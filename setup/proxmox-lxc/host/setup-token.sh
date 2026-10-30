@@ -21,8 +21,9 @@ pveum pool list --output-format json | jq -e --arg p "$BBBOX_POOL" '.[] | select
 # cores, memory, disk size, the network, description and tags, clear the
 # protection a clone inherits, start, stop, delete, read status and config,
 # and list the pool. For Windows VMs (Proxmox QEMU) it also sets the SMBIOS
-# serial, which carries the box's address, and opens the console.
-privs="VM.Audit,VM.Clone,VM.Allocate,VM.Config.CPU,VM.Config.Memory,VM.Config.Disk,VM.Config.Network,VM.Config.Options,VM.Config.HWType,VM.Console,VM.PowerMgmt,Pool.Audit"
+# serial, which carries the box's address, and opens the console. It takes,
+# deletes and restores a box's snapshots.
+privs="VM.Audit,VM.Clone,VM.Allocate,VM.Config.CPU,VM.Config.Memory,VM.Config.Disk,VM.Config.Network,VM.Config.Options,VM.Config.HWType,VM.Console,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback,Pool.Audit"
 if pveum role list --output-format json | jq -e --arg r "$BBBOX_API_ROLE" '.[] | select(.roleid == $r)' >/dev/null; then
   pveum role modify "$BBBOX_API_ROLE" --privs "$privs"
 else

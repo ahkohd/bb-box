@@ -32,6 +32,23 @@ interface FakeTask {
   pollsLeft: number;
 }
 
+export const TOKEN_ROLE = [
+  "VM.Audit",
+  "VM.Clone",
+  "VM.Allocate",
+  "VM.Config.CPU",
+  "VM.Config.Memory",
+  "VM.Config.Disk",
+  "VM.Config.Network",
+  "VM.Config.Options",
+  "VM.Config.HWType",
+  "VM.Console",
+  "VM.PowerMgmt",
+  "VM.Snapshot",
+  "VM.Snapshot.Rollback",
+  "Pool.Audit",
+] as const;
+
 export const FAKE_TOKEN = { tokenId: "bb-box@pve!plugin", tokenSecret: "s3cret-token-value" };
 
 export class FakeProxmox {
@@ -63,6 +80,7 @@ export class FakeProxmox {
   /** Each storage's type, lvmthin unless it says. */
   readonly storageTypes = new Map<string, string>();
   readonly pools = new Set<string>(["bbbox"]);
+  readonly privileges = new Map<string, Set<string>>([["/pool/bbbox", new Set(TOKEN_ROLE)]]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   /** Optional hook to fail a request: return a response to short-circuit. */
   intercept?: (call: FakeCall) => FetchResponse | undefined;
@@ -200,6 +218,12 @@ export class FakeProxmox {
       const storage = this.storage.get(decodeURIComponent(match[1]!));
       if (!storage) return respond(500, `storage '${match[1]}' does not exist`, { data: null });
       return ok({ ...storage, used: storage.total - storage.avail, active: 1, enabled: 1, type: this.storageTypes.get(decodeURIComponent(match[1]!)) ?? "lvmthin" });
+    }
+
+    if (method === "GET" && path === "/access/permissions") {
+      const privileges = (paths: string[]) => Object.fromEntries(paths.map((each) => [each, Object.fromEntries([...this.privileges.get(each)!].map((privilege) => [privilege, 1]))]));
+      if (!params.path) return ok(privileges([...this.privileges.keys()]));
+      return ok(this.privileges.has(params.path) ? privileges([params.path]) : {});
     }
 
     if (method === "GET" && path === "/pools") {

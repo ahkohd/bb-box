@@ -60,6 +60,11 @@ export const CHECKS = {
   "proxmox.bridge": { name: "Network bridge", from: ["proxmox-lxc", "proxmox-qemu"], what: "The bridge exists on the node." },
   "proxmox.vmids": { name: "VMID range", from: ["proxmox-lxc", "proxmox-qemu"], what: "The VMID range is free of guests bb-box did not make." },
   "proxmox.sizes": { name: "Room for each kind", from: ["proxmox-lxc", "proxmox-qemu"], what: "The node holds a box of each kind at its default size." },
+  "proxmox.snapshots": {
+    name: "Snapshots",
+    from: ["proxmox-lxc", "proxmox-qemu"],
+    what: "Whether the token may take and restore snapshots, with VM.Snapshot and VM.Snapshot.Rollback on the pool, and what each template's storage restores: any snapshot on LVM-thin, Ceph RBD, BTRFS and qcow2 files, the newest only on ZFS, none on LVM or raw files (070).",
+  },
   "template.<vmid>": { name: "<flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: "A template is there, is a template, and has what its kind needs." },
   "template.<vmid>.image": { name: "Image of <flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: "The template's image record: its age, pins and tools, against this bb-box's." },
   "proxmox.android-kvm": { name: "KVM for Android", from: ["proxmox-qemu"], what: "Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM." },

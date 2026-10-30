@@ -30,7 +30,8 @@
 import { SPARES } from "../../core/boxes.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
-import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -248,6 +249,7 @@ const VMIDS: Check = ["proxmox.vmids", "VMID range"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const ANDROID_KVM: Check = ["proxmox.android-kvm", "KVM for Android"];
 const ANDROID_DISK: Check = ["proxmox.android-disk", "Disk for Android"];
+const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
 const ANDROID_ROOM_GIB = 40;
 
 function powerOf(status: string): PowerState {
@@ -1112,7 +1114,8 @@ export class ProxmoxQemuBackend implements Backend {
       for (const [id, name] of skipped) checks.push({ id, name, status: "skipped", detail: "Skipped until the checks above pass.", fix: null });
     };
     const templateCheck = (template: number): Check => [`template.${template}`, this.#templateName(template)];
-    const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS];
+    const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS];
+    const templateStorages: GuestDiskStorage[] = [];
     let version = "";
 
     try {
@@ -1195,6 +1198,7 @@ export class ProxmoxQemuBackend implements Backend {
               fail(name, `VM template ${template} is on ${storage}, whose free space cannot be read.`, audit(free, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
+              templateStorages.push({ name: storage, type: (free as StorageStatus).type, volume: String(config[disk]) });
               const freeGiB = Math.floor((free as { available: number }).available / GiB);
               const kind = this.#kindOf(template);
               pass(name, `VM template ${template} on ${storage}, ${freeGiB} GiB free.`);
@@ -1262,6 +1266,9 @@ export class ProxmoxQemuBackend implements Backend {
       } catch (error) {
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
+
+      const privileges = await poolPrivileges(api, pool, signal);
+      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages }) });
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its VMs carry the tag ${installTag(this.#context.installId)}.`);
 

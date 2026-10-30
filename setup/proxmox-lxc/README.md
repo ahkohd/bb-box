@@ -196,6 +196,8 @@ separation, and the role `BBBoxPlugin` with only what bb-box uses:
 | VM.Config.HWType | a Windows box's SMBIOS serial, which carries its address (Proxmox QEMU) |
 | VM.Console | a Windows box's desktop, through the API's VNC proxy (Proxmox QEMU) |
 | VM.PowerMgmt | start and stop |
+| VM.Snapshot | take and delete a box's snapshots (070) |
+| VM.Snapshot.Rollback | restore a box to one of its snapshots (070) |
 | VM.Audit, Pool.Audit | status, config and the pool's members |
 
 The role applies on `/pool/<pool>`. The token also gets `PVEDatastoreUser` on
@@ -213,6 +215,19 @@ another GPU, and a new image contract need `template/build.sh` as root.
 The script writes the token to `BBBOX_TOKEN_FILE` (mode 0600), with the API
 URL, the node and the SHA-256 fingerprint of the host's certificate. It never
 prints the secret.
+
+Run the script again after an update that adds a privilege, such as
+`VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots. It keeps the token,
+its secret and the token file, and sets the role's privileges to the list
+above. The doctor's Snapshots check says when the token lacks either
+privilege, and what each template's storage restores:
+
+| Storage | Snapshots |
+| --- | --- |
+| LVM-thin, Ceph RBD, BTRFS | restores any snapshot |
+| ZFS | restores only the newest snapshot |
+| directory, NFS or CIFS | VMs with qcow2 disks: restores any snapshot. Containers and raw disks: takes none |
+| LVM (thick) | none: Proxmox VE 9 takes snapshots of VMs on it only as a preview |
 
 #### The GPU memory report
 

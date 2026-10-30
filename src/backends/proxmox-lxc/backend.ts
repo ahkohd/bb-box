@@ -37,7 +37,8 @@ import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/star
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import {
   BUILD,
   TAG,
@@ -271,6 +272,7 @@ const POOL: Check = ["proxmox.pool", "Resource pool"];
 const BRIDGE: Check = ["proxmox.bridge", "Network bridge"];
 const VMIDS: Check = ["proxmox.vmids", "VMID range"];
 const GPU_REPORT: Check = ["proxmox.gpu-report", "Host's GPU report"];
+const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 
 function powerOf(status: string): PowerState {
@@ -1276,7 +1278,8 @@ export class ProxmoxLxcBackend implements Backend {
       `template.${template.vmid}`,
       `${FLAVOUR_NAMES[flavour]} template ${template.vmid}${template.gpu ? ` (GPU ${template.gpu})` : ""}`,
     ];
-    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS];
+    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS];
+    const templateStorages: GuestDiskStorage[] = [];
     let version = "";
 
     try {
@@ -1362,6 +1365,7 @@ export class ProxmoxLxcBackend implements Backend {
               fail(name, `CT template ${template} is on ${storage}, whose free space cannot be read.`, audit(disk, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
               this.#templates.set(template, templateInfo(storage, config));
+              templateStorages.push({ name: storage, type: (disk as StorageStatus).type, volume: String(config.rootfs) });
               pass(name, `CT template ${template} on ${storage}, ${Math.floor((disk as { available: number }).available / GiB)} GiB free.`);
               const [linuxPins, desktopPins, bbApp, nvidia] = await facts;
               const judged = judgeImage(
@@ -1468,6 +1472,9 @@ export class ProxmoxLxcBackend implements Backend {
       } catch (error) {
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
+
+      const privileges = await poolPrivileges(api, pool, signal);
+      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "lxc", privileges, storages: templateStorages }) });
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its containers carry the tag ${installTag(this.#context.installId)}.`);
 
