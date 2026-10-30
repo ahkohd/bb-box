@@ -2,7 +2,7 @@
 
 The Monitor shows how BB's server, your machines and every box are doing: CPU, memory, disk, network and the busiest processes, in BB's sidebar. It can also watch BB's server while nobody looks, and tell you when its CPU or memory stays high.
 
-![The Monitor in BB's sidebar, on a Linux desktop box under load, with the box's Open menu: Page, Open desktop, Open terminal and the thread that holds the box](../media/monitor.png)
+![The Monitor in BB's sidebar, on a Linux desktop box under load, with the box's Open menu: Open details, Open desktop, Open terminal and the thread that holds the box](../media/monitor.png)
 
 ## Opening it
 
