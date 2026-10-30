@@ -1,0 +1,15 @@
+iOS Simulator device copies, 30 October 2026, in an ios box on a shared iOS
+host (a Tart VM, slot 1 of 9), iPhone 18 Pro, iOS 27.0 (24A434), Xcode 27.0,
+slim on, as the slot's user (no sudo). Timed with perl's Time::HiRes.
+
+device folder (~/Library/Developer/CoreSimulator/Devices/<udid>)  352 MB
+a user default written in the device: bbsnapMarker=before
+xcrun simctl shutdown                         3.19 s
+xcrun simctl clone of the shut-down device    1.62 s
+cp -c -R of the device folder (APFS clones)   0.96 s, 346 MB as du counts it
+xcrun simctl boot of the clone, to booted     2.50 s; the default was there
+the clone shut down and deleted, the copy removed
+
+bb-box's device server had booted the box's own device again by itself
+before the script did. simctl has no saved state of a booted device: these
+are copies of a shut-down device's disk.

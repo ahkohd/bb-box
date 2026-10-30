@@ -1,0 +1,29 @@
+Tart macOS snapshots, 30 October 2026, on a macos box on Tart (6 cores,
+16 GiB, 130 GiB disk, macOS 27.0), claimed from a warm VM. Stop and start
+through bb-box, timed with date around the tools and from bb-box's own
+timings; tart-snapshots.sh run by the lead as the Tart user on the Mac.
+
+A process holding 1 GiB and writing a counter each second, started with
+launchctl submit in the box (PID 1881, 00:48:30), and a 1 GiB file.
+
+bb-box stop (tart suspend)                         about 7 s (00:48:48 to 00:48:55)
+VM folder while suspended: disk.img 88.57 GB, state.vzvmsave 7.85 GB,
+  nvram.bin 0.03 GB; 86 GB on disk (du)
+cp -c -R of the folder, same APFS volume           0.02 s; free space unchanged
+  (control.sock, a socket, is not copied)
+tart clone of the suspended VM                     0.03 s; it kept the box's MAC
+  address and its saved state
+tart run of the clone                              failed at once: "The
+  operation couldn't be completed. Operation not supported"
+tart delete of the clone                           0.02 s
+bb-box start (resume)                              10.4 s; the counter went on
+then: a marker file written, the 1 GiB file removed, bb-box stop
+restore: the copy moved back in the VM's place     0.19 s
+bb-box start (resume of the restored state)        11.0 s
+  after: the marker gone, the 1 GiB file back, PID 1881 from 00:48:30
+  still running, its counter back at 17, from 46 before the restore
+
+A first try put the copy on the home folder's volume, another volume than
+the VMs', where cp -c falls back to a full copy: 1 GB of 96 GB in 7.5 min.
+The lead stopped it and removed the partial copy. The copies folder and the
+clone were removed; the box was released.

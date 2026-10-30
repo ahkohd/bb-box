@@ -1,0 +1,59 @@
+Proxmox VE snapshot measurements, run by the lead as root on the node with
+proxmox-snapshots.sh, 30 October 2026, 00:31 to 00:36 UTC. The first run
+stopped at the QEMU clone on a lock of the VM's config held for a moment by
+bb-box; the rest ran again with retries on that lock (none was needed).
+
+pve-manager/9.2.21 (running kernel: 6.17.13-2-pve)
+LXC rootfs: local-lvm:vm-3150-disk-0,size=16G
+VM disk: scsi0: local-lvm:vm-3206-disk-0,discard=on,iothread=1,size=16G,ssd=1
+VM memory: 4096
+VM agent: enabled=1
+Thin pool data: 7299.03 GiB, 53.56% used
+
+=== LXC 3150 (2 cores, 4 GiB, 16 GiB disk, 36.19% of it used: about 5.8 GiB)
+lxc snapshot, running                                    0.68 s
+  snap_vm-3150-disk-0_s1 16.00g, origin vm-3150-disk-0
+lxc write 1 GiB after the snapshot                       1.92 s
+  vm-3150-disk-0 36.19% -> 40.29%; pool 53.56% -> 53.58%
+lxc clone of the snapshot (full) to a spare VMID         9.30 s
+  vm-3990-disk-0 16.00g 24.86% (no origin: a full copy)
+lxc start the clone, no network                          1.10 s
+lxc stop the clone                                       1.33 s
+lxc destroy the clone                                    0.60 s
+lxc thin snapshot of the snapshot (a linked fork)        0.13 s
+  bbsnap-thin-fork 16.00g 36.19%, origin snap_vm-3150-disk-0_s1
+lxc remove the thin fork                                 0.08 s
+lxc vzdump, snapshot mode, zstd                         13.18 s, 2982 MiB
+lxc restore the vzdump to a spare VMID                   6.48 s
+lxc destroy the restored copy                            0.63 s
+lxc rollback to s1, then start                          45.83 s
+  after: after-marker and after.bin gone; before.bin (1024 MiB) kept
+lxc delete snapshot s1                                   0.57 s
+
+=== QEMU 3206 (2 cores, 4 GiB, 16 GiB disk, 34.36% used; 1.5 GiB held in /dev/shm)
+vm uptime since 2026-10-30 00:27:48
+vm snapshot, running, disk only                          1.07 s
+  snap_vm-3206-disk-0_disk1 16.00g
+vm snapshot, running, with memory (vmstate)              3.69 s
+  snap_vm-3206-disk-0_mem1 16.00g
+  vm-3206-state-mem1 8.49g, 43.68% used (about 3.7 GiB)
+vm write 512 MiB after the snapshots                     2.05 s
+vm rollback to mem1 (resumes running)                    3.92 s
+  status running; SSH port answered at once
+  after: uptime since 00:27:48 (the same boot), /dev/shm/ram.bin there,
+  after-marker gone
+(first run stopped here on the config lock)
+vm clone of disk1 (full) to a spare VMID                 6.54 s
+  vm-3990-disk-0 16.00g 31.95%
+vm start the clone, link down                            0.96 s
+vm stop the clone                                        0.49 s
+vm destroy the clone                                     0.60 s
+vm vzdump, snapshot mode, zstd                          12.83 s, 2471 MiB
+vm rollback to disk1 (stops the VM)                      0.91 s
+vm start after disk1 rollback                            0.96 s
+vm SSH port answers after the start                      7.64 s
+vm delete snapshot mem1                                  0.88 s
+vm delete snapshot disk1                                 0.57 s
+
+Left: both boxes running, no snapshots, the spare VMID gone, no dumps, no
+extra volumes.

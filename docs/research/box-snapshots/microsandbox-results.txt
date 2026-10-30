@@ -1,0 +1,24 @@
+microsandbox snapshots, 30 October 2026, with msb 0.7.7 (the release bb-box
+pins, checked by its SHA-256) run by the box user in a Proxmox QEMU linux box
+(4 cores, 8 GiB, KVM): nested, so a microVM inside a VM, not bb-box's own
+microsandbox host. The sandbox: ubuntu:24.04, 2 GiB, 512 MiB of random data
+in /dev/shm and 512 MiB on its disk, and a counter written each second.
+
+msb pull ubuntu:24.04                          1.86 s
+msb create                                     0.48 s
+msb snap create disk1 (disk only, running)     0.34 s, 4.0 GiB listed
+msb snap create full1 --full (memory, running) 1.50 s; the source paused
+  briefly and ran on (its counter 6 before, 7 after)
+  both on disk: 2.2 GB in ~/.microsandbox/snapshots
+msb fork src (running, copy on write)          1.57 s; the child had the
+  counter and /dev/shm
+msb snap restore src:full1 into a new sandbox  3.85 s; the counter and
+  /dev/shm there, as at the capture
+msb snap restore src:disk1 into a new sandbox  0.45 s; a cold boot: the
+  disk file there, /dev/shm empty
+msb snap export full1 (tar and zstd)           8.96 s, 1552 MiB
+msb snap export disk1                          1.16 s, 513 MiB
+
+Snapshots of one sandbox form a group with a head: full1 was a child of
+disk1, and the group's head cannot be removed until another is chosen as
+head. Everything was removed with the box, which was released.

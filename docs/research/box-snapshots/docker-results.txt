@@ -1,0 +1,21 @@
+Docker commit and checkpoint, 30 October 2026, with docker-snapshots.sh in a
+Proxmox QEMU linux box (2 cores, 4 GiB, 16 GiB disk, Ubuntu 24.04), Docker
+29.1.3 with experimental on, CRIU 4.3 from the CRIU PPA (Ubuntu 24.04 has no
+criu package). The container: ubuntu:24.04, 1 GiB of random data in
+/dev/shm, 1 GiB on its writable layer, and a counter written each second.
+
+docker commit (pauses the container)            15.20 s, image of 1104 MB
+docker run a fork from the commit                0.18 s
+  the fork has the 1 GiB file of the writable layer, not /dev/shm
+docker checkpoint create --leave-running        24.87 s, 1025 MiB on disk
+docker checkpoint create (stops the container)  22.76 s
+docker start --checkpoint                        fails: "bind-mount
+  /proc/0/ns/net -> /var/run/docker/netns/...: no such file or directory"
+docker start --checkpoint-dir in a new container fails: "custom
+  checkpointdir is not supported"
+
+Again with --network none and 256 MiB in /dev/shm:
+docker checkpoint create (stops the container)   1.69 s
+docker start --checkpoint                         fails the same way.
+
+Everything made was removed: no containers, no snap images, no checkpoints.

@@ -1,0 +1,17 @@
+Hetzner Cloud host snapshot, 30 October 2026, 01:03 UTC, with
+hetzner-snapshot.sh run by the lead with bb-box's Hetzner token, which the
+owner allowed for this run and the lead then deleted.
+
+source: the bb-box host of a linux small box, cpx42 in nbg1, 320 GB disk, running
+create_image call                       0.18 s
+snapshot of the running host, to done   76.66 s
+size: 16.99 GB compressed (image_size), disk_size 320 GB
+a server from it, no network:           refused, 403 resource_limit_exceeded,
+                                        "shared core limit exceeded"
+a server from it, IPv6 only, unstarted: refused the same way
+the image deleted; nothing left with the script's label
+
+A server from a snapshot must have a disk at least the snapshot's
+disk_size, so this one needs a CPX42 or larger, which the project's limit
+on shared cores refused beside the host. A first run stopped before making
+anything, on a field Hetzner's answer no longer has.

@@ -1,0 +1,19 @@
+Android emulator snapshots, 30 October 2026, in an android box on Proxmox QEMU
+(8 cores, 16 GiB), Pixel 8, API 35, Google APIs, emulator 37.2.12.0, through
+adb's emulator console (adb emu avd snapshot ...), timed with date in the box.
+
+Before: a global setting bbsnap_marker=before, the Settings app open; the
+device used 1.7 GB of its 2.5 GB.
+
+adb emu avd snapshot save bbsnap1     14.83 s, 2.5 GB on the box's disk
+  (ram.bin, textures.bin, hardware.ini, snapshot.pb, screenshot.png in
+  ~/.android/avd/pixel_8.avd/snapshots/bbsnap1; default_boot, the Quick
+  Boot snapshot, is also 2.5 GB)
+set bbsnap_marker=after, pressed Home
+adb emu avd snapshot load bbsnap1      3.21 s
+adb answers, boot completed            0.85 s more
+  after: bbsnap_marker=before, Settings the top activity again
+adb emu avd snapshot delete bbsnap1    0.35 s
+
+The box had booted its device cold, in 52.8 s, about 25 s of it giving the
+device its own Android ID.
