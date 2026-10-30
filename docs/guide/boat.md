@@ -85,7 +85,7 @@ boat.dev stops a sandbox by itself at its auto-stop. BB Box sets each box's auto
 
 ## Android boxes
 
-boat.dev's machines have KVM, so they can run the Android emulator. An Android box on boat.dev is the same as on Proxmox QEMU: a phone, foldable or tablet, booted from its snapshot, with its screen in the Box panel.
+boat.dev's machines have KVM, so they can run the Android emulator. An Android box on boat.dev is the same as on Proxmox QEMU: a phone, foldable or tablet, booted from its snapshot, with its screen in the Box panel. Using it is in [device boxes](devices.md).
 
 1. Read the Android SDK's licence: Google's terms for the SDK, the emulator and the system image, as `setup/android/pins.json` pins them. `setup/android/accept-sdk-licence.sh` shows them, without accepting anything unless you say so.
 2. In BB Box's settings, under **boat.dev**, turn on **Android SDK licence**. That is your acceptance. While it is off, boat.dev offers no Android boxes, and `box_list` and the doctor say why.

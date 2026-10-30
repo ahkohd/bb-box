@@ -1,68 +1,212 @@
 ---
 import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
-import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
-import demo from "../../../docs/media/demo.webp";
 import { getEntry } from "astro:content";
+import demoPoster from "../../../docs/media/demo-poster.jpg";
+import demoVideo from "../../../docs/media/demo.mp4?url";
 import { pageUrl } from "../repo.ts";
 import { listUnder } from "../rendered.ts";
 
 const base = import.meta.env.BASE_URL;
 const introduction = await getEntry("docs", "start");
 const reasons = listUnder(introduction?.rendered?.html ?? "", "why-bb-box");
+const mark = `<svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>`;
+const ways = [
+  { title: "Quick start", words: "Install the plugin, set up Docker and make a box.", id: "start/quick-start" },
+  { title: "User guide", words: "The Box panel, desktops and devices, the terminal, images, files and settings.", id: "guide" },
+  { title: "Backends", words: "Docker, Proxmox, microsandbox, Tart, SSH host pools and cloud machines.", id: "setup" },
+  { title: "Reference", words: "Every agent tool, bb box command, setting, kind and check.", id: "reference" },
+];
 ---
 
 <StarlightPage
   frontmatter={{
     title: "bb-box",
-    description: "Computers for BB threads: Linux, macOS or Windows boxes for you and the thread's agent.",
+    description: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
     template: "splash",
     hero: {
-      title: "bb-box",
-      tagline: "Computers for BB threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop.",
+      title: `${mark}bb-box`,
+      tagline: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
       actions: [
-        { text: "Make your first box", link: pageUrl(base, "start/quick-start"), icon: "right-arrow" },
-        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "minimal" },
+        { text: "Make your first box", link: pageUrl(base, "start/quick-start") },
+        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "secondary" },
       ],
     },
   }}
 >
-  <img
-    class="demo"
-    src={demo.src}
-    width={demo.width}
-    height={demo.height}
-    alt="A person makes a desktop box in a BB thread, the agent opens Chrome in it, then the person makes a server box and runs a command in its terminal"
-  />
+  <figure class="demo not-content">
+    <video autoplay muted loop playsinline preload="auto" poster={demoPoster.src} width={demoPoster.width} height={demoPoster.height} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop to watch, then makes a server box and runs a command in its terminal.">
+      <source src={demoVideo} type="video/mp4" />
+    </video>
+  </figure>
 
-  <h2>Why bb-box</h2>
-  <CardGrid>
-    {reasons.map((reason) => (
-      <Card title={reason.title}>
-        <Fragment set:html={reason.html} />
-      </Card>
-    ))}
-  </CardGrid>
+  <section class="column not-content" aria-labelledby="why-bb-box">
+    <h2 id="why-bb-box">Why bb-box</h2>
+    <ul class="list">
+      {reasons.map((reason) => (
+        <li>
+          <span class="dash" aria-hidden="true">-</span>
+          <span>
+            <span class="lead">{reason.title}.</span>{" "}
+            <span class="words" set:html={reason.html} />
+          </span>
+        </li>
+      ))}
+    </ul>
+    <p class="trust">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
+  </section>
 
-  <p class="note">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
-
-  <h2>Find your way</h2>
-  <CardGrid>
-    <LinkCard title="Quick start" description="Install the plugin, set up Docker and make a box." href={pageUrl(base, "start/quick-start")} />
-    <LinkCard title="User guide" description="The Box panel, desktops, the terminal, images, files and settings." href={pageUrl(base, "guide")} />
-    <LinkCard title="Backends" description="Docker, Proxmox, Tart, SSH host pools and cloud machines." href={pageUrl(base, "setup")} />
-    <LinkCard title="Reference" description="Every agent tool, bb box command, setting, kind and check." href={pageUrl(base, "reference")} />
-  </CardGrid>
+  <section class="column not-content" aria-labelledby="find-your-way">
+    <h2 id="find-your-way">Find your way</h2>
+    <ul class="list">
+      {ways.map((way) => (
+        <li>
+          <span class="dash" aria-hidden="true">-</span>
+          <span>
+            <a class="lead link" href={pageUrl(base, way.id)}>{way.title}</a>{". "}
+            <span class="words">{way.words}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  </section>
 </StarlightPage>
 
 <style>
+  :global([data-has-hero] .site-title) {
+    visibility: hidden;
+  }
+
+  :global([data-has-hero] .hero) {
+    display: block;
+    max-width: 42rem;
+    margin-inline: auto;
+    padding: 4rem 0 0;
+  }
+
+  :global([data-has-hero] .hero .stack),
+  :global([data-has-hero] .hero .copy) {
+    align-items: flex-start;
+    text-align: start;
+    gap: 0;
+  }
+
+  :global([data-has-hero] .hero h1) {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+    color: var(--foreground);
+  }
+
+  :global([data-has-hero] .hero h1 .mark) {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  :global([data-has-hero] .hero .tagline) {
+    max-width: none;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+    text-wrap: pretty;
+  }
+
+  :global([data-has-hero] .hero .actions) {
+    justify-content: flex-start;
+    gap: 0.5rem;
+    margin-top: 1.3125rem;
+  }
+
+  :global([data-has-hero] .hero .sl-link-button) {
+    font-weight: 500 !important;
+    height: auto;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+  }
+
   .demo {
+    max-width: 67.5rem;
+    margin: 3rem auto 0;
+  }
+
+  .demo video {
+    display: block;
     width: 100%;
     height: auto;
-    border-radius: 0.5rem;
-    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 8px;
   }
-  .note {
-    color: var(--sl-color-gray-2);
-    font-style: italic;
+
+  .column {
+    max-width: 42rem;
+    margin: 3rem auto 0;
+  }
+
+  .column h2 {
+    margin: 0 0 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--muted-foreground);
+  }
+
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.9375rem;
+    line-height: 1.275;
+  }
+
+  .list li {
+    display: flex;
+    gap: 0.75rem;
+    margin: 0;
+  }
+
+  .dash {
+    flex-shrink: 0;
+    color: var(--muted-foreground);
+  }
+
+  .lead {
+    color: var(--foreground);
+  }
+
+  .words {
+    color: var(--muted-foreground);
+  }
+
+  .list :global(a) {
+    color: inherit;
+    text-decoration-line: underline;
+    text-decoration-color: var(--muted-foreground);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  .list :global(a:hover) {
+    text-decoration-color: var(--foreground);
+  }
+
+  .list a.link {
+    color: var(--foreground);
+  }
+
+  .trust {
+    margin: 1.25rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--muted-foreground);
+  }
+
+  .column:last-child {
+    margin-bottom: 4rem;
   }
 </style>

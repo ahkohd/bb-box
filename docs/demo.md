@@ -1,108 +1,61 @@
 # Recording the demo
 
-The README opens with a 1-minute demo of a person using bb-box in BB's web app, and the guide uses screenshots from the same session. Record them again when the Box panel, the New box form or the desktop and terminal tabs change.
+The README and the documentation site's landing page open with a 40-second demo of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form or the desktop and terminal tabs change.
 
-The scripts are in [scripts/demo](../scripts/demo). They run on a Mac with Google Chrome, ffmpeg and Swift.
+## The demo video
 
-## Before you start
+The video is recorded in a box, on a fresh BB with no account, so no deployment's machine, user, project or account name can show. Every name in it is one BB or bb-box makes: the box that runs the fresh BB, the boxes bb-box names, and the user `box`. The scripts are in [scripts/demo](../scripts/demo).
 
-- Use a Mac whose Chrome is signed in to your BB. Do not sign in to anything for the demo.
-- Recording takes over the Mac's pointer and keyboard for about 5 minutes. Only start when the owner is not using it: wait until it has had no input for 5 minutes, or until they say it is free. If they start using it while you record, stop, put back what you changed and wait again.
-- Work in a new Chrome window. Do not close or change the owner's tabs or windows.
-- Turn on Do Not Disturb if you can. The recording covers only the page area, so a notification outside it does not show.
-- The terminal or agent running the scripts needs Accessibility and Screen Recording permission in System Settings, Privacy and Security.
+### What it shows
 
-## The flow
+1. BB's home, where the person asks the thread's agent: 'Get a Linux desktop box and open getbb.app on it.'
+2. The agent gets a Linux desktop box with `box_acquire` and opens getbb.app in its browser with `computer_launch`, then maximises the browser with `box_run`.
+3. The person opens the right panel, then the Box panel, then **Open desktop**, and maximises the pane to watch the desktop.
+4. In the Box panel, **New box**, a Linux server with the form's defaults, then **Open terminal** on its row, and `uname -sm && nproc` in it.
 
-The demo is 30 to 60 seconds once cut:
+The agent's wait is played at three times its speed; the rest is real time.
 
-1. BB's web app with the left sidebar collapsed.
-2. A new thread on a BB machine, with a neutral first message such as 'Demo'. Pick the machine by typing its name in the machine picker, so the list of machines is not shown in full.
-3. In the thread's right panel, the plus, then **Box**, then the plus in the Box panel: the New box form. Choose Linux and Desktop, and select **Create box**.
-4. **Open desktop** on the new box's row. The desktop appears in the panel.
-5. Ask the thread's agent: 'Open Chrome on the desktop box and go to getbb.app.' It opens Chrome through computer use and the page loads in the panel.
-6. Expand the panel, so the desktop shows large.
-7. The Box tab, a second box: Linux and Server. **Open terminal** on its row and run `uname -a`.
+### The agent
 
-Afterwards, release both boxes (`bb box release NAME --thread THREAD`), and close the window. Archive the demo thread only if its owner wants it gone.
+A fresh BB has no agent signed in, so the thread's agent is [agent.mjs](../scripts/demo/agent.mjs), a scripted ACP agent. It makes the same calls to bb-box's tools that an agent would, through the MCP server BB gives it, and says what it does. Only its choice of calls is scripted. It needs `@modelcontextprotocol/sdk` beside it.
 
-## Capturing only the page
+### Set up
 
-The recording shows BB's page and nothing else: not Chrome's tabs or address bar, which would show where your BB is hosted, and nothing outside the window.
+On a Linux box with Docker, about 8 cores, 16 GiB of memory and 40 GB of disk free:
 
-`window.sh` opens a new Chrome window with its page area 1280x800 points at a fixed place on the screen, and `record.sh` and `shot.sh` capture exactly that area. Chrome's toolbar is taken as 87 points tall; if the first capture shows part of it, or cuts off the page, change `DEMO_TOOLBAR`. On a Retina screen the capture is 2560x1600 pixels.
+1. Start a fresh BB with its own data and ports, and nothing from the box's environment:
 
-```sh
-swiftc -O scripts/demo/input.swift -o /tmp/demo-input
-sh scripts/demo/window.sh open https://YOUR-BB/          # prints the window's ID
-sh scripts/demo/record.sh 200 /tmp/demo/take.mov         # records for 200 s, in the background
-```
+   ```sh
+   env -i HOME="$HOME/fresh" PATH=/usr/local/bin:/usr/bin:/bin npx bb-app@latest \
+     --data-dir "$HOME/fresh/data" --server-bind-host 0.0.0.0 --server-port 4999 --host-daemon-port 4998
+   ```
 
-## Driving Chrome
+   Use the same `env -i` with `npx --package bb-app@latest bb` and `BB_SERVER_URL=http://127.0.0.1:4999` as `BB_CLI` for the commands below.
 
-Chrome's default profile has no DevTools port and its JavaScript from AppleScript is off, and turning either on changes the owner's browser. So the demo is driven like a person would: `input.swift` posts mouse and keyboard events, gliding the pointer so clicks read well on video.
+2. Install bb-box from a checkout of `main`, after `npm ci` in it: `bb plugin install path:<checkout> --yes`.
+3. Let boxes join it as machines: `bb settings general machineServerUrl http://<Docker bridge address>:4999`, then `bb settings general defaultMachineAccess direct`.
+4. `bb box setup docker`, then set the Docker backend's `desktop-image` to `bbbox/linux-desktop:1` with `bb box config apply`, and `bb box docker-build <machine>`. Both images take about 15 minutes.
+5. Register the agent and make it the default: `bb plugin config provider-acp set customAgents '[{"id":"demo","displayName":"Demo agent","command":"node","args":["<path>/agent.mjs"]}]'`, then `bb settings general defaultProviderId acp-demo`. Set `onboardingCompletedAt` and turn `telemetryEnabled` off with `bb settings general`.
+6. Rehearse the flow once, which also starts the desktop, then run [reset.sh](../scripts/demo/reset.sh) so the take starts with no thread and no box.
 
-```sh
-/tmp/demo-input click 477 331     # screen points: window x + page x, window y + 87 + page y
-/tmp/demo-input type MACHINE-NAME
-/tmp/demo-input key 36            # Return
-/tmp/demo-input scroll -40        # repeat to scroll a form
-/tmp/demo-input pos               # where the pointer is
-```
+### Record
 
-Find each target with `shot.sh` and convert its place in the PNG to screen points: halve Retina pixels, then add the window's page origin (0, 127 with the defaults). Before each step, check with `pos` that the pointer is where you left it; if not, someone is using the Mac. Take the guide's screenshots with `shot.sh` during the same session.
+[chrome.sh](../scripts/demo/chrome.sh) starts headless Google Chrome, which plays the desktop's video, with a debugging port. [record.mjs](../scripts/demo/record.mjs), run with Playwright beside it, drives BB's page at 1280 by 800 and draws a pointer that glides to each control before it is pressed, as headless Chrome draws none. It saves Chrome's screencast, the page alone at 2560 by 1600, with each frame's time, and the time each step starts.
 
-## Recording for a fixed time
+### Encode
 
-Give `record.sh` a length a little longer than the flow, about 200 s, and wait for it to end. Do not stop it with a signal: a background `screencapture` ignores Ctrl-C, and if made to stop on SIGINT it exits without writing the file. The cut removes the extra time.
+[encode.sh](../scripts/demo/encode.sh) speeds up the agent's wait, holds the last frame for 1.5 seconds, and encodes from the saved frames:
 
-## Cutting
+- `demo.mp4`: H.264 at CRF 12, 1920 by 1200, 30 fps, about 2 MB, `-tune animation`, yuv420p, faststart, no sound. The landing page plays it muted and looping.
+- `demo.webp`: animated WebP at 960 by 600, 10 fps and quality 70, for the README, as GitHub plays images in a README but not videos. Lossless came to 17.7 MB, and 8.7 MB even at 800 by 500 and 6 fps, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
+- `demo-poster.jpg`: the maximised desktop, the landing page's poster while the video loads.
 
-List the moments the picture changes, then look at frames to check what each one shows:
+Keep each under about 5 MB.
 
-```sh
-sh scripts/demo/find-cuts.sh /tmp/demo/take.mov
-sh scripts/demo/find-cuts.sh /tmp/demo/take.mov /tmp/demo/frames.png 5 19 100 177
-```
+### Check every frame
 
-Write the parts to keep as `start,end` lines, as in [cuts.example.txt](../scripts/demo/cuts.example.txt). Keep each click and the moment its result shows, and cut:
+Before committing, read every frame's text, as with `tesseract` over the saved frames, and look through the words for any name that is not BB's, bb-box's or the box user's. List the names that show for whoever reviews the change.
 
-- waiting, including the agent's thinking
-- the machine picker before the filter applies, which lists every machine
-- the thread's Info tab, whose Directory row contains BB's host
-- anything else that shows the host
+## The guide's screenshots
 
-Machine, box, provider and project names may show.
-
-## Encoding
-
-```sh
-sh scripts/demo/encode.sh /tmp/demo/take.mov cuts.txt /tmp/demo/out
-```
-
-This cuts to a lossless master at 1280x800, then encodes from it:
-
-- `demo.webp`: lossless animated WebP at 20 fps, usually 4 to 5 MB. Lossy WebP blends parts of earlier frames, which leaves ghosts on flat, dark UI, so do not use it. Keep it under 8 MB; if lossless is far over, cut the video shorter.
-- `demo.mp4`: H.264 at CRF 12, `-tune animation`, yuv420p, faststart, 30 fps, usually about 2 MB. Keep it under 10 MB.
-
-Always encode from the original recording, never from an earlier MP4 or WebP, or their artifacts carry over. To check a new encode against the old one at the same moment:
-
-```sh
-uv run --no-project --with pillow python scripts/demo/compare.py \
-  docs/media/demo.webp /tmp/demo/out/demo.webp /tmp/demo form=13:700,60,580,360
-```
-
-## Where the files go
-
-Put the files in [docs/media](media):
-
-- `demo.webp` and `demo.mp4`
-- `new-box-form.png`, `desktop-box.png`, `terminal-box.png` and `box-panel.png`, at 2560x1600
-
-The README shows the WebP just under its title, because GitHub plays images in a README but not videos stored in the repo. The image links to the MP4:
-
-```markdown
-[![What the demo shows](docs/media/demo.webp)](docs/media/demo.mp4)
-```
-
-The screenshots are in [making a box](guide/making-a-box.md), [desktops](guide/desktops.md) and [the terminal](guide/terminal.md). Before committing, list the names that show in the video and screenshots for whoever reviews the change.
+The guide's screenshots, `new-box-form.png`, `desktop-box.png`, `terminal-box.png` and `box-panel.png` in [docs/media](media), come from an earlier session in a BB in use. Take new ones on a fresh BB in a box, as for the video: the same steps, with Playwright's `page.screenshot` at 1280 by 800 and a device scale of 2, give 2560 by 1600. They are in [making a box](guide/making-a-box.md), [desktops](guide/desktops.md) and [the terminal](guide/terminal.md). Before committing, list the names that show in them for whoever reviews the change.
