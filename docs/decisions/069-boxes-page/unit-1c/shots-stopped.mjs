@@ -5,7 +5,7 @@ import { boxes, home, pause, rpc, skipSetup, waitFor } from "./live-lib.mjs";
 const [thread, name] = process.argv.slice(2);
 const id = (await rpc("allBoxes")).find((entry) => entry.box.name === name).box.id;
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, storageState: join(home, "live", "state.json") });
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
 await skipSetup(page);
 await page.goto(`${boxes}/box/${id}`);

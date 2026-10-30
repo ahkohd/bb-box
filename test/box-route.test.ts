@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { boxPage, boxView, otherView, pageOfView, routeOf, subPathOf, viewFromPage, wayBack, type BoxesRoute } from "../src/app/box-route.ts";
-import { actorWords, ago, dayAndClock, endedWords, failedNotice, headline, hostOf, observedWords, reachNotice, settingsNotice, span, unreachableWhy } from "../src/app/box-words.ts";
+import { actorWords, ago, backendNotice, dayAndClock, endedWords, failedNotice, headline, hostOf, observedWords, reachNotice, releaseUnfinished, settingsNotice, silentWhy, span, startSteps, unreachableWhy } from "../src/app/box-words.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 
 const BOX = "bxamberfox2q7k";
@@ -140,7 +140,7 @@ test("a release that did not finish says so, never a spinner without end", () =>
   const failed = { operation: "release" as const, at: NOW - 60_000, words: "Proxmox refused: the container is locked by a backup.", observed: { state: "running" as const, at: NOW - 60_000, from: "Proxmox LXC on pve-1" }, parts: [] };
   const box = view({ state: "releasing", log: { lastStart: null, lastStop: null, lastFailed: failed } });
   assert.deepEqual(headline(box, NOW, {}), { tone: "bad", words: "Release did not finish", detail: ["1 min ago"] });
-  assert.deepEqual(failedNotice(box, NOW), { operation: "release", title: "Release did not finish 1 min ago", words: failed.words, then: "The box may still run on pve-1; bb-box keeps its record until a release is confirmed." });
+  assert.deepEqual(failedNotice(box, NOW), { operation: "release", heading: "Release did not finish", title: "Release did not finish 1 min ago", words: failed.words, then: "The box may still run on pve-1; bb-box keeps its record until a release is confirmed." });
   assert.equal(failedNotice({ ...box, log: { lastStart: null, lastStop: null, lastFailed: { ...failed, words: "docker container rm failed: device or resource busy" } } }, NOW)!.words, "docker container rm failed: device or resource busy.", "the backend's words end as a sentence");
   assert.equal(failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: failed } }), NOW), null, "not once the box is no longer releasing");
 });
@@ -158,17 +158,23 @@ test("a failed operation's words come from what bb-box then observed, with when;
   assert.equal(failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: resize } }), NOW)!.then, "Its memory changed before it failed.");
 });
 
-test("a backend not in settings and a host that does not answer say so, and why Stop, Start, Resize and New thread are off (G20)", () => {
+test("a backend not in settings or not answering turns off Stop, Start, Resize and New thread, saying why; a box that does not answer keeps Stop, Start and Resize (G20, lead decision)", () => {
   const removed = view({ reach: { is: "not-in-settings", backend: "Proxmox LXC on pve-old", lastAnswered: NOW - 2 * 24 * 3_600_000 } });
   assert.deepEqual(headline(removed, NOW, {}), { tone: "warn", words: "Not checked", detail: ["last seen ready 2 d ago"] });
   assert.equal(unreachableWhy(removed), "Its backend is not in settings");
   assert.match(settingsNotice(removed)!, /^Proxmox LXC on pve-old was removed from bb-box's settings, so bb-box cannot check, stop or release amber-fox, which may still be running on pve-1\./);
   const silent = view({ reach: { is: "not-answering", since: NOW - 12 * 60_000, lastAnswered: NOW - 12 * 60_000, nextCheckAt: NOW + 4 * 60_000, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" } });
   assert.deepEqual(headline(silent, NOW, {}), { tone: "warn", words: "Not answering", detail: ["last seen ready 12 min ago"] });
-  assert.equal(unreachableWhy(silent), "amber-fox does not answer");
+  assert.equal(unreachableWhy(silent), null, "Stop, Start and Resize go through the backend, so a box that does not answer keeps them");
+  assert.equal(silentWhy(silent), "amber-fox does not answer", "its views and New thread on this box need it to answer");
   const notice = reachNotice(silent, NOW)!;
   assert.equal(notice.title, "amber-fox does not answer");
-  assert.match(notice.words, /^It did not answer a command\. Since .+, bb-box cannot read, stop or start it on pve-3\. bb-box checks again in 4 min\.$/);
+  assert.match(notice.words, /^It did not answer a command\. Since .+, bb-box cannot reach it on pve-3, so it cannot read it or run commands in it\. You can still stop, start or release it: those go through Proxmox LXC on pve-1\.$/);
+  assert.equal(notice.next, "bb-box checks again in 4 min.", "the countdown is apart from the words");
+  const backendDown = view({ reach: { is: "backend-silent", backend: "Proxmox LXC on pve-1", since: NOW - 6 * 60_000, error: "Listing the boxes on Proxmox LXC on pve-1 failed: connect ECONNREFUSED", lastAnswered: null } });
+  assert.equal(unreachableWhy(backendDown), "Proxmox LXC on pve-1 does not answer");
+  assert.deepEqual(headline(backendDown, NOW, {}), { tone: "warn", words: "Not checked", detail: ["last seen ready"] });
+  assert.match(backendNotice(backendDown)!.words, /^Listing the boxes on Proxmox LXC on pve-1 failed: connect ECONNREFUSED\. Since .+, bb-box cannot check, stop, start or resize amber-fox through it, and the box may still be running\.$/);
   assert.equal(unreachableWhy(view()), null);
 });
 
@@ -180,4 +186,25 @@ test("a released box and a forgotten one say which, with when and who, and a for
   assert.equal(forgotten.title, "maple-row was forgotten");
   assert.match(forgotten.words, /^bb-box removed its record\. Its box was not deleted and may still run on pve-old\. Forgotten 1 min ago, today at .+, by a bb box command\.$/);
   assert.doesNotMatch(forgotten.words + forgotten.title, /released/i);
+});
+
+test("a failed stop or start goes once the box has moved on, and a release whose failure the log lost still says it did not finish (review 6 and 7)", () => {
+  const at = NOW - 3 * 3_600_000;
+  const stop = { operation: "stop" as const, at, words: "Timed out.", observed: { state: "running" as const, at, from: "Docker on devpc" }, parts: [] };
+  assert.ok(failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: stop } }), NOW), "while it still runs");
+  assert.equal(failedNotice(view({ state: "stopped", log: { lastStart: null, lastStop: { at: NOW - 60_000, by: { is: "outside" }, asked: false }, lastFailed: stop } }), NOW), null, "it stopped later, outside bb-box");
+  assert.equal(failedNotice(view({ state: "stopped", log: { lastStart: null, lastStop: null, lastFailed: stop } }), NOW), null, "seen stopped, though the log has no stop");
+  const start = { operation: "start" as const, at, words: "Timed out.", observed: { state: "stopped" as const, at, from: "Docker on devpc" }, parts: [] };
+  assert.ok(failedNotice(view({ state: "stopped", log: { lastStart: null, lastStop: null, lastFailed: start } }), NOW), "while it is still stopped");
+  assert.equal(failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: start } }), NOW), null, "ready again, started outside bb-box");
+  assert.equal(observedWords(start.observed, "start"), `It is still stopped (checked ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at)}).`);
+  const lost = view({ state: "releasing", error: "Releasing the box failed: the host refused. bb-box tries again in a few minutes." });
+  assert.equal(releaseUnfinished(lost), true);
+  assert.deepEqual(headline(lost, NOW, {}), { tone: "bad", words: "Release did not finish", detail: [] }, "no time the log does not have");
+  assert.equal(failedNotice(lost, NOW)!.title, "Release did not finish");
+  assert.equal(releaseUnfinished(view({ state: "releasing" })), false, "a release under way, with no error");
+});
+
+test("a start's own steps leave out its total (review 4)", () => {
+  assert.deepEqual(startSteps({ clone: 700, "start.boot": 1400, "start.ssh": 500, "start.total": 1900 }), [["start.boot", 1400], ["start.ssh", 500]]);
 });

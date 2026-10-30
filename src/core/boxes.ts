@@ -451,6 +451,16 @@ export interface BoxReach {
   answered(box: BoxRecord): void;
   notAnswering(boxId: string): boolean;
   forget(boxId: string): void;
+  settled?(box: BoxRecord): void;
+}
+
+function withoutStartSteps(timings: Readonly<Record<string, number>>): Record<string, number> {
+  return Object.fromEntries(Object.entries(timings).filter(([step]) => !step.startsWith("start.")));
+}
+
+export interface BackendSilence {
+  readonly since: number;
+  readonly error: string;
 }
 
 function changedParts(from: BoxSize, to: BoxSize | null): SizePart[] {
@@ -761,6 +771,7 @@ export class Boxes {
   /** The threads BB said had ended at the last sweep. */
   #ending = new Set<string>();
   readonly #powerCheckedAt = new Map<string, number>();
+  readonly #silentBackends = new Map<string, BackendSilence>();
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -805,6 +816,7 @@ export class Boxes {
 
   async #write(box: BoxRecord): Promise<BoxRecord> {
     await this.#deps.kv.set(recordKey(box.threadId, box.id), box);
+    if (box.state !== "ready") this.#deps.reach?.settled?.(box);
     this.#deps.recorded?.(box, false);
     this.#deps.notify(box.threadId);
     return box;
@@ -877,6 +889,26 @@ export class Boxes {
       .filter((box): box is BoxRecord => !!box)
       .map((box) => this.#current(box))
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  }
+
+  backendSilence(backendId: string): BackendSilence | null {
+    return this.#silentBackends.get(backendId) ?? null;
+  }
+
+  async #backendSilent(backendId: string, error: string): Promise<void> {
+    const known = this.#silentBackends.get(backendId);
+    this.#silentBackends.set(backendId, { since: known?.since ?? this.#now(), error });
+    if (!known) await this.#notifyBackend(backendId);
+  }
+
+  async #backendAnswered(backendId: string): Promise<void> {
+    if (!this.#silentBackends.delete(backendId)) return;
+    await this.#notifyBackend(backendId);
+  }
+
+  async #notifyBackend(backendId: string): Promise<void> {
+    const threads = new Set((await this.all()).filter((box) => box.backend === backendId).map((box) => box.threadId));
+    for (const threadId of threads) this.#deps.notify(threadId);
   }
 
   /** A box by ID alone. */
@@ -2575,12 +2607,12 @@ export class Boxes {
     return this.update(box, (current) => {
       if (current.state === "releasing") return {};
       if (state === "stopping") return { state, error: null, unrequestedStop: null };
+      if (state === "starting") return { state, error: null, timings: withoutStartSteps(current.timings) };
       if (moving) return { state, error: null };
       if (state === "stopped") return { state, stoppedAt: this.#now() };
       if (!started) return { state };
-      const kept = Object.entries(current.timings).filter(([step]) => !step.startsWith("start."));
       const guest = facts && current.guest ? { guest: { ...current.guest, facts } } : {};
-      return { state, timings: { ...Object.fromEntries(kept), ...started }, ...guest };
+      return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest };
     });
   }
 
@@ -3036,8 +3068,10 @@ export class Boxes {
         held = await backend.held(signal);
       } catch (error) {
         this.#deps.logError(`sweep ${backend.id}`, error);
+        await this.#backendSilent(backend.id, describeError(error, `Listing the boxes on ${backend.label}`));
         continue;
       }
+      await this.#backendAnswered(backend.id);
       // Read after held(): a guest there was claimed, so recorded, before.
       const records = (await this.all()).filter((box) => box.backend === backend.id);
       const byRef = new Map<string, BoxRecord[]>();

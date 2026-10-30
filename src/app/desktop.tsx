@@ -52,7 +52,7 @@ import type { BoxAction } from "./box-menu.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
 import { BoxName, useBoxesNav, useListOpens, type PageLink } from "./box-nav.tsx";
-import { BoxPage, NotHere, useBoxPage } from "./box-page.tsx";
+import { BoxPage, Loading, NotHere, useBoxPage } from "./box-page.tsx";
 import { otherView, pageOfView, routeOf, wayBack, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
@@ -2193,7 +2193,7 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const pageLink: PageLink = { href: nav.href(toPage), go: () => (backToPage && "go" in back ? back.go() : nav.go(toPage)) };
   const threadId = route.threadId ?? page?.threadId ?? null;
   if (page && !page.box) return <NotHere page={page} back={nav.back(toPage, null)} now={now} />;
-  if (!threadId) return error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null;
+  if (!threadId) return <Loading back={back} error={error} />;
   if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} />;
   const switchView = (_box: BoxView, screen: Screen) => nav.go(otherView(route, screen), { replace: true });
   const legacyDesktop = route.threadId !== null && route.view === "desktop";

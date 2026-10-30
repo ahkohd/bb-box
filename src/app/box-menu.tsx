@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { hasViewer, OPERATOR } from "./common.tsx";
-import { hostOf, notInSettings, releaseUnfinished, unreachableWhy } from "./box-words.ts";
+import { hostOf, notInSettings, releaseUnfinished, silentWhy, unreachableWhy } from "./box-words.ts";
 import { pageUrl } from "./desktop.tsx";
 import { TerminalGlyph } from "./glyphs.tsx";
 import { openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
@@ -129,7 +129,8 @@ export function BoxMenu({
   const managed = !thread?.held;
   const unreachable = unreachableWhy(box);
   const gone = notInSettings(box);
-  const unfinished = releaseUnfinished(box) !== null;
+  const unfinished = releaseUnfinished(box);
+  const silent = silentWhy(box);
   const viewsOpen = !onPage && hasViewer(box) && ready;
   const screens = machine ? MACHINE_SCREENS : screensOf(box);
   const inBrowser = machine ? machine.inBrowser : true;
@@ -203,7 +204,7 @@ export function BoxMenu({
             </DropdownMenuItem>
           ) : null}
           {offersNewThread ? (
-            <GatedItem why={unreachable} icon={<Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />} words="New thread on this box…" onSelect={() => setNewThread(NO_DRAFT)} />
+            <GatedItem why={silent} icon={<Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />} words="New thread on this box…" onSelect={() => setNewThread(NO_DRAFT)} />
           ) : null}
           {opensSomething ? <DropdownMenuSeparator /> : null}
           {managed && stops && ready ? <GatedItem why={unreachable} icon={<Icon name="Square" aria-hidden />} words="Stop" onSelect={stop} /> : null}

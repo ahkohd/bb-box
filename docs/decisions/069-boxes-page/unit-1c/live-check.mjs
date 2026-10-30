@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { DatabaseSync } from "node:sqlite";
@@ -7,6 +7,7 @@ import {
   agentStart,
   bb,
   bbMay,
+  closeMenu,
   boxes,
   containerOf,
   docker,
@@ -52,11 +53,13 @@ line(`Boxes: ${[A, M, D, B, F].map((box) => `${box.name} (${box.id})`).join(", "
 line("");
 
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, storageState: join(home, "live", "state.json") });
+const statePath = join(home, "live", "state.json");
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ...(existsSync(statePath) ? { storageState: statePath } : {}) });
 await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: process.env.LIVE_BASE ?? "http://127.0.0.1:7801" });
 const page = await context.newPage();
 page.setDefaultTimeout(20_000);
 await skipSetup(page);
+await context.storageState({ path: statePath });
 
 const shotsDir = process.env.LIVE_SHOTS ? join(home, "live-results", "shots") : null;
 if (shotsDir) mkdirSync(shotsDir, { recursive: true });
@@ -93,7 +96,7 @@ const stateIs = (box, state) => waitFor(async () => (await view(box))?.state ===
 const section = (name) => !only.size || only.has(name);
 
 async function settle() {
-  for (const name of ["stop-fails", "start-fails", "rm-fails"]) rmSync(join(home, "flags", name), { force: true });
+  for (const name of ["stop-fails", "start-fails", "rm-fails", "exec-hangs", "listing-fails"]) rmSync(join(home, "flags", name), { force: true });
   for (const box of [A, D, M]) {
     const now = await view(box);
     if (now?.state === "stopped") {
@@ -137,7 +140,15 @@ if (section("entries")) {
   });
   await check("entry", "the Monitor's Open menu has Page first, which opens the page", async () => {
     await page.goto(`${boxes}/threads`);
-    if (!(await page.getByRole("button", { name: "Machine", exact: true }).count())) await page.getByRole("button", { name: "Machine status" }).click();
+    const picker = page.getByRole("button", { name: "Machine", exact: true });
+    const toggle = page.getByRole("button", { name: "Machine status" });
+    const more = page.getByRole("button", { name: "More footer actions" });
+    const shown = await waitFor(async () => ((await picker.isVisible()) ? "picker" : (await toggle.isVisible()) ? "toggle" : (await more.isVisible()) ? "more" : null), "the Monitor in the footer", 20_000);
+    if (shown === "toggle") await toggle.click();
+    if (shown === "more") {
+      await more.click();
+      await page.getByRole("menuitem", { name: /Machine status/ }).click();
+    }
     await page.getByRole("button", { name: "Machine", exact: true }).click();
     await page.getByRole("option").filter({ hasText: A.name }).first().click();
     await page.getByRole("button", { name: "Open", exact: true }).click();
@@ -348,12 +359,6 @@ if (section("keyboard")) {
   });
 }
 
-const workingThread = async () => {
-  const before = agentStart(thread, "box_run", { box: A.name, command: "sleep 150" });
-  await waitFor(async () => (await rpc("boxPage", { box: A.id })).thread?.running === true, "the thread working", 60_000);
-  return before;
-};
-
 async function expectAsks(where) {
   const asked = dialog();
   await asked.waitFor();
@@ -368,21 +373,32 @@ async function expectAsks(where) {
 if (section("g3")) {
   await settle();
   line("## G3 and G6: Stop, Start and a failed stop from the page");
-  await check("G6", "a stop that fails says so, with what bb-box then saw", async () => {
+  await check("G6", "a stop that fails says so, with what bb-box then saw, said once by the page's one announcer", async () => {
     await goPage(A);
+    const announcer = page.locator("[data-announcer]");
+    expect((await announcer.getAttribute("aria-live")) === "polite", "a polite announcer");
+    expect((await announcer.textContent()) === "", "nothing said on opening");
     flag("stop-fails");
     await page.getByRole("button", { name: "Stop", exact: true }).click();
-    const notice = page.getByRole("alert", { name: /^Stop failed / });
+    const notice = page.getByRole("region", { name: /^Stop failed / });
     await notice.waitFor({ timeout: 60_000 });
     const words = await notice.textContent();
     expect(/It is still running \(checked .+\)\./.test(words), words);
     expect(/permission denied/.test(words), "the backend's words");
+    await waitFor(async () => /^Stop failed\. /.test(await announcer.textContent()), "the announcement");
+    const said = await announcer.textContent();
+    const live = await page.locator("[data-notice][role], [data-notice] [role=alert], [data-notice] [role=status], [data-notice] [aria-live]").count();
+    expect(live === 0, `${live} live parts in the notices`);
     await shoot("stop-failed");
-    return words;
+    return `${words} | said: ${said}`;
   });
   let before = null;
   await check("G3", "with the box's own thread working, Stop asks from the row, its menu, the page and the notice's retry", async () => {
-    before = await workingThread();
+    await goPage(A);
+    await page.getByText(/^idle/).first().waitFor();
+    before = agentStart(thread, "box_run", { box: A.name, command: "sleep 150" });
+    await page.getByText("working now", { exact: true }).waitFor({ timeout: 25_000 });
+    await waitFor(async () => (await rpc("boxPage", { box: A.id })).thread?.running === true, "the thread working", 60_000);
     const said = [];
     await threadsTab();
     await page.locator("[data-resource-row]", { hasText: A.name }).first().getByRole("button", { name: "Stop", exact: true }).click();
@@ -443,18 +459,32 @@ if (section("g3")) {
 if (section("start")) {
   await settle();
   line("## A start that fails");
+  await check("review 6", "a failed stop goes from the page once the box is stopped outside bb-box", async () => {
+    await goPage(F);
+    flag("stop-fails");
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.getByRole("region", { name: /^Stop failed / }).waitFor({ timeout: 60_000 });
+    docker(["stop", containerOf(F.id)]);
+    bb(["box", "sweep"]);
+    await stateIs(F, "stopped");
+    await page.locator("h1 + p").getByText("Stopped", { exact: true }).waitFor();
+    expect(!(await page.getByRole("region", { name: /^Stop failed / }).count()), "no Stop failed beside Stopped");
+    await page.getByRole("button", { name: "Start", exact: true }).click();
+    await stateIs(F, "ready");
+    return `header: ${await page.locator("h1 + p").textContent()}`;
+  });
   await check("G6", "a start that fails says so, with what bb-box then saw, and Start again starts it", async () => {
     await goPage(F);
     await page.getByRole("button", { name: "Stop", exact: true }).click();
     await stateIs(F, "stopped");
     flag("start-fails");
     await page.getByRole("button", { name: "Start", exact: true }).click();
-    const notice = page.getByRole("alert", { name: /^Start failed / });
+    const notice = page.getByRole("region", { name: /^Start failed / });
     await notice.waitFor({ timeout: 60_000 });
     const words = await notice.textContent();
     expect(/cgroup is frozen/.test(words), "the backend's words");
-    expect(/(It is stopped \(checked .+\)\.|bb-box could not confirm its state\.)/.test(words), words);
-    expect(!/still stopped/.test(words), "never claims still stopped without an observation");
+    expect(/(It is still stopped \(checked .+\)\.|bb-box could not confirm its state\.)/.test(words), words);
+    expect(!/still stopped/.test(words) || /still stopped \(checked /.test(words), "never claims still stopped without an observation");
     await shoot("start-failed");
     await notice.getByRole("button", { name: "Start again" }).click();
     await stateIs(F, "ready");
@@ -471,7 +501,7 @@ if (section("release")) {
     await openBoxMenu(page, B.name);
     await page.getByRole("menuitem", { name: "Release…" }).click();
     await dialog().getByRole("button", { name: "Release" }).click();
-    const notice = page.getByRole("alert", { name: /^Release did not finish / });
+    const notice = page.getByRole("region", { name: /^Release did not finish / });
     await notice.waitFor({ timeout: 60_000 });
     const words = await notice.textContent();
     expect(/device or resource busy/.test(words), "the backend's words");
@@ -487,7 +517,7 @@ if (section("release")) {
   });
   await check("release", "Release again releases it, and the page says so, by you", async () => {
     await goPage(B);
-    await page.getByRole("alert", { name: /^Release did not finish / }).getByRole("button", { name: "Release again…" }).click();
+    await page.getByRole("region", { name: /^Release did not finish / }).getByRole("button", { name: "Release again…" }).click();
     await dialog().getByText(`Release ${B.name} again?`).waitFor();
     await dialog().getByRole("button", { name: "Release" }).click();
     await page.getByText(`${B.name} was released`).waitFor({ timeout: 60_000 });
@@ -507,45 +537,85 @@ if (section("release")) {
 
 if (section("reach")) {
   await settle();
-  line("## G20: a box that does not answer");
-  await check("G20", "the page and the menus of a box that does not answer offer no Stop, Resize or New thread, each saying why", async () => {
+  line("## G20: a box that does not answer, and a backend that does not answer");
+  await check("G20", "a box that does not answer keeps Stop, Start and Resize, says it can still be stopped, and loses only its views and New thread", async () => {
     const container = containerOf(D.id);
     expect(container, "its container");
-    docker(["pause", container]);
+    flag("exec-hangs");
+    writeFileSync(join(home, "flags", "exec-hangs"), container);
     try {
       bbMay(["box", "run", D.name, "true", "--thread", thread, "--timeout-seconds", "15"]);
       await waitFor(async () => (await view(D)).reach?.is === "not-answering", "not answering", 60_000);
       await goPage(D);
       await page.locator("h1 + p").getByText("Not answering", { exact: true }).waitFor();
-      const notice = page.getByRole("status", { name: `${D.name} does not answer` });
+      const notice = page.getByRole("region", { name: `${D.name} does not answer` });
       const words = await notice.textContent();
+      expect(/You can still stop, start or release it: those go through /.test(words), words);
       expect(/bb-box checks again in \d/.test(words), words);
       await shoot("not-answering");
       const stop = page.getByRole("button", { name: "Stop", exact: true });
-      expect(await stop.isDisabled(), "Stop disabled");
-      const why = await stop.locator("..").getAttribute("title");
-      expect(why === `${D.name} does not answer`, `Stop says ${why}`);
+      expect(!(await stop.isDisabled()), "Stop enabled");
+      const reasons = await page.locator("[data-off-reasons]").textContent();
+      expect(reasons === `Terminal is off: ${D.name} does not answer.`, `reasons ${reasons}`);
       const pageItems = await openBoxMenu(page, D.name);
-      expect(pageItems.some((item) => item.startsWith("New thread on this box…") && item.endsWith(`${D.name} does not answer (disabled)`)), `page menu ${pageItems.join(", ")}`);
-      expect(pageItems.some((item) => item.startsWith("Resize…") && item.endsWith("(disabled)")), `page menu ${pageItems.join(", ")}`);
-      await page.keyboard.press("Escape");
+      expect(pageItems.includes(`New thread on this box…${D.name} does not answer (disabled)`), `page menu ${pageItems.join(", ")}`);
+      expect(pageItems.includes("Resize…"), `page menu ${pageItems.join(", ")}`);
+      await closeMenu(page);
       await threadsTab();
       const rowItems = await openBoxMenu(page, D.name);
-      expect(rowItems.some((item) => item === `Stop${D.name} does not answer (disabled)`), `row menu ${rowItems.join(", ")}`);
-      await page.keyboard.press("Escape");
-      expect(!(await page.locator("[data-resource-row]", { hasText: D.name }).first().getByRole("button", { name: "Stop", exact: true }).count()), "no quick Stop");
-      return `notice: ${words} | page menu: ${pageItems.join(", ")} | row menu: ${rowItems.join(", ")}`;
+      expect(rowItems.includes("Stop"), `row menu ${rowItems.join(", ")}`);
+      await closeMenu(page);
+      expect(await page.locator("[data-resource-row]", { hasText: D.name }).first().getByRole("button", { name: "Stop", exact: true }).count(), "a quick Stop");
+      await goPage(D);
+      await page.getByRole("button", { name: "Stop", exact: true }).click();
+      await stateIs(D, "stopped");
+      await waitFor(async () => (await view(D)).reach?.is === "answers", "the mark cleared", 30_000);
+      await page.locator("h1 + p").getByText("Stopped", { exact: true }).waitFor();
+      expect(!(await page.getByRole("region", { name: `${D.name} does not answer` }).count()), "no notice once stopped");
+      return `notice: ${words} | off: ${reasons} | page menu: ${pageItems.join(", ")} | row menu: ${rowItems.join(", ")} | stopped from its page, mark cleared`;
     } finally {
-      docker(["unpause", container]);
+      rmSync(join(home, "flags", "exec-hangs"), { force: true });
     }
   });
-  await check("G20", "Check now finds it answers again", async () => {
+  await check("G20", "started again, it answers", async () => {
     await goPage(D);
-    const notice = page.getByRole("status", { name: `${D.name} does not answer` });
-    if (await notice.count()) await notice.getByRole("button", { name: "Check now" }).click();
-    await waitFor(async () => (await view(D)).reach?.is === "answers", "answers", 60_000);
+    await page.getByRole("button", { name: "Start", exact: true }).click();
+    await stateIs(D, "ready");
     await page.locator("h1 + p").getByText("Ready", { exact: true }).waitFor();
     return "Ready";
+  });
+  await check("G20", "a backend whose listing fails turns off Stop, Start, Resize and New thread, saying why in words, until it lists again", async () => {
+    flag("listing-fails");
+    try {
+      bbMay(["box", "sweep"]);
+      await waitFor(async () => (await view(A)).reach?.is === "backend-silent", "the backend silent", 60_000);
+      await goPage(A);
+      await page.locator("h1 + p").getByText("Not checked", { exact: true }).waitFor();
+      const backend = (await view(A)).backendLabel;
+      const notice = page.getByRole("region", { name: `${backend} does not answer` });
+      const words = await notice.textContent();
+      expect(/cannot check, stop, start or resize/.test(words), words);
+      await shoot("backend-silent");
+      expect(await page.getByRole("button", { name: "Stop", exact: true }).isDisabled(), "Stop disabled");
+      const reasons = await page.locator("[data-off-reasons]").textContent();
+      expect(reasons === `Terminal and Stop are off: ${backend} does not answer.`, `reasons ${reasons}`);
+      const pageItems = await openBoxMenu(page, A.name);
+      for (const item of ["New thread on this box…", "Resize…"]) expect(pageItems.includes(`${item}${backend} does not answer (disabled)`), `page menu ${pageItems.join(", ")}`);
+      await closeMenu(page);
+      await threadsTab();
+      const rowItems = await openBoxMenu(page, A.name);
+      for (const item of ["Stop", "Resize…"]) expect(rowItems.includes(`${item}${backend} does not answer (disabled)`), `row menu ${rowItems.join(", ")}`);
+      await closeMenu(page);
+      expect(!(await page.locator("[data-resource-row]", { hasText: A.name }).first().getByRole("button", { name: "Stop", exact: true }).count()), "no quick Stop");
+      rmSync(join(home, "flags", "listing-fails"), { force: true });
+      bbMay(["box", "sweep"]);
+      await waitFor(async () => (await view(A)).reach?.is === "answers", "the backend back", 60_000);
+      await goPage(A);
+      expect(!(await page.getByRole("button", { name: "Stop", exact: true }).isDisabled()), "Stop back");
+      return `notice: ${words} | off: ${reasons} | page menu: ${pageItems.join(", ")} | row menu: ${rowItems.join(", ")} | cleared once it listed again`;
+    } finally {
+      rmSync(join(home, "flags", "listing-fails"), { force: true });
+    }
   });
 }
 
@@ -592,12 +662,13 @@ if (section("removed")) {
     await waitFor(async () => (await view(F)).reach?.is === "not-in-settings", "not in settings", 60_000);
     await goPage(F);
     await page.locator("h1 + p").getByText("Not checked", { exact: true }).waitFor();
-    const notice = page.getByRole("status", { name: "Its backend is not in settings" });
+    const notice = page.getByRole("region", { name: "Its backend is not in settings" });
     const words = await notice.textContent();
     expect((await notice.getByRole("link", { name: "Open BB Box settings" }).getAttribute("href")) === "/settings/plugins/bb-box", "Open BB Box settings");
     const stop = page.getByRole("button", { name: "Stop", exact: true });
     expect(await stop.isDisabled(), "Stop disabled");
-    expect((await stop.locator("..").getAttribute("title")) === "Its backend is not in settings", "Stop says why");
+    const reasons = await page.locator("[data-off-reasons]").textContent();
+    expect(reasons === "Terminal and Stop are off: its backend is not in settings.", `reasons ${reasons}`);
     const facts = await page.getByRole("region", { name: "Facts" }).textContent();
     expect(facts.includes("Backend not in settings"), "Runs on is muted, and says so");
     await shoot("not-in-settings");
@@ -615,7 +686,7 @@ if (section("removed")) {
   await check("G5 words", "Forget from the page says forgotten, never released, and the box still runs", async () => {
     const container = containerOf(F.id);
     await goPage(F);
-    await page.getByRole("status", { name: "Its backend is not in settings" }).getByRole("button", { name: "Forget…" }).click();
+    await page.getByRole("region", { name: "Its backend is not in settings" }).getByRole("button", { name: "Forget…" }).click();
     await dialog().getByText(`Forget ${F.name}?`).waitFor();
     const asked = await dialog().textContent();
     await dialog().getByRole("button", { name: "Forget", exact: true }).click();
@@ -637,11 +708,11 @@ if (section("removed")) {
     return await page.getByText(/^bb-box removed its record/).textContent();
   });
   if (kept) {
-    await withBbBoxOff(() => editConfig(() => kept));
-    await waitFor(async () => (await view(A)).reach?.is === "answers", "the backend back", 60_000).catch(() => null);
     const container = containerOf(F.id);
     if (container) docker(["rm", "-f", container]);
-    line(`- restored the configuration; removed ${F.name}'s container by hand`);
+    await withBbBoxOff(() => editConfig(() => kept));
+    await waitFor(async () => (await view(A)).reach?.is === "answers", "the backend back", 60_000).catch(() => null);
+    line(`- removed ${F.name}'s container by hand, then restored the configuration, so the sweep has no guest of it to restore`);
   }
 }
 

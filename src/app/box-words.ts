@@ -77,18 +77,40 @@ export function notInSettings(box: Pick<BoxView, "reach">): boolean {
   return box.reach?.is === "not-in-settings";
 }
 
-export function notAnswering(box: Pick<BoxView, "reach">): Extract<NonNullable<BoxView["reach"]>, { is: "not-answering" }> | null {
+type ReachOf<Is> = Extract<NonNullable<BoxView["reach"]>, { is: Is }>;
+
+export function backendSilent(box: Pick<BoxView, "reach">): ReachOf<"backend-silent"> | null {
+  return box.reach?.is === "backend-silent" ? box.reach : null;
+}
+
+export function notAnswering(box: Pick<BoxView, "reach">): ReachOf<"not-answering"> | null {
   return box.reach?.is === "not-answering" ? box.reach : null;
 }
 
-export function unreachableWhy(box: Pick<BoxView, "name" | "reach">): string | null {
+export function unreachableWhy(box: Pick<BoxView, "reach">): string | null {
   if (notInSettings(box)) return "Its backend is not in settings";
-  return notAnswering(box) ? `${box.name} does not answer` : null;
+  const silent = backendSilent(box);
+  return silent ? `${silent.backend} does not answer` : null;
 }
 
-export function releaseUnfinished(box: Pick<BoxView, "state" | "log">): LastFailed | null {
+export function silentWhy(box: Pick<BoxView, "name" | "reach">): string | null {
+  return unreachableWhy(box) ?? (notAnswering(box) ? `${box.name} does not answer` : null);
+}
+
+export interface ReleaseFailure {
+  readonly at: number | null;
+  readonly words: string;
+}
+
+export function releaseFailure(box: Pick<BoxView, "state" | "log" | "error">): ReleaseFailure | null {
+  if (box.state !== "releasing") return null;
   const failed = box.log?.lastFailed;
-  return box.state === "releasing" && failed?.operation === "release" ? failed : null;
+  if (failed?.operation === "release") return { at: failed.at, words: failed.words ?? box.error ?? "" };
+  return box.error ? { at: null, words: box.error } : null;
+}
+
+export function releaseUnfinished(box: Pick<BoxView, "state" | "log" | "error">): boolean {
+  return releaseFailure(box) !== null;
 }
 
 function upSince(box: Pick<BoxView, "log" | "readyAt" | "createdAt">): number {
@@ -115,9 +137,9 @@ function lastSeen(box: BoxView, at: number | null, now: number): string {
 }
 
 export function headline(box: BoxView, now: number, titles: ThreadTitles): Headline {
-  const unfinished = releaseUnfinished(box);
-  if (unfinished) return { tone: "bad", words: "Release did not finish", detail: [ago(unfinished.at, now)] };
-  if (box.reach?.is === "not-in-settings" && box.state !== "releasing") return { tone: "warn", words: "Not checked", detail: [lastSeen(box, box.reach.lastAnswered, now)] };
+  const release = releaseFailure(box);
+  if (release) return { tone: "bad", words: "Release did not finish", detail: release.at !== null ? [ago(release.at, now)] : [] };
+  if ((box.reach?.is === "not-in-settings" || box.reach?.is === "backend-silent") && box.state !== "releasing") return { tone: "warn", words: "Not checked", detail: [lastSeen(box, box.reach.lastAnswered, now)] };
   const silent = notAnswering(box);
   if (silent) return { tone: "warn", words: "Not answering", detail: [silent.lastAnswered !== null ? lastSeen(box, silent.lastAnswered, now) : `since ${clock(silent.since)}`] };
   switch (box.state) {
@@ -147,14 +169,14 @@ export function headline(box: BoxView, now: number, titles: ThreadTitles): Headl
 
 const OPERATION_TITLES: Readonly<Record<LastFailed["operation"], string>> = { stop: "Stop failed", start: "Start failed", resize: "Resize failed", release: "Release did not finish" };
 
-export function observedWords(observed: Observation | null): string {
+export function observedWords(observed: Observation | null, operation: LastFailed["operation"] = "stop"): string {
   if (!observed || observed.state === "unknown") return "bb-box could not confirm its state.";
   const checked = `(checked ${clock(observed.at)})`;
   switch (observed.state) {
     case "running":
-      return `It is still running ${checked}.`;
+      return operation === "stop" ? `It is still running ${checked}.` : `It is running ${checked}.`;
     case "stopped":
-      return `It is stopped ${checked}.`;
+      return operation === "start" ? `It is still stopped ${checked}.` : `It is stopped ${checked}.`;
     case "gone":
       return `Its guest is gone ${checked}.`;
   }
@@ -171,34 +193,79 @@ function asSentence(words: string): string {
   return !trimmed || /[.!?)]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+function stateMatches(observed: Observation | null, operation: LastFailed["operation"], state: BoxView["state"]): boolean {
+  switch (observed?.state) {
+    case "running":
+      return state === "ready";
+    case "stopped":
+      return state === "stopped";
+    case "gone":
+      return state === "gone";
+    default:
+      return operation === "stop" ? state === "ready" : operation === "start" ? state === "stopped" : state === "ready" || state === "stopped";
+  }
+}
+
+function overtaken(failed: LastFailed, box: Pick<BoxView, "log">): boolean {
+  const stop = box.log?.lastStop?.at ?? 0;
+  const start = box.log?.lastStart?.askedAt ?? 0;
+  return stop > failed.at || start > failed.at;
+}
+
 export interface FailedNotice {
   readonly operation: LastFailed["operation"];
+  readonly heading: string;
   readonly title: string;
   readonly words: string;
   readonly then: string;
 }
 
 export function failedNotice(box: BoxView, now: number): FailedNotice | null {
+  const release = releaseFailure(box);
+  if (release) {
+    const host = hostOf(box.backendLabel);
+    return {
+      operation: "release",
+      heading: OPERATION_TITLES.release,
+      title: release.at !== null ? `${OPERATION_TITLES.release} ${ago(release.at, now)}` : OPERATION_TITLES.release,
+      words: asSentence(release.words),
+      then: `The box may still run${host ? ` on ${host}` : ""}; bb-box keeps its record until a release is confirmed.`,
+    };
+  }
   const failed = box.log?.lastFailed;
-  if (!failed) return null;
-  if ((failed.operation === "release") !== (box.state === "releasing")) return null;
-  const then =
-    failed.operation === "release"
-      ? `The box may still run${hostOf(box.backendLabel) ? ` on ${hostOf(box.backendLabel)}` : ""}; bb-box keeps its record until a release is confirmed.`
-      : failed.operation === "resize"
-        ? partsWords(failed.parts)
-        : observedWords(failed.observed);
-  return { operation: failed.operation, title: `${OPERATION_TITLES[failed.operation]} ${ago(failed.at, now)}`, words: asSentence(failed.words ?? ""), then };
+  if (!failed || failed.operation === "release" || overtaken(failed, box) || !stateMatches(failed.observed, failed.operation, box.state)) return null;
+  const then = failed.operation === "resize" ? partsWords(failed.parts) : observedWords(failed.observed, failed.operation);
+  return { operation: failed.operation, heading: OPERATION_TITLES[failed.operation], title: `${OPERATION_TITLES[failed.operation]} ${ago(failed.at, now)}`, words: asSentence(failed.words ?? ""), then };
 }
 
-export function reachNotice(box: BoxView, now: number): { readonly title: string; readonly words: string } | null {
+export interface ReachNotice {
+  readonly title: string;
+  readonly words: string;
+  readonly next: string;
+}
+
+export function reachNotice(box: BoxView, now: number): ReachNotice | null {
   const silent = notAnswering(box);
   if (!silent) return null;
-  const next = silent.checking ? "bb-box is checking it now." : silent.nextCheckAt !== null ? `bb-box checks again in ${span(Math.max(0, silent.nextCheckAt - now))}.` : "";
   const where = silent.host ? ` on ${silent.host}` : "";
   return {
     title: `${box.name} does not answer`,
-    words: [silent.error, `Since ${clock(silent.since)}, bb-box cannot read, stop or start it${where}.`, next].filter(Boolean).join(" "),
+    words: [
+      asSentence(silent.error),
+      `Since ${clock(silent.since)}, bb-box cannot reach it${where}, so it cannot read it or run commands in it.`,
+      `You can still stop, start or release it: those go through ${box.backendLabel}.`,
+    ].join(" "),
+    next: silent.checking ? "bb-box is checking it now." : silent.nextCheckAt !== null ? `bb-box checks again in ${span(Math.max(0, silent.nextCheckAt - now))}.` : "",
+  };
+}
+
+export function backendNotice(box: BoxView): ReachNotice | null {
+  const silent = backendSilent(box);
+  if (!silent) return null;
+  return {
+    title: `${silent.backend} does not answer`,
+    words: `${asSentence(silent.error)} Since ${clock(silent.since)}, bb-box cannot check, stop, start or resize ${box.name} through it, and the box may still be running.`,
+    next: "bb-box asks it again every 3 minutes.",
   };
 }
 
@@ -252,7 +319,7 @@ export function acquireSteps(timings: Readonly<Record<string, number>>): [string
 }
 
 export function startSteps(timings: Readonly<Record<string, number>>): [string, number][] {
-  return Object.entries(timings).filter(([step]) => step.startsWith("start."));
+  return Object.entries(timings).filter(([step]) => step.startsWith("start.") && step !== "start.total");
 }
 
 export function joinedAfter(timings: Readonly<Record<string, number>>): number | null {

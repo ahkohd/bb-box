@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BoxPageState, Contract, ThreadOnBox } from "../plugin/contract.ts";
@@ -29,9 +29,11 @@ import {
   joinedAfter,
   NOT_HERE_TITLE,
   NOT_HERE_WORDS,
+  backendNotice,
   notInSettings,
   reachNotice,
   releaseUnfinished,
+  silentWhy,
   settingsNotice,
   span,
   startingAgain,
@@ -55,7 +57,9 @@ function boxPageKey(boxId: string): string {
   return `box:${boxId}`;
 }
 
-export function useBoxPage(boxId: string) {
+export const THREADS_RECHECK_MS = 15_000;
+
+export function useBoxPage(boxId: string, { recheckThreads = false }: { recheckThreads?: boolean } = {}) {
   const rpc = useRpc<Contract>();
   const thread = useRef<string | null>(null);
   const live = useLive<BoxPageState>(
@@ -67,6 +71,14 @@ export function useBoxPage(boxId: string) {
     },
   );
   thread.current = live.value?.threadId ?? live.value?.ended?.thread ?? null;
+  const { refresh } = live;
+  useEffect(() => {
+    if (!recheckThreads) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, THREADS_RECHECK_MS);
+    return () => clearInterval(timer);
+  }, [recheckThreads, refresh]);
   return live;
 }
 
@@ -164,22 +176,20 @@ interface PageView {
 }
 
 function pageViews(box: BoxView): PageView[] {
-  const why = unreachableWhy(box) ?? whyClosed(box);
+  const why = silentWhy(box) ?? whyClosed(box);
   const screens = screensOf(box).map((screen): PageView => ({ view: screen, words: screenWord(box, screen), glyph: screen === "device" ? <PhoneGlyph className="size-4" /> : <MonitorGlyph className="size-4" />, why }));
   const terminal: PageView[] = box.terminal || box.state !== "ready" ? [{ view: "terminal", words: "Terminal", glyph: <TerminalGlyph className="size-4" />, why }] : [];
   return [...screens, ...terminal];
 }
 
-function ViewButton({ route, view }: { route: BoxPageRoute; view: PageView }) {
+function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: PageView; describedBy: string }) {
   const nav = useBoxesNav();
   if (view.why) {
     return (
-      <span title={view.why} className="inline-flex">
-        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled aria-label={`${view.words}: ${view.why}`}>
-          {view.glyph}
-          {view.words}
-        </Button>
-      </span>
+      <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled aria-describedby={describedBy}>
+        {view.glyph}
+        {view.words}
+      </Button>
     );
   }
   const to = viewFromPage(route, view.view);
@@ -201,15 +211,31 @@ interface PageActions {
   readonly resize: () => void;
 }
 
+function listWords(names: readonly string[]): string {
+  return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+export function offWords(off: readonly { readonly name: string; readonly why: string }[]): string[] {
+  const byWhy = new Map<string, string[]>();
+  for (const { name, why } of off) byWhy.set(why, [...(byWhy.get(why) ?? []), name]);
+  return [...byWhy].map(([why, names]) => `${listWords(names)} ${names.length === 1 ? "is" : "are"} off: ${why.replace(/^Its /, "its ")}.`);
+}
+
 function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPageState; box: BoxView; route: BoxPageRoute; now: number; titles: ThreadTitles; actions: PageActions; menu: ReactNode }) {
   const pluginId = experimental_usePluginId();
   const heading = useRef<HTMLHeadingElement>(null);
+  const reasonsId = useId();
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
   const head = headline(box, now, titles);
   const unreachable = unreachableWhy(box);
   const stops = (box.canStopStart || notInSettings(box)) && box.state !== "releasing";
+  const views = pageViews(box);
+  const starts = stops && box.state === "stopped";
+  const stopsNow = stops && (box.state === "ready" || box.state === "stopping");
+  const off = [...views.flatMap((view) => (view.why ? [{ name: view.words, why: view.why }] : [])), ...(unreachable && (starts || stopsNow) ? [{ name: starts ? "Start" : "Stop", why: unreachable }] : [])];
+  const reasons = offWords(off);
   return (
     <header>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -244,27 +270,30 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
             <ThreadLine page={page} now={now} />
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          {pageViews(box).map((view) => (
-            <ViewButton key={view.view} route={route} view={view} />
-          ))}
-          {stops && box.state === "stopped" ? (
-            <span title={unreachable ?? undefined} className="inline-flex">
-              <Button type="button" size="sm" className="h-8 gap-1.5" disabled={actions.busy !== null || !!unreachable} onClick={() => actions.act("start")}>
+        <div className="flex min-w-0 flex-col gap-1.5 sm:items-end">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {views.map((view) => (
+              <ViewButton key={view.view} route={route} view={view} describedBy={reasonsId} />
+            ))}
+            {starts ? (
+              <Button type="button" size="sm" className="h-8 gap-1.5" disabled={actions.busy !== null || !!unreachable} aria-describedby={unreachable ? reasonsId : undefined} onClick={() => actions.act("start")}>
                 <Icon name={actions.busy === "start" ? "Loading" : "Play"} className={cn("size-4", actions.busy === "start" && "animate-spin motion-reduce:animate-none")} aria-hidden />
                 Start
               </Button>
-            </span>
-          ) : null}
-          {stops && (box.state === "ready" || box.state === "stopping") ? (
-            <span title={unreachable ?? undefined} className="inline-flex">
-              <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={actions.busy !== null || box.state === "stopping" || !!unreachable} onClick={() => actions.act("stop")}>
+            ) : null}
+            {stopsNow ? (
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={actions.busy !== null || box.state === "stopping" || !!unreachable} aria-describedby={unreachable ? reasonsId : undefined} onClick={() => actions.act("stop")}>
                 <Icon name={actions.busy === "stop" || box.state === "stopping" ? "Loading" : "Square"} className={cn("size-4", (actions.busy === "stop" || box.state === "stopping") && "animate-spin motion-reduce:animate-none")} aria-hidden />
                 Stop
               </Button>
-            </span>
+            ) : null}
+            {menu}
+          </div>
+          {reasons.length ? (
+            <p id={reasonsId} data-off-reasons className="max-w-sm text-xs leading-snug text-muted-foreground sm:text-right">
+              {reasons.join(" ")}
+            </p>
           ) : null}
-          {menu}
         </div>
       </div>
     </header>
@@ -272,34 +301,66 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
 }
 
 function PageNotice({ tone, title, children, actions }: { tone: "bad" | "warn"; title: string; children?: ReactNode; actions?: ReactNode }) {
+  const headingId = useId();
   return (
-    <section role={tone === "bad" ? "alert" : "status"} aria-label={title} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
-      <p className={cn("text-sm font-medium", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>{title}</p>
+    <section aria-labelledby={headingId} data-notice={tone} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
+      <h2 id={headingId} className={cn("text-sm font-medium", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
+        {title}
+      </h2>
       {children ? <div className="mt-1 text-sm text-foreground">{children}</div> : null}
-      {actions ? <div className="mt-3 flex flex-wrap gap-1.5">{actions}</div> : null}
+      {actions ? <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">{actions}</div> : null}
     </section>
   );
 }
 
 function SmallButton({ words, onClick, danger = false, disabled = false, why }: { words: string; onClick: () => void; danger?: boolean; disabled?: boolean; why?: string | null }) {
+  const whyId = useId();
   return (
-    <span title={why ?? undefined} className="inline-flex">
-      <Button type="button" variant="outline" size="sm" className={cn("h-7", danger && "text-destructive-text")} disabled={disabled || !!why} onClick={onClick}>
+    <>
+      <Button type="button" variant="outline" size="sm" className={cn("h-7", danger && "text-destructive-text")} disabled={disabled || !!why} aria-describedby={why ? whyId : undefined} onClick={onClick}>
         {words}
       </Button>
-    </span>
+      {why ? (
+        <span id={whyId} className="text-xs text-muted-foreground">
+          {offWords([{ name: words.replace(/…$/, ""), why }])[0]}
+        </span>
+      ) : null}
+    </>
   );
 }
 
-function Notices({ page, box, now, actions }: { page: BoxPageState; box: BoxView; now: number; actions: PageActions }) {
+interface Said {
+  readonly key: string;
+  readonly speech: string;
+}
+
+function useAnnounceNew(said: readonly Said[], announce: (speech: string) => void): void {
+  const seen = useRef<ReadonlySet<string> | null>(null);
+  const latest = useRef({ said, announce });
+  latest.current = { said, announce };
+  const keys = said.map((each) => each.key).join("\n");
+  useEffect(() => {
+    const before = seen.current;
+    const { said: now, announce: say } = latest.current;
+    seen.current = new Set(now.map((each) => each.key));
+    if (!before) return;
+    const fresh = now.filter((each) => !before.has(each.key));
+    if (fresh.length) say(fresh.map((each) => each.speech).join(" "));
+  }, [keys]);
+}
+
+function Notices({ page, box, now, actions, announce }: { page: BoxPageState; box: BoxView; now: number; actions: PageActions; announce: (speech: string) => void }) {
   const yours = page.owner === "yours";
   const gone = notInSettings(box);
   const unreachable = unreachableWhy(box);
   const failed = failedNotice(box, now);
   const reach = reachNotice(box, now);
+  const backend = backendNotice(box);
   const settings = settingsNotice(box);
   const release = () => (yours ? actions.remove() : actions.ask("release"));
   const notices: ReactNode[] = [];
+  const said: Said[] = [];
+  const note = (key: string, heading: string, words: string) => said.push({ key: `${key}\n${heading}\n${words}`, speech: `${heading}. ${words}` });
   if (failed) {
     const retry =
       failed.operation === "release" ? (
@@ -313,15 +374,19 @@ function Notices({ page, box, now, actions }: { page: BoxPageState; box: BoxView
       ) : failed.operation === "start" && box.state === "stopped" ? (
         <SmallButton words="Start again" why={unreachable} disabled={actions.busy !== null} onClick={() => actions.act("start")} />
       ) : null;
+    const words = [failed.words, failed.then].filter(Boolean).join(" ");
+    note("failed", failed.heading, words);
     notices.push(
       <PageNotice key="failed" tone="bad" title={failed.title} actions={retry}>
-        {[failed.words, failed.then].filter(Boolean).join(" ")}
+        {words}
       </PageNotice>,
     );
-  } else if (box.error && box.state !== "failed") {
+  } else if (box.error && !box.log?.lastFailed && box.state !== "failed" && box.state !== "releasing") {
+    note("error", "Its last change failed", box.error);
     notices.push(<PageNotice key="error" tone="bad" title="Its last change failed">{box.error}</PageNotice>);
   }
   if (settings) {
+    note("settings", "Its backend is not in settings", settings);
     notices.push(
       <PageNotice
         key="settings"
@@ -340,14 +405,18 @@ function Notices({ page, box, now, actions }: { page: BoxPageState; box: BoxView
       </PageNotice>,
     );
   }
-  if (reach) {
+  for (const [key, told] of [["backend", backend], ["reach", reach]] as const) {
+    if (!told) continue;
+    note(key, told.title, told.words);
     notices.push(
-      <PageNotice key="reach" tone="warn" title={reach.title} actions={<SmallButton words="Check now" onClick={() => actions.act("refresh")} />}>
-        {reach.words}
+      <PageNotice key={key} tone="warn" title={told.title} actions={<SmallButton words="Check now" onClick={() => actions.act("refresh")} />}>
+        {told.words}
+        {told.next ? <span className="mt-1 block text-xs text-muted-foreground">{told.next}</span> : null}
       </PageNotice>,
     );
   }
   if (box.state === "failed") {
+    note("did-not-start", "It did not start", box.error ?? "");
     notices.push(
       <PageNotice
         key="did-not-start"
@@ -364,8 +433,12 @@ function Notices({ page, box, now, actions }: { page: BoxPageState; box: BoxView
       </PageNotice>,
     );
   }
-  if (box.stopped) notices.push(<PageNotice key="unasked" tone="warn" title="It stopped without being asked">{box.stopped}</PageNotice>);
+  if (box.stopped) {
+    note("unasked", "It stopped without being asked", box.stopped);
+    notices.push(<PageNotice key="unasked" tone="warn" title="It stopped without being asked">{box.stopped}</PageNotice>);
+  }
   if (page.deviceFailed && box.state === "ready") {
+    note("device", `Its ${page.deviceFailed.model} did not boot`, page.deviceFailed.words);
     notices.push(
       <PageNotice key="device" tone="warn" title={`Its ${page.deviceFailed.model} did not boot`} actions={<SmallButton words="Check now" onClick={() => actions.act("refresh")} />}>
         {page.deviceFailed.words}
@@ -373,18 +446,20 @@ function Notices({ page, box, now, actions }: { page: BoxPageState; box: BoxView
     );
   }
   if (box.state === "ready" && box.enrol.state === "failed") {
+    note("join", "It could not join BB", box.enrol.error ?? "");
     notices.push(
       <PageNotice key="join" tone="warn" title="It could not join BB">
         <JoinHelp words={box.enrol.error} />
       </PageNotice>,
     );
   }
+  useAnnounceNew(said, announce);
   return notices.length ? <div className="space-y-3">{notices}</div> : null;
 }
 
 function Starting({ box, now }: { box: BoxView; now: number }) {
   const again = startingAgain(box);
-  const steps = again ? startSteps(box.timings) : acquireSteps(box.timings);
+  const steps = again ? [] : acquireSteps(box.timings);
   return (
     <section aria-label="Starting" className="rounded-lg border border-border bg-card px-4 py-3">
       <p className="flex items-center gap-2 text-sm text-foreground">
@@ -454,7 +529,7 @@ function systemWords(box: BoxView): string {
 function enrolFact(box: BoxView): { first: string; second: string | null } {
   switch (box.enrol.state) {
     case "enrolled":
-      return { first: "Joined", second: box.state === "ready" && !unreachableWhy(box) ? "Threads can run on it" : "Offline now" };
+      return { first: "Joined", second: box.state === "ready" && !silentWhy(box) ? "Threads can run on it" : "Offline now" };
     case "enrolling":
       return { first: "Joining…", second: null };
     case "failed":
@@ -530,9 +605,9 @@ function Facts({ box, now }: { box: BoxView; now: number }) {
 function ThreadsCard({ page, box, onNewThread }: { page: BoxPageState; box: BoxView; onNewThread: (() => void) | null }) {
   const yours = page.owner === "yours";
   const others = page.threads.filter((thread) => thread.id !== page.thread?.id);
-  const online = box.enrol.state === "enrolled" && box.state === "ready" && !unreachableWhy(box);
+  const unreachable = silentWhy(box);
+  const online = box.enrol.state === "enrolled" && box.state === "ready" && !unreachable;
   const none = online ? "None now. A thread can run on its BB machine." : box.enrol.state === "enrolled" ? "None. Its BB machine is offline now." : "None. It is not a BB machine, so no thread can run on it.";
-  const unreachable = unreachableWhy(box);
   return (
     <section aria-labelledby="threads-heading" className="rounded-lg border border-border bg-card px-4 py-3">
       <h2 id="threads-heading" className="text-sm font-medium text-foreground">
@@ -540,12 +615,9 @@ function ThreadsCard({ page, box, onNewThread }: { page: BoxPageState; box: BoxV
       </h2>
       {others.length ? <ThreadChips threads={others} className="mt-2" /> : <p className="mt-1 text-xs text-muted-foreground">{none}</p>}
       {onNewThread && box.enrol.state === "enrolled" && box.state === "ready" ? (
-        <span title={unreachable ?? undefined} className="mt-3 inline-flex">
-          <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" disabled={!!unreachable} onClick={onNewThread}>
-            <Icon name="MessageSquarePlus" fallback="Plus" className="size-4" aria-hidden />
-            New thread on this box…
-          </Button>
-        </span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <SmallButton words="New thread on this box…" why={unreachable} onClick={onNewThread} />
+        </div>
       ) : null}
     </section>
   );
@@ -639,7 +711,7 @@ function PageFrame({ children, dimmed = false }: { children: ReactNode; dimmed?:
   );
 }
 
-function Loading({ back, error }: { back: WayBackTo; error: string | null }) {
+export function Loading({ back, error }: { back: WayBackTo; error: string | null }) {
   return (
     <PageFrame>
       <Trail back={back} here="Box" />
@@ -650,7 +722,7 @@ function Loading({ back, error }: { back: WayBackTo; error: string | null }) {
 
 export function BoxPage({ route }: { route: BoxPageRoute }) {
   const nav = useBoxesNav();
-  const { value: page, error, refresh } = useBoxPage(route.boxId);
+  const { value: page, error, refresh } = useBoxPage(route.boxId, { recheckThreads: true });
   const box = page?.box ?? null;
   const now = useNow(true, box && isMoving(box) ? 1000 : 15_000);
   const back = nav.back(route, box?.name ?? null);
@@ -659,6 +731,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const machineActions = useMachineActions(refreshAll);
   const [asking, setAsking] = useState<MenuAsk>(null);
   const [resizing, setResizing] = useState(false);
+  const [announced, setAnnounced] = useState("");
   const titles = useActorTitles(actorThreads(box), page?.thread ?? null);
   if (!page) return <Loading back={back} error={error} />;
   if (!box) return <NotHere page={page} back={back} now={now} />;
@@ -694,7 +767,10 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       <Trail back={back} here={box.name} />
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
-      <Notices page={page} box={box} now={now} actions={actions} />
+      <Notices page={page} box={box} now={now} actions={actions} announce={setAnnounced} />
+      <p aria-live="polite" data-announcer className="sr-only">
+        {announced}
+      </p>
       {starting ? <Starting box={box} now={now} /> : null}
       {starting ? null : <Facts box={box} now={now} />}
       {starting ? null : failed ? (

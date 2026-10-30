@@ -86,9 +86,9 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   };
 
   const workingOn = async (box: BoxRecord): Promise<ThreadOnBox[]> => {
-    const [holder, onMachine] = await Promise.all([app.holderOf(box), app.threadsOn(box)]);
+    const [holder, onMachine] = await Promise.all([app.holderOf(box).catch((): ThreadOnBox => ({ id: box.threadId, title: null, running: false, unchecked: true })), app.threadsOn(box)]);
     const working = onMachine.filter((thread) => thread.running && thread.id !== holder?.id);
-    return holder?.running ? [holder, ...working] : working;
+    return holder && (holder.running || holder.unchecked) ? [holder, ...working] : working;
   };
 
   /** Leaves a box a thread runs on alone unless forced, and names the threads, so the panel can ask. */
@@ -133,7 +133,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         who: BY_PERSON,
         beforeRestart: async (found) => {
           if (options.force) return;
-          const threads = (await app.threadsOn(found)).filter((thread) => thread.running);
+          const threads = await workingOn(found);
           if (threads.length) throw new Working(threads);
         },
       });
@@ -264,7 +264,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const found = await boxes.find(boxId);
       if (!found || !listed(found)) return { ...NOT_HERE, ended: app.boxLog.ended(boxId) };
       const yours = found.threadId === OPERATOR;
-      const [thread, threads, monitor] = await Promise.all([app.holderOf(found), app.threadsOn(found).catch(() => []), monitorReach(found)]);
+      const [thread, threads, monitor] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found)]);
       return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null };
     },
     async "machines.list"() {

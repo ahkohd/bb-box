@@ -67,7 +67,7 @@ The buttons on a row open the box's desktop or terminal, and stop or start the b
 
 Releasing a box deletes it and everything on its disk, so copy out anything you want to keep first. On a physical machine, releasing resets the machine and returns it to its pool. Everything in the box user's home is deleted.
 
-Release asks you first. If the box's own thread is working, or another thread is working on the box's BB machine, it asks again, for example 'Release calm-otter anyway?', and names the threads: 'Fix the sign-in flow is working on calm-otter.' Stop asks the same way, from a row, a menu, a box's page and a notice's **Stop again**. A box whose threads are all idle stops at once. One of your machines asks only when a thread is working on it.
+Release asks you first. If the box's own thread is working, or another thread is working on the box's BB machine, it asks again, for example 'Release calm-otter anyway?', and names the threads: 'Fix the sign-in flow is working on calm-otter.' Stop asks the same way, from a row, a menu, a box's page and a notice's **Stop again**, and so does a resize that needs a restart. If BB cannot say whether the box's thread is working, they ask too, and say so. A box whose threads are all idle stops at once. One of your machines asks only when a thread is working on it.
 
 ### The machine a thread runs on
 
@@ -133,7 +133,7 @@ The page shows, from the top:
 
 Who stopped or started a box comes from its log, so the page leaves it out where the log does not say.
 
-When a box's backend is no longer in BB Box's settings, or the box does not answer, its Stop, Start, Resize and New thread on this box are greyed out and say why. A box that does not answer says when BB Box checks it again. Select **Check now** to check at once. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
+When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread on this box are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread on this box are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
 
 A release that did not finish says so, with the backend's words, and **Release again…**. For 24 hours after a box is released or forgotten, its page says which, when and by whom. After that, or for a link that is wrong, the page says 'This box is not here'.
 

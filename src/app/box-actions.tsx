@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import type { Contract, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { message, OPERATOR } from "./common.tsx";
-import { ThreadChips, threadTitle } from "./thread-chips.tsx";
+import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
 import type { BoxAction } from "./box-menu.tsx";
 
 /** A failure that needs action: red, and lasting until dismissed or the next action. Nothing when there is none. */
@@ -48,13 +48,12 @@ export interface InUse<M extends string> {
 /** "Release calm-otter anyway?": who is working on the box, and the verb's "anyway" to go on. */
 export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }: { inUse: InUse<M> | null; words: Readonly<Record<M, string>>; onClose: () => void; onForce: (inUse: InUse<M>) => void }) {
   const verb = inUse ? words[inUse.method] : "";
-  const count = inUse?.threads.length ?? 0;
   return (
     <AlertDialog open={inUse !== null} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{inUse ? `${verb} ${inUse.box.name} anyway?` : null}</AlertDialogTitle>
-          <AlertDialogDescription>{inUse ? `${count === 1 ? threadTitle(inUse.threads[0]!) : `${count} threads`} ${count === 1 ? "is" : "are"} working on ${inUse.box.name}.` : null}</AlertDialogDescription>
+          <AlertDialogDescription>{inUse ? `${workingOnWords(inUse.threads, inUse.box.name)}.` : null}</AlertDialogDescription>
           {inUse ? <ThreadChips threads={inUse.threads} /> : null}
         </AlertDialogHeader>
         <AlertDialogFooter>

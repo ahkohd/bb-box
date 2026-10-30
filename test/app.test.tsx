@@ -1577,7 +1577,7 @@ test("Resize asks before a restart, in the record's words, then names the thread
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Restart and resize" }));
   expect(await within(dialog).findByText("Restart calm-otter anyway?")).toBeTruthy();
-  expect(within(dialog).getByText("A thread is working on it, and its work stops while it restarts.")).toBeTruthy();
+  expect(within(dialog).getByText("Build the app is working on calm-otter. Its work stops while it restarts.")).toBeTruthy();
   expect(within(dialog).getByRole("button", { name: /Build the app/ })).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Restart anyway" }));
   expect(await within(dialog).findByText("It has 8 cores · 16 GiB · 20 GiB disk now, after a restart.")).toBeTruthy();
@@ -8558,17 +8558,20 @@ test("Stop on the page asks while the box's own thread is working, names it, and
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
-test("a box whose backend is not in settings, and one whose host does not answer: a notice each, and Stop, Start, Resize and New thread disabled with why, on the page and in the row's menu (G20)", async () => {
+test("a backend not in settings or not answering turns off Stop, Start, Resize and New thread with the reason in words; a box that does not answer keeps Stop, Start and Resize, and says it can still be stopped (G20, lead decision)", async () => {
   const removed = box({ id: "box_7", name: "maple-row", canStopStart: false, reach: { is: "not-in-settings", backend: "Fake host", lastAnswered: null } });
   const silent = box({ id: "box_8", name: "fern-hollow", reach: { is: "not-answering", since: Date.now() - 12 * 60_000, lastAnswered: null, nextCheckAt: Date.now() + 4 * 60_000, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" } });
-  const { handlers, changes } = server([removed, silent]);
+  const down = box({ id: "box_9", name: "reed-marsh", resizing: { cores: "live", memory: "live", disk: "no", shrinks: true }, reach: { is: "backend-silent", backend: "Fake host", since: Date.now() - 6 * 60_000, error: "Listing the boxes on Fake host failed: connect ECONNREFUSED", lastAnswered: null } });
+  const { handlers, changes } = server([removed, silent, down]);
   const maple = boxPageAt(handlers, "box/box_7");
   expect(await maple.findByText("Not checked")).toBeTruthy();
-  const notice = maple.getByRole("status", { name: "Its backend is not in settings" });
+  const notice = maple.getByRole("region", { name: "Its backend is not in settings" });
   expect(within(notice).getByText(/^Fake host was removed from bb-box's settings, so bb-box cannot check, stop or release maple-row/)).toBeTruthy();
   expect(within(notice).getByRole("link", { name: "Open BB Box settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect((maple.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(maple.getByRole("button", { name: "Terminal: Its backend is not in settings" })).toBeTruthy();
+  expect((maple.getByRole("button", { name: "Terminal" }) as HTMLButtonElement).disabled).toBe(true);
+  const reasons = maple.getByText("Terminal and Stop are off: its backend is not in settings.");
+  expect(maple.getByRole("button", { name: "Stop" }).getAttribute("aria-describedby")).toBe(reasons.id);
   let menu = await openMenu(maple.getByRole("button", { name: "maple-row actions" }));
   expect(items(menu)).toEqual(["Copy address", "New thread on this box…Its backend is not in settings (disabled)", "Resize…Its backend is not in settings (disabled)", "Check now", "Forget…"]);
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Forget…" }));
@@ -8581,23 +8584,39 @@ test("a box whose backend is not in settings, and one whose host does not answer
   expect(maple.getByText(/^bb-box removed its record\. Its box was not deleted and may still run on Fake host\. Forgotten just now, today at .+, by you\.$/)).toBeTruthy();
   cleanup();
 
+  const reed = boxPageAt(handlers, "box/box_9");
+  expect(await reed.findByText("Not checked")).toBeTruthy();
+  const silence = reed.getByRole("region", { name: "Fake host does not answer" });
+  expect(within(silence).getByText(/cannot check, stop, start or resize reed-marsh through it/)).toBeTruthy();
+  expect((reed.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(reed.getByText("Terminal and Stop are off: Fake host does not answer.")).toBeTruthy();
+  menu = await openMenu(reed.getByRole("button", { name: "reed-marsh actions" }));
+  expect(items(menu)).toEqual(["Copy address", "New thread on this box…Fake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  cleanup();
+
   const fern = boxPageAt(handlers, "box/box_8");
   expect(await fern.findByText("Not answering")).toBeTruthy();
-  const reach = fern.getByRole("status", { name: "fern-hollow does not answer" });
-  expect(within(reach).getByText(/^It did not answer a command\. Since .+, bb-box cannot read, stop or start it on pve-3\. bb-box checks again in 4 min\.$/)).toBeTruthy();
-  expect((fern.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(fern.getByRole("button", { name: "Terminal: fern-hollow does not answer" })).toBeTruthy();
+  const reach = fern.getByRole("region", { name: "fern-hollow does not answer" });
+  expect(within(reach).getByText(/^It did not answer a command\. Since .+, bb-box cannot reach it on pve-3, so it cannot read it or run commands in it\. You can still stop, start or release it: those go through Fake host\.$/)).toBeTruthy();
+  expect(within(reach).getByText("bb-box checks again in 4 min.")).toBeTruthy();
+  expect((fern.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(fern.getByText("Terminal is off: fern-hollow does not answer.")).toBeTruthy();
   fireEvent.click(within(reach).getByRole("button", { name: "Check now" }));
   await waitFor(() => expect(changes).toContain("refresh box_8"));
   menu = await openMenu(fern.getByRole("button", { name: "fern-hollow actions" }));
   expect(items(menu)).toEqual(["Copy address", "New thread on this box…fern-hollow does not answer (disabled)", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
+  fireEvent.click(fern.getByRole("button", { name: "Stop" }));
+  await waitFor(() => expect(changes).toContain("stop box_8"));
   cleanup();
 
   const list = boxesPage(handlers);
-  menu = await openMenu(await list.findByRole("button", { name: "fern-hollow actions" }));
-  expect(items(menu)).toEqual(["Open terminal", "Copy address", "Stopfern-hollow does not answer (disabled)", "Check now", "Release…"]);
-  expect(list.queryByRole("button", { name: "Stop" })).toBeNull();
+  await list.findByText("reed-marsh");
+  menu = await openMenu(list.getByRole("button", { name: "reed-marsh actions" }));
+  expect(items(menu)).toEqual(["Open terminal", "Copy address", "StopFake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  expect(within(list.getByText("reed-marsh").closest("[data-resource-row]") as HTMLElement).queryByRole("button", { name: "Stop" })).toBeNull();
 });
 
 test("a box whose release did not finish says so on its page and its row, with Release again, never a spinner without end", async () => {
@@ -8606,7 +8625,7 @@ test("a box whose release did not finish says so on its page and its row, with R
   const { handlers, changes } = server([stuck]);
   const page = boxPageAt(handlers, "box/box_1");
   expect(await page.findByText("Release did not finish")).toBeTruthy();
-  const notice = page.getByRole("alert", { name: "Release did not finish 1 min ago" });
+  const notice = page.getByRole("region", { name: "Release did not finish 1 min ago" });
   expect(within(notice).getByText("Proxmox refused: the container is locked by a backup. The box may still run on pve-1; bb-box keeps its record until a release is confirmed.")).toBeTruthy();
   expect(document.querySelector('[aria-label="Starting"]')).toBeNull();
   fireEvent.click(within(notice).getByRole("button", { name: "Release again…" }));
@@ -8678,7 +8697,7 @@ test("a box's page says a device did not boot, a join that failed, a box deleted
   const phone = box({ id: "box_p", name: "keen-iris", device: { platform: "ios", model: "iPhone 17 Pro", simulatorHost: true } });
   const device = server([phone], { deviceFailed: { model: "iPhone 17 Pro", words: "The simulator runtime is missing." } });
   let slot = boxPageAt(device.handlers, "box/box_p");
-  const notice = await slot.findByRole("status", { name: "Its iPhone 17 Pro did not boot" });
+  const notice = await slot.findByRole("region", { name: "Its iPhone 17 Pro did not boot" });
   expect(within(notice).getByText("The simulator runtime is missing.")).toBeTruthy();
   expect(within(notice).getByRole("button", { name: "Check now" })).toBeTruthy();
   expect(slot.getByRole("link", { name: "Simulator" }).getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_p/device/from-box");
@@ -8687,7 +8706,7 @@ test("a box's page says a device did not boot, a join that failed, a box deleted
   const unjoined = server([box({ enrol: { state: "failed", hostId: null, error: "BB at http://127.0.0.1:7801 is not reachable from the box." } })]);
   slot = boxPageAt(unjoined.handlers, "box/box_1");
   expect(await slot.findByText("· Could not join BB")).toBeTruthy();
-  expect(slot.getByRole("status", { name: "It could not join BB" }).textContent).toContain("is not reachable from the box");
+  expect(slot.getByRole("region", { name: "It could not join BB" }).textContent).toContain("is not reachable from the box");
   expect(slot.getByText("None. It is not a BB machine, so no thread can run on it.")).toBeTruthy();
   cleanup();
 
@@ -8703,9 +8722,116 @@ test("a box's page says a device did not boot, a join that failed, a box deleted
 
   const failed = server([box({ state: "failed", error: "The template did not answer on SSH within 120 s.", timings: { clone: 700 } })]);
   slot = boxPageAt(failed.handlers, "box/box_1");
-  const didNot = await slot.findByRole("alert", { name: "It did not start" });
+  const didNot = await slot.findByRole("region", { name: "It did not start" });
   expect(within(didNot).getByText("The template did not answer on SSH within 120 s.")).toBeTruthy();
   expect(within(didNot).getByRole("button", { name: "Release…" })).toBeTruthy();
   expect(slot.getByText("Did not finish")).toBeTruthy();
   expect(slot.queryByRole("heading", { name: "Other threads on it" })).toBeNull();
+});
+
+function pageWith(view: () => BoxView, holder: ThreadOnBox = { id: THREAD, title: "UI thread", running: false }): PluginRpcTestHandlers<Contract> {
+  const { handlers } = server([view()]);
+  return { ...handlers, boxPage: () => ({ box: view(), threadId: THREAD, owner: "thread", thread: holder, threads: [], monitor: { machineId: null, why: null }, deviceFailed: null, ended: null }) };
+}
+
+test("notices are not live regions: one polite announcer says a new notice once, never on opening and never as the clock moves (review 5)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const failure = () => ({ lastStart: null, lastStop: null, lastFailed: { operation: "stop" as const, at: Date.now() - 1_000, words: "Docker refused", observed: { state: "running" as const, at: Date.now() - 1_000, from: "Fake host" }, parts: [] } });
+    const opened = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: pageWith(() => box({ log: failure() })), pluginId: "bb-box" });
+    await opened.findByRole("region", { name: /^Stop failed / });
+    expect(document.querySelector("[data-announcer]")!.textContent, "a failure from before the page opened is not announced").toBe("");
+    expect(document.querySelectorAll("[data-notice][role], [data-notice] [role=alert], [data-notice] [role=status], [data-notice] [aria-live]")).toHaveLength(0);
+    cleanup();
+
+    let current = box();
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: pageWith(() => current), pluginId: "bb-box" });
+    await slot.findByRole("heading", { level: 1 });
+    const announcer = document.querySelector("[data-announcer]")!;
+    expect(announcer.getAttribute("aria-live")).toBe("polite");
+    current = box({ log: failure() });
+    const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Check now" }));
+    await slot.findByRole("region", { name: /^Stop failed / });
+    await waitFor(() => expect(announcer.textContent).toMatch(/^Stop failed\. Docker refused\. It is still running \(checked .+\)\.$/));
+    const said = announcer.textContent;
+    await act(async () => {
+      vi.advanceTimersByTime(61_000);
+    });
+    await waitFor(() => expect(slot.getByRole("region", { name: /^Stop failed 1 min ago/ })).toBeTruthy());
+    expect(announcer.textContent).toBe(said);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("starting again shows no step of the last start, and no Total, only what it waits on (review 4)", async () => {
+  const again = box({ state: "starting", createdAt: Date.now() - 3 * 3_600_000, timings: { clone: 700, total: 2100, "start.boot": 1400, "start.ssh": 500, "start.total": 1900 }, log: { lastStart: { askedAt: Date.now() - 2_000, readyAt: null, failedAt: null, by: { is: "person" }, first: false }, lastStop: null, lastFailed: null } });
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: pageWith(() => again), pluginId: "bb-box" });
+  const card = await slot.findByRole("region", { name: "Starting" });
+  expect(Array.from(card.querySelectorAll("li"), (item) => item.textContent)).toEqual(["Waiting for it to boot and answer"]);
+});
+
+test("an open page asks again every 15 s while it is shown, so Working now and the threads keep up (review 9); the working mark stops under reduced motion (review 10)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  try {
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: pageWith(() => box(), { id: THREAD, title: "UI thread", running: true }), pluginId: "bb-box" });
+    await slot.findByText("working now");
+    expect(slot.getAllByLabelText("Working")[0]!.getAttribute("class")).toContain("motion-reduce:animate-none");
+    const asked = () => slot.inspection.rpcCalls.filter((call) => call.method === "boxPage").length;
+    const before = asked();
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    await waitFor(() => expect(asked()).toBe(before + 1));
+  } finally {
+    Reflect.deleteProperty(document, "visibilityState");
+    vi.useRealTimers();
+  }
+});
+
+test("a view opened by box ID has its way back while it loads, and when its box cannot be read (review 11)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const pending: PluginRpcTestHandlers<Contract> = { ...handlers, boxPage: () => new Promise<never>(() => undefined) };
+  const waiting = renderSlot(app.navPanels[0]!, { subPath: "box/box_2/desktop/from-list" }, { rpc: pending, pluginId: "bb-box" });
+  const back = await waiting.findByRole("button", { name: "Back to boxes" });
+  fireEvent.click(back);
+  expect(waiting.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "", replace: true } });
+  cleanup();
+  const broken: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    boxPage: () => {
+      throw new Error("BB's server did not answer.");
+    },
+  };
+  const failing = renderSlot(app.navPanels[0]!, { subPath: "box/box_2/terminal/from-box/from-settings" }, { rpc: broken, pluginId: "bb-box" });
+  expect(await failing.findByText("BB's server did not answer.")).toBeTruthy();
+  expect(failing.getByRole("button", { name: "Back to the box" })).toBeTruthy();
+});
+
+test("when BB cannot say whether the box's thread works, Stop asks and says so (review 2)", async () => {
+  const { handlers, changes } = server([box()], { inUse: [{ id: THREAD, title: null, running: false, unchecked: true }] });
+  const slot = boxPageAt(handlers, "box/box_1");
+  fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("bb-box could not ask BB whether its thread is working on calm-otter.")).toBeTruthy();
+  expect(changes).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop anyway" }));
+  await waitFor(() => expect(changes).toEqual(["stop (forced) box_1"]));
+});
+
+test("a release whose failure the log lost still says it did not finish, with Release again, not Releasing for ever (review 7)", async () => {
+  const stuck = box({ state: "releasing", backendLabel: "Proxmox LXC on pve-1", error: "Releasing the box failed: the host refused. bb-box tries again in a few minutes." });
+  const { handlers, changes } = server([stuck]);
+  const page = boxPageAt(handlers, "box/box_1");
+  expect(await page.findByText("Release did not finish", { selector: "span" })).toBeTruthy();
+  const notice = page.getByRole("region", { name: "Release did not finish" });
+  expect(within(notice).getByText("Releasing the box failed: the host refused. bb-box tries again in a few minutes. The box may still run on pve-1; bb-box keeps its record until a release is confirmed.")).toBeTruthy();
+  expect(page.queryByText("Releasing…")).toBeNull();
+  const menu = await openMenu(page.getByRole("button", { name: "calm-otter actions" }));
+  expect(items(menu).at(-1)).toBe("Release again…");
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release again…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  await waitFor(() => expect(changes).toEqual(["release box_1"]));
 });

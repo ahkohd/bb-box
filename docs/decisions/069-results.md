@@ -471,15 +471,23 @@ open the page.
   and `machines.list`, with "Release did not finish" on its row and
   Release again… in its menu, never a spinner. A box being released is
   listed too, dimmed, until its release ends.
-- **G20.** With its backend not in settings or the box not answering,
-  Stop, Start, Resize… and New thread on this box are disabled with the
-  reason, on the page and in the rows' menus, and a row has no quick Stop
-  or Start.
+- **G20, as the lead decided after the review.** With its backend not in
+  settings, or not answering (its listing of boxes fails in the sweep),
+  Stop, Start, Resize… and New thread on this box are disabled, with the
+  reason in words beside them on the page and in the menus, and a row has
+  no quick Stop or Start. A box that does not answer itself keeps Stop,
+  Start and Resize, which go through its backend: only its views and New
+  thread on this box are disabled, and its notice says it can still be
+  stopped, started or released. Its mark clears as soon as its record
+  moves out of ready, or it answers.
 - **G3.** The panel's `stop` and `release` RPCs ask first when the box's
   own thread is working, as well as when a thread works on its BB machine,
-  its own thread first. The question names them: "Fix the sign-in flow is
-  working on calm-otter." The agent's tools and `bb box` are unchanged. A
-  machine of your own keeps today's guard.
+  its own thread first, and when BB cannot say whether the thread works
+  ("bb-box could not ask BB whether … is working on calm-otter"). A resize
+  that needs a restart asks under the same guard. The question names the
+  threads: "Fix the sign-in flow is working on calm-otter." The agent's
+  tools and `bb box` are unchanged. A machine of your own keeps today's
+  guard.
 - **Entries.** "Page" is the first item of the Monitor's Open menu, which
   now shows for a box with no view too; "N more on the Boxes page" opens
   the box's page; the Box panel's menu has "Open on the Boxes page".
@@ -521,30 +529,37 @@ tests among them; vitest 332 tests passed in 4 files;
 
 A Linux box with Docker 29.1.3, 8 cores, 16 GiB, ran a fresh `npx bb-app`
 0.48.0 with no account, its own data folder and ports, started with
-`env -i`, `HOME` and `PATH` only. bb-box was installed from this branch
-with `bb plugin install path:`, and Docker on the box set up with
-`bb box setup docker`; its Linux image built in 4 minutes. So that boxes
-join BB without an account, BB listened on all addresses, closed to the
-network outside the box by its firewall, with Machine access set to
-Manual at the box's own address: every box joined BB. A shim first on BB's
-`PATH`, [`docker-shim.sh`](069-boxes-page/unit-1c/docker-shim.sh), logs
-every Docker call and on a flag fails one start, one stop or one removal.
+`env -i`, `HOME` and `PATH` only, set up by
+[`live-setup.sh`](069-boxes-page/unit-1c/live-setup.sh). bb-box was
+installed from this branch with `bb plugin install path:`, and Docker on
+the box set up with `bb box setup docker`. So that boxes join BB without an
+account, BB listened on all addresses, closed to the network outside the
+box by its firewall, with Machine access set to Manual at the box's own
+address: every box joined BB. A shim first on BB's `PATH`,
+[`docker-shim.sh`](069-boxes-page/unit-1c/docker-shim.sh), logs every
+Docker call; on a flag it fails one start, one stop or one removal, makes
+`docker exec` into one container hang, as a hung box does, or makes
+`docker container ls` fail, as a Docker daemon that does not answer does.
 The agent is unit 1b's custom ACP agent, which calls BB's box tools as a
-prompt names them. The boxes, made through bb-box:
+prompt names them, driven by
+[`agent-call.sh`](069-boxes-page/unit-1c/agent-call.sh). The boxes, made
+through bb-box:
 
-- for the thread, by the agent's `box_acquire`: happy-beacon (the page's
-  box), calm-cedar (cut off), and in each run two more, one released from
-  its page and one whose start fails and which is then forgotten;
+- for the thread, by the agent's `box_acquire`: clear-finch (the page's
+  box), polite-dune (the one that hangs), and in each run two more, one
+  released from its page and one whose start fails and which is then
+  forgotten;
 - a machine of your own, by `bb box machines add`: workbench.
 
 [`live-check.mjs`](069-boxes-page/unit-1c/live-check.mjs), with
 [`live-lib.mjs`](069-boxes-page/unit-1c/live-lib.mjs) and
 [`runs.sh`](069-boxes-page/unit-1c/runs.sh), drives headless Chromium at
 1440 by 1000 and checks each result through the page and bb-box's own
-state. Three runs in a row on the commit delivered each passed 31 of 31
+state. Three runs in a row on the commit delivered each passed 33 of 33
 checks: [run 1](069-boxes-page/unit-1c/run-1.md),
 [run 2](069-boxes-page/unit-1c/run-2.md),
-[run 3](069-boxes-page/unit-1c/run-3.md).
+[run 3](069-boxes-page/unit-1c/run-3.md). (The first delivery's three runs
+passed its 31 checks each, on a first fresh BB.)
 
 | Check | Result, each run |
 | --- | --- |
@@ -552,24 +567,27 @@ checks: [run 1](069-boxes-page/unit-1c/run-1.md),
 | The Box panel's Open on the Boxes page | the page; its menu: Open terminal, Open on the Boxes page, Copy address, New thread on this box…, Stop, Resize…, Check now, Release… |
 | The Monitor's Open menu | Page, Open terminal, then the thread; Page opens the page |
 | The box's name in a view's bar | the page, keeping the view's origin: `box/<id>/from-list` |
-| An old path, `<thread>/<box>/terminal` | its back arrow, "Back to happy-beacon", replaces it with the page |
+| An old path, `<thread>/<box>/terminal` | its back arrow, "Back to clear-finch", replaces it with the page |
 | An old path with `from-settings` | its back arrow is a link to BB Box settings |
 | Reload | the page again, its name focused |
 | Page, Terminal, browser Back, Forward, then the view's back arrow | Back, Forward and the arrow agree, and nothing is pushed twice: the history's length stays |
 | A reload on the view, then its back arrow | replaced with the page; Back then goes to the entry before the view |
 | Ctrl-click on Terminal | a new tab at `box/<id>/terminal/from-box`, whose back arrow replaces it with the page |
 | Keyboard only | Tab from the name: Box ID, Copy link, the thread, Terminal, Stop, the menu, then the facts; Shift-Tab reaches the trail; Enter on Terminal opens it; in the terminal, 12 presses of Shift-Tab stay in the shell (an open question below); the browser's Back returns to the page with focus on its name |
-| Stop, Start and Release from the page | stopped "just now, today at 12:41 AM, by you", started, "Last started … by you: ready in 0.3 s"; released, "Released just now, … by you", also after a reload and after `bb plugin reload bb-box` |
-| A start that fails | "Start failed just now", Docker's words, "It is stopped (checked 12:41 AM)."; Start again starts it |
-| A host cut off, by `docker pause` | "Not answering", "calm-cedar does not answer … bb-box checks again in 59 s"; Check now after `docker unpause`: Ready |
-| A backend removed from settings, with bb-box off, from its stored configuration | "Not checked · last seen ready", the notice with Open BB Box settings and Forget…; Forget…: "… was forgotten: bb-box removed its record. Its box was not deleted and may still run on keen-oriole", its container still running; the same after a reload and after `bb plugin reload bb-box`; the configuration then put back |
+| Working now | with the page open on clear-finch, "idle" turned to "working now" within 15 s of the agent starting a `box_run` there, with no reload |
+| Stop, Start and Release from the page | stopped "just now, today at 2:21 AM, by you", started, "Last started … by you: ready in 0.3 s"; released, "Released just now, … by you", also after a reload and after `bb plugin reload bb-box` |
+| A failed stop, then the box stopped outside bb-box | "Stop failed just now"; after `docker stop` and `bb box sweep`, "Stopped" and no failure beside it |
+| A start that fails | "Start failed just now", Docker's words, "It is still stopped (checked 2:22 AM)."; Start again starts it |
+| A failure, said | the page's one announcer said "Stop failed. …" once, and nothing on opening; no notice has a live part |
+| A release that does not finish | "Release did not finish", Docker's words, on the page and the row, with Release again…, which then released it |
+| A backend removed from settings, with bb-box off, from its stored configuration | "Not checked · last seen ready", the notice with Open BB Box settings and Forget…; Forget…: "… was forgotten: bb-box removed its record. Its box was not deleted and may still run on crisp-petrel", its container still running; the same after a reload and after `bb plugin reload bb-box`; the container then removed and the configuration put back |
 
 | Gate | Result | What each run did |
 | --- | --- | --- |
-| G3 | 3 of 3 | With the agent in `box_run` on happy-beacon, Stop from its row, its row's menu, its page and a failed stop's Stop again each asked "Stop happy-beacon anyway?", "CALL box_list is working on happy-beacon.", with the thread's chip; Cancel left it ready; Stop anyway stopped it. With the thread idle, Stop stopped it at once. workbench, with no thread on it, stopped at once |
-| G6, words | 3 of 3 | A stop Docker refused: "Stop failed just now", Docker's words, "It is still running (checked 12:41 AM)."; a start Docker refused: "It is stopped (checked …)."; never "still stopped" without an observation |
+| G3 | 3 of 3 | With the agent in `box_run` on clear-finch, Stop from its row, its row's menu, its page and a failed stop's Stop again each asked "Stop clear-finch anyway?", "CALL box_list is working on clear-finch.", with the thread's chip; Cancel left it ready; Stop anyway stopped it. With the thread idle, Stop stopped it at once. workbench, with no thread on it, stopped at once |
+| G6, words | 3 of 3 | A stop Docker refused: "Stop failed just now", Docker's words, "It is still running (checked 2:21 AM)."; a start Docker refused: "It is still stopped (checked …)."; "still stopped" only with an observation |
 | G8 | 3 of 3 | A row's quick Terminal and back: the list, by going back in history; after visiting another box's page, a quick icon and back: the list; settings, workbench's page with `from-settings`, Terminal and back: the page, then settings, also after a reload on the view; a page opened by URL, then Boxes, then browser Back: not the page; a row's quick Terminal, a reload, then back: the list |
-| G20 | 3 of 3 | calm-cedar, not answering: Stop disabled with "calm-cedar does not answer", and in the page's menu New thread on this box… and Resize…, in its row's menu Stop and Resize…, each disabled with that reason, and no quick Stop. A box whose backend was removed: Stop disabled with "Its backend is not in settings", New thread on this box…, Resize… and the row's Stop disabled with it, Runs on saying "Backend not in settings", and Forget… last |
+| G20, as the lead decided | 3 of 3 | polite-dune, whose `docker exec` hangs: "Not answering", its notice saying it can still be stopped, started or released, Stop enabled on its page and row, "Terminal is off: polite-dune does not answer." beside the actions, New thread on this box… disabled with that reason; Stop from its page stopped it, and its mark cleared. With `docker container ls` failing and a sweep: "Not checked", "Docker on crisp-petrel does not answer", Stop disabled, "Terminal and Stop are off: Docker on crisp-petrel does not answer.", New thread on this box… and Resize… disabled with it in the page's menu, Stop and Resize… in the row's, no quick Stop; all back after the next sweep listed again. A box whose backend was removed: the same with "its backend is not in settings", Runs on saying "Backend not in settings", and Forget… last |
 
 ### Screenshots
 
@@ -587,16 +605,19 @@ question](069-boxes-page/unit-1c/in-use-1440-light.png), [a start that
 failed](069-boxes-page/unit-1c/start-failed-760-light.png), [a release that
 did not finish](069-boxes-page/unit-1c/release-unfinished-760-dark.png),
 [released](069-boxes-page/unit-1c/released-1440-light.png) ([390
-dark](069-boxes-page/unit-1c/released-390-dark.png)), [not
-answering](069-boxes-page/unit-1c/not-answering-1440-dark.png), [a backend
+dark](069-boxes-page/unit-1c/released-390-dark.png)), [a box that
+does not answer](069-boxes-page/unit-1c/not-answering-1440-light.png) ([390
+dark](069-boxes-page/unit-1c/not-answering-390-dark.png)), [a backend that
+does not answer](069-boxes-page/unit-1c/backend-silent-1440-dark.png) ([390
+dark](069-boxes-page/unit-1c/backend-silent-390-dark.png)), [a backend
 not in settings](069-boxes-page/unit-1c/not-in-settings-1440-light.png)
 ([390 dark](069-boxes-page/unit-1c/not-in-settings-390-dark.png)),
 [forgotten](069-boxes-page/unit-1c/forgotten-760-light.png), [a machine
 from settings](069-boxes-page/unit-1c/machine-1440-dark.png), and [a view's
 bar](069-boxes-page/unit-1c/view-bar-1440-light.png) ([390
-dark](069-boxes-page/unit-1c/view-bar-390-dark.png)). A fourth run took
-them, with its screenshots on (its two G3 checks failed there, as resizing
-the window for a screenshot closes the open dialog);
+dark](069-boxes-page/unit-1c/view-bar-390-dark.png)). A fourth run on
+this delivery took them, with its screenshots on (its two G3 checks failed
+there, as resizing the window for a screenshot closes the open dialog);
 [`shots-stopped.mjs`](069-boxes-page/unit-1c/shots-stopped.mjs) took the
 stopped page's.
 
@@ -623,7 +644,9 @@ stopped page's.
 - "Its host does not answer" names the box, as "calm-cedar does not
   answer", with its host in the words, as the reach check tests the box
   itself and cannot tell a host that does not answer from a box that does
-  not.
+  not. A backend that does not answer is told by its listing failing in
+  the sweep, every 3 minutes, so it can take up to 3 minutes to show, and
+  to clear.
 - Every box being released is listed, dimmed, not only one whose release
   failed.
 - A view by box ID waits for `boxPage` to learn the box's thread.
@@ -644,9 +667,6 @@ stopped page's.
   them, so the back arrow cannot be reached from the keyboard there; the
   browser's Back works. This predates the page (035). Should a terminal
   give a key to leave it, for keyboard-only use?
-- A failed stop, start or resize stays on the page until that operation
-  next succeeds, however old. Should it go after a time, or after any
-  later start or stop?
 
 ### Follow-ups
 
@@ -656,3 +676,43 @@ stopped page's.
   gets the words "is not a BB machine" there now.
 - A view whose box's backend is not in settings, or which does not answer,
   still tries to connect; it could say why first, as the page does.
+- A forgotten box whose guest still runs comes back when its backend is put
+  back in settings: the sweep restores its record from the guest (019),
+  and lists it again. Forget is meant for a backend gone for good; 069 and
+  the guide could say so.
+- A resize that needs a restart is not checked live here: Docker resizes
+  cores and memory live. Its test covers the guard.
+
+### After the independent review
+
+The review of the first delivery (PR 1291) said to merge after fixes. Each
+fix has a test; the lead decided points 1 to 3.
+
+| # | Finding | Fix | Test |
+| --- | --- | --- | --- |
+| 1 | G20 turned off Stop, Start and Resize for a box that does not answer, though they go through its backend | Only a backend not in settings or not answering turns them off. bb-box now records a backend whose listing fails in the sweep (`Boxes.backendSilence`), and the box's view says `backend-silent`. A box that does not answer keeps them, and its mark clears when its record moves out of ready (`ReachCheck.settled`). Its notice: "bb-box cannot reach it …, so it cannot read it or run commands in it. You can still stop, start or release it: those go through Docker on devpc." Section 7 and G20 of 069 say so, as the lead's decision | `plugin.test.ts`: a box that does not answer stops through its backend and its mark clears; a backend whose listing fails, then lists again. `box-route.test.ts` and `app.test.tsx`: the words, the menus and the page |
+| 2 | The G3 guard let Stop and Release through when BB's thread lookup failed | `holderOf` throws on any error but a missing thread; the guard then asks, saying bb-box could not ask BB. `boxPage` still shows no thread then | `plugin.test.ts`: with BB's lookup failing, Stop and Release ask; with the thread gone, Stop goes on. `app.test.tsx`: the question's words |
+| 3 | A resize with a restart did not ask while the box's own thread worked | Its `beforeRestart` uses the same guard as Stop and Release | `plugin.test.ts`: it asks, then restarts when forced. The resize dialog's words name the thread |
+| 4 | "Starting again" showed the last start's steps, and Total, as done | A start clears the last start's `start.*` timings when it is asked; the card shows only what it waits on; `startSteps` leaves out Total | `plugin.test.ts`: no step of the last start while one is under way. `app.test.tsx`: the card |
+| 5 | Notices were live regions whose words changed with the clock | Notices are sections with a heading. One polite announcer, always in the page, says a notice once when it appears or changes in substance, never on opening and never as the time moves; the countdown is plain text apart from the words | `app.test.tsx`: no live part in a notice; a new failure said once; 61 s later the announcer says nothing new |
+| 6 | A failed stop or start stayed beside a state that contradicted it | A failure shows only while the box is still as bb-box observed it then, and until a later stop or start | `box-route.test.ts`; live: a failed stop, then `docker stop` outside bb-box, and the notice goes |
+| 7 | A release whose failure the log lost showed "Releasing…" for ever | A releasing box with an error is a release that did not finish: its words, and Release again… | `box-route.test.ts`, `app.test.tsx` |
+| 8 | Disabled reasons were only a hover title | The reasons are words beside the actions ("Terminal and Stop are off: its backend is not in settings."), linked to the buttons with `aria-describedby`; a notice's disabled button has its reason beside it | `app.test.tsx`; live |
+| 9 | Working now and the threads went out of date | An open page asks `boxPage` again every 15 s while it is shown | `app.test.tsx`; live: "working now" appeared within 15 s of the agent starting, with no reload |
+| 10 | The working spinner ignored reduced motion | `WorkingMark` stops under reduced motion | `app.test.tsx` |
+| 11 | A view opened by box ID had no way back while loading or on error | It shows the trail and its way back meanwhile | `app.test.tsx` |
+
+Rebased onto main `50b110a7`. On a Linux box, on the commits delivered:
+`tsc` clean; the node suite 2,882 tests, 2,594 passed, 288 skipped, 0
+failed, the docs and site tests among them; vitest 338 tests passed in 4
+files; `scripts/reference.ts --check` passes. The live check below ran on
+the same code before that rebase, whose only change beside it is in the
+boat backend.
+
+The live check ran again on a second fresh BB 0.48.0 set up the same way,
+now by [`live-setup.sh`](069-boxes-page/unit-1c/live-setup.sh) with
+[`agent-call.sh`](069-boxes-page/unit-1c/agent-call.sh). The shim gained
+two flags: one makes `docker exec` into one container hang, as a hung box
+does, and one makes `docker container ls` fail, as a Docker daemon that
+does not answer does. A paused container cannot be stopped by Docker at
+all, so the hung box is made this way.

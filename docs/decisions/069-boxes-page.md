@@ -423,8 +423,9 @@ it, the words leave it out rather than guess.
 | Stopped without being asked | ○ Stopped · … outside bb-box | Today's amber notice with what bb-box saw and did (#406), under the header |
 | Stop, Start or Resize failed | The state bb-box last confirmed, with when | A red notice, "Stop failed 2 min ago", with the backend's words and what bb-box then observed: "It is still running (checked 6:58 PM)", or "bb-box could not confirm its state". A resize that failed part way names the parts that changed. Stop again, Start again or Resize… (gate G6) |
 | Release did not finish | ● Release did not finish · 1 min ago | A red notice with the backend's words: "The box may still run on pve-1; bb-box keeps its record until a release is confirmed." Release again… in the notice and the menu. Never a spinner without end |
-| Its backend is not in settings | ● Not checked · last seen ready 2 d ago | An amber notice: the backend was removed from settings, so bb-box cannot check, stop or release the box, which may still be running there. Open BB Box settings, to add it back, or Forget…, which removes bb-box's record only and says that a guest that still runs keeps running. Stop, Start, Resize and New thread on this box are disabled with that reason; Runs on is muted (gate G20) |
-| Its host does not answer | ● Not answering · last seen ready 12 min ago | An amber notice with the host's error and since when; bb-box cannot read, stop or start it. "bb-box checks again in 4 min", from the reach check's schedule (section 10, gate G7). Check now. History shows "No reading" from then |
+| Its backend is not in settings | ● Not checked · last seen ready 2 d ago | An amber notice: the backend was removed from settings, so bb-box cannot check, stop or release the box, which may still be running there. Open BB Box settings, to add it back, or Forget…, which removes bb-box's record only and says that a guest that still runs keeps running. Stop, Start, Resize and New thread on this box are disabled with that reason, in words beside them; Runs on is muted (gate G20) |
+| Its backend does not answer | ● Not checked · last seen ready | Listing its backend's boxes fails (the sweep, every 3 minutes). An amber notice with the backend's error and since when: bb-box cannot check, stop, start or resize the box through it. Stop, Start, Resize and New thread on this box are disabled with that reason, in words (gate G20). It clears when the backend lists its boxes again |
+| The box does not answer | ● Not answering · last seen ready 12 min ago | An amber notice with the box's error and since when: bb-box cannot reach it, so it cannot read it or run commands in it, but it can still stop, start or release it, as those go through its backend. "bb-box checks again in 4 min", from the reach check's schedule (section 10, gate G7), apart from the notice's words. Check now. Its views and New thread on this box are disabled with that reason; Stop, Start and Resize stay. The mark clears as soon as the box is seen stopped or answering. History shows "No reading" from then |
 | A device that did not boot | ● Ready, with the device's words | An amber notice, "Its iPhone 17 Pro did not boot", with the device's error and Check now; Simulator opens the view, which shows the device's own state. A ready host never stands for a ready device |
 | Could not join BB | ● Ready · Could not join BB | Today's join help (`JoinHelp`), as a notice |
 | Failed | ● Failed · 52 min ago | A red notice, "It did not start", with the error, Check now and Release…; then how it started, up to where it stopped |
@@ -507,8 +508,10 @@ one card per thread. What changes:
   Release, from a row, the menu, the page or a notice's retry, ask first
   when the box's own thread is working, as they already do when a thread
   works on its BB machine: "Fix the sign-in flow in Safari is working on
-  amber-fox. Stop it anyway?" A machine of the person's own keeps today's
-  guard. The inline details go.
+  amber-fox. Stop it anyway?" When BB cannot say whether the thread works,
+  they ask too ("bb-box could not ask BB whether …"). A resize that needs a
+  restart asks under the same guard. A machine of the person's own keeps
+  today's guard. The inline details go.
 - **Sort by last active.** Sort gains "Last active": when the box's thread,
   or for a machine, any thread on it, last worked, or the box was last
   started, whichever is latest. Boxes nobody has used for days sort last,
@@ -867,7 +870,24 @@ pool Mac someone else holds.
 | G17 network-summary | 2 | The network chart is described by its numbers and gaps, as CPU's is (section 4) | VoiceOver and NVDA read the network chart's averages and highest point, and its gaps |
 | G18 history-full | 3 | A full history file stops history's writes, says so, and recovers by pruning; nothing else is affected (section 10) | With `boxhistory`'s cap set low in a test, writes stop, Monitor settings and the doctor say so, alerts and the box log still write, and writing resumes once pruning makes room |
 | G19 run-shape | 3 | The run is 24 hours on a separate BB with 30 Linux boxes: Docker boxes, Proxmox LXC boxes, a Proxmox VM, and more than 16 boxes read through their route; and 2 hours of it with a Mac with 3 shared iOS slots, on a Tart or Namespace Mac where one is free, never a pool Mac someone else holds | The run's report gives every budget of section 10 for both parts, with what limits each number |
-| G20 offline-actions | 1c | With its backend not in settings or its host not answering, a box's Stop, Start, Resize and New thread on this box are disabled with the reason (section 7) | maple-row's and fern-hollow's menus and page offer none of them, and each says why |
+| G20 offline-actions | 1c | With its backend not in settings or not answering, a box's Stop, Start, Resize and New thread on this box are disabled with the reason, in words; a box that does not answer itself keeps Stop, Start and Resize, which go through its backend, and loses only its views and New thread (section 7; the lead's decision during unit 1c) | maple-row's menus and page, and those of a box whose backend's listing fails, offer none of them, each saying why; fern-hollow, which does not answer, can be stopped from its page, and its mark clears once it is stopped |
+
+## Decided by the lead during unit 1c
+
+After unit 1c's independent review, on 30 October 2026:
+
+- **G20 is about the backend, not the box.** Stop, Start and Resize go
+  through a box's backend, not through the box, so they are disabled only
+  when the backend is not in settings or does not answer (its listing of
+  boxes fails). A box that does not answer keeps them: that is how a hung
+  VM gets stopped. Its notice says that bb-box cannot reach it and that it
+  can still be stopped, started or released, and its mark clears as soon as
+  the box is seen stopped or answering.
+- **The guard fails safe.** When BB cannot say whether the box's own thread
+  works, Stop and Release ask, saying so.
+- **A resize's restart asks too.** A resize that needs a restart asks under
+  the same guard as Stop and Release, the box's own working thread
+  included. This extends G3.
 
 ## Open questions for the owner
 

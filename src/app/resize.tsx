@@ -14,7 +14,7 @@ import type { Contract, ResizeResult, ThreadOnBox } from "../plugin/contract.ts"
 import type { BoxView, ResizeView, SizeView } from "../plugin/views.ts";
 import { FormSection, OptionCard } from "./box-form.tsx";
 import { message } from "./common.tsx";
-import { ThreadChips } from "./thread-chips.tsx";
+import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
 
 /** How long the dialog waits after a change before it checks the size. */
 export const RESIZE_CHECK_MS = 250;
@@ -320,7 +320,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
             {step.at === "confirm"
               ? `Everything running in it stops, and ${back(step.down)}.`
               : step.at === "threads"
-                ? `${step.threads.length === 1 ? "A thread is" : `${step.threads.length} threads are`} working on it, and ${step.threads.length === 1 ? "its" : "their"} work stops while it restarts.`
+                ? `${workingOnWords(step.threads, box.name)}. ${step.threads.length === 1 ? "Its" : "Their"} work stops while it restarts.`
                 : step.at === "done"
                   ? `It has ${words(step.answer.to ?? step.answer.from!, box.resizing ?? null)} now${step.answer.changed ? (step.answer.box?.lastResize?.restart ? ", after a restart" : ", changed live") : ""}.`
                   : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`}

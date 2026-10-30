@@ -747,7 +747,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const backendInSettings = (box: BoxRecord) => configuration.document.backends.some((backend) => backend.id === box.backend);
   const reachOf = (box: BoxRecord): ReachView => {
     const known = reach.reach(box);
-    return backendInSettings(box) ? known : { is: "not-in-settings", backend: box.backendLabel, lastAnswered: known.lastAnswered };
+    if (!backendInSettings(box)) return { is: "not-in-settings", backend: box.backendLabel, lastAnswered: known.lastAnswered };
+    const silence = boxes.backendSilence(box.backend);
+    if (silence) return { is: "backend-silent", backend: box.backendLabel, since: silence.since, error: silence.error, lastAnswered: known.lastAnswered };
+    return known.is === "not-answering" && box.state !== "ready" ? { is: "answers", lastAnswered: known.lastAnswered } : known;
   };
   const boxes: Boxes = new Boxes({
     kv: bb.storage.kv,
@@ -1599,8 +1602,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     async holderOf(box) {
       if (!ownedByThread(box.threadId)) return null;
-      const thread = await bb.sdk.threads.get({ threadId: box.threadId }).catch(() => null);
-      return thread && !isSet(thread.archivedAt) && !isSet(thread.deletedAt) ? threadOnBox(thread) : null;
+      try {
+        const thread = await bb.sdk.threads.get({ threadId: box.threadId });
+        return !isSet(thread.archivedAt) && !isSet(thread.deletedAt) ? threadOnBox(thread) : null;
+      } catch (error) {
+        if (isMissingThread(error)) return null;
+        throw error;
+      }
     },
     async checkInUse(box, action) {
       const threads = await api.threadsOn(box);

@@ -163,6 +163,7 @@ export interface ThreadOnBox {
   /** Working now: busy, or waiting on a question to the user. An idle thread has finished. */
   readonly running: boolean;
   readonly activeAt?: number;
+  readonly unchecked?: boolean;
 }
 
 export interface MonitorReach {

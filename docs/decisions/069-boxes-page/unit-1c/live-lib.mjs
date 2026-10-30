@@ -150,3 +150,8 @@ export async function openBoxMenu(page, name) {
   await page.getByRole("button", { name: `${name} actions`, exact: true }).first().click();
   return menuItems(page);
 }
+
+export async function closeMenu(page) {
+  await page.keyboard.press("Escape");
+  await page.getByRole("menu").waitFor({ state: "detached", timeout: 5000 }).catch(() => null);
+}

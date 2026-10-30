@@ -5966,3 +5966,92 @@ test("boxPage finds a box by its ID alone, with its thread, the threads on its B
   assert.equal(mine.threadId, OPERATOR);
   assert.equal(mine.thread, null);
 });
+
+test("the guard asks when BB cannot say whether the box's own thread works, and goes on for a thread that no longer exists (069 G3, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.threads.set(THREAD, { ...world.threads.get(THREAD)!, status: "active" });
+  world.threadErrors.set(THREAD, new Error("fetch failed: ECONNRESET"));
+  for (const method of ["stop", "release"] as const) {
+    const asked = (await harness.behavior.callRpc(method, { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: { id: string; unchecked?: boolean; running: boolean }[]; error: string | null };
+    assert.equal(asked.box.state, "ready", `${method} leaves it for the person`);
+    assert.deepEqual(asked.threads, [{ id: THREAD, title: null, running: false, unchecked: true }], method);
+  }
+  world.threadErrors.set(THREAD, Object.assign(new Error("HTTP 404: Thread not found"), { status: 404, code: "thread_not_found" }));
+  const gone = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: unknown[] };
+  assert.equal(gone.box.state, "stopped", "a thread BB no longer has does not hold the box");
+  assert.equal(gone.threads, undefined);
+});
+
+test("a resize that restarts the box asks first while the box's own thread works, and goes on when forced (069, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "restart", memory: "restart", disk: "live", shrinks: true };
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.threads.set(THREAD, { ...world.threads.get(THREAD)!, title: "Fix the sign-in flow", status: "active" });
+  const asked = (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.id, size: { cores: 4 }, restart: true })) as { changed: boolean; error: string | null; threads?: { id: string }[] };
+  assert.equal(asked.changed, false);
+  assert.deepEqual(asked.threads?.map((thread) => thread.id), [THREAD]);
+  const forced = (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.id, size: { cores: 4 }, restart: true, force: true })) as { changed: boolean; error: string | null };
+  assert.equal(forced.error, null);
+  assert.equal(forced.changed, true);
+});
+
+test("a box that does not answer still stops through its backend, and is no longer marked so once it is seen stopped (069 G20, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", { kind: "linux" });
+  const box = await app.boxes.enrolled(await only(app));
+  world.backend!.faults.silent = box.guest!.ref;
+  assert.ok(isError(await tool("box_run", { box: box.name, command: "true" })));
+  const before = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string } } };
+  assert.equal(before.box.reach.is, "not-answering");
+  const stopped = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string; reach: { is: string } }; error: string | null };
+  assert.equal(stopped.error, null);
+  assert.equal(stopped.box.state, "stopped");
+  assert.equal(stopped.box.reach.is, "answers", "seen stopped: no longer marked as not answering");
+  assert.equal(app.reach.reach(box).is, "answers");
+});
+
+test("a backend whose listing fails is said not to answer on its boxes until it lists again (069 G20, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.backend!.faults.held = new Error("connect ECONNREFUSED 192.0.2.10:8006");
+  await app.boxes.sweep();
+  const silent = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string; error: string; since: number } } };
+  assert.equal(silent.box.reach.is, "backend-silent");
+  assert.match(silent.box.reach.error, /ECONNREFUSED/);
+  delete world.backend!.faults.held;
+  await app.boxes.sweep();
+  const back = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string } } };
+  assert.equal(back.box.reach.is, "answers");
+});
+
+test("a start clears the last start's steps when it is asked, so a start under way shows only its own (069 section 7)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name });
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+  const started = (await app.boxes.find(box.id))!;
+  assert.ok(Object.keys(started.timings).some((step) => step.startsWith("start.")), "a finished start keeps its steps");
+  await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name });
+  const backend = world.backend!;
+  const startGuest = backend.start!.bind(backend);
+  let during: string[] | null = null;
+  Object.assign(backend, {
+    start: async (...args: Parameters<typeof startGuest>) => {
+      during = Object.keys((await app.boxes.find(box.id))!.timings).filter((step) => step.startsWith("start."));
+      return startGuest(...args);
+    },
+  });
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+  assert.deepEqual(during, [], "no step of the last start while this one is under way");
+  assert.ok(Object.keys((await app.boxes.find(box.id))!.timings).some((step) => step.startsWith("start.")), "and this start's own once it is done");
+});
