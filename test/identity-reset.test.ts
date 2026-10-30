@@ -290,7 +290,7 @@ test("a card that appears late is waited for; with none of the marker's cards an
   const before = identityOf(root);
   const absent = identity(root, ["boot"], { waitSeconds: 1 });
   assert.equal(absent.code, 0);
-  assert.match(absent.out, /kept, not knowing whether this box is a copy: after waiting about 1 s it found none of the marker's MAC addresses \(bc:24:11:00:00:18\) and no new one/);
+  assert.match(absent.out, /not knowing yet whether this box is a copy: after waiting about 1 s it found none of the marker's MAC addresses \(bc:24:11:00:00:18\) and no new one/);
   assert.deepEqual(identityOf(root), before, "never erases credentials on unknown");
   assert.equal(status(root).boot, "unknown");
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
@@ -458,14 +458,25 @@ test("enable writes the unit before the network and identity services, and requi
   const before = /^Before=(.*)$/m.exec(unit)?.[1]?.split(" ") ?? [];
   for (const unitName of ["network-pre.target", "systemd-networkd.service", "ssh.service", "tailscaled.service", "docker.service", "containerd.service", "bb-box-display.service"]) assert.ok(before.includes(unitName), unitName);
   assert.match(unit, /^ExecStart=\/usr\/local\/sbin\/bb-box-identity boot$/m);
-  for (const gated of ["systemd-networkd.service", "ssh.service", "tailscaled.service", "user@.service", "docker.service", "docker.socket", "containerd.service", "bb-box-docker-containers.service", "bb-box-display.service", "bb-box-selkies.service"]) {
+  for (const gated of ["systemd-networkd.service", "user@.service", "docker.service", "docker.socket", "containerd.service", "bb-box-docker-containers.service", "bb-box-display.service", "bb-box-selkies.service"]) {
     assert.equal(read(root, `etc/systemd/system/${gated}.d/10-bb-box-identity.conf`), "[Unit]\nRequires=bb-box-identity.service\nAfter=bb-box-identity.service\n", gated);
   }
+  for (const user of ["ssh.service", "tailscaled.service"]) {
+    assert.equal(read(root, `etc/systemd/system/${user}.d/10-bb-box-identity.conf`), "[Unit]\nRequires=bb-box-identity.service bb-box-identity-settle.service\nAfter=bb-box-identity.service bb-box-identity-settle.service\n", user);
+  }
+  const settleUnit = read(root, "etc/systemd/system/bb-box-identity-settle.service") ?? "";
+  assert.match(settleUnit, /^Before=ssh\.service tailscaled\.service shutdown\.target$/m, "it holds only what uses the identity, never the network or the console");
+  assert.match(settleUnit, /^After=bb-box-identity\.service$/m);
+  assert.match(settleUnit, /^TimeoutStartSec=infinity$/m);
+  assert.ok(existsSync(join(root, "etc/systemd/system/multi-user.target.wants/bb-box-identity-settle.service")));
+  assert.equal(read(root, "etc/systemd/user/bb-host-daemon-.service.d/10-bb-box-identity.conf"), "[Service]\nExecStartPre=/usr/local/sbin/bb-box-identity wait %n\nTimeoutStartSec=infinity\n", "BB's daemon, a user unit, waits too");
   assert.ok(existsSync(join(root, "etc/systemd/system/multi-user.target.wants/bb-box-identity.service")));
   assert.equal(read(root, "usr/local/lib/bb-box/identity-reset-on"), "on\n");
   assert.equal(identity(root, ["disable"]).code, 0);
   assert.equal(existsSync(join(root, "etc/systemd/system/bb-box-identity.service")), false);
   assert.equal(existsSync(join(root, "etc/systemd/system/ssh.service.d")), false);
+  assert.equal(existsSync(join(root, "etc/systemd/system/bb-box-identity-settle.service")), false);
+  assert.equal(existsSync(join(root, "etc/systemd/user/bb-host-daemon-.service.d")), false);
   assert.equal(existsSync(join(root, "usr/local/lib/bb-box/identity-reset-on")), false);
   const docker = tempDir("identity-docker");
   assert.equal(identity(docker, ["enable", "--no-unit"]).code, 0);
@@ -485,4 +496,137 @@ test("only the checked builds turn the reset on; every image has the program, an
   const start = readFileSync(DOCKER_START, "utf8");
   const check = start.indexOf('bb-box-identity boot --value "${BBBOX_IDENTITY:-}"');
   assert.ok(check > 0 && check < start.indexOf("rm -f \"$home\"/.bb-machines/*/daemon.lock.lock") && check < start.indexOf(`touch "$run/ready"`), "a Docker box checks before it starts anything");
+});
+
+function settle(root: string, options: { readonly waitSeconds?: number } = {}) {
+  return spawn("bash", [SCRIPT, "settle"], { env: { PATH: process.env.PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: String(options.waitSeconds ?? 0), BBBOX_IDENTITY_SETTLE_SECONDS: "0.1" } });
+}
+
+function waitFor(root: string, unit: string) {
+  return spawn("bash", [SCRIPT, "wait", unit], { env: { PATH: process.env.PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_SETTLE_SECONDS: "0.1" } });
+}
+
+function ended(child: ReturnType<typeof spawn>): Promise<{ code: number | null; out: string }> {
+  let out = "";
+  child.stdout!.on("data", (chunk: Buffer) => (out += chunk.toString()));
+  return new Promise((resolve) => child.on("close", (code) => resolve({ code, out })));
+}
+
+function stillRunning(child: ReturnType<typeof spawn>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(child.exitCode === null), ms);
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+test("a card added and booted becomes an anchor, so removing the first card later keeps the box (sequential hot-plug)", () => {
+  const lxc = guest([LOOP, LXC_ETH0]);
+  boot(lxc);
+  written(lxc, "bxsource1", "eth");
+  const eth1: Nic = { name: "eth1", mac: "bc:24:11:00:00:11" };
+  setNics(lxc, [LOOP, LXC_ETH0, eth1]);
+  const grew = boot(lxc);
+  assert.match(grew.out, /kept/);
+  assert.match(grew.out, /added this boot's interfaces \( bc:24:11:00:00:11 \) to the marker/);
+  assert.equal(read(lxc, "etc/bb-box/identity"), "bb-box identity 1\nbox bxsource1\nsource eth\nmac bc:24:11:00:00:11\nmac bc:24:11:aa:f1:b6\n");
+  setNics(lxc, [LOOP, eth1]);
+  const before = identityOf(lxc);
+  assert.match(boot(lxc).out, /kept/, "net0 removed after net1 had booted");
+  assert.deepEqual(identityOf(lxc), before);
+
+  const ens18: Nic = { name: "ens18", mac: "bc:24:11:00:00:18", device: true };
+  const ens19: Nic = { name: "ens19", mac: "bc:24:11:00:00:19", device: true };
+  const vm = guest([LOOP, ens18]);
+  boot(vm);
+  written(vm, "bxvm1", "device");
+  setNics(vm, [LOOP, ens18, ens19]);
+  assert.match(boot(vm).out, /kept/);
+  setNics(vm, [LOOP, ens19]);
+  assert.match(boot(vm).out, /kept/, "qm set --net1, a boot, then --delete net0");
+  assert.equal(read(vm, "var/lib/bb-box/identity-resets"), null);
+
+  const copy = guest([LOOP, LXC_ETH0]);
+  boot(copy);
+  written(copy, "bxsource2", "eth");
+  setNics(copy, [LOOP, LXC_ETH0, eth1]);
+  boot(copy);
+  setNics(copy, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }, { name: "eth1", mac: "bc:24:11:5e:77:02" }]);
+  assert.match(boot(copy).out, /resets its identity/, "a copy of a box whose anchors grew still resets: all its cards are new");
+});
+
+test("a copy whose card appears after the wait is held, not let through: SSH, Tailscale and BB's daemon wait, and it resets once the card is there", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP]);
+  const before = identityOf(root);
+  const unknown = boot(root);
+  assert.equal(unknown.code, 0, "the boot goes on, to the network and the console");
+  assert.match(unknown.out, /not knowing yet whether this box is a copy: .* It removes nothing; SSH, Tailscale and BB's daemon wait while it looks again/);
+  assert.deepEqual(identityOf(root), before, "nothing removed on unknown");
+  const holding = settle(root);
+  const done = ended(holding);
+  const daemon = waitFor(root, "bb-host-daemon-bb-example-com-host_source.service");
+  const daemonDone = ended(daemon);
+  assert.equal(await stillRunning(daemon, 400), true, "BB's daemon waits");
+  assert.deepEqual(identityOf(root), before);
+  setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  const settled = await done;
+  assert.equal(settled.code, 0);
+  assert.match(settled.out, /this box is a copy, as its cards show now that they are here, so it resets its identity/);
+  assertReset(root, before);
+  assert.equal(status(root).boot, "reset");
+  const daemonEnd = await daemonDone;
+  assert.equal(daemonEnd.code, 1, "the copied machine's daemon never starts");
+  assert.match(daemonEnd.out, /BB machine host_source went with this box's identity reset, so its daemon does not start/);
+});
+
+test("the box itself, its card late past the wait, keeps everything once the card appears, and its daemon starts", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP]);
+  const before = identityOf(root);
+  boot(root);
+  const holding = ended(settle(root));
+  const daemon = ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"));
+  setTimeout(() => setNics(root, [LOOP, LXC_ETH0]), 300);
+  const settled = await holding;
+  assert.equal(settled.code, 0);
+  assert.match(settled.out, /kept, now that its cards are here/);
+  assert.deepEqual(identityOf(root), before);
+  assert.equal(status(root).boot, "kept");
+  assert.equal((await daemon).code, 0);
+});
+
+test("a box with no card at all still boots: nothing is removed, and only what uses its identity keeps waiting", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP]);
+  const before = identityOf(root);
+  assert.equal(boot(root).code, 0);
+  const holding = settle(root);
+  const daemon = waitFor(root, "bb-host-daemon-bb-example-com-host_source.service");
+  assert.equal(await stillRunning(holding, 800), true, "SSH and Tailscale, behind it, wait");
+  assert.equal(await stillRunning(daemon, 10), true);
+  holding.kill();
+  daemon.kill();
+  assert.deepEqual(identityOf(root), before);
+  assert.equal(status(root).boot, "unknown");
+});
+
+test("wait lets BB's daemon start once the identity is known, unless its machine went with a reset", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"))).code, 0, "unarmed");
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  boot(root);
+  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"))).code, 1, "the copied machine");
+  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_new.service"))).code, 0, "the machine bb-box enrols it as next");
+  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_sour.service"))).code, 0, "another machine whose ID begins the same");
 });

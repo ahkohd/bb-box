@@ -6347,3 +6347,71 @@ test("an enrolment again after an identity reset that fails is tried again at th
   assert.equal(again.state, "ready");
   assert.equal((await resetChecks(harness))[0]?.status, "warn");
 });
+
+test("a stale read of no reset never releases a box whose reset another check recorded meanwhile; it is enrolled again instead (070, 036)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+  const box = await armed(app, await addMachine(harness, app, { kind: "linux", name: "build-6" }));
+  const machine = box.enrol.hostId!;
+  const backend = app.backends.get(box.backend)!;
+  const transports = backend.transports.bind(backend);
+  let letReadEnd: () => void = () => {};
+  const readEnds = new Promise<void>((resolve) => (letReadEnd = resolve));
+  let reads = 0;
+  Object.assign(backend, {
+    transports: async (...args: Parameters<typeof transports>) => {
+      const real = await transports(...args);
+      const command = real.command!;
+      return {
+        ...real,
+        command: new Proxy(command, {
+          get(target, property) {
+            if (property === "run") {
+              return async (script: string, options?: Parameters<typeof command.run>[1]) => {
+                if (!script.includes(`${IDENTITY_STATE}/identity-resets`) || reads++ > 0) return target.run(script, options);
+                await readEnds;
+                return { exitCode: 0, stdout: "absent\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+              };
+            }
+            const value = Reflect.get(target, property, target) as unknown;
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        }),
+      };
+    },
+  });
+  world.hosts.delete(machine);
+  const removal = provider.remove({ resource: { boxId: box.id }, hostId: machine } as never);
+  await until("the read under way", async () => reads > 0);
+  await app.boxes.identityResetFound((await app.boxes.find(box.id))!, { at: Date.parse("2026-10-30T17:04:02Z"), why: RESET_WHY, machine });
+  letReadEnd();
+  assert.deepEqual(await within(removal, "BB's removal"), { status: "removed" });
+  const kept = await app.boxes.find(box.id);
+  assert.equal(kept?.state, "ready", "not released: its reset is recorded and its recovery pending");
+  assert.equal(kept?.identityReset?.machine, machine);
+  assert.deepEqual(app.boxLog.events(box.id).map((event) => event.kind).filter((kind) => kind === "release-asked" || kind === "released"), []);
+  await app.enrolment.sweep();
+  const again = await enrolledAgain(app, box.id);
+  assert.notEqual(again.enrol.hostId, machine);
+});
+
+test("BB's removal of a machine after its box's reset returns at once, while BB still holds the machine removing, and the box is enrolled again once BB is done (070)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true }, { manualRemoveMs: 60_000 });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+  const box = await armed(app, await addMachine(harness, app, { kind: "linux", name: "build-7" }));
+  const machine = box.enrol.hostId!;
+  await identityResetIn(app, box, machine);
+  world.hosts.set(machine, { ...world.hosts.get(machine)!, status: "disconnected", lifecycle: { ...world.hosts.get(machine)!.lifecycle, phase: "removing" } });
+  world.bbRemovals.set(machine, async () => {});
+  const started = Date.now();
+  assert.deepEqual(await within(provider.remove({ resource: { boxId: box.id }, hostId: machine } as never), "BB's removal", 3_000), { status: "removed" });
+  assert.ok(Date.now() - started < 3_000, "it does not wait for BB to finish the removal it is part of");
+  assert.ok(world.hosts.has(machine), "BB still holds the machine, removing");
+  const waiting = await app.boxes.find(box.id);
+  assert.deepEqual([waiting?.identityReset?.machine, waiting?.identityReset?.retiredAt, waiting?.enrol.state], [machine, null, "off"]);
+  world.hosts.delete(machine);
+  const again = await enrolledAgain(app, box.id);
+  assert.notEqual(again.enrol.hostId, machine);
+});

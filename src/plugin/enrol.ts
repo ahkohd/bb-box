@@ -49,6 +49,14 @@ import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../cor
 
 type ResetFound = { readonly found: "reset"; readonly reset: IdentityReset } | { readonly found: "none" } | { readonly found: "unread"; readonly why: string };
 
+function identityState(box: BoxRecord): string {
+  return JSON.stringify([box.enrol.hostId, box.enrol.state, box.identityReset?.foundAt ?? null, box.identityReset?.enrolledAgainAt ?? null, box.removedMachineToCheck?.at ?? null]);
+}
+
+function recoveryPending(box: BoxRecord): boolean {
+  return !!box.identityReset && box.identityReset.enrolledAgainAt === null;
+}
+
 export const MACHINE_PROVIDER_ID = "bb-box";
 
 /**
@@ -408,6 +416,7 @@ export class Enrolment {
   /** Boxes whose BB daemon this process is starting again. */
   readonly #reconnecting = new Set<string>();
   readonly #recovering = new Set<string>();
+  readonly #identityTurns = new Map<string, Promise<unknown>>();
   /** The steps of each enrolment this process is following. */
   readonly #phases = new Map<string, Phases>();
   readonly #stopping = new AbortController();
@@ -688,8 +697,12 @@ export class Enrolment {
       this.#following.delete(box.id);
     }
     if (resetFound) {
-      const latest = await this.#deps.boxes.find(box.id);
-      if (latest) await this.#resetFound(latest, resetFound.machine, resetFound.reset);
+      const found = resetFound;
+      await this.#identityTurn(box.id, async () => {
+        const latest = await this.#deps.boxes.find(box.id);
+        if (latest) await this.#deps.boxes.identityResetFound(latest, { at: found.reset.at, why: found.reset.why, machine: found.machine });
+      });
+      void this.#recover(box.id);
       return;
     }
     if (!startOver || this.#stopping.signal.aborted) return;
@@ -984,9 +997,8 @@ export class Enrolment {
     this.#reconnecting.add(box.id);
     try {
       const reach = await this.#reach(box);
-      const found = await this.#resetThatRemoved(box, hostId, stop);
-      if (found.found === "reset") {
-        await this.#resetFound(box, hostId, found.reset);
+      if ((await this.#identityTurn(box.id, () => this.#recordReset(box.id, hostId, stop))) === "recover") {
+        await this.#recover(box.id);
         return;
       }
       // Its own time limit, or the plugin stopping, whichever comes first.
@@ -1119,58 +1131,70 @@ export class Enrolment {
     }
   }
 
+  #identityTurn<T>(boxId: string, work: () => Promise<T>): Promise<T> {
+    const turn = (this.#identityTurns.get(boxId) ?? Promise.resolve()).catch(() => undefined).then(work);
+    const done = turn.catch(() => undefined);
+    this.#identityTurns.set(boxId, done);
+    void done.then(() => {
+      if (this.#identityTurns.get(boxId) === done) this.#identityTurns.delete(boxId);
+    });
+    return turn;
+  }
+
+  async #recordReset(boxId: string, machine: string, signal?: AbortSignal): Promise<"recover" | null> {
+    const box = await this.#deps.boxes.find(boxId);
+    if (!box) return null;
+    if (recoveryPending(box)) return box.identityReset!.machine === machine ? "recover" : null;
+    const found = await this.#resetThatRemoved(box, machine, signal);
+    if (found.found !== "reset") return null;
+    await this.#deps.boxes.identityResetFound(box, { at: found.reset.at, why: found.reset.why, machine });
+    return "recover";
+  }
+
   async #machineGone(box: BoxRecord, machine: string, options: { readonly removedInBb: boolean }): Promise<void> {
     if (box.identityReset?.machine === machine) {
       void this.#recover(box.id);
       return;
     }
-    if (box.enrol.hostId && box.enrol.hostId !== machine) return;
+    if ((await this.#identityTurn(box.id, () => this.#decideMachineGone(box.id, machine, options))) === "recover") void this.#recover(box.id);
+  }
+
+  async #decideMachineGone(boxId: string, machine: string, options: { readonly removedInBb: boolean }): Promise<"recover" | null> {
+    const box = await this.#deps.boxes.find(boxId);
+    if (!box) return null;
+    if (recoveryPending(box)) return box.identityReset!.machine === machine ? "recover" : null;
+    if (box.enrol.hostId && box.enrol.hostId !== machine) return null;
+    const seen = identityState(box);
     const found = await this.#resetThatRemoved(box, machine);
     if (found.found === "reset") {
-      await this.#resetFound(box, machine, found.reset);
-      return;
+      await this.#deps.boxes.identityResetFound(box, { at: found.reset.at, why: found.reset.why, machine });
+      return "recover";
     }
     if (found.found === "unread") {
       await this.#deps.boxes.machineToCheck(box, machine, found.why);
-      return;
+      return null;
     }
-    await this.#confirmedGone(box, machine, options);
-  }
-
-  async #confirmedGone(box: BoxRecord, machine: string, options: { readonly removedInBb: boolean }): Promise<void> {
     await this.#deps.kv.delete(`${MANUAL_PREFIX}${machine}`);
-    const cleared = await this.#deps.boxes.update(box, (current) => (current.enrol.hostId === machine ? { enrol: gone(current.enrol) } : {}));
-    if (!options.removedInBb || !cleared) return;
-    // One of your machines lives as its BB machine (036): removing that in BB removes the box.
-    if (cleared.threadId === OPERATOR && cleared.state !== "releasing" && cleared.enrol.state !== "failed" && cleared.enrol.hostId === null) {
-      await this.#deps.boxes.release(OPERATOR, cleared.id, "its BB machine was removed in BB");
-    }
+    let release = false;
+    const decided = await this.#deps.boxes.update(box, (current) => {
+      const named = current.enrol.hostId === machine || (current.enrol.hostId === null && current.removedMachineToCheck?.machine === machine);
+      if (identityState(current) !== seen || recoveryPending(current) || !named) return {};
+      // One of your machines lives as its BB machine (036): removing that in BB removes the box.
+      release = options.removedInBb && current.threadId === OPERATOR && current.state !== "releasing" && current.enrol.state !== "failed";
+      return { enrol: current.enrol.hostId === machine ? gone(current.enrol) : current.enrol, removedMachineToCheck: null };
+    });
+    if (release && decided) await this.#deps.boxes.release(OPERATOR, decided.id, "its BB machine was removed in BB");
+    return null;
   }
 
   async #checkRemovedMachine(box: BoxRecord): Promise<void> {
     const check = box.removedMachineToCheck;
-    if (!check || this.#recovering.has(box.id)) return;
-    this.#recovering.add(box.id);
+    if (!check) return;
     try {
-      const found = await this.#resetThatRemoved(box, check.machine);
-      if (found.found === "unread") return;
-      if (found.found === "reset") {
-        await this.#deps.boxes.identityResetFound(box, { at: found.reset.at, why: found.reset.why, machine: check.machine });
-      } else {
-        const cleared = await this.#deps.boxes.machineChecked(box, check.machine);
-        if (cleared) await this.#confirmedGone({ ...cleared, enrol: { ...cleared.enrol, hostId: check.machine } }, check.machine, { removedInBb: true });
-      }
+      if ((await this.#identityTurn(box.id, () => this.#decideMachineGone(box.id, check.machine, { removedInBb: true }))) === "recover") void this.#recover(box.id);
     } catch (error) {
       if (!this.#isStopping(error)) this.#deps.logError("check a removed machine for an identity reset", error);
-    } finally {
-      this.#recovering.delete(box.id);
     }
-    if (!this.#stopping.signal.aborted) void this.#recover(box.id);
-  }
-
-  async #resetFound(box: BoxRecord, machine: string, reset: IdentityReset): Promise<void> {
-    await this.#deps.boxes.identityResetFound(box, { at: reset.at, why: reset.why, machine });
-    await this.#recover(box.id);
   }
 
   async #recover(boxId: string): Promise<void> {

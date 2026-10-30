@@ -459,10 +459,11 @@ this box", and deleted.
 
 ## Unit 2: the identity reset
 
-Built on 30 October 2026, on main `827d3315`, in three commits: the reset,
-a reset never costing a box, and the answers to the reviews. This section
-describes the code as it stands after the third; [After the
-reviews](#after-the-reviews) says what each review changed.
+Built on 30 October 2026, on main `827d3315`, in four commits: the reset,
+a reset never costing a box, the answers to the reviews, and the answers to
+the re-reviews. This section describes the code as it stands after the
+fourth; [After the reviews](#after-the-reviews) and [After the
+re-reviews](#after-the-re-reviews) say what each changed.
 
 ### What changed
 
@@ -474,8 +475,8 @@ reviews](#after-the-reviews) says what each review changed.
   template, and the Docker images that Docker, Hetzner, Namespace and
   microsandbox boxes run. It turns the reset on only when the build sets
   `BOX_IDENTITY_RESET=on`, which only the checked builds do (Rollout, step
-  2). Its commands: `boot`, `write`, `enable`, `disable`, `unarm`, `status`
-  and `version`.
+  2). Its commands: `boot`, `settle`, `wait`, `write`, `enable`, `disable`,
+  `unarm`, `status` and `version`.
 - **The marker**, `/etc/bb-box/identity`: a first line `bb-box identity 1`,
   then the box's ID, the source, and either one `mac` line for each of the
   backend's interfaces or one `value` line. A second file,
@@ -491,7 +492,12 @@ reviews](#after-the-reviews) says what each review changed.
   `docker`, `docker.socket`, `containerd`, `bb-box-docker-containers`, and
   the desktop's display, session, VNC, Selkies and device firewall. So if
   the check fails, none of them start: it fails closed. It refuses a manual
-  stop, which would stop them too.
+  stop, which would stop them too. A second unit,
+  `bb-box-identity-settle.service`, runs `settle` after it, and `ssh` and
+  `tailscaled` require it too; a drop-in for the box user's
+  `bb-host-daemon-*` units, BB's daemon, makes each run `bb-box-identity
+  wait %n` before it starts. When the boot could not tell, these wait while
+  `settle` keeps looking (below); otherwise they go on at once.
 - **Docker's image** has no systemd. `bb-box-start` runs `bb-box-identity
   boot --value "$BBBOX_IDENTITY"` before it starts anything; if that fails,
   it exits, starts nothing and never writes `/run/bb-box/ready`.
@@ -511,11 +517,16 @@ reviews](#after-the-reviews) says what each review changed.
 - **The comparison at boot.** No marker and no armed record: kept, nothing
   to compare. A marker that is unreadable on a box that had one: reset. If
   any of the marker's MAC addresses is on any Ethernet card, whatever its
-  name: kept, so a card added, removed or renamed changes nothing. Once the
-  cards are known (udev settled, or no udev, as in a container), a new one
-  of the backend's with none of the marker's: a copy, reset. Otherwise it
-  waits, in 150 loops of 0.2 s, then boots as it is and resets nothing
-  (`boot=unknown`). A value is compared as it is.
+  name: kept, and the box's current cards of the backend's are added to the
+  marker, so a card added, booted, then the first removed changes nothing.
+  Once the cards are known (udev settled, or no udev, as in a container), a
+  new one of the backend's with none of the marker's: a copy, reset.
+  Otherwise it waits, in 150 loops of 0.2 s, then lets the boot go on
+  removing nothing (`boot=unknown`): the network, Docker, the desktop and
+  logins start, while SSH, Tailscale and BB's daemon wait for `settle`,
+  which looks again every 2 s and decides as above once the cards are
+  there. `wait` lets BB's daemon start once the boot is decided, unless its
+  machine is named in a reset. A value is compared as it is.
 - **The reset**, in order, each step's failure failing the boot: first
   `/var/lib/bb-box/identity-reset-pending`, written and synced, with the
   time, why and the host IDs it will remove, so a reset cut short is
@@ -556,9 +567,9 @@ reviews](#after-the-reviews) says what each review changed.
 
 ### Tests
 
-On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's three commits
+On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's four commits
 over main `827d3315`: `npx tsc` passes and the reference is current; the
-node suite ran 3,040 tests, 2,752 passed, 0 failed, 288 skipped (the live
+node suite ran 3,047 tests, 2,759 passed, 0 failed, 288 skipped (the live
 and conformance ones); vitest ran 384, all passed. The node suite includes
 the docs, site and reference checks. A device-server test that times a
 new version within 2 s failed once under the full suite's load (2,187 ms)
@@ -681,6 +692,14 @@ be undone on its own.
    `bb box option set general.identityResetBackends=proxmox-lxc`, then
    adding `proxmox-qemu`, then each Docker backend. microsandbox, Hetzner,
    Namespace and Tart offer no source yet, so naming them does nothing.
+   Before Proxmox LXC or Proxmox QEMU goes in, boot its rebuilt Linux image
+   unarmed, ideally before the first nightly rebuild after the merge, and
+   run G14's checks again on it live: `systemd-analyze` for the order, now
+   with `udevadm settle` on VMs and the requirements on Docker, containerd
+   and the desktop; a plain clone that resets; three restarts with Docker
+   containers and Tailscale; a spare claimed, renamed and restarted; a card
+   added, booted, then the first removed; and a card that comes late. The
+   G14 runs above were of version 1 of the program.
 4. **A box made before** keeps working as it does: it has no marker, so it
    never resets, and its snapshots say "not fork-safe". bb-box arms a box
    only at its first ready, so turning a backend on arms no running box.
@@ -850,6 +869,43 @@ the machine itself. The unit does not require ifupdown's
 `networking.service`: bb-box's images use systemd-networkd. The journald
 restart was checked on Proxmox LXC and on a production QEMU box, not on
 Tart.
+
+### After the re-reviews
+
+Opus said merge, with one low finding and a condition before step 3 of the
+rollout. Astra said not yet, with three P1s it reproduced. The lead asked
+for all of them, each with a regression test.
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| A stale "absent" read of a box's record could release it after another check had recorded its reset meanwhile: the conditional update did nothing, but the release went on | Astra 1 | A box's identity decisions run one at a time in the enrolment. Before a read bb-box notes the box's reset and enrolment state; the release happens only when one update finds that state unchanged, no recovery pending and the machine still named, and only then | `plugin.test.ts`: a read held while another path records the reset, then answering "absent": not released, then enrolled again |
+| A card added and booted never became an anchor, so removing the first card later reset a working box | Astra 2 | After a boot that matched, the box's current cards of the backend's are added to the marker | `identity-reset.test.ts`: LXC and a VM, a card added, booted, the first removed: kept; a copy of such a box still resets |
+| An unknown boot let a copy start BB's daemon, Tailscale and SSH with its source's identity, and nothing looked again | Astra 3 | Unknown removes nothing and lets the boot go on, but SSH and Tailscale wait for the settle unit, and BB's daemon for `wait`; `settle` looks every 2 s and resets or keeps once the cards are there; `wait` keeps a removed machine's daemon from ever starting | a copy whose card comes after the wait: held, then reset, its daemon refused; the box's own card late: kept, its daemon started; no card: nothing removed, SSH and the daemon still waiting; `wait`'s rules |
+| BB's removal of a machine after its box's reset waited up to 2 minutes for the recovery it started | Opus a | That path records the reset and starts the recovery without waiting | `plugin.test.ts`: BB holds the machine removing until `remove` returns; it returns at once, and the box is enrolled again once BB is done |
+| A real copy can boot as its source when udev never settles | Opus b | Now held by `settle` rather than let through; for unit 7, `boot=unknown` is not a reset | |
+| G14 ran on version 1 | Opus c | The rollout's step 3 now asks for G14 again on rebuilt LXC and QEMU images before either backend goes into `identityResetBackends` | |
+
+Two faults found while testing are fixed: `wait` read its records through a
+pipe that `pipefail` failed when the pending record was absent, and took a
+host ID only up to its first underscore; and two other pipes that could
+fail the same way are now plain loops.
+
+**Live, in a systemd container** on a test box, with the branch's program
+turned on, stand-ins named `docker` and `bb-box-display`, and a lingering
+box user with a stand-in BB daemon unit (`bb-host-daemon-...-host_systemd_source`):
+a normal boot and a restart with the marker written: `kept`, every service
+and the daemon up. Then the box was stopped, disconnected from its network
+and started with no card: after the 30 s wait, `boot=unknown`, the host ID
+and credentials still there, `systemd-networkd`, the Docker and desktop
+stand-ins, `systemd-user-sessions` and `user@1000` active, a shell working,
+`ssh` inactive with its start job waiting, the settle unit running, and the
+daemon waiting in its start step. Then a network was connected, giving the
+box a new card as a copy gets: `settle` reset it ("none of the marker's MAC
+addresses (02:42:ac:11:00:aa) is on this box's interfaces
+(c2:3d:fa:9e:3b:28)"), SSH started, and the daemon failed its start step:
+"BB machine host_systemd_source went with this box's identity reset, so its
+daemon does not start". `multi-user.target` waits while SSH does, as it
+wants SSH; logins do not.
 
 ### Choices and deviations
 

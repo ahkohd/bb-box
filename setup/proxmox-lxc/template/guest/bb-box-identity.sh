@@ -6,6 +6,8 @@ readonly VERSION=2
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
+readonly SETTLE_UNIT=bb-box-identity-settle.service
+readonly IDENTITY_USERS="ssh.service tailscaled.service"
 readonly GATED_UNITS="systemd-networkd.service NetworkManager.service ssh.service ssh.socket tailscaled.service user@.service docker.service docker.socket containerd.service bb-box-docker-containers.service bb-box-display.service bb-box-session.service bb-box-vnc.service bb-box-vnc-password.service bb-box-selkies.service bb-box-device-firewall.service"
 root=${BBBOX_IDENTITY_ROOT:-}
 marker=$root/etc/bb-box/identity
@@ -14,11 +16,13 @@ resets=$root/var/lib/bb-box/identity-resets
 pending=$root/var/lib/bb-box/identity-reset-pending
 switch=$root/usr/local/lib/bb-box/identity-reset-on
 units=$root/etc/systemd/system
+user_units=$root/etc/systemd/user
 run=$root/run/bb-box-identity
 boot_result=$run/boot
 boot_value=$run/value
 net=$root/sys/class/net
 nic_wait_seconds=${BBBOX_IDENTITY_NIC_WAIT_SECONDS:-30}
+settle_seconds=${BBBOX_IDENTITY_SETTLE_SECONDS:-2}
 live_value=
 marker_box=
 marker_source=
@@ -36,6 +40,14 @@ one_line() { printf '%s' "$1" | tr '\n' ' ' | sed 's/ $//'; }
 flush() { sync "$@" 2>/dev/null || sync; }
 make_folder() { [ -d "$1" ] || install -d -m "$2" "$1"; }
 note_boot() { printf '%s\n' "$1" >"$boot_result" 2>/dev/null || :; }
+boot_seen() { cat "$boot_result" 2>/dev/null || echo none; }
+
+listed() {
+  local wanted=$1 item
+  shift
+  for item in "$@"; do [ "$item" = "$wanted" ] && return 0; done
+  return 1
+}
 
 is_ethernet() { [ "$(cat "$1/type" 2>/dev/null)" = 1 ] && [ -r "$1/address" ]; }
 
@@ -107,7 +119,7 @@ devices_settled() {
 new_backend_macs() {
   local mac
   for mac in $(live_macs "$(counted_source "$marker_source")"); do
-    printf '%s\n' "${marker_macs[@]}" | grep -qxF "$mac" || printf '%s\n' "$mac"
+    listed "$mac" "${marker_macs[@]}" || printf '%s\n' "$mac"
   done
 }
 
@@ -169,6 +181,24 @@ store_marker() {
   local box=$1 source=$2 note=$3 text
   text=$(marker_text "$box" "$source" "$note") || return 1
   write_atomically "$marker" "$text" 0644 && write_atomically "$armed" "${box:-none}" 0644
+}
+
+grow_anchors() {
+  local mac added= text
+  [[ $marker_source =~ ^(eth|device)$ ]] || return 0
+  for mac in $(live_macs "$marker_source"); do
+    listed "$mac" "${marker_macs[@]}" && continue
+    marker_macs+=("$mac")
+    added="$added $mac"
+  done
+  [ -n "$added" ] || return 0
+  text=$(
+    printf '%s\n' "$MARKER_HEADER"
+    [ -z "$marker_box" ] || printf 'box %s\n' "$marker_box"
+    printf 'source %s\n' "$marker_source"
+    printf '%s\n' "${marker_macs[@]}" | sort -u | sed 's/^/mac /'
+  )
+  if write_atomically "$marker" "$text" 0644; then say "added this boot's interfaces ($added ) to the marker, as the box proved itself"; else say "could not add this boot's interfaces to the marker"; fi
 }
 
 bb_folders() {
@@ -284,7 +314,7 @@ reset_identity() {
 
 boot() {
   local reason at= outcome
-  make_folder "$run" 0700 || say "could not make $run, so bb box status cannot say what this boot found"
+  make_folder "$run" 0755 || say "could not make $run, so bb box status cannot say what this boot found"
   rm -f "$boot_value"
   [ -z "$live_value" ] || (umask 077 && printf '%s\n' "$live_value" >"$boot_value") || say "could not keep the value bb-box set on this guest in $boot_value"
   if [ ! -e "$switch" ]; then
@@ -310,11 +340,12 @@ boot() {
     if [ "$outcome" -eq 0 ]; then
       note_boot kept
       say "kept: the identity marker of box ${marker_box:-none} matches"
+      grow_anchors
       return 0
     fi
     if [ "$outcome" -eq 2 ]; then
       note_boot unknown
-      say "kept, not knowing whether this box is a copy: $reason. It resets nothing and boots as it is"
+      say "not knowing yet whether this box is a copy: $reason. It removes nothing; SSH, Tailscale and BB's daemon wait while it looks again"
       return 0
     fi
     say "this box is a copy, so it resets its identity: $reason"
@@ -325,6 +356,60 @@ boot() {
     return 1
   fi
   note_boot reset
+  return 0
+}
+
+settle() {
+  local reason outcome
+  [ -e "$switch" ] || return 0
+  nic_wait_seconds=0
+  while :; do
+    case $(boot_seen) in
+      unknown) ;;
+      failed) return 1 ;;
+      *) return 0 ;;
+    esac
+    if read_marker; then
+      reason=$(compare_with_marker)
+      outcome=$?
+      if [ "$outcome" -eq 0 ]; then
+        note_boot kept
+        say "kept, now that its cards are here: the identity marker of box ${marker_box:-none} matches"
+        grow_anchors
+        return 0
+      fi
+      if [ "$outcome" -eq 1 ]; then
+        say "this box is a copy, as its cards show now that they are here, so it resets its identity: $reason"
+        if reset_identity "$reason" "$(now)"; then
+          note_boot reset
+          return 0
+        fi
+        note_boot failed
+        say "the reset failed, so SSH, Tailscale and BB's daemon stay off; the next boot resumes it"
+        return 1
+      fi
+    fi
+    sleep "$settle_seconds"
+  done
+}
+
+wait_for_identity() {
+  local unit=${1:-} machine
+  machine=$(printf '%s' "${unit%.service}" | grep -oE 'host_[A-Za-z0-9_]+$')
+  while :; do
+    case $(boot_seen) in
+      unknown) sleep "$settle_seconds" ;;
+      failed)
+        say "this box's identity reset failed, so BB's daemon does not start"
+        return 1
+        ;;
+      *) break ;;
+    esac
+  done
+  if [ -n "$machine" ] && { cat "$resets" "$pending" 2>/dev/null || :; } | grep -qE "; BB machines removed: (.* )?$machine( .*)?\$"; then
+    say "BB machine $machine went with this box's identity reset, so its daemon does not start"
+    return 1
+  fi
   return 0
 }
 
@@ -382,20 +467,54 @@ WantedBy=multi-user.target
 EOF
 }
 
+settle_unit_text() {
+  cat <<UNIT
+[Unit]
+Description=bb-box: services that use the box's identity wait until it is known
+DefaultDependencies=no
+Requires=$UNIT
+After=$UNIT
+Before=$IDENTITY_USERS shutdown.target
+Conflicts=shutdown.target
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bb-box-identity settle
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+requirement_of() {
+  local needed=$UNIT
+  [[ " $IDENTITY_USERS " != *" $1 "* ]] || needed="$UNIT $SETTLE_UNIT"
+  printf '[Unit]\nRequires=%s\nAfter=%s' "$needed" "$needed"
+}
+
 enable() {
-  local with_unit=$1 gated
+  local with_unit=$1 gated unit
   write_atomically "$switch" "on" 0644 || fail "could not write $switch"
   [ "$with_unit" = yes ] || return 0
   write_atomically "$units/$UNIT" "$(unit_text)" 0644 || fail "could not write the unit"
+  write_atomically "$units/$SETTLE_UNIT" "$(settle_unit_text)" 0644 || fail "could not write the unit"
   for gated in $GATED_UNITS; do
-    write_atomically "$units/$gated.d/10-bb-box-identity.conf" "$(printf '[Unit]\nRequires=%s\nAfter=%s' "$UNIT" "$UNIT")" 0644 || fail "could not require it of $gated"
+    write_atomically "$units/$gated.d/10-bb-box-identity.conf" "$(requirement_of "$gated")" 0644 || fail "could not require it of $gated"
   done
-  { make_folder "$units/multi-user.target.wants" 0755 && ln -sfn "../$UNIT" "$units/multi-user.target.wants/$UNIT"; } || fail "could not enable the unit"
+  write_atomically "$user_units/bb-host-daemon-.service.d/10-bb-box-identity.conf" "$(printf '[Service]\nExecStartPre=/usr/local/sbin/bb-box-identity wait %%n\nTimeoutStartSec=infinity')" 0644 || fail "could not make BB's daemon wait for it"
+  make_folder "$units/multi-user.target.wants" 0755 || fail "could not enable the unit"
+  for unit in "$UNIT" "$SETTLE_UNIT"; do
+    ln -sfn "../$unit" "$units/multi-user.target.wants/$unit" || fail "could not enable $unit"
+  done
 }
 
 disable() {
   local gated
-  rm -f "$switch" "$units/$UNIT" "$units/multi-user.target.wants/$UNIT"
+  rm -f "$switch" "$units/$UNIT" "$units/multi-user.target.wants/$UNIT" "$units/$SETTLE_UNIT" "$units/multi-user.target.wants/$SETTLE_UNIT" "$user_units/bb-host-daemon-.service.d/10-bb-box-identity.conf"
+  rmdir "$user_units/bb-host-daemon-.service.d" 2>/dev/null || :
   for gated in $GATED_UNITS; do
     rm -f "$units/$gated.d/10-bb-box-identity.conf"
     rmdir "$units/$gated.d" 2>/dev/null || :
@@ -435,11 +554,16 @@ case $command in
     as_root_or_tested
     disable
     ;;
+  settle)
+    as_root_or_tested
+    settle
+    ;;
+  wait) wait_for_identity "${1:-}" ;;
   unarm)
     as_root_or_tested
     rm -f "$marker" "$armed" && flush "${marker%/*}" "${armed%/*}"
     ;;
   status) status ;;
   version) echo "$VERSION" ;;
-  *) fail "usage: bb-box-identity boot [--value <value>] | write --box <id> --source eth|device|value | enable [--no-unit] | disable | unarm | status | version" 2 ;;
+  *) fail "usage: bb-box-identity boot [--value <value>] | write --box <id> --source eth|device|value | enable [--no-unit] | disable | settle | wait [<unit>] | unarm | status | version" 2 ;;
 esac

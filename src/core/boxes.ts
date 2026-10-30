@@ -1539,10 +1539,6 @@ export class Boxes {
     return updated;
   }
 
-  async machineChecked(box: BoxRecord, machine: string): Promise<BoxRecord | null> {
-    return this.update(box, (current) => (current.removedMachineToCheck?.machine === machine ? { removedMachineToCheck: null } : {}));
-  }
-
   async identityResetChecks(): Promise<DoctorCheck[]> {
     return (await this.all()).flatMap((box): DoctorCheck[] => {
       const checks: DoctorCheck[] = [];
