@@ -382,3 +382,77 @@ box:
   outlives its box, and its snapshots, once found again, are deleted after
   7 days, though the person who forgot the box was told nothing was
   deleted. Opus asks for the owner's look at this before unit 8.
+
+## Unit 1b: Proxmox QEMU take and delete
+
+Built on 30 October 2026, on unit 1a.
+
+### What changed
+
+- Proxmox QEMU offers snapshots of its Linux boxes, `linux` and
+  `linux-desktop`: the disk, or the disk and memory, taken while the VM
+  runs. Windows (unit 3) and Android device boxes (unit 13) offer none yet.
+- It shares unit 1a's Proxmox code. The plan reads every disk's storage,
+  the boot disk, other disks, the EFI disk and the TPM state, and refuses a
+  take when any of them takes no snapshots. It gives a memory snapshot's
+  time as about a second for each GiB of the VM's memory, plus a second.
+- **Where the memory goes.** The plan finds the storage Proxmox saves a
+  memory snapshot's state on, from the VM's config as Proxmox does: its
+  `vmstatestorage`, or else among its disks' storages, a shared one first
+  and a file-based one before others. The state volume is twice the VM's
+  memory and 500 MiB, which the take checks and reserves on that storage.
+  Where the choice depends on an order bb-box cannot know, or a storage's
+  settings cannot be read, a memory take is refused with why; a disk take
+  is not affected. `--memory` sends `vmstate`; the snapshot holds the disk
+  and memory when Proxmox lists it with its state. A part-made take or a
+  locked VM names `qm unlock <vmid>`.
+- A stopped Proxmox QEMU box is suspended to disk, so its take is refused:
+  "bb-box cannot take a snapshot of box fond-fjord now: a stopped Proxmox
+  QEMU box is kept suspended to disk, so start it first."
+- The guide's Snapshots page names Proxmox QEMU's Linux boxes.
+
+### After the reviews
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| Only the boot disk's storage was checked; an EFI or TPM disk on storage with no snapshots was admitted and failed at Proxmox | Opus 1b-1 | Every disk's storage is checked | `proxmox-qemu-snapshots.test.ts`: "the plan checks every disk's storage" |
+| A memory take checked the boot disk's storage and reserved the RAM's size, while Proxmox may use `vmstatestorage` and allocates twice the RAM and 500 MiB | Opus 1b-1, Astra 1b-1 | Planned on the target Proxmox would choose, at Proxmox's size, or refused with why | "a memory snapshot is planned on the storage Proxmox saves it to", and in `snapshots.test.ts` "a memory take checks and reserves the storage Proxmox saves the memory on" |
+| Reservations were keyed by backend ID, so two backends on one pool did not share them | Astra 1b-2 | Keyed by the physical storage: the node and storage name, or the name alone when shared | "reservations are by physical storage"; the LXC and QEMU plans give `proxmox:pve:local-lvm` for one pool |
+| The stopped-VM refusal named the VMID, not the box | Opus 1b-2 | Names the box, and says a stopped Proxmox QEMU box is kept suspended to disk | "a stopped VM's take is refused in words about the box" |
+
+### Tests
+
+On the same Linux box, over unit 1a: `npx tsc` passes; the node suite ran
+2,996 tests, 2,708 passed, 0 failed, 288 skipped; vitest ran
+380, all passed.
+
+`test/proxmox-qemu-snapshots.test.ts`, 7: the offer, Linux only; the plan's
+storage and memory time, and its refusal of a Windows box; a take with and
+without memory, listed and deleted; a killed take incomplete and a locked
+VM naming `qm unlock`; every disk's storage; the memory target and its
+size, shared first, and refused when ambiguous or unreadable; the stopped
+VM's words and the pool's storage key.
+
+### On a separate BB
+
+The same BB as unit 1a, bb-box installed again from this branch, the lead's
+Proxmox QEMU backend with a Linux template, all through `bb box`, on a
+Linux VM of 2 cores and 4 GiB:
+
+| Check | Result |
+| --- | --- |
+| `bb box kinds` | "Snapshots: on Proxmox LXC on pve-1, its disk, while it runs; on Proxmox QEMU on pve-1, its disk, or its disk and memory, while it runs." |
+| Take, disk only | ready in 0.7 s as bb-box timed it, 1.1 s for the command |
+| Take with `--memory` | ready in 1.7 s, 2.1 s for the command; "it holds its disk and memory" |
+| List, and `bb box status` | each with what it holds; "Snapshots: 2 of 5: ..." |
+| The VM after the memory snapshot | answered at once, on the same boot (`uptime -s` unchanged) |
+| Delete both | 0.8 s for the command; "it freed what it no longer shared with its box" |
+| bb-box restarted after a memory take's task began | ready at the next start, "disk and memory" |
+| `snapshots.db` deleted while bb-box was off | all three found again on enable, two "disk and memory", one "disk"; none deleted |
+| A take of the stopped VM | refused: "Guest 3250 is suspended to disk. Start the box first." (now in words about the box, above) |
+| A record for a snapshot the VM does not have, written into `snapshots.db` beside the real ones | missing at the first listing after it, 07:49:09, still `ready`; `lost` at 08:01:18, at the first listing 10 minutes after, logged as `snapshot-lost` with the words: "not on Proxmox" (snnotonproxmox): pve-1 no longer has it.; the real three untouched |
+
+After the reviews, on the second separate BB, a Linux VM of 2 cores and 4
+GiB: a take with `--memory` was ready in 1.8 s, 2.2 s for the command, "it
+holds its disk and memory"; a disk take in 0.7 s; both listed with what they hold, "2 of 5 for
+this box", and deleted.

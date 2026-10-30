@@ -2,16 +2,17 @@
 
 A snapshot keeps a box's state at one moment, so you can see later what it held. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-For now you take, list and delete snapshots from the command line, on Proxmox LXC boxes. Restoring a box to a snapshot, forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
+For now you take, list and delete snapshots from the command line, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Restoring a box to a snapshot, forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
 
 ## What each backend offers
 
 | Backend | Holds | While the box runs |
 | --- | --- | --- |
 | Proxmox LXC | the disk | taken live, in about a second |
+| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory |
 | Every other backend | no snapshots yet | |
 
-A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD or BTRFS. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
+A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
 ## Taking a snapshot
 
@@ -19,7 +20,7 @@ A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD or BTR
 bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 ```
 
-`--memory` holds the box's memory too, where its backend can; Proxmox LXC cannot. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
+`--memory` holds the box's memory too, where its backend can: Proxmox QEMU can, for a box that runs; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
 
 The command waits until the backend confirms the snapshot is complete. A box holds at most 5 snapshots. A take is refused when the host's storage is more than 85% full, or would be with the snapshot, or when its thin metadata is more than 80% full, as a full thin pool stops every box on the host.
 
