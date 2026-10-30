@@ -365,6 +365,18 @@ test("option set and unset change general and Monitor options in one save, and l
   assert.match(kind.stderr ?? "", /^Nothing was saved\. Fix these first:\n  general\.defaultKind: There is no kind "plan9"\./);
 });
 
+test("bb box option sets and unsets the snapshot settings that bite, within their ranges (070 unit 4)", async () => {
+  const { cli, document } = await start();
+  const set = await cli(["option", "set", "general.snapshots.perBox=3", "general.snapshots.roomPercent=70"]);
+  assert.equal(set.exitCode, 0, set.stderr);
+  assert.match(set.stdout ?? "", /general\.snapshots\.perBox: 5, the default → 3/);
+  assert.deepEqual(document().general.snapshots, { perBox: 3, roomPercent: 70 });
+  assert.match((await cli(["option", "get", "general.snapshots.roomPercent"])).stdout ?? "", /^general\.snapshots\.roomPercent = 70: How full a host's storage may be/);
+  assert.match((await cli(["option", "set", "general.snapshots.roomPercent=95"])).stderr ?? "", /general\.snapshots\.roomPercent is a whole number from 50 to 90, not "95"\./);
+  assert.equal((await cli(["option", "unset", "general.snapshots.perBox", "general.snapshots.roomPercent"])).exitCode, 0);
+  assert.equal(document().general.snapshots, undefined);
+});
+
 test("the tailnet's OAuth client is set from a dotenv file with its mode in one save, never printed", async () => {
   const { cli, dir, seen, app, document } = await start();
   const alone = await cli(["option", "set", "--secret", "general.tailnet.clientSecret=TS_SECRET", "--secrets-file", "secrets.env"], dir);

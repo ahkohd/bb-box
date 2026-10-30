@@ -1,11 +1,11 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
-import type { BackendConfig, ConfigDocument, HostConfig, ImageBake, ImageConfig, Problem } from "../core/document.ts";
+import { SNAPSHOT_DEFAULTS, ceilingOf, snapshotConfig, type BackendConfig, type ConfigDocument, type HostConfig, type ImageBake, type ImageConfig, type Problem } from "../core/document.ts";
 import { withImage } from "../core/project-images.ts";
 import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
-import { effectiveKind, isSecretField, isSecretState, kindChanges, mib, PRESET_LABELS, PRESET_NAMES, withBackend, withGeneral, withKind, withMonitor, withoutBackend, type KindSizes } from "./config.ts";
+import { effectiveKind, isSecretField, isSecretState, kindChanges, mib, PRESET_LABELS, PRESET_NAMES, withBackend, withCeiling, withGeneral, withKind, withMonitor, withSnapshots, withoutBackend, type KindSizes } from "./config.ts";
 
 export type Path = string;
 export type PlainValue = string | number | boolean | null;
@@ -464,17 +464,45 @@ function sameStored(a: Stored, b: Stored): boolean {
 }
 
 type Defaults = ConfigState["defaults"];
+type Section = "general" | "monitor" | "snapshots" | "ceilings";
 
-function defaultOf(defaults: Defaults, section: "general" | "monitor", key: string): PlainValue | undefined {
+export const SNAPSHOT_KEYS = ["perBox", "roomPercent", "keepDays", "agentsRestore", "agentsMemory", "pictures"] as const;
+export type SnapshotKey = (typeof SNAPSHOT_KEYS)[number];
+const CEILINGS = "snapshots/ceilings/";
+
+export function snapshotPath(key: SnapshotKey): Path {
+  return `snapshots/${key}`;
+}
+
+export function ceilingPath(backendId: string): Path {
+  return `${CEILINGS}${backendId}`;
+}
+
+function isSnapshotKey(key: string): key is SnapshotKey {
+  return (SNAPSHOT_KEYS as readonly string[]).includes(key);
+}
+
+function defaultOf(defaults: Defaults, section: Section, key: string): PlainValue | undefined {
+  if (section === "snapshots") return isSnapshotKey(key) ? SNAPSHOT_DEFAULTS[key] : undefined;
+  if (section === "ceilings") return SNAPSHOT_DEFAULTS.ceiling;
   const values: Readonly<Record<string, unknown>> = section === "general" ? defaults.general : defaults.monitor;
   const value = values[key];
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : undefined;
 }
 
-function settingOf(path: Path): { readonly section: "general" | "monitor"; readonly key: string } | null {
+function settingOf(path: Path): { readonly section: Section; readonly key: string } | null {
+  if (path.startsWith(CEILINGS) && path.length > CEILINGS.length) return { section: "ceilings", key: path.slice(CEILINGS.length) };
   const [section, key, ...rest] = path.split("/");
   if ((section === "general" || section === "monitor") && key && !rest.length) return { section, key };
+  if (section === "snapshots" && key && isSnapshotKey(key) && !rest.length) return { section, key };
   return null;
+}
+
+function storedSetting(state: ConfigState, section: Section, key: string): unknown {
+  if (section === "snapshots") return snapshotConfig(state.document)[key as SnapshotKey];
+  if (section === "ceilings") return ceilingOf(snapshotConfig(state.document), key);
+  const values: Readonly<Record<string, unknown>> = section === "general" ? { ...state.defaults.general, ...state.document.general } : { ...state.defaults.monitor, ...state.document.monitor };
+  return values[key];
 }
 
 function backendIn(document: ConfigDocument, id: string): BackendConfig | undefined {
@@ -586,10 +614,7 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
   const tailnetKey = tailnetKeyOf(path);
   if (tailnetKey) return storedAtTailnet(state.document.general.tailnet, tailnetKey);
   const setting = settingOf(path);
-  if (setting) {
-    const values: Readonly<Record<string, unknown>> = setting.section === "general" ? { ...state.defaults.general, ...state.document.general } : { ...state.defaults.monitor, ...state.document.monitor };
-    return { kind: "value", value: asPlain(values[setting.key]) };
-  }
+  if (setting) return { kind: "value", value: asPlain(storedSetting(state, setting.section, setting.key)) };
   const at = backendAt(path);
   if (at) return storedAtBackend(state, at, path);
   const image = imageAt(path);
@@ -635,10 +660,19 @@ export function isChange(state: ConfigState, edit: PathEdit): boolean {
   return !(stored.kind === "value" && JSON.stringify(stored.value) === JSON.stringify(value));
 }
 
-function writeSetting(state: ConfigState, document: ConfigDocument, section: "general" | "monitor", key: string, value: PlainValue): ConfigDocument {
+function writeSetting(state: ConfigState, document: ConfigDocument, section: Section, key: string, value: PlainValue): ConfigDocument {
   const fallback = defaultOf(state.defaults, section, key);
   const kept = value === fallback ? undefined : value;
-  return section === "general" ? withGeneral(document, { [key]: kept } as Partial<ConfigDocument["general"]>) : withMonitor(document, { [key]: kept } as Partial<NonNullable<ConfigDocument["monitor"]>>);
+  switch (section) {
+    case "general":
+      return withGeneral(document, { [key]: kept } as Partial<ConfigDocument["general"]>);
+    case "monitor":
+      return withMonitor(document, { [key]: kept } as Partial<NonNullable<ConfigDocument["monitor"]>>);
+    case "snapshots":
+      return withSnapshots(document, { [key]: kept });
+    case "ceilings":
+      return withCeiling(document, key, kept as number | undefined);
+  }
 }
 
 interface FileDraft {
@@ -861,6 +895,10 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
   if (serverPath === "general.files") return "files";
   const tailnet = /^general\.tailnet(?:\.([A-Za-z]+))?$/.exec(serverPath);
   if (tailnet) return tailnetPath(TAILNET_KEYS.find((key) => key === tailnet[1]) ?? "mode");
+  const ceiling = /^general\.snapshots\.ceilings\.(.+)$/.exec(serverPath);
+  if (ceiling) return ceilingPath(ceiling[1]!);
+  const snapshot = /^general\.snapshots\.([A-Za-z]+)$/.exec(serverPath);
+  if (snapshot && isSnapshotKey(snapshot[1]!)) return snapshotPath(snapshot[1]);
   const setting = /^(general|monitor)\.([A-Za-z]+)$/.exec(serverPath);
   if (setting) return `${setting[1]}/${setting[2]}`;
   const kind = /^kinds\.([^.]+)$/.exec(serverPath);
@@ -982,6 +1020,12 @@ const SETTING_LABELS: Readonly<Record<string, string>> = {
   "general/video": "Linux desktops as video",
   "general/nightlyImages": "Rebuild each night",
   "general/defaultKind": "Default kind",
+  "snapshots/perBox": "Snapshots per box",
+  "snapshots/roomPercent": "Refuse new snapshots when a host's storage is past",
+  "snapshots/keepDays": "Keep keeps a snapshot for",
+  "snapshots/agentsRestore": "Agents may restore their own boxes",
+  "snapshots/agentsMemory": "Agents may restore memory snapshots",
+  "snapshots/pictures": "Keep a picture of the screen with each snapshot",
   "monitor/enabled": "Machine status",
   "monitor/refreshIntervalSeconds": "Refresh every",
   "monitor/backgroundMonitoring": "Background monitoring",
@@ -1031,6 +1075,8 @@ function imageLabelOf(path: Path): string | null {
 export function labelOf(path: Path, value?: EditValue, state?: ConfigState): string {
   const setting = SETTING_LABELS[path];
   if (setting) return setting;
+  const ceiling = settingOf(path);
+  if (ceiling?.section === "ceilings") return `The ceiling a month on ${state?.backends.find((backend) => backend.id === ceiling.key)?.label ?? ceiling.key}'s paid snapshots`;
   if (path === BACKEND_ORDER_PATH) return "The order new boxes try the backends in";
   const image = imageLabelOf(path);
   if (image) return image;

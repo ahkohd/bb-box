@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Activity01Icon, ComputerIcon, Globe02Icon, Image01Icon, Settings01Icon, SmartPhone01Icon } from "@hugeicons/core-free-icons";
+import { Activity01Icon, Camera01Icon, ComputerIcon, Globe02Icon, Image01Icon, Settings01Icon, SmartPhone01Icon } from "@hugeicons/core-free-icons";
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -14,7 +14,8 @@ import { SetupProgress } from "./first-run.tsx";
 import { FirstRunSection, JustReady, useHereHostId } from "./settings-first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { BOXES_PART, FILES_PART, MONITOR_PART, NETWORK_PART } from "./settings-drafts.ts";
+import { BOXES_PART, FILES_PART, MONITOR_PART, NETWORK_PART, SNAPSHOTS_PART } from "./settings-drafts.ts";
+import { snapshotsPast, snapshotsSummary } from "./settings-snapshots.tsx";
 import { IMPORT_PART } from "./settings-import.ts";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import { useRegistry } from "./settings-saving.tsx";
@@ -358,6 +359,7 @@ function Options() {
   const rows: { id: string; icon: ReactNode; title: string; value: string; tone?: "warn" }[] = [
     { id: "boxes", icon: <BoxGlyph />, title: "Boxes", value: [`${defaultInfo ? kindName(state.kinds, defaultInfo) : general.defaultKind} by default`, general.boxesPerThread ? `${general.boxesPerThread} per thread` : "no limit per thread", plural(files, "file")].join(" · ") },
     { id: "images", icon: <OptionIcon icon={Image01Icon} />, title: "Images", value: [general.nightlyImages ? "Rebuilt each night" : "Not rebuilt on a schedule", ...(failedImages ? [failedImages] : []), ...(projectImages ? [plural(projectImages, "project image")] : [])].join(" · "), ...(failedImages ? { tone: "warn" as const } : {}) },
+    { id: "snapshots", icon: <OptionIcon icon={Camera01Icon} />, title: "Snapshots", value: snapshotsSummary(state), ...(snapshotsPast(state) ? { tone: "warn" as const } : {}) },
     { id: "devices", icon: <OptionIcon icon={SmartPhone01Icon} />, title: "Devices", value: `iOS video: ${iosEncoderWords(general.iosEncoder)}` },
     { id: "network", icon: <OptionIcon icon={Globe02Icon} />, title: "Network", value: general.tailnet?.mode === "oauth" ? "Machines join your tailnet" : "No tailnet" },
   ];
@@ -403,7 +405,7 @@ function Options() {
   );
 }
 
-const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], network: [NETWORK_PART], monitor: [MONITOR_PART], configuration: [IMPORT_PART] };
+const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], snapshots: [SNAPSHOTS_PART], network: [NETWORK_PART], monitor: [MONITOR_PART], configuration: [IMPORT_PART] };
 
 function useDraftChip(): (parts: readonly string[]) => ReactNode {
   const registry = useRegistry();

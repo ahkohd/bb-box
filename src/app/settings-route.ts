@@ -1,6 +1,6 @@
 import { SETTINGS_PATH } from "./common.tsx";
 
-export const OPTION_PAGES = ["boxes", "images", "devices", "network", "monitor", "configuration"] as const;
+export const OPTION_PAGES = ["boxes", "images", "snapshots", "devices", "network", "monitor", "configuration"] as const;
 
 export type OptionPage = (typeof OPTION_PAGES)[number];
 

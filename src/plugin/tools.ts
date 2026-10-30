@@ -548,8 +548,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         });
         const snapshotLine = snapshotStatusLine(
           box,
-          app.backends.get(box.backend)?.snapshotting?.(box.kind) ?? null,
+          app.snapshots.offerFor(app.backends.get(box.backend), box.kind),
           app.snapshots.seen({ is: "agent", threadId: thread(threadId) }, { box: { id: box.id, threadId: box.threadId }, runsOn }),
+          app.snapshots.settings.perBox,
         );
         const hints: Record<string, string[]> = {
           ready: using(box),

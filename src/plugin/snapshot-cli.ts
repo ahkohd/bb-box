@@ -47,10 +47,11 @@ function shown(records: readonly SnapshotRecord[], kept: boolean): SnapshotRecor
 export function snapshotCommands(app: BbBox) {
   const { boxes, snapshots } = app;
   const holds = app.snapshotHolds;
+  const prices = app.snapshotPrices;
   return {
     "snapshot take": cliCommand({
       summary:
-        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds at most 5.",
+        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set.",
       positionals: [{ name: "box", description: "The box's name or ID.", required: true }],
       options: {
         ...threadOption,
@@ -70,7 +71,7 @@ export function snapshotCommands(app: BbBox) {
             ...(options.memory ? { memory: true } : {}),
             ...(options.request !== undefined ? { request: String(options.request) } : {}),
           });
-          return options.json ? json(answer) : out(takenText(answer, box.name));
+          return options.json ? json(answer) : out(takenText(answer, box.name, app.snapshots.settings.perBox));
         }),
     }),
     "snapshot list": cliCommand({
@@ -97,7 +98,7 @@ export function snapshotCommands(app: BbBox) {
           const list = shown(records, options.kept === true);
           if (options.json) return json(list);
           if (!list.length) return out(options.kept ? "There are no kept snapshots." : "There are no snapshots.");
-          return out(listText(list));
+          return out(listText(list, app.snapshots.settings.perBox));
         }),
     }),
     "snapshot delete": cliCommand({
@@ -156,6 +157,29 @@ export function snapshotCommands(app: BbBox) {
               const step = options.off ? null : ((options.at as HoldStepName | undefined) ?? "task");
               holds.arm(step);
               return out(step ? `The next snapshot take or delete stops ${step === "planned" ? "once it is recorded" : "once its backend's task has begun"}, until bb-box restarts.` : "No snapshot operation is held.");
+            },
+          }),
+        }
+      : {}),
+    ...(prices
+      ? {
+          "snapshot fake-price": cliCommand({
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: snapshots taken on a backend from now on carry a made-up price in US dollars a day, so the ceiling on paid snapshots can be checked where no backend charges. Until bb-box restarts.`,
+            positionals: [
+              { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
+              { name: "amount", description: "Dollars a day for each snapshot, such as 0.056; or off.", required: true },
+            ],
+            async run({ positionals }) {
+              const backend = positionals.backend!;
+              if (!app.backends.get(backend)) throw new PluginCliError(`There is no backend "${backend}".`, { code: "not_found", hint: "bb box config show lists the backends' IDs." });
+              if (positionals.amount === "off") {
+                prices.set(backend, null);
+                return out(`Snapshots taken on ${backend} from now on carry its own price.`);
+              }
+              const daily = Number(positionals.amount);
+              if (!Number.isFinite(daily) || daily <= 0) throw new PluginCliError(`Give an amount a day above 0, such as 0.056, or off; not "${positionals.amount}".`, { code: "invalid_value" });
+              prices.set(backend, daily);
+              return out(`Snapshots taken on ${backend} from now on carry a made-up price of $${daily} a day, for live checks, until bb-box restarts.`);
             },
           }),
         }

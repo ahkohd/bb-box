@@ -49,6 +49,21 @@ The settings page saves with an operation ID it makes for each save, and the cha
 | `encoderLedger` | `boolean` | `true` | Advanced: whether bb-box keeps the iOS devices it streams on each Mac within that Mac's video encoder (064), giving room first to the person in control of a device, then recordings, other viewers and the agent's waits, and showing the others at a lower resolution. Off, every stream of a shared ios box is capped at two thirds and nothing else is. On unless set off. |
 | `iosEncoder` | `"auto" \| "hardware" \| "software"` | `"auto"` | Advanced: how an ios box's device server encodes the device's video (065). auto uses the Mac's hardware H.264 encoder where it has one, and bb-box-h264 in software where it has none or its encoder fails; hardware never uses software; software always does, as to test it on a Mac that has an encoder. A box takes it when its device server is delivered. auto unless set. |
 | `tailnet` | `TailnetSetting` |  | How bb-box joins machines it makes to the operator's tailnet: off, where BB is reached without one, or through a Tailscale OAuth client, from which it makes a single-use key for each machine. The client's ID and secret are general secrets. |
+| `snapshots` | `SnapshotSettings` |  | Snapshots of boxes (070): how many a box holds, how full a host's storage may get, and what paid ones may cost. |
+
+### general.snapshots
+
+Snapshots of boxes (070). A ceiling for a backend that is not set is 5.
+
+| Key | Type | Default | What it is |
+| --- | --- | --- | --- |
+| `perBox` | `number` | `5` | The most snapshots a box holds, 1 to 50; kept ones count, and undos are counted apart, 2 a box. 5 unless set. |
+| `roomPercent` | `number` | `85` | How full a host's storage may be, in percent, 50 to 90, for bb-box to take a snapshot on it: a take is refused past it, and past 5 points below it of a thin pool's metadata. 7 points above it, bb-box deletes agents' snapshots on that storage that nobody kept, oldest first. 85 unless set. |
+| `keepDays` | `number` | `30` | Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. |
+| `agentsRestore` | `boolean` | `true` | Whether an agent may restore its own boxes without asking, with an undo first. On unless set off. Not used yet: agents' restores come with 070's unit 5. |
+| `agentsMemory` | `boolean` | `true` | Whether an agent may restore a snapshot that holds a box's memory. On unless set off. Not used yet: agents' restores come with 070's unit 5. |
+| `pictures` | `boolean` | `true` | Whether bb-box keeps a small picture of a box's screen with each snapshot. On unless set off. Not used yet: pictures come with 070's unit 6. |
+| `ceilings` | `Readonly<Record<string, number>>` |  | The ceiling on paid snapshots, by backend ID: the most a month, in the provider's currency, that the paid snapshots held on it may cost at their prices, 0 to 1000. A take, an undo, a Keep, a renewal or a held copy that would pass it is refused. 5 for a backend not set. |
 
 ## kinds
 

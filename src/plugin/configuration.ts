@@ -5,7 +5,7 @@
 
 import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
-import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, WarmShortfall } from "../backends/types.ts";
+import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, Price, WarmShortfall } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import type { DevicePlatform } from "../core/device.ts";
 import {
@@ -117,6 +117,25 @@ export interface BackendState {
   readonly changed: number;
   readonly hostEstimates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
   readonly hosts?: readonly string[];
+  /** What its kinds' snapshots hold and cost, and on a backend that charges, the rate held and this month's spend (070). */
+  readonly snapshots?: BackendSnapshotsView | null;
+}
+
+export interface BackendSnapshotsView {
+  /** Each distinct offer, with the kinds that have it. */
+  readonly offers: readonly { readonly kinds: readonly string[]; readonly words: string }[];
+  /** What one snapshot costs; null where it is on the person's own storage. */
+  readonly price: Price | null;
+  /** Where snapshots cost money or are held at a price. */
+  readonly paid: {
+    readonly currency: Price["currency"];
+    readonly count: number;
+    readonly unknown: number;
+    readonly monthly: number;
+    readonly spent: number;
+    readonly ceiling: number;
+    readonly past: boolean;
+  } | null;
 }
 
 export interface ConfigState {
@@ -167,6 +186,7 @@ export interface ConfigurationDeps {
   /** Every box record. */
   boxes(): Promise<readonly BoxRecord[]>;
   snapshotsHeld?(): ReadonlyMap<string, { readonly count: number; readonly words: string }>;
+  snapshotsOf?(backendId: string): BackendSnapshotsView | null;
   /** Each kind's spares now, ready and being made. */
   spareCounts?(): Promise<Readonly<Record<string, { readonly ready: number; readonly making: number }>>>;
   /** Tells open panels and pages that the configuration changed. */
@@ -344,6 +364,11 @@ export class Configuration {
     return exported(this.#document, this.#secrets, this.#deps.drivers);
   }
 
+  #snapshotsOf(backendId: string): { readonly snapshots?: BackendSnapshotsView } {
+    const view = this.#deps.snapshotsOf?.(backendId) ?? null;
+    return view && (view.offers.length || view.paid) ? { snapshots: view } : {};
+  }
+
   async state(): Promise<ConfigState> {
     // A write's reconfiguring finishes first, so the backends' states match the document.
     await this.#queue.catch(() => {});
@@ -402,6 +427,7 @@ export class Configuration {
           changed: ledger.backends[backend.id]?.changed ?? this.#document.revision,
           ...(backend.hosts?.length ? { hostEstimates: this.#deps.backends.hostEstimates(backend.id) } : {}),
           hosts: this.#deps.backends.hosts(backend.id),
+          ...this.#snapshotsOf(backend.id),
         };
       }),
       problems: checkDocument(this.#document, this.#secrets, drivers, inUse),

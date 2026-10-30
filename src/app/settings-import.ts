@@ -12,6 +12,7 @@ import {
   canonicalJson,
   documentValue,
   fieldAt,
+  ceilingPath,
   fileOfPath,
   filePath,
   hostFieldPath,
@@ -26,6 +27,8 @@ import {
   orderValue,
   plain,
   sizePath,
+  snapshotPath,
+  SNAPSHOT_KEYS,
   storedAt,
   tailnetKeyOf,
   tailnetPath,
@@ -134,6 +137,8 @@ export function importPlan(state: ConfigState, read: DraftRead, file: unknown): 
 
   for (const key of Object.keys(state.defaults.general)) settle(`general/${key}`);
   for (const key of Object.keys(state.defaults.monitor)) settle(`monitor/${key}`);
+  for (const key of SNAPSHOT_KEYS) settle(snapshotPath(key));
+  for (const id of new Set([...Object.keys(state.document.general.snapshots?.ceilings ?? {}), ...Object.keys(read.document.general.snapshots?.ceilings ?? {})])) settle(ceilingPath(id));
 
   settle(tailnetPath("mode"));
   if (read.document.general.tailnet?.mode === "oauth") {
@@ -305,6 +310,7 @@ function backendName(state: ConfigState, id: string, edits: ReadonlyMap<Path, Ed
 function placeOf(state: ConfigState, path: Path, edits: ReadonlyMap<Path, Edit>): string {
   if (PLACES[path]) return PLACES[path]!;
   if (path.startsWith("monitor/")) return "Monitor";
+  if (path.startsWith("snapshots/")) return "Snapshots";
   if (tailnetKeyOf(path)) return "Network";
   if (fileOfPath(path) !== null) return "Files for every box";
   const kind = kindAt(path);
@@ -328,6 +334,10 @@ export function importValueWords(state: ConfigState, path: Path, value: PlainVal
   if (path === "general/iosEncoder") return ENCODER_WORDS[String(value)] ?? String(value);
   if (path === tailnetPath("mode")) return TAILNET_WORDS[String(value)] ?? String(value);
   if (path === "monitor/refreshIntervalSeconds") return `${value} s`;
+  if (path === snapshotPath("perBox")) return `${value} a box`;
+  if (path === snapshotPath("roomPercent")) return `${value}% full`;
+  if (path === snapshotPath("keepDays")) return `${value} days`;
+  if (path.startsWith(ceilingPath("")) && typeof value === "number") return `${value} a month`;
   if (path === BACKEND_ORDER_PATH) return String(value).split(" ").filter(Boolean).map((id) => backendName(state, id, edits)).join(", then ");
   const kind = kindAt(path);
   if (kind?.at === "size" && kind.part !== "cores") return `${value} GiB`;

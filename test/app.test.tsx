@@ -47,6 +47,7 @@ import { forgetConfigurationPage } from "../src/app/settings-configuration.tsx";
 import { forgetStandardImages } from "../src/app/settings-images.tsx";
 import { forgetFindQuery } from "../src/app/settings-find.tsx";
 import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } from "../src/app/settings-find-index.ts";
+import { problemPath } from "../src/app/settings-paths.ts";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
 import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -9325,4 +9326,82 @@ test("a release whose failure the log lost still says it did not finish, with Re
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Release again…" }));
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
   await waitFor(() => expect(changes).toEqual(["release box_1"]));
+});
+
+const SNAPSHOT_DOCUMENT: ConfigDocument = { schema: 1, revision: 4, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: {} };
+
+function snapshotServer(paid: { past?: boolean; ceiling?: number } | null) {
+  applied = SNAPSHOT_DOCUMENT;
+  const backends = configState({}).backends.map((backend) => ({
+    ...backend,
+    doctor: { at: 1_790_000_000_000, revision: 4, report: { ok: true, summary: "Fake host", checks: [{ id: "proxmox.snapshots" as const, name: "Snapshots", status: "warn" as const, detail: "fast (LVM-thin) restores any snapshot.", fix: "Watch the pool's metadata on the host." }], notes: [] } },
+    snapshots: {
+      offers: [{ kinds: ["linux", "linux-desktop"], words: paid ? "its disk, or its disk and memory, while it runs · $0.056 a day each" : "its disk, or its disk and memory, while it runs · no charge" }],
+      price: paid ? { amount: 0.056, currency: "USD" as const, per: "day" as const, known: true } : null,
+      paid: paid ? { currency: "USD" as const, count: 2, unknown: 0, monthly: 3.36, spent: 0.39, ceiling: paid.ceiling ?? 5, past: paid.past ?? false } : null,
+    },
+  }));
+  return server([], { config: { backends } });
+}
+
+test("070 unit 4: Settings' Snapshots page saves the limit, the room and each paid ceiling through drafts and Save, and shows what each backend offers", async () => {
+  const { handlers, changes } = snapshotServer({});
+  const slot = settings(handlers, "#option/snapshots");
+  const perBox = (await slot.findByRole("textbox", { name: "Snapshots per box, in snapshots a box" })) as HTMLInputElement;
+  const room = slot.getByRole("textbox", { name: "Refuse new snapshots when a host's storage is past, in percent full" }) as HTMLInputElement;
+  const ceiling = slot.getByRole("textbox", { name: "Fake host, in dollars a month" }) as HTMLInputElement;
+  expect([perBox.value, room.value, ceiling.value]).toEqual(["5", "85", "5"]);
+  expect(ceiling.getAttribute("inputmode")).toBe("decimal");
+  expect(slot.getByText(/\$0\.056 a day for each snapshot\. Held now: 2 snapshots, about \$3\.36 a month\. Spent this month so far, deleted ones included: \$0\.39\./)).toBeTruthy();
+  expect(slot.getByText(/A new snapshot is refused past this, or past 80% of a thin pool's metadata\. Past 92%, bb-box deletes agents' snapshots/)).toBeTruthy();
+  expect(slot.getByText("Its disk, or its disk and memory, while it runs · $0.056 a day each")).toBeTruthy();
+  expect(slot.getByText("fast (LVM-thin) restores any snapshot.")).toBeTruthy();
+  expect(slot.getByText("Fix: Watch the pool's metadata on the host.").className).toContain("text-warning-text");
+  expect(slot.queryByRole("switch")).toBeNull();
+  expect(slot.queryByText(/Keep keeps a snapshot for|Agents may restore|picture of the screen/)).toBeNull();
+
+  fireEvent.change(room, { target: { value: "60" } });
+  expect(slot.getByText(/or past 55% of a thin pool's metadata\. Past 67%/)).toBeTruthy();
+  fireEvent.change(perBox, { target: { value: "3" } });
+  fireEvent.change(ceiling, { target: { value: "7.5" } });
+  expect(slot.getByRole("region", { name: "Save the snapshot settings" }).textContent).toContain("3 changes to the snapshot settings not saved");
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general.snapshots).toEqual({ perBox: 3, roomPercent: 60, ceilings: { fake: 7.5 } });
+});
+
+test("070 unit 4: with no backend that charges the page says so, a ceiling past the rate warns in words, and the overview's row sums it up", async () => {
+  const free = settings(snapshotServer(null).handlers, "#option/snapshots");
+  expect(await free.findByText("None of your backends charges for snapshots.")).toBeTruthy();
+  expect(free.queryByRole("textbox", { name: /dollars a month/ })).toBeNull();
+  cleanup();
+  const past = settings(snapshotServer({ past: true, ceiling: 3 }).handlers, "#option/snapshots");
+  expect(await past.findByText(/The rate held is past this ceiling: bb-box refuses new paid snapshots, undos, Keep and renewals there until you raise it or delete some\. It deletes none by itself\./)).toBeTruthy();
+  cleanup();
+  const overview = settings(snapshotServer({ past: true, ceiling: 3 }).handlers);
+  const row = await overview.findByRole("button", { name: "Snapshots" });
+  expect(document.getElementById(row.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full · past a paid ceiling");
+  cleanup();
+  const within = settings(snapshotServer({ ceiling: 7.5 }).handlers);
+  const withinRow = await within.findByRole("button", { name: "Snapshots" });
+  expect(document.getElementById(withinRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full · paid up to $7.50 a month");
+  cleanup();
+  const plain = settings(snapshotServer(null).handlers);
+  const freeRow = await plain.findByRole("button", { name: "Snapshots" });
+  expect(document.getElementById(freeRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full");
+});
+
+test("070 unit 4: Find finds each snapshot setting with its value, and a refused value's problem lands on its field", () => {
+  const entries = settingsIndex(stateOf(snapshotServer({ ceiling: 7.5 }).handlers));
+  expect(foundBy(entries, "snapshots/perBox")).toMatchObject({ label: "Snapshots per box", where: "Options › Snapshots", value: "5", opens: { view: { page: "option", id: "snapshots" } } });
+  expect(foundBy(entries, "snapshots/roomPercent")?.value).toBe("85% full");
+  expect(foundBy(entries, "snapshots/ceilings/fake")).toMatchObject({ label: "Paid snapshots on Fake host", value: "$7.50 a month" });
+  expect(labelsFor(entries, "snapshot limit")[0]).toBe("Snapshots per box | Options › Snapshots");
+  expect(labelsFor(entries, "snapshot ceiling")[0]).toBe("Paid snapshots on Fake host | Options › Snapshots");
+  expect(labelsFor(entries, "storage full")).toContain("Refuse new snapshots when a host's storage is past | Options › Snapshots");
+  expect(entries.some((entry) => /Keep keeps|Agents may restore|picture of the screen/.test(entry.label))).toBe(false);
+  const free = settingsIndex(stateOf(snapshotServer(null).handlers));
+  expect(free.find((entry) => entry.key === "option snapshots ceiling")).toMatchObject({ label: "Paid snapshots", value: "None of your backends charges" });
+  expect(problemPath("general.snapshots.ceilings.fake:pc-1", {})).toBe("snapshots/ceilings/fake:pc-1");
+  expect(problemPath("general.snapshots.perBox", {})).toBe("snapshots/perBox");
 });

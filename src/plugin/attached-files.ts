@@ -93,7 +93,7 @@ export interface BoxFiles {
   readonly snapshotsMoved: number;
 }
 
-export const SNAPSHOT_TABLES = ["snapshots", "snapshot_operations"] as const;
+export const SNAPSHOT_TABLES = ["snapshots", "snapshot_operations", "snapshot_charges"] as const;
 
 export interface FileMigrations {
   readonly log: readonly string[];

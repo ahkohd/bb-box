@@ -17,7 +17,7 @@ import type { FieldDescriptor } from "../src/backends/types.ts";
 import { CHECKS, type CheckInfo } from "../src/core/checks.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { platformWord, screensOf, type DeviceModel, type Screen } from "../src/core/device.ts";
-import { GENERAL_DEFAULTS, MAX_SPARES, MAX_WARM, MONITOR_DEFAULTS } from "../src/core/document.ts";
+import { GENERAL_DEFAULTS, MAX_SPARES, MAX_WARM, MONITOR_DEFAULTS, SNAPSHOT_DEFAULTS } from "../src/core/document.ts";
 import { PRESETS, describeSize, kindSizes } from "../src/core/sizes.ts";
 import plugin from "../server.ts";
 
@@ -194,6 +194,12 @@ function configurationPage(): string {
     "## general",
     "",
     memberTable("GeneralSettings", GENERAL_DEFAULTS),
+    "",
+    "### general.snapshots",
+    "",
+    "Snapshots of boxes (070). A ceiling for a backend that is not set is 5.",
+    "",
+    memberTable("SnapshotSettings", SNAPSHOT_DEFAULTS),
     "",
     "## kinds",
     "",

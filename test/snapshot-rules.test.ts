@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SNAPSHOT_DEFAULTS } from "../src/core/document.ts";
 import {
   CHANGES,
   FOUND_KEPT_MS,
-  SNAPSHOTS_PER_BOX,
   countsAgainstLimit,
   eligible,
   judgeEach,
@@ -130,7 +130,7 @@ test("keep needs a ready snapshot; unkeep a kept one; rename and note anything n
 });
 
 test("the limit counts kept ones and undos apart, a kept undo as an ordinary snapshot, and nothing that holds nothing", () => {
-  assert.equal(SNAPSHOTS_PER_BOX, 5);
+  assert.equal(SNAPSHOT_DEFAULTS.perBox, 5);
   assert.ok(countsAgainstLimit(record()));
   assert.ok(countsAgainstLimit(record({ keptUntil: NOW + 1 })));
   assert.equal(countsAgainstLimit(record({ undoOf: "op1" })), false);
