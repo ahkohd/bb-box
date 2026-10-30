@@ -51,6 +51,7 @@ is a log: bb-box does not file these with BB.
 | [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
 | [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each update of bb-box to new code keeps the old version's code in BB's server, about 5 MiB of heap and 4 MiB outside it, and each reload of the same code keeps the old instance, about 0.6 MiB |
 | [Leave a modified click on a panel's link to the browser](#37-leave-a-modified-click-on-a-panels-link-to-the-browser) | not met in 0.48.0 | each link on a box's page stops the click going further when Ctrl or Command is held, so the browser opens the new tab |
+| [Say who answered a plugin's form](#38-say-who-answered-a-plugins-form) | not met in 0.6.15 | a restore an agent asks for on one of the person's machines (070) is recorded as "a yes given in the thread", as the asking agent could answer the form itself with `bb thread interactions respond --self` |
 
 ## 1. BB's host app on Windows
 
@@ -1441,6 +1442,35 @@ button to the browser.
 **Until then.** The links on a box's page and the box's name in a view's bar
 stop the click going further when it has a modifier key or another button,
 so BB never sees it and the browser opens the new tab.
+
+## 38. Say who answered a plugin's form
+
+**Status in plugin SDK 0.6.15: not met.**
+
+**What bb-box needs.** Decision 070 lets an agent ask for a restore of a box
+its thread runs on, such as one of the person's own machines, through a form
+in the thread (`bb.ui.requestInput`), and restores only on its submit. The
+owner's rule is "never one of the person's own machines without a yes in the
+thread". bb-box needs to know that the person gave that yes, not the agent
+that asked.
+
+**What BB does now.** `PluginInteractionResult` gives `submitted` and the
+value, and nothing of who submitted it. BB's command line answers a plugin's
+form: `bb thread interactions respond <interactionId> --self --value <json>`,
+where `--self` is the thread in `BB_THREAD_ID`, and every agent has `bb` on
+its path. So the asking agent can answer its own form.
+
+**What we ask.** Either of:
+
+- the result says where the answer came from: the app, by a person, or the
+  command line, with the thread that ran it where it was one;
+- or a form can be marked as answerable only in the app, and the command
+  line refuses to answer it.
+
+**Until then.** bb-box words the form, its result and the box log as "a yes
+given in the thread", never as the person's own; the skill tells agents never
+to answer bb-box's forms; and 070's gate G11 runs the command line's answer
+from the asking agent and records what bb-box then logs.
 
 ## Checked, no request needed
 

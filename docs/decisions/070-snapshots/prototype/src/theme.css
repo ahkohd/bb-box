@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@source "../../../../../components";
+@source "../../../../../src/app/common.tsx";
+@source "../../../../../src/app/glyphs.tsx";
+@source "../../../../../src/app/thread-chips.tsx";
+@source "../../../../../src/app/boxes-toolbar.tsx";
+@source "../../../../../src/app/settings-parts.tsx";
+@source "./";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root,
+.light {
+  color-scheme: light;
+  --canvas: oklch(1 0 0);
+  --ink: oklch(0.3211 0 0);
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--canvas);
+  --popover: var(--canvas);
+  --popover-foreground: var(--ink);
+  --primary: oklch(0.4891 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: color-mix(in oklch, var(--ink) 8%, var(--canvas));
+  --secondary-foreground: var(--ink);
+  --muted: color-mix(in oklch, var(--ink) 11%, var(--canvas));
+  --muted-foreground: oklch(0.44 0 0);
+  --subtle-foreground: oklch(0.5 0 0);
+  --accent: var(--secondary);
+  --accent-foreground: var(--ink);
+  --state-hover: color-mix(in oklab, var(--ink) 5.9%, transparent);
+  --state-active: color-mix(in oklab, var(--ink) 11.8%, transparent);
+  --destructive: oklch(0.45 0.19 25.8625);
+  --destructive-foreground: oklch(1 0 0);
+  --destructive-text: oklch(0.45 0.19 25.8625);
+  --warning: oklch(0.7 0.16 50);
+  --warning-text: oklch(0.55 0.14 50);
+  --success: oklch(0.7 0.15 155);
+  --border: color-mix(in oklch, var(--ink) 14%, var(--canvas));
+  --input: color-mix(in oklch, var(--ink) 29.5%, var(--canvas));
+  --ring: var(--primary);
+  --surface-recessed: color-mix(in oklab, var(--ink) 6%, transparent);
+  --surface-raised: color-mix(in oklab, var(--ink) 2.5%, transparent);
+  --surface-selected: color-mix(in oklab, var(--primary) 16%, transparent);
+  --surface-warning: color-mix(in oklab, var(--warning) 9%, transparent);
+  --surface-destructive: color-mix(in oklab, var(--destructive) 7%, transparent);
+  --surface-destructive-border: color-mix(in oklab, var(--destructive) 30%, transparent);
+  --surface-warning-border: color-mix(in oklab, var(--warning) 35%, transparent);
+  --sidebar: color-mix(in oklch, var(--ink) 3%, var(--canvas));
+  --rail: color-mix(in oklch, var(--ink) 6%, var(--canvas));
+  --sidebar-foreground: var(--ink);
+  --chart-cpu: #15803d;
+  --chart-memory: #a16207;
+  --chart-disk: #1d4ed8;
+  --chart-down: #1d4ed8;
+  --chart-up: #6d28d9;
+  --chart-host: #525252;
+  --sidebar-accent: color-mix(in oklch, var(--ink) 8%, var(--canvas));
+  --sidebar-border: color-mix(in oklch, var(--ink) 14%, var(--canvas));
+}
+
+.dark {
+  color-scheme: dark;
+  --canvas: oklch(0.195 0 0);
+  --ink: oklch(0.81 0 0);
+  --primary: oklch(0.7058 0 0);
+  --primary-foreground: oklch(0.2178 0 0);
+  --secondary: color-mix(in oklch, var(--ink) 13%, var(--canvas));
+  --muted: color-mix(in oklch, var(--ink) 16%, var(--canvas));
+  --muted-foreground: oklch(0.78 0 0);
+  --subtle-foreground: oklch(0.68 0 0);
+  --state-hover: color-mix(in oklab, var(--ink) 13.8%, transparent);
+  --state-active: color-mix(in oklab, var(--ink) 22.5%, transparent);
+  --destructive: oklch(0.56 0.19 22.1703);
+  --destructive-text: oklch(0.65 0.16 22);
+  --warning: oklch(0.75 0.16 50);
+  --warning-text: oklch(0.75 0.16 50);
+  --success: oklch(0.74 0.15 155);
+  --border: color-mix(in oklch, var(--ink) 19.4%, var(--canvas));
+  --input: color-mix(in oklch, var(--ink) 32.6%, var(--canvas));
+  --surface-selected: color-mix(in oklab, var(--primary) 12%, transparent);
+  --sidebar: oklch(0.175 0 0);
+  --rail: oklch(0.16 0 0);
+  --chart-cpu: #22c55e;
+  --chart-memory: #e5c07b;
+  --chart-disk: #5b8def;
+  --chart-down: #5b8def;
+  --chart-up: #a78bfa;
+  --chart-host: #a3a3a3;
+  --sidebar-accent: color-mix(in oklch, var(--ink) 13%, var(--canvas));
+  --sidebar-border: color-mix(in oklch, var(--ink) 19.4%, var(--canvas));
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-state-hover: var(--state-hover);
+  --color-state-active: var(--state-active);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-text: var(--destructive-text);
+  --color-warning: var(--warning);
+  --color-warning-text: var(--warning-text);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface-recessed: var(--surface-recessed);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-selected: var(--surface-selected);
+  --color-surface-warning: var(--surface-warning);
+  --color-surface-destructive: var(--surface-destructive);
+  --color-surface-destructive-border: var(--surface-destructive-border);
+  --color-surface-warning-border: var(--surface-warning-border);
+  --color-sidebar: var(--sidebar);
+  --color-rail: var(--rail);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
