@@ -61,7 +61,7 @@ When a box is not ready, its views stay in the menu, greyed out, each with the r
 
 BB's server and your other BB machines, the ones that are not boxes, have the arrow while threads are working there, or were active there in the past 24 hours. Its tooltip says 'Threads on' and the machine's name. Its menu lists those threads under **Threads**, those working first, then the most recently active, at most 5, then a note such as '2 more in BB's sidebar'. A machine with no such threads has no arrow.
 
-![The Threads menu of a BB machine that is not a box, listing its threads, one of them working, and '1 more in BB's sidebar'](../media/monitor-threads.png)
+![The Threads menu of BB's server, listing five of its threads, two of them working, and '3 more in BB's sidebar'](../media/monitor-threads-2x.png)
 
 ## Background monitoring and pressure notifications
 

@@ -1,5 +1,7 @@
 import { chromium } from "playwright";
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 
 const out = process.argv[2] ?? "screenshots";
 mkdirSync(out, { recursive: true });
@@ -15,6 +17,18 @@ const shoot = async (name) => {
   console.log(name);
 };
 const button = (name, options = {}) => page.getByRole("button", { name, ...options });
+const bb = (...args) => execFileSync(process.env.BB_CLI ?? "bb", args, { encoding: "utf8" });
+const bbJson = (...args) => JSON.parse(bb(...args, "--json"));
+const monitorHeader = page.locator("[data-bb-box-monitor-header]");
+const threadsOnServer = [
+  ["Write the release notes", true],
+  ["Run the test suite", true],
+  ["Fix the sign-in redirect", false],
+  ["Resize the hero images", false],
+  ["Update the changelog", false],
+  ["Check the broken links", false],
+  ["Tidy the build cache", false],
+];
 
 await page.goto(process.env.DEMO_BB_URL ?? "http://localhost:4999/", { waitUntil: "networkidle" });
 await pause(1500);
@@ -73,7 +87,7 @@ await button("Desktop", { exact: true }).click();
 await pause(1500);
 await button("Machine status").click();
 await pause(1500);
-await button("Machine", { exact: true }).click();
+await monitorHeader.getByRole("button", { name: "Machine", exact: true }).click();
 await pause(800);
 await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-index]").filter({ hasText: desktopBox }).first().click();
 await pause(15000);
@@ -86,20 +100,31 @@ await page.keyboard.press("Escape");
 await pause(500);
 await button("Box", { exact: true }).click();
 await pause(800);
-await button("Machine", { exact: true }).click();
+
+const server = bbJson("machine", "list").find((machine) => machine.machineProviderId === null);
+const root = process.env.DEMO_PROJECT_ROOT ?? `${homedir()}/website`;
+mkdirSync(root, { recursive: true });
+const project = bbJson("project", "create", "--name", "website", "--root", root, "--machine", server.name);
+for (const [title, working] of threadsOnServer) {
+  const thread = bbJson("thread", "spawn", "--project", project.id, "--machine", server.name, "--environment", root, "--provider", "acp-demo", "--prompt", working ? "WORK" : "Done");
+  bb("thread", "update", thread.id, "--title", title);
+  await pause(1500);
+}
+await pause(5000);
+
+await monitorHeader.getByRole("button", { name: "Machine", exact: true }).click();
 await pause(800);
-await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-index]").first().click();
+await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-index]").filter({ hasText: server.name }).first().click();
 await pause(8000);
-await page.getByRole("button", { name: /^Threads on / }).click();
-await pause(1000);
-const around = async (locator) => locator.boundingBox();
-const panel = await around(page.locator("[data-bb-box-monitor-shell]"));
-const menu = await around(page.getByRole("menu"));
+await monitorHeader.getByRole("button", { name: `Threads on ${server.name}`, exact: true }).click();
+await pause(1500);
+const panel = await page.locator("[data-bb-box-monitor-shell]").boundingBox();
+const menu = await page.getByRole("menu").boundingBox();
 const left = Math.min(panel.x, menu.x) - 8;
 const top = Math.min(panel.y, menu.y) - 8;
 const right = Math.max(panel.x + panel.width, menu.x + menu.width) + 8;
-const bottom = Math.min(panel.y + 260, 800);
-await page.screenshot({ path: `${out}/monitor-threads.png`, clip: { x: left, y: top, width: right - left, height: bottom - top } });
-console.log("monitor-threads");
+const bottom = Math.max(menu.y + menu.height, panel.y + 200) + 8;
+await page.screenshot({ path: `${out}/monitor-threads-2x.png`, clip: { x: left, y: top, width: right - left, height: bottom - top } });
+console.log("monitor-threads-2x");
 
 await browser.close().catch(() => {});

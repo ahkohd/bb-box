@@ -122,6 +122,10 @@ h6 {
   border-radius: 8px;
 }
 
+.sl-markdown-content img[src*="-2x."]:not(:where(.not-content *)) {
+  zoom: 0.5;
+}
+
 .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
   border-bottom-color: var(--border);
 }
