@@ -5,19 +5,18 @@ import { cn } from "@/lib/utils";
 import type { BoxPageState, Contract, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { Badge, boxTitleBadges, deviceModelOf, EmptyPanel, OPERATOR, osName, SETTINGS_PATH, StatusDot, systemName, useLive, useNow } from "./common.tsx";
-import { BoxGlyph, MonitorGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph } from "./glyphs.tsx";
 import { ThreadChips, threadTitle, WorkingMark } from "./thread-chips.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { BoxMenu, type MenuAsk } from "./box-menu.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
-import { whyClosed } from "./box-opens.tsx";
-import { screensOf, screenWord } from "./screens.ts";
 import { controlWord } from "./status.ts";
 import { myViewers } from "./box-row.tsx";
 import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
-import { boxPage, viewFromPage, type BoxPageRoute, type BoxViewName } from "./box-route.ts";
+import { boxPage, viewFromPage, type BoxPageRoute } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
 import { Activity } from "./activity.tsx";
+import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
 import {
   acquireSteps,
   actorWords,
@@ -170,26 +169,12 @@ function ThreadLine({ page, now }: { page: BoxPageState; now: number }) {
   );
 }
 
-interface PageView {
-  readonly view: BoxViewName;
-  readonly words: string;
-  readonly glyph: ReactNode;
-  readonly why: string | null;
-}
-
-function pageViews(box: BoxView): PageView[] {
-  const why = silentWhy(box) ?? whyClosed(box);
-  const screens = screensOf(box).map((screen): PageView => ({ view: screen, words: screenWord(box, screen), glyph: screen === "device" ? <PhoneGlyph className="size-4" /> : <MonitorGlyph className="size-4" />, why }));
-  const terminal: PageView[] = box.terminal || box.state !== "ready" ? [{ view: "terminal", words: "Terminal", glyph: <TerminalGlyph className="size-4" />, why }] : [];
-  return [...screens, ...terminal];
-}
-
-function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: PageView; describedBy: string }) {
+function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: ViewChoice; describedBy: string }) {
   const nav = useBoxesNav();
   if (view.why) {
     return (
       <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled aria-describedby={describedBy}>
-        {view.glyph}
+        {viewGlyph(view.view)}
         {view.words}
       </Button>
     );
@@ -198,7 +183,7 @@ function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: P
   return (
     <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
       <a href={nav.href(to)} onClick={nav.onLink(to)}>
-        {view.glyph}
+        {viewGlyph(view.view)}
         {view.words}
       </a>
     </Button>
@@ -233,7 +218,7 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
   const head = headline(box, now, titles);
   const unreachable = unreachableWhy(box);
   const stops = (box.canStopStart || notInSettings(box)) && box.state !== "releasing";
-  const views = pageViews(box);
+  const views = boxViews(box);
   const starts = stops && box.state === "stopped";
   const stopsNow = stops && (box.state === "ready" || box.state === "stopping");
   const off = [...views.flatMap((view) => (view.why ? [{ name: view.words, why: view.why }] : [])), ...(unreachable && (starts || stopsNow) ? [{ name: starts ? "Start" : "Stop", why: unreachable }] : [])];
@@ -518,8 +503,12 @@ function formWords(box: BoxView): string {
   }
 }
 
+function hostWords(box: BoxView): string | null {
+  return box.slotHost ?? hostOf(box.backendLabel);
+}
+
 function sizeWords(box: BoxView): string {
-  const host = hostOf(box.backendLabel);
+  const host = hostWords(box);
   if (box.shared) return host ? `A share of ${host}` : "A share of its Mac";
   return box.sizeNow?.words ?? box.size ?? "Not known";
 }
@@ -567,7 +556,7 @@ function controlFact(box: BoxView): string | null {
 function Facts({ box, now }: { box: BoxView; now: number }) {
   const gone = notInSettings(box);
   const enrol = enrolFact(box);
-  const host = hostOf(box.backendLabel);
+  const host = hostWords(box);
   const control = controlFact(box);
   return (
     <section aria-label="Facts" className="overflow-hidden rounded-lg border border-border bg-card">

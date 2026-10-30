@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readOutWords, bytesWords, gapsOf, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
+import { readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
 import { namedAfterReady } from "../src/app/box-words.ts";
 
 const T0 = Date.UTC(2026, 9, 30, 16, 0, 0);
@@ -56,6 +56,9 @@ test("a slot's numbers are against its share: 2 of 4 cores is 50%", () => {
   assert.equal(slotCpuWords(1.6, share, "mac-1", 12), "1.6 of its 4 cores, of mac-1's 12");
   assert.equal(slotCpuWords(null, { ...share, cores: 2.4 }, "mac-1", 12), "Its share: 2.4 of mac-1's 12 cores");
   assert.match(slotLineWords("mac-1", 3), /^This slot is a macOS user on mac-1, one of up to 3 slots there\. .* never make this slot busy\.$/);
+  assert.equal(hostAtStart("mac-1"), "mac-1", "a Mac's own name keeps its case");
+  assert.equal(hostAtStart("its Namespace Mac"), "Its Namespace Mac");
+  assert.match(slotLineWords("its Namespace Mac", 4), /^This slot is a macOS user on its Namespace Mac, one of up to 4 slots there\. .*: its Namespace Mac's cores and memory divided by 4\. Its Namespace Mac's numbers are every slot's together/);
 });
 
 test("sizes and rates read as a person reads them", () => {

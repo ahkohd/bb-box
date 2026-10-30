@@ -32,7 +32,8 @@ test("old paths keep working, with and without from-settings", () => {
   assert.deepEqual(routeOf(`operator/${BOX}/terminal/from-settings`), { page: "view", boxId: BOX, view: "terminal", origins: ["from-settings"], threadId: "operator" });
   assert.deepEqual(routeOf(`operator/${BOX}/from-settings`), { page: "view", boxId: BOX, view: "desktop", origins: ["from-settings"], threadId: "operator" });
   for (const path of [`thr_1/${BOX}`, `thr_1/${BOX}/device`, `operator/${BOX}/terminal/from-settings`]) assert.equal(subPathOf(routeOf(path)), path);
-  assert.equal(subPathOf(otherView(routeOf(`thr_1/${BOX}/device`) as never, "desktop")), `thr_1/${BOX}`, "a switch keeps the old form");
+  assert.equal(subPathOf(otherView(routeOf(`thr_1/${BOX}/device`) as never, "desktop")), `box/${BOX}/desktop`, "a switch from an old path names its view, as the old desktop path shows whichever screen was last shown");
+  assert.equal(subPathOf(otherView(routeOf(`operator/${BOX}/from-settings`) as never, "terminal")), `box/${BOX}/terminal/from-settings`, "and keeps from-settings");
 });
 
 test("a path that is not one of them opens the list", () => {
@@ -53,6 +54,15 @@ test("the way back goes where the entry was opened from: the list, the page with
   assert.deepEqual(wayBack(routeOf(`thr_1/${BOX}`) as never), { to: "box", route: boxPage(BOX) });
   const switched = otherView(fromSettings, "terminal");
   assert.equal(subPathOf(switched), `box/${BOX}/terminal/from-box/from-settings`, "a switch keeps its origins");
+  assert.deepEqual(wayBack(switched), wayBack(fromSettings), "so its way back is the same");
+  for (const origins of [[], ["from-list"], ["from-settings"], ["from-box"], ["from-box", "from-list"], ["from-box", "from-settings"]] as const) {
+    const start = boxView(BOX, "desktop", origins);
+    const there = otherView(start, "terminal");
+    const andBack = otherView(there, "desktop");
+    assert.deepEqual(routeOf(subPathOf(there)), there, `the switch's path reads back: ${origins.join("/")}`);
+    assert.deepEqual(wayBack(there), wayBack(start), `a switch keeps the way back: ${origins.join("/")}`);
+    assert.equal(subPathOf(andBack), subPathOf(start), `and switching back returns to the same path: ${origins.join("/")}`);
+  }
   assert.deepEqual(pageOfView(boxView(BOX, "desktop", ["from-list"])), boxPage(BOX, ["from-list"]), "the name in the bar opens the page, keeping the list as its way back");
 });
 

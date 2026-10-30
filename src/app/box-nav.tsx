@@ -98,13 +98,13 @@ export function followPageLink(page: PageLink): (event: MouseEvent<HTMLAnchorEle
 }
 
 export function BoxName({ name, page }: { name: string; page?: PageLink }) {
-  if (!page) return <span className="font-medium text-foreground">{name}</span>;
+  if (!page) return <span className="font-normal text-foreground">{name}</span>;
   return (
     <a
       href={page.href}
       title={`${name}'s page`}
       onClick={followPageLink(page)}
-      className="rounded-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className="rounded-sm font-normal text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       {name}
     </a>

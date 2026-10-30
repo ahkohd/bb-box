@@ -153,6 +153,19 @@ export function memoryOfShare(bytes: number | null | undefined, share: SlotShare
   return share.memoryBytes > 0 ? (bytes / share.memoryBytes) * 100 : null;
 }
 
+export interface NowPercents {
+  readonly cpu: number | null;
+  readonly memory: number | null;
+  readonly ofShare: boolean;
+}
+
+export function nowPercents(snapshot: MonitorSnapshot): NowPercents {
+  const share = snapshot.slot?.share ?? null;
+  if (!share) return { cpu: snapshot.cpu.usagePercent, memory: snapshot.memory.usagePercent, ofShare: false };
+  const own = snapshot.own ?? null;
+  return { cpu: percentOfShare(own?.cpuCores, share), memory: memoryOfShare(own?.memoryBytes, share), ofShare: true };
+}
+
 function coresWords(cores: number): string {
   return Number.isInteger(cores) ? String(cores) : cores.toFixed(1);
 }
@@ -162,9 +175,13 @@ export function slotCpuWords(cores: number | null, share: SlotShare, host: strin
   return `${cores.toFixed(1)} of its ${coresWords(share.cores)} cores, of ${host}'s ${macCores}`;
 }
 
+export function hostAtStart(host: string): string {
+  return host.startsWith("its ") ? `Its ${host.slice("its ".length)}` : host;
+}
+
 export function slotLineWords(host: string, slots: number): string {
   const many = slots === 1 ? "the only slot it holds" : `one of up to ${slots} slots there`;
-  return `This slot is a macOS user on ${host}, ${many}. Its CPU and memory are its own processes', measured against its share: ${host}'s cores and memory divided by ${slots === 1 ? "1" : slots}. ${host}'s numbers are every slot's together, and never make this slot busy.`;
+  return `This slot is a macOS user on ${host}, ${many}. Its CPU and memory are its own processes', measured against its share: ${host}'s cores and memory divided by ${slots === 1 ? "1" : slots}. ${hostAtStart(host)}'s numbers are every slot's together, and never make this slot busy.`;
 }
 
 export function memoryPressure(percentUsed: number): { label: string; tone: "neutral" | "warn" | "bad" } {

@@ -160,6 +160,12 @@ A release that did not finish says so, with the backend's words, and **Release a
 
 The back arrow on a desktop, device or terminal goes back to where you opened it from: the list, the box's page, or BB Box's settings, and says which. A link with no such place goes back to the box's page.
 
+### A view's bar
+
+A desktop, device or terminal on the Boxes page has the box's other views in its bar, so Desktop to Terminal is one click: **Desktop**, **Simulator** or **Emulator**, and **Terminal**, as each can open now. Switching replaces the view rather than adding a step, so its back arrow, and your browser's Back, still go to where you first opened it from.
+
+In a window wider than 640 px, the bar also shows the box's CPU and memory now, from the same reading as its page, before **Take control**. A shared iOS or macOS box shows its own, against its share. Select them to open the box's page. If a reading fails after one worked, the bar keeps the last numbers and says which time they are from. They do not show while the Monitor is off, or while the box is not running.
+
 ## Your machines
 
 A machine is a box of your own, kept as a BB machine. It belongs to no thread. It shows in BB's machine list and in the new-thread picker, so you can start threads on it, and it stays until you remove it.

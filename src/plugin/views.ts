@@ -19,7 +19,7 @@ import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
 import { actionsOf, deviceModel, isTestOffer, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
 import { deviceStateWords } from "../core/device-settings.ts";
-import { inSlot, isSlotKind, placementOf, placementWords, rootRefusalWords, SHARED_HOSTS_OFF, SHARED_MACOS_DESKTOP_WORDS, SHARED_MACOS_WORDS, type SharedHosts, type SlotKind } from "../core/device-host.ts";
+import { inSlot, isSlotKind, placementOf, slotHostName, placementWords, rootRefusalWords, SHARED_HOSTS_OFF, SHARED_MACOS_DESKTOP_WORDS, SHARED_MACOS_WORDS, type SharedHosts, type SlotKind } from "../core/device-host.ts";
 import { offeredWords } from "../core/mac-capabilities.ts";
 import type { BoxLogView } from "../core/box-log.ts";
 import type { Reach } from "../core/reach.ts";
@@ -47,6 +47,7 @@ export interface BoxView {
   /** What the box is, as a badge: an LXC or Docker container, a VM or a physical machine. Null when its backend's driver is gone. */
   readonly form: BoxForm | null;
   readonly shared: boolean;
+  readonly slotHost?: string | null;
   readonly role: "box" | "machine";
   /** In words: what the box has, or else what it was asked to be. Null when neither is known. */
   readonly size: string | null;
@@ -133,6 +134,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     nature: box.nature,
     form: inSlot(box) ? null : boxForm(box.backend),
     shared: inSlot(box),
+    slotHost: slotHostName(box),
     role: box.role,
     size: sizeWords(box),
     state: box.state,

@@ -11,6 +11,7 @@ import {
   placementWords,
   readPlacement,
   slotCapabilities,
+  slotHostName,
   slotPorts,
   slotUid,
   slotUser,
@@ -48,6 +49,16 @@ test("a placement is written into guest.data once and read back; no slot keys is
   assert.deepEqual(readPlacement({ ...placementData(slot), slotPlace: 12 }), { ok: false, words: "guest.data.slotPlace must be a whole number from 0 to 11, not 12." });
   assert.deepEqual(readPlacement({ ...placementData(slot), slotCarried: false, slotGeneration: 10000 }), { ok: false, words: "guest.data.slotGeneration must be a whole number from 1 to 9999, not 10000." });
   assert.deepEqual(readPlacement({ ...placementData(slot), slotHostOn: "docker" }), { ok: false, words: 'guest.data.slotHostOn must be "pool-mac", "tart" or "namespace", not "docker".' });
+});
+
+test("a slot's host is named by its Mac where bb-box knows it, never by the shared host VM's name or a Namespace tag; a VM of its own has none (069 unit 5)", () => {
+  const tart: SlotPlacement = { on: "slot", host: "bb-box-host-0a1b2c3d4e", hostOn: "tart", carried: false, generation: 3, place: 1, most: 3 };
+  assert.equal(slotHostName({ guest: { ref: "bb-box-host-0a1b2c3d4e/3", host: "mac-1", address: null, size: null, data: placementData(tart) } }), "mac-1");
+  const pool: SlotPlacement = { ...tart, host: "mac-2", hostOn: "pool-mac" };
+  assert.equal(slotHostName({ guest: { ref: "mac-2/3", host: "mac-2", address: null, size: null, data: placementData(pool) } }), "mac-2");
+  const namespace: SlotPlacement = { ...tart, host: "bbbox-install-ios-host-abc123", hostOn: "namespace" };
+  assert.equal(slotHostName({ guest: { ref: "r", host: null, address: null, size: null, data: placementData(namespace) } }), "its Namespace Mac", "a Namespace Mac has no name of its own");
+  assert.equal(slotHostName({ guest: { ref: "r", host: "pve-1", address: null, size: null, data: { box: "bx1" } } }), null);
 });
 
 test("box_status's words for where a box is (064)", () => {

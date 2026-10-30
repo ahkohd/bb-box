@@ -53,7 +53,8 @@ import type { BoxOpens } from "./box-opens.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
 import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from "./box-nav.tsx";
 import { BoxPage, Loading, NotHere, useBoxPage } from "./box-page.tsx";
-import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewRoute } from "./box-route.ts";
+import { BarNumbers, OtherViews, ViewSwitchButton } from "./view-bar.tsx";
+import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./device-stage.ts";
@@ -1048,13 +1049,7 @@ function ScreenGlyph({ screen, className }: { screen: Screen; className?: string
 function OtherScreenButton({ box, shows, onClick }: { box: BoxView; shows: Screen; onClick: (other: Screen) => void }) {
   const other = otherScreen(box, shows);
   if (!other) return null;
-  const word = screenWord(box, other);
-  return (
-    <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => onClick(other)}>
-      <ScreenGlyph screen={other} className="size-3.5" />
-      {word}
-    </Button>
-  );
+  return <ViewSwitchButton view={other} words={screenWord(box, other)} onClick={() => onClick(other)} />;
 }
 
 /** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
@@ -1082,14 +1077,24 @@ function pageIsInsecure(): boolean {
   return typeof isSecureContext !== "undefined" && !isSecureContext;
 }
 
-type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo; screen?: Screen | null; openScreen?: (box: BoxView, screen: Screen) => void; page?: PageLink };
+type DesktopViewerProps = {
+  threadId: string;
+  boxId: string;
+  newTab: boolean;
+  onBack?: BackTo;
+  screen?: Screen | null;
+  openScreen?: (box: BoxView, screen: Screen) => void;
+  page?: PageLink;
+  otherViews?: (shown: Screen) => ReactNode;
+  numbers?: ReactNode;
+};
 
 export function DesktopViewer(props: DesktopViewerProps) {
   const viewer = useViewerId(props.boxId);
   return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
 }
 
-function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, viewer }: DesktopViewerProps & { viewer: string }) {
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, otherViews, numbers, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -1719,7 +1724,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
-        {box && hasDevice && hasDesktop ? (
+        {otherViews ? (
+          otherViews(shows)
+        ) : box && hasDevice && hasDesktop ? (
           <OtherScreenButton
             box={box}
             shows={shows}
@@ -1731,6 +1738,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           />
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
+          {numbers}
           {showing && !mine ? (
             <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
               {taken ? "Take control again" : "Take control"}
@@ -2195,10 +2203,14 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const threadId = route.threadId ?? page?.threadId ?? null;
   if (page && !page.box) return <NotHere page={page} back={nav.back(toPage, null)} now={now} />;
   if (!threadId) return <Loading back={back} error={error} />;
-  if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} />;
-  const switchView = (_box: BoxView, screen: Screen) => nav.go(otherView(route, screen), { replace: true });
+  const switchTo = (view: BoxViewName) => nav.go(otherView(route, view), { replace: true });
+  const box = page?.box ?? null;
+  const otherViews = (shown: BoxViewName) => (box ? <OtherViews box={box} shown={shown} onSwitch={switchTo} /> : null);
+  const reach = page?.monitor ?? null;
+  const numbers = box && reach?.is === "read" && reach.machineId ? <BarNumbers key={reach.machineId} machineId={reach.machineId} name={box.name} page={pageLink} /> : null;
+  if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} numbers={numbers} />;
   const legacyDesktop = route.threadId !== null && route.view === "desktop";
-  return <DesktopViewer threadId={threadId} boxId={route.boxId} newTab={false} onBack={back} screen={legacyDesktop ? null : route.view} openScreen={legacyDesktop ? undefined : switchView} page={pageLink} />;
+  return <DesktopViewer threadId={threadId} boxId={route.boxId} newTab={false} onBack={back} screen={legacyDesktop ? null : route.view} page={pageLink} otherViews={otherViews} numbers={numbers} />;
 }
 
 const knownTitles = new Map<string, string>();
