@@ -9,7 +9,7 @@ import { BoxGlyph } from "@/src/app/glyphs.tsx";
 import { PageTabs } from "@/src/app/boxes-toolbar.tsx";
 import { DAY, type FakeBox, type FakeSnap } from "./data";
 import { go, hrefOf, type Tab } from "./nav";
-import { DeleteDialog, freesWords, SnapshotRow } from "./snapshot-row";
+import { DeleteDialog, freesWords, KeepDialog, SnapshotRow } from "./snapshot-row";
 import { useStore } from "./store";
 import { day, money, plural, sizeWords, span } from "./words";
 
@@ -140,6 +140,7 @@ function SnapshotsTab() {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [keeping, setKeeping] = useState(false);
   const all = filtersFor(store.boxes, now);
   const query = search.trim().toLowerCase();
   const rows = store.snaps
@@ -231,8 +232,8 @@ function SnapshotsTab() {
           <span className="min-w-0 flex-1">
             {picked.length ? `${plural(picked.length, "snapshot")} selected. ${freesWords(picked, store.boxes)}` : "Tick snapshots to keep or delete them together."}
           </span>
-          <Button type="button" variant="outline" size="sm" className="h-7" disabled={!picked.length} onClick={() => store.keep([...selected], now + store.settings.keepDays * DAY)}>
-            Keep {store.settings.keepDays} days
+          <Button type="button" variant="outline" size="sm" className="h-7" disabled={!picked.length} onClick={() => setKeeping(true)}>
+            Keep…
           </Button>
           <Button type="button" variant="outline" size="sm" className="h-7 text-destructive-text" disabled={!picked.length} onClick={() => setDeleting(true)}>
             Delete…
@@ -275,6 +276,7 @@ function SnapshotsTab() {
         ) : null}
       </div>
       {deleting ? <DeleteDialog boxes={store.boxes} snaps={picked} onClose={() => setDeleting(false)} onDone={doneSelecting} /> : null}
+      {keeping ? <KeepDialog box={null} snaps={picked} onClose={() => setKeeping(false)} onDone={doneSelecting} /> : null}
     </div>
   );
 }

@@ -15,6 +15,7 @@ export interface Price {
 }
 
 export interface Snapshotting {
+  readonly scope: "box" | "device";
   readonly holds: readonly Holds[];
   readonly whileRunning: WhileRunning;
   readonly restore: "in-place" | "new-guest";
@@ -102,6 +103,8 @@ export interface FakeSnap {
   readonly undoWay: UndoWay | null;
   readonly heldCopyGB: number | null;
   readonly sizeThen: { readonly cores: number; readonly memoryGiB: number } | null;
+  readonly forkSafe: boolean;
+  readonly onEarlierGuest: boolean;
   readonly picture: number | null;
   readonly state: SnapState;
   readonly error: string | null;
@@ -128,6 +131,7 @@ export interface RestoreNotice {
 }
 
 const PROXMOX_LXC: Snapshotting = {
+  scope: "box",
   holds: ["disk"],
   whileRunning: "live",
   restore: "in-place",
@@ -150,12 +154,13 @@ const PROXMOX_QEMU: Snapshotting = {
 };
 
 const TART_MACOS: Snapshotting = {
+  scope: "box",
   holds: ["disk-and-memory"],
   whileRunning: "suspends",
   restore: "in-place",
   fork: "none",
-  keeps: "as-is",
-  keepsWhyNot: null,
+  keeps: "no",
+  keepsWhyNot: "Tart's macOS forks come in unit 8; until then a kept copy could not be used after the release.",
   price: null,
   takesAboutMs: 20_000,
   memorySecondsPerGiB: null,
@@ -165,6 +170,7 @@ const TART_MACOS: Snapshotting = {
 };
 
 const BOAT: Snapshotting = {
+  scope: "box",
   holds: ["disk"],
   whileRunning: "live",
   restore: "new-guest",
@@ -181,6 +187,10 @@ const BOAT: Snapshotting = {
 
 const ANDROID_DEVICE: Snapshotting = {
   ...PROXMOX_QEMU,
+  scope: "device",
+  holds: ["disk-and-memory"],
+  takesAboutMs: 14_800,
+  memorySecondsPerGiB: null,
   fork: "none",
   keeps: "no",
   keepsWhyNot: "A device snapshot lives in the box, and goes with it.",
@@ -238,7 +248,7 @@ export function boxesAt(now: number): FakeBox[] {
     box({ id: "bxbrisklake8m3", name: "brisk-lake", kindLabel: "Linux VM", badges: ["VM"], backend: "Proxmox QEMU", backendLabel: "Proxmox QEMU on pve-1", host: "pve-1", threadId: "thr_migrate", createdAt: now - 9 * HOUR, snapshotting: PROXMOX_QEMU, cores: 8, memoryGiB: 16, diskGiB: 64, usedGB: 21 }),
     box({ id: "bxtidyglade3z", name: "tidy-glade", kindLabel: "Linux", badges: ["LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-3", host: "pve-3", storage: ZFS_3, threadId: "thr_cache", createdAt: now - 7 * HOUR, usedGB: 9 }),
     box({ id: "bxsilverpine6z", name: "silver-pine", kindLabel: "macOS", os: "macOS", badges: ["Desktop", "VM"], backend: "Tart", backendLabel: "Tart on mac-2", host: "mac-2", storage: APFS, threadId: "thr_checkout", createdAt: now - 30 * HOUR, snapshotting: TART_MACOS, screen: "macos", cores: 6, memoryGiB: 16, diskGiB: 96, usedGB: 41 }),
-    box({ id: "bxrosyreef4k1", name: "rosy-reef", kindLabel: "Android", os: "Android", badges: ["Pixel 9", "Emulator"], backend: "Proxmox QEMU", backendLabel: "Proxmox QEMU on pve-1", host: "pve-1", threadId: "thr_android", createdAt: now - 26 * HOUR, snapshotting: PROXMOX_QEMU, screen: "phone", diskGiB: 48 }),
+    box({ id: "bxrosyreef4k1", name: "rosy-reef", kindLabel: "Android", os: "Android", badges: ["Pixel 9", "Emulator"], backend: "Proxmox QEMU", backendLabel: "Proxmox QEMU on pve-1", host: "pve-1", threadId: "thr_android", createdAt: now - 26 * HOUR, snapshotting: ANDROID_DEVICE, screen: "phone", diskGiB: 48 }),
     box({ id: "bxquickwren7d", name: "quick-wren", kindLabel: "Linux", badges: ["VM"], backend: "boat.dev", backendLabel: "boat.dev", host: "boat", storage: null, threadId: "thr_docs", createdAt: now - 3 * DAY, snapshotting: BOAT, cores: 2, memoryGiB: 4, diskGiB: 51 }),
     box({ id: "bxcalmharbor4w", name: "calm-harbor", kindLabel: "iOS", os: "iOS", badges: ["iPhone 17 Pro", "Shared"], backend: "Tart", backendLabel: "a shared iOS host on mac-1", host: "mac-1", storage: null, threadId: "thr_checkout", createdAt: now - 2 * HOUR, snapshotting: null, noSnapshotsWhy: "iOS boxes on a shared host have no snapshots: a Simulator device saves no running state, and a slot is a user on a shared Mac.", screen: "phone" }),
     box({ id: "bxworkpc5n2hq", name: "work-pc", kindLabel: "Linux desktop", badges: ["Desktop", "LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-1", host: "pve-1", threadId: null, workspaces: ["thr_cleanup"], createdAt: now - 60 * DAY, screen: "linux", usedGB: 28 }),
@@ -259,7 +269,7 @@ function timeName(at: number, now: number): string {
 }
 
 function snap(base: Partial<FakeSnap> & Pick<FakeSnap, "id" | "boxId" | "name" | "takenAt" | "by">): FakeSnap {
-  return { note: null, tookMs: 700, holds: "disk", sizeGB: null, price: null, keptUntil: null, undoOf: null, undoWay: null, heldCopyGB: null, sizeThen: null, picture: null, state: "ready", error: null, ...base };
+  return { note: null, tookMs: 700, holds: "disk", sizeGB: null, price: null, keptUntil: null, undoOf: null, undoWay: null, heldCopyGB: null, sizeThen: null, forkSafe: true, onEarlierGuest: false, picture: null, state: "ready", error: null, ...base };
 }
 
 export function snapshotsAt(now: number): FakeSnap[] {
@@ -267,7 +277,7 @@ export function snapshotsAt(now: number): FakeSnap[] {
     snap({ id: "snamb01thursd", boxId: "bxamberfox2q7k", name: timeName(now - 5 * HOUR - 20 * MINUTE, now), takenAt: now - 5 * HOUR - 20 * MINUTE, by: BY_PERSON, sizeGB: 3.4, keptUntil: now + 29 * DAY, picture: 11, note: "Signed in to the staging site, cookies set.", sizeThen: { cores: 4, memoryGiB: 8 } }),
     snap({ id: "snamb02migrat", boxId: "bxamberfox2q7k", name: "before the migration", takenAt: now - 2 * HOUR - 5 * MINUTE, by: byAgent("thr_login"), sizeGB: 1.2, picture: 23 }),
     snap({ id: "snamb03playwr", boxId: "bxamberfox2q7k", name: "after installing Playwright", takenAt: now - 41 * MINUTE, by: byAgent("thr_login"), sizeGB: 0.4, picture: 37, tookMs: 640 }),
-    snap({ id: "snbri01today0", boxId: "bxbrisklake8m3", name: timeName(now - 7 * HOUR, now), takenAt: now - 7 * HOUR, by: BY_PERSON, sizeGB: 2.2 }),
+    snap({ id: "snbri01today0", boxId: "bxbrisklake8m3", name: timeName(now - 7 * HOUR, now), takenAt: now - 7 * HOUR, by: BY_PERSON, sizeGB: 2.2, forkSafe: false, note: "Taken before brisk-lake's image had the identity reset." }),
     snap({ id: "snbri02schema", boxId: "bxbrisklake8m3", name: "schema v41", takenAt: now - 3 * HOUR, by: byAgent("thr_migrate"), sizeGB: 0.9, note: "Before the column renames." }),
     snap({ id: "snbri03pgupgr", boxId: "bxbrisklake8m3", name: "before pg_upgrade", takenAt: now - 25 * MINUTE, by: byAgent("thr_migrate"), sizeGB: 13.8, holds: "disk-and-memory", tookMs: 14_700 }),
     snap({ id: "snbri04indexe", boxId: "bxbrisklake8m3", name: "before dropping old indexes", takenAt: now - 9 * MINUTE, by: byAgent("thr_migrate"), state: "failed", tookMs: null, error: "Proxmox: VM 214 is locked (backup)." }),
@@ -276,8 +286,8 @@ export function snapshotsAt(now: number): FakeSnap[] {
     snap({ id: "sntid03cachec", boxId: "bxtidyglade3z", name: "cache warm, tuned", takenAt: now - 50 * MINUTE, by: byAgent("thr_cache"), sizeGB: 0.5 }),
     snap({ id: "snsil01clean0", boxId: "bxsilverpine6z", name: "clean install", takenAt: now - 28 * HOUR, by: BY_PERSON, holds: "disk-and-memory", sizeGB: 7.1, picture: 5, tookMs: 19_400 }),
     snap({ id: "snsil02xcode0", boxId: "bxsilverpine6z", name: "after Xcode signed in", takenAt: now - 4 * HOUR, by: byAgent("thr_checkout"), holds: "disk-and-memory", sizeGB: 7.9, picture: 19, tookMs: 21_200 }),
-    snap({ id: "snros01signed", boxId: "bxrosyreef4k1", name: "app signed in", takenAt: now - 20 * HOUR, by: byAgent("thr_android"), sizeGB: 2.5, picture: 8 }),
-    snap({ id: "snros02deepln", boxId: "bxrosyreef4k1", name: "before the deep link test", takenAt: now - 90 * MINUTE, by: byAgent("thr_android"), sizeGB: 0.3, picture: 14 }),
+    snap({ id: "snros01signed", boxId: "bxrosyreef4k1", name: "app signed in", takenAt: now - 20 * HOUR, by: byAgent("thr_android"), holds: "disk-and-memory", sizeGB: 2.5, picture: 8, tookMs: 14_800 }),
+    snap({ id: "snros02deepln", boxId: "bxrosyreef4k1", name: "before the deep link test", takenAt: now - 90 * MINUTE, by: byAgent("thr_android"), holds: "disk-and-memory", sizeGB: 2.4, picture: 14, tookMs: 14_600 }),
     snap({ id: "snwor01upgrad", boxId: "bxworkpc5n2hq", name: "before the upgrade", takenAt: now - 2 * HOUR, by: byAgent("thr_cleanup"), sizeGB: 2.0, picture: 31 }),
     snap({ id: "snqui01green0", boxId: "bxquickwren7d", name: "docs build green", takenAt: now - 2 * DAY, by: byAgent("thr_docs"), price: USD_DAY, tookMs: 41_000 }),
     snap({ id: "snqui03kept00", boxId: "bxquickwren7d", name: "release notes draft", takenAt: now - 5 * DAY, by: BY_PERSON, price: USD_DAY, keptUntil: now + 20 * DAY, tookMs: 36_000 }),

@@ -56,6 +56,7 @@ function stateLine(box: FakeBox, now: number): { tone: "ok" | "busy" | "off" | "
 export function capabilityWords(box: FakeBox): string {
   const cap = box.snapshotting;
   if (!cap) return box.noSnapshotsWhy ?? "No snapshots.";
+  if (cap.scope === "device") return `Snapshots hold the device: its disk and memory, the apps open on it. A restore puts back the device only, not the rest of ${box.name}. They go when ${box.name} is released.`;
   const holds = cap.holds.length === 2 ? "Snapshots hold the disk, or the disk and memory when asked." : cap.holds[0] === "disk" ? "Snapshots hold the disk." : "Snapshots hold the disk and memory: the box suspends for each.";
   const storage = box.storage?.newestOnly ? ` ${box.host} uses ZFS: a restore goes to the newest snapshot only, with a held copy as its undo.` : "";
   const leaves = cap.excludes ? ` They leave out ${cap.excludes}.` : "";
@@ -110,7 +111,9 @@ function TakeDialog({ box, onClose }: { box: FakeBox; onClose: () => void }) {
         </div>
       ) : null}
       <AlertDialogDescription className="text-xs leading-snug text-muted-foreground">
-        {memoryOnly
+        {cap.scope === "device"
+          ? `It holds the device: its disk and memory, with the apps open on it, about ${seconds(cap.takesAboutMs)}. The rest of ${box.name} is not in it.`
+          : memoryOnly
           ? `It holds its disk and memory: every snapshot on Tart's macOS does, as ${box.name} suspends and resumes, about ${seconds(cap.takesAboutMs)}. A restore brings back its running apps, and the credentials in them.`
           : memory
             ? "It holds the disk and the memory."
@@ -215,7 +218,7 @@ function Notices({ box }: { box: FakeBox }) {
     );
   }
   const undo = notice.undoId ? store.snaps.find((snap) => snap.id === notice.undoId) : null;
-  const who = notice.consentIn ? `by you, with your yes in ${notice.consentIn}` : byWords(notice.by, store.threads, true);
+  const who = notice.consentIn ? `on a yes given in ${notice.consentIn}` : byWords(notice.by, store.threads, true);
   const words = notice.kind === "finished-after-restart" ? `bb-box finished the restore of ${box.name} to "${notice.to}" after its restart, from its record and Proxmox's task.` : `Restored at ${clockOf(notice.at)} to "${notice.to}", taken ${whenInSentence(notice.toAt, store.now)}, ${who}.`;
   return (
     <div role="status" className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-border bg-surface-raised px-4 py-3">
@@ -247,7 +250,7 @@ function Facts({ box }: { box: FakeBox }) {
     ["Made", `${span(store.now - box.createdAt)} ago`],
   ];
   if (box.forkedFrom) cells.push(["Forked from", box.forkedFrom.box, `"${box.forkedFrom.snapshot}" (${when(box.forkedFrom.takenAt, store.now).toLowerCase()})`]);
-  if (box.snapshotting) cells.push(["Snapshots", box.snapshotting.holds.map(holdsWords).join(", or "), box.snapshotting.price ? `$${box.snapshotting.price.amount.toFixed(3)} a day each` : "No charge, on its host"]);
+  if (box.snapshotting) cells.push(["Snapshots", box.snapshotting.scope === "device" ? "the device only" : box.snapshotting.holds.map(holdsWords).join(", or "), box.snapshotting.price ? `$${box.snapshotting.price.amount.toFixed(3)} a day each` : "No charge, on its host"]);
   return (
     <section aria-label="Facts" className="grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-card sm:grid-cols-3 [&>*]:border-b [&>*]:border-r [&>*]:border-border">
       {cells.map(([label, first, second]) => (
