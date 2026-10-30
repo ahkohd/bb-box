@@ -56,6 +56,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
+import { writeIdentityMarker } from "./identity.ts";
 import {
   bestAnswer,
   grantRefusal,
@@ -2034,6 +2035,7 @@ export class Boxes {
       }
       box = (await this.#read(box.threadId, box.id)) ?? box;
     }
+    await this.#markIdentity(box, guest, backend, timings, signal);
     const now = this.#now();
     const next = await this.update(box, (current) =>
       current.state === "releasing"
@@ -2096,6 +2098,21 @@ export class Boxes {
     const ms = this.#now() - started;
     timings.image = ms;
     await this.update(box, () => ({ image: { name, state: "done" as const, seconds: Math.round(ms / 1000) } }));
+  }
+
+  async #markIdentity(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
+    const source = box.capabilities.os === "linux" ? (backend.identitySource?.(box.kind) ?? null) : null;
+    if (!source) return;
+    const started = this.#now();
+    try {
+      const command = (await backend.transports(guest, box.kind)).command;
+      if (!command) return;
+      const written = await writeIdentityMarker(command, box.id, source, signal);
+      timings.identity = this.#now() - started;
+      if (!written.written) this.#deps.log?.(`Wrote no identity marker in box ${box.name}, so a copy of it would not reset, and its snapshots cannot be forked: ${written.why}.`);
+    } catch (error) {
+      if (!signal.aborted) this.#deps.logError("identity marker", error);
+    }
   }
 
   /** Starts enrolling a ready box as a BB machine, when it can enrol. */

@@ -3938,7 +3938,7 @@ test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_s
 
   const listed = await harness.behavior.runCli(["snapshot", "list", "--thread", THREAD]);
   assert.equal(listed.exitCode, 0, listed.stderr);
-  assert.match(listed.stdout ?? "", new RegExp(`^${box.name} \\(${box.id}\\) · Fake host · thread ${THREAD}\\n  "before the migration" \\(${record!.id}\\) · ready · taken .* · by a bb box command · disk · size unknown\\n  1 of 5 for this box\\.\\n$`));
+  assert.match(listed.stdout ?? "", new RegExp(`^${box.name} \\(${box.id}\\) · Fake host · thread ${THREAD}\\n  "before the migration" \\(${record!.id}\\) · ready · taken .* · by a bb box command · disk · size unknown · taken before ${box.name} had the identity reset\\n  1 of 5 for this box\\.\\n$`));
   const json = JSON.parse((await harness.behavior.runCli(["snapshot", "list", box.name, "--thread", THREAD, "--json"])).stdout ?? "[]") as { id: string; note: string }[];
   assert.deepEqual(json.map((each) => [each.id, each.note]), [[record!.id, "schema v41"]]);
   assert.equal((await harness.behavior.runCli(["snapshot", "list", "--all", "--kept"])).stdout, "There are no kept snapshots.\n");

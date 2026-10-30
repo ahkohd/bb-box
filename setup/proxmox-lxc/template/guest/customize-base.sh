@@ -283,6 +283,34 @@ install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-hea
 # Dev Container features for a project image's script (049).
 install -m 0755 "$build/guest/bb-box-feature.sh" /usr/local/bin/bb-box-feature
 
+install -m 0755 "$build/guest/bb-box-identity.sh" /usr/local/sbin/bb-box-identity
+if [ "$runtime" != docker ]; then
+  cat >/etc/systemd/system/bb-box-identity.service <<'EOF'
+[Unit]
+Description=bb-box: a copy of a box gives up the identity it copied
+DefaultDependencies=no
+After=local-fs.target systemd-journald.socket systemd-udev-trigger.service
+Before=network-pre.target systemd-networkd.service NetworkManager.service ssh.service ssh.socket tailscaled.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bb-box-identity boot
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  for unit in systemd-networkd.service NetworkManager.service ssh.service ssh.socket tailscaled.service user@.service; do
+    install -d -m 0755 "/etc/systemd/system/$unit.d"
+    printf '[Unit]\nRequires=bb-box-identity.service\nAfter=bb-box-identity.service\n' >"/etc/systemd/system/$unit.d/10-bb-box-identity.conf"
+  done
+  systemctl enable bb-box-identity.service >/dev/null
+fi
+
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
 # does in a login shell. Once: a refresh (049) runs this on a built image,
 # where a later step may have put another directory first.

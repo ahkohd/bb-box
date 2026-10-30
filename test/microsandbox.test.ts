@@ -109,15 +109,17 @@ test("acquires a box as a microVM labelled with its owner, at its size, with /ru
     "bbbox.thread=thr_abc123",
   ]);
   assert.deepEqual(
-    ["--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--pull", "--mount-disk", "--env"].map((flag) => after(create, flag)[0]),
-    [box.name, "2", "4096M", "32G", "/run", "public,private", "never", `${fake.dir}/disks/${guest.ref}.ext4:/var/lib/docker`, "BBBOX_DOCKERD=1"],
+    ["--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--pull", "--mount-disk"].map((flag) => after(create, flag)[0]),
+    [box.name, "2", "4096M", "32G", "/run", "public,private", "never", `${fake.dir}/disks/${guest.ref}.ext4:/var/lib/docker`],
   );
+  assert.deepEqual(after(create, "--env"), [`BBBOX_IDENTITY=${box.boxId}`, "BBBOX_DOCKERD=1"], "the value its identity marker holds, set on the guest by bb-box (070)");
   assert.deepEqual(fake.scripts.find(([name]) => name === "disk"), ["disk", guest.ref, "64"], "bb-box makes the box's Docker disk, at the configured size");
   assert.ok(!create.includes("--replace"));
   const quiet = setup({ docker: false });
-  await quiet.backend.acquire(identity("linux", { cores: 1, memoryMiB: 2048, diskGiB: 8 }), null, hooks().hooks, signal());
+  const small = identity("linux", { cores: 1, memoryMiB: 2048, diskGiB: 8 });
+  await quiet.backend.acquire(small, null, hooks().hooks, signal());
   const plain = quiet.fake.calls().find((call) => call[0] === "create")!;
-  assert.deepEqual([after(plain, "--mount-owned"), after(plain, "--mount-disk"), after(plain, "--env"), after(plain, "--root-disk")[0]], [[], [], [], "8G"]);
+  assert.deepEqual([after(plain, "--mount-owned"), after(plain, "--mount-disk"), after(plain, "--env"), after(plain, "--root-disk")[0]], [[], [], [`BBBOX_IDENTITY=${small.boxId}`], "8G"]);
 });
 
 test("a box's Docker disk goes with the box, a host without mkfs.ext4 gets msb's own until bb-box has made a template to clone, and the upkeep removes old disks no microVM has", async () => {

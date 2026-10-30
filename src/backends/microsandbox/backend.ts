@@ -63,6 +63,7 @@ import {
   type Limit,
   type PowerState,
   type ReleaseHooks,
+  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { setupDir } from "../setup-dir.ts";
@@ -74,6 +75,7 @@ import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } fro
 import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
 import { MSB_VERSION, scriptValues } from "./release.ts";
 import { BOX_USER, MsbTransport } from "./transport.ts";
+import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 
 /** A box is ready in under a second, a desktop in about one; an import of its image can come first. */
 const READY_TIMEOUT_MS = 60_000;
@@ -439,6 +441,10 @@ export class MsbBackend implements Backend {
     if (this.#arch) return;
     if (this.#config.machine && (await this.#context.machines?.connected(this.#config.machine)) !== true) return;
     await this.#hostFacts(signal).catch(() => undefined);
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return this.kinds().some((offered) => offered.id === kind) ? "value" : null;
   }
 
   kinds(): BoxKind[] {
@@ -1081,6 +1087,7 @@ export class MsbBackend implements Backend {
       "--quiet",
       ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
       "--hostname", hostnameOf(box.name),
+      "--env", `${IDENTITY_VARIABLE}=${box.boxId}`,
       "--cpus", String(box.size.cores),
       "--memory", `${box.size.memoryMiB}M`,
       "--root-disk", `${box.size.diskGiB ?? this.#config.diskGiB}G`,

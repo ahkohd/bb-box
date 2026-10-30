@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { SnapshotFailed, SnapshotIncomplete, type Backend, type Guest, type HeldSnapshot, type SnapshotHooks, type Snapshotting, type SnapshotStorage, type TaskOutcome } from "../backends/types.ts";
 import { BoxError, type BoxRecord, OPERATOR } from "./boxes.ts";
+import { readForkSafe } from "./identity.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
 import { ceilingOf, snapshotConfig, type SnapshotConfig } from "./document.ts";
 import { ceilingVerdict, heldRate, pastCeiling, spentThisMonth, type HeldRate } from "./snapshot-cost.ts";
@@ -274,6 +275,7 @@ export class Snapshots {
     if (plan.locked) throw new BoxError("locked", `${backend.label} left box ${box.name} locked (${plan.locked.lock}), so it takes no snapshot. ${plan.locked.fix}`);
     if (!plan.take.ok) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.take.why ?? `${backend.label} refused it.`}`);
     if (memory && !plan.take.memory) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} with its memory: ${plan.take.memoryWhy ?? "its backend did not say where the memory would go."}`);
+    const forkSafe = await this.#forkSafe(box, backend);
     const spends: { readonly storage: SnapshotStorage; readonly adds: number }[] = [{ storage: plan.storage, adds: plan.take.addsBytes ?? 0 }];
     if (memory && plan.take.memory) spends.push({ storage: plan.take.memory.storage, adds: plan.take.memory.addsBytes });
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
@@ -337,7 +339,7 @@ export class Snapshots {
         keptUntil: null,
         keptAt: null,
         undoOf: null,
-        forkSafe: null,
+        forkSafe,
         dependsOn: [],
         picture: null,
         ref: null,
@@ -376,6 +378,18 @@ export class Snapshots {
     if ("repeat" in admitted) return this.#repeat(admitted.repeat);
     this.#notify(box.threadId);
     return this.#runTake(admitted.record, admitted.operation, box, backend, admitted.counted);
+  }
+
+  async #forkSafe(box: BoxRecord, backend: Backend): Promise<number | null> {
+    if (box.state !== "ready" || box.capabilities.os !== "linux" || !box.guest) return null;
+    try {
+      const command = (await backend.transports(box.guest, box.kind)).command;
+      return command ? await readForkSafe(command, this.#stopping.signal) : null;
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      this.#deps.log?.(`Could not read box ${box.name}'s identity reset at a take, so the snapshot is not fork-safe: ${message(error)}`);
+      return null;
+    }
   }
 
   #roomProblem(box: BoxRecord, storage: SnapshotStorage, adds: number, memory: boolean, roomPercent: number): string | null {

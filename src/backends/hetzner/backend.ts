@@ -29,6 +29,7 @@ import {
   type ReleaseHooks,
   type ResizePlan,
   type Resizing,
+  type IdentitySource,
 } from "../types.ts";
 import { Hetzner, HetznerError, type EurosBeforeVat, type HetznerFetch, type ServerType } from "./api.ts";
 import { HetznerHosts, IMAGE_BUILD_ROLE, serverNamePrefix, serverNamePrefixBeforeHz, type HostRecord } from "./hosts.ts";
@@ -233,6 +234,10 @@ export class HetznerBackend implements Backend {
 
   get label(): string {
     return "Hetzner Cloud";
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return this.kinds().some((offered) => offered.id === kind) ? "value" : null;
   }
 
   kinds(): BoxKind[] {

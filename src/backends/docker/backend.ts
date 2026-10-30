@@ -53,6 +53,7 @@ import {
   type MachineAccess,
   type PowerState,
   type ReleaseHooks,
+  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
@@ -63,6 +64,7 @@ import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
+import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 const READY_TIMEOUT_MS = 60_000;
@@ -560,6 +562,10 @@ export class DockerBackend implements Backend {
   }
 
   /** The kinds, with Docker until the daemon has said it is rootless, and a GPU desktop's until its image has said it is too old. */
+  identitySource(kind: string): IdentitySource | null {
+    return this.kinds().some((offered) => offered.id === kind) ? "value" : null;
+  }
+
   kinds(): BoxKind[] {
     if (this.#info?.rootless) return this.#rootlessKinds;
     return this.#gpuBusId === false ? this.#oldDesktopKinds : this.#kinds;
@@ -1508,6 +1514,7 @@ export class DockerBackend implements Backend {
       ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
       "--hostname", hostnameOf(box.name),
       "--init",
+      "--env", `${IDENTITY_VARIABLE}=${box.boxId}`,
       "--cpus", String(cores),
       ...(cpus ? ["--cpuset-cpus", formatCpuList(cpus)] : ["--env", `OMP_NUM_THREADS=${Math.ceil(cores)}`]),
       ...(lxcfs ? lxcfsMountArgs(lxcfs) : []),

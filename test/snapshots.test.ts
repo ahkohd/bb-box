@@ -9,9 +9,12 @@ import { BY_COMMAND, type BoxEventKind } from "../src/core/box-log.ts";
 import { BoxError, Boxes, type BoxRecord } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { checkDocument, emptyDocument, snapshotConfig, type SnapshotSettings } from "../src/core/document.ts";
-import { LOST_AFTER_MISSING_MS, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
+import { LOST_AFTER_MISSING_MS, snapshotLine, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
 import { Snapshots, type HoldStep } from "../src/core/snapshots.ts";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { quote } from "../src/transports/process.ts";
 import { SNAPSHOT_TABLES, migrateFile, moveFromMain, openBoxFiles, unopenedFiles, type DatabaseSource } from "../src/plugin/attached-files.ts";
 import { BOX_LOG_MIGRATIONS, BoxLogStore } from "../src/plugin/box-log-store.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "../src/plugin/snapshot-store.ts";
@@ -24,7 +27,7 @@ const COMMAND: Caller = { is: "command" };
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
-function world() {
+function world(options: { readonly identityTool?: string } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -44,7 +47,7 @@ function world() {
     threadState: "live" as "live" | "ended",
     settings: {} as SnapshotSettings,
     price: null as Price | null,
-    backend: new FakeBackend({ root, storage: backendStorage }),
+    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
     boxes: null as unknown as Boxes,
@@ -1042,3 +1045,83 @@ test("box_status counts every snapshot against the limit while naming only those
   assert.equal(seen.counted, 4);
 });
 
+
+const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
+
+function identityGuest(options: { readonly booted?: boolean } = {}): { readonly root: string; readonly tool: string } {
+  const dir = tempDir("identity-guest");
+  const root = join(dir, "root");
+  mkdirSync(join(root, "sys/class/net/eth0"), { recursive: true });
+  writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
+  writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
+  const tool = join(dir, "bb-box-identity");
+  writeFileSync(tool, `#!/bin/sh\nBBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
+  if (options.booted !== false) assert.equal(spawnSync(tool, ["boot"]).status, 0, "the boot check ran, as its unit runs it at the box's first boot");
+  return { root, tool };
+}
+
+function withIdentitySource(state: World, source: "eth" | "device" | "value"): void {
+  (state.backend as unknown as Record<string, unknown>).identitySource = () => source;
+}
+
+test("a box is first ready with its identity marker, written with its backend's source, and each take records the reset's version as forkSafe", async () => {
+  const guest = identityGuest();
+  const state = world({ identityTool: guest.tool });
+  withIdentitySource(state, "eth");
+  const box = await readyBox(state);
+  assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource eth\nmac bc:24:11:aa:f1:b6\n`);
+  assert.equal(typeof box.timings.identity, "number");
+  assert.deepEqual(state.boxLogs.filter((line) => line.includes("identity marker")), []);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  assert.equal(taken.forkSafe, 1);
+  assert.equal(state.store.record(taken.id)?.forkSafe, 1, "kept on the record, so a restart keeps it");
+  assert.doesNotMatch(snapshotLine(taken), /identity reset/);
+});
+
+test("a take is not fork-safe, and says so, when the box's image has no identity reset, its backend writes no marker, its marker no longer matches, or its boot check did not run", async () => {
+  const notForkSafe = async (state: World, box: BoxRecord, why: string) => {
+    const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+    assert.equal(taken.state, "ready", why);
+    assert.equal(taken.forkSafe, null, why);
+    assert.match(snapshotLine(taken), new RegExp(`taken before ${box.name} had the identity reset`), why);
+  };
+  const older = world();
+  withIdentitySource(older, "eth");
+  const olderBox = await readyBox(older);
+  assert.ok(older.boxLogs.some((line) => line === `Wrote no identity marker in box ${olderBox.name}, so a copy of it would not reset, and its snapshots cannot be forked: its image has no identity reset.`));
+  await notForkSafe(older, olderBox, "an image from before the change");
+
+  const unsettled = identityGuest();
+  const noSource = world({ identityTool: unsettled.tool });
+  await notForkSafe(noSource, await readyBox(noSource), "a backend whose identity source is not settled writes no marker");
+  assert.equal(readFileSync(join(unsettled.root, "run/bb-box-identity/boot"), "utf8"), "unarmed\n");
+
+  const changed = identityGuest();
+  const moved = world({ identityTool: changed.tool });
+  withIdentitySource(moved, "eth");
+  const movedBox = await readyBox(moved);
+  writeFileSync(join(changed.root, "sys/class/net/eth0/address"), "bc:24:11:00:00:01\n");
+  await notForkSafe(moved, movedBox, "its MAC addresses changed since the marker was written, so it would reset at its next boot");
+
+  const unwired = identityGuest({ booted: false });
+  const noBoot = world({ identityTool: unwired.tool });
+  withIdentitySource(noBoot, "eth");
+  await notForkSafe(noBoot, await readyBox(noBoot), "the boot check never ran, so its unit is not wired");
+});
+
+test("a Docker box's marker holds the value its start saw, and a box whose start saw none is not armed", async () => {
+  const guest = identityGuest({ booted: false });
+  assert.equal(spawnSync(guest.tool, ["boot", "--value", "bxpending"]).status, 0);
+  const state = world({ identityTool: guest.tool });
+  withIdentitySource(state, "value");
+  const box = await readyBox(state);
+  assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource value\nvalue bxpending\n`);
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 1);
+
+  const before = identityGuest();
+  const old = world({ identityTool: before.tool });
+  withIdentitySource(old, "value");
+  const oldBox = await readyBox(old);
+  assert.ok(old.boxLogs.some((line) => line.startsWith(`Wrote no identity marker in box ${oldBox.name}`) && line.includes("this boot saw no value from bb-box")), old.boxLogs.join("\n"));
+  assert.equal(oldBox.state, "ready");
+});

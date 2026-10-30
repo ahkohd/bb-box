@@ -54,6 +54,25 @@ Give the snapshot's name or ID. The command waits until the backend confirms it 
 
 If a task such as a backup is running on the box's guest, a take or a delete is refused until it ends. If Proxmox left the guest locked with no task running, as when a task on it was stopped part way, it is refused with the command to run on the host, such as `pct unlock 214`. Only root on the host can unlock a guest.
 
+## A copy of a box gives up its identity
+
+Every Linux image BB Box builds can tell when it is a copy of another box. When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/identity`. It holds the box's ID and the MAC addresses of the network cards its backend gives it. On Docker, Hetzner, Namespace and microsandbox it holds a value BB Box sets on the box instead, as their network cards can change at a restart.
+
+At each start, before its network, SSH, Tailscale and BB's daemon start, the box compares the marker with what it has. If they differ, as in any copy of the box, such as a Proxmox clone, or the marker has gone, the box removes what made it its source:
+
+- BB's machine credentials and host ID, so it joins BB as a new machine
+- the thread's access file, `~/.config/bb-box/env`
+- its Tailscale node
+- its SSH host keys and machine ID, which it makes again
+
+The rest of its disk stays, threads' files included. A restart, a resize, a rename and a spare given to a thread change nothing.
+
+`/var/lib/bb-box/identity-resets` lists each reset, with why. If a reset cannot finish, the box keeps its network, SSH and BB's daemon off.
+
+Each snapshot records whether its box had the reset when it was taken. A snapshot from before says "taken before amber-fox had the identity reset". Forks, which come later, will start only from snapshots that had it.
+
+Boxes made before their image had the reset, boxes BB Box made before it wrote markers, and boat.dev boxes have no marker yet, so they never reset.
+
 ## When a box is released
 
 A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one.

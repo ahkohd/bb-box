@@ -100,6 +100,7 @@ import {
   type TaskOutcome,
   type TaskRef,
   type WarmShortfall,
+  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
@@ -676,6 +677,10 @@ export class ProxmoxLxcBackend implements Backend {
       },
       ["disk"],
     );
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return this.#offers().some((offer) => offer.kind.id === kind) ? "eth" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {
