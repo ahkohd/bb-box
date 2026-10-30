@@ -79,7 +79,6 @@ function ThreadItem({ thread, onOpen }: { thread: ThreadOnBox; onOpen: (threadId
 function MoreOnBoxesPage({ more, box }: { more: number; box: BoxScreens }) {
   return (
     <MenuItem onSelect={box.openOnBoxesPage} className="text-muted-foreground">
-      <span className="h-4 w-3.5 shrink-0" />
       <span className="min-w-0">{more} more on the Boxes page</span>
     </MenuItem>
   );
