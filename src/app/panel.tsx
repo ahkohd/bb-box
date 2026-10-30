@@ -138,7 +138,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
             {rows.map(({ box, held }) => (
-              <BoxRow key={box.id} box={box} threadId={threadId} open={open === box.id} onToggle={() => setOpen((current) => (current === box.id ? null : box.id))} act={act} now={now} held={held} onBoxesPage={() => nav.go(boxPage(box.id))} />
+              <BoxRow key={box.id} box={box} threadId={threadId} opening={{ details: open === box.id, toggle: () => setOpen((current) => (current === box.id ? null : box.id)) }} act={act} now={now} held={held} onBoxesPage={() => nav.go(boxPage(box.id))} />
             ))}
           </div>
         </div>

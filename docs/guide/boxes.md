@@ -47,7 +47,7 @@ After the state, the line says what needs your attention. For a desktop, it says
 
 The name and the line under it each keep to one line. In a narrow panel, the line leaves out what does not fit, from its end. Point at the line to see all of it. A long name is shortened in the same way.
 
-Select a row to see its details. They give the box's address, size, backend and system, and whether it is a BB machine. They also say how long each step took to start it, and when it was made.
+In the Box panel, select a row to see its details. They give the box's address, size, backend and system, and whether it is a BB machine. They also say how long each step took to start it, and when it was made. On the Boxes page, a row opens [the box's page](#a-boxs-page) instead.
 
 ### What you can do with a box
 
@@ -109,7 +109,11 @@ On Threads, each thread's card comes where its first box falls in that order.
 
 A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
+Select a row, its name or the arrow at its end to open [the box's page](#a-boxs-page). Hold Command or Ctrl as you select its name or arrow to open the page in a new tab. With the keyboard, Tab reaches each row's name, then its buttons; Enter on a name opens the page.
+
 A desktop or terminal you open from a row shows on the page, with a back arrow to the list. A row whose release did not finish says 'Release did not finish', and its menu has **Release again…**.
+
+When you come back to the list from a box's page, a desktop or a terminal, by the page's **Boxes** link, a back arrow or the browser's Back, the list is as you left it: the same tab, search, filters, sort and scroll, with the keyboard's focus on the name of the box you opened. If that box has gone, the focus is on the row now in its place. The list keeps these until you close the browser tab. The search field and the tabs stay at the top while the rows scroll.
 
 The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. To start a thread on a box of its own, use BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
 
@@ -117,6 +121,7 @@ The gear at the top right opens BB Box's settings. **New box** beside it adds on
 
 Every box, and every machine of yours, has a page of its own on the Boxes page, at `/plugins/bb-box/desktop/box/` and the box's ID. Its address works in a new browser tab, after a reload and as a link you send. To open it:
 
+- on the Boxes page, select a box's row, its name or the arrow at its end
 - in the Box panel, select **Open on the Boxes page** in a box's menu
 - in the Monitor's machine status, select **Open** beside a box's name, then **Page**
 - in a desktop, device or terminal on the Boxes page, select the box's name in its bar

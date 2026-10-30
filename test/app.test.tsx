@@ -19,9 +19,10 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { forgetMoves } from "../src/app/box-route.ts";
+import { FRESH_PLACE, forgetListPlace, keepListPlace, leaveRow, listPlace, placeFrom, returnToPlace, rowToReturnTo } from "../src/app/list-place.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
@@ -331,6 +332,8 @@ const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
   forgetMoves();
+  forgetListPlace();
+  forgetThreadTitles();
   toast.dismiss();
   dropAllKept();
   forgetLive();
@@ -6193,6 +6196,10 @@ test("a desktop machine not made after its image was built says why on the Boxes
   expect(await list.findByText("The desktop image is built, but the box was not made: no room")).toBeTruthy();
 });
 
+function listedRowNames(): string[] {
+  return Array.from(document.querySelectorAll("[data-row-name]"), (link) => link.getAttribute("aria-label") ?? "");
+}
+
 /** The Boxes page, with thread titles from the SDK. */
 function boxesPage(handlers: PluginRpcTestHandlers<Contract>) {
   const [page] = app.navPanels;
@@ -6342,7 +6349,7 @@ test("the Boxes page's tab row has the settings gear, then New box at the far ri
   expect(row.contains(list.getByRole("tablist"))).toBe(true);
   expect(row.className).toContain("justify-between");
   // Before the lists, not under them.
-  expect(gear.compareDocumentPosition(list.getByRole("button", { name: "calm-otter: details" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(gear.compareDocumentPosition(list.getByRole("link", { name: "calm-otter" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 
@@ -6380,7 +6387,7 @@ test("on the Boxes page, the search narrows the list, says when nothing matches,
   const list = boxesPage(handlers);
   await list.findByText("calm-otter");
   // An open menu hides the page from the accessibility tree, so the rows are read hidden or not.
-  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  const rowNames = listedRowNames;
   // Name, ascending, at first, as on the Automations page.
   expect(rowNames()).toEqual(["bold-heron", "calm-otter", "swift-fox"]);
   expect(list.getByRole("button", { name: "Sort: Name, ascending" })).toBeTruthy();
@@ -6408,6 +6415,132 @@ test("on the Boxes page, the search narrows the list, says when nothing matches,
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
   expect(list.getByRole("button", { name: "Sort: Created, descending" })).toBeTruthy();
   expect(rowNames().at(-1)).toBe("swift-fox");
+});
+
+function rowOf(list: ReturnType<typeof boxesPage>, name: string): HTMLElement {
+  return list.getByRole("link", { name, hidden: true }).closest<HTMLElement>("[data-resource-row]")!;
+}
+
+test("on the Boxes page a row's click, its name and its chevron open the box's page from the list; a row no longer unfolds, and its controls do not open the page (069 unit 1d)", async () => {
+  const { handlers, changes } = server([box(), desktopBox()]);
+  const list = boxesPage(handlers);
+  const name = await list.findByRole("link", { name: "calm-otter" });
+  expect(name.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_1/from-list");
+  expect(list.queryByRole("button", { name: /: details$/ })).toBeNull();
+  const toPage = { method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_1/from-list" } };
+  fireEvent.click(name);
+  expect(list.inspection.navigateCalls).toEqual([toPage]);
+  const row = rowOf(list, "calm-otter");
+  const chevron = row.querySelector("[data-row-action]")!.lastElementChild as HTMLAnchorElement;
+  expect(chevron.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_1/from-list");
+  expect(chevron.tabIndex).toBe(-1);
+  expect(chevron.getAttribute("aria-hidden")).toBe("true");
+  fireEvent.click(chevron);
+  fireEvent.click(row.querySelector("[data-status-line]")!);
+  expect(list.inspection.navigateCalls).toEqual([toPage, toPage, toPage]);
+  fireEvent.click(name, { metaKey: true });
+  fireEvent.click(chevron, { ctrlKey: true });
+  fireEvent.click(within(row).getByRole("button", { name: "Stop" }));
+  await waitFor(() => expect(changes).toEqual(["stop box_1"]));
+  const menu = await openMenu(within(row).getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Check now" }));
+  expect(list.inspection.navigateCalls).toHaveLength(3);
+  expect(row.className).toContain("hover:bg-state-hover/40");
+  expect(row.querySelector("dl")).toBeNull();
+});
+
+test("the Boxes page keeps its search, filters and sort, and focus returns to the row's name, after a box is opened by its name, its chevron, a quick icon or its menu (G9)", async () => {
+  const { handlers } = server([box(), desktopBox(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
+  const ways: [string, (row: HTMLElement) => Promise<void>, string][] = [
+    ["name", async (row) => void fireEvent.click(within(row).getByRole("link", { name: "bold-heron" })), "box/box_2/from-list"],
+    ["chevron", async (row) => void fireEvent.click(row.querySelector("[data-row-action]")!.lastElementChild!), "box/box_2/from-list"],
+    ["quick icon", async (row) => void fireEvent.click(within(row).getByRole("button", { name: "Open terminal" })), "box/box_2/terminal/from-list"],
+    [
+      "menu",
+      async (row) => {
+        const menu = await openMenu(within(row).getByRole("button", { name: "bold-heron actions" }));
+        fireEvent.click(within(menu).getByRole("menuitem", { name: "Open desktop" }));
+      },
+      "box/box_2/desktop/from-list",
+    ],
+  ];
+  let list = boxesPage(handlers);
+  await list.findByRole("link", { name: "calm-otter" });
+  fireEvent.change(list.getByRole("textbox", { name: "Search boxes" }), { target: { value: "o" } });
+  let menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /^Ready/ }));
+  fireEvent.keyDown(menu, { key: "Escape" });
+  menu = await openMenu(list.getByRole("button", { name: "Sort: Name, ascending" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Name" }));
+  expect(listedRowNames()).toEqual(["calm-otter", "bold-heron"]);
+  for (const [way, open, subPath] of ways) {
+    await open(rowOf(list, "bold-heron"));
+    expect([way, list.inspection.navigateCalls.at(-1)]).toEqual([way, { method: "toPluginPanel", path: "desktop", options: { subPath } }]);
+    cleanup();
+    list = boxesPage(handlers);
+    const name = await list.findByRole("link", { name: "bold-heron" });
+    expect([way, (list.getByRole("textbox", { name: "Search boxes" }) as HTMLInputElement).value]).toEqual([way, "o"]);
+    expect(list.getByRole("button", { name: "Sort: Name, descending" })).toBeTruthy();
+    expect([way, listedRowNames()]).toEqual([way, ["calm-otter", "bold-heron"]]);
+    expect([way, list.getByRole("button", { name: "Filters" }).className]).toEqual([way, expect.stringContaining("bg-state-active")]);
+    await waitFor(() => expect([way, document.activeElement]).toEqual([way, name]));
+  }
+});
+
+test("returning to the Boxes page after a box went, focus is on the row now in its place, also when the fresh list drops the row shown at first (G9)", async () => {
+  const { handlers } = server([box(), desktopBox(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
+  let list = boxesPage(handlers);
+  fireEvent.click(await list.findByRole("link", { name: "calm-otter" }));
+  cleanup();
+  await handlers.release!({ threadId: THREAD, box: "box_1" } as never);
+  list = boxesPage(handlers);
+  await waitFor(() => expect(listedRowNames()).toEqual(["bold-heron", "swift-fox"]));
+  await waitFor(() => expect(document.activeElement).toBe(list.getByRole("link", { name: "swift-fox" })));
+});
+
+test("a machine's row opens its page, and a thread chip on it records the row, so the way back focuses it (G9)", async () => {
+  const { handlers } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, state: "stopped" }, [])] });
+  let list = boxesPage(handlers);
+  const name = await list.findByRole("link", { name: "build-1" });
+  expect(name.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_m1/from-list");
+  fireEvent.click(rowOf(list, "scratch").firstElementChild!);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_m2/from-list" } });
+  fireEvent.click(within(rowOf(list, "build-1")).getByRole("button", { name: /Fix the login form/ }));
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_a" });
+  cleanup();
+  list = boxesPage(handlers);
+  const back = await list.findByRole("link", { name: "build-1" });
+  await waitFor(() => expect(document.activeElement).toBe(back));
+  expect(rowOf(list, "build-1").querySelector("[data-row-action]")!.lastElementChild!.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_m1/from-list");
+});
+
+test("the list's place is kept in session storage for a reload, with its scroll for the tab it was on; what is not a place is left out", () => {
+  const list = document.createElement("div");
+  Object.defineProperty(list, "scrollTop", { value: 240, writable: true });
+  for (const id of ["box_a", "box_b", "box_c"]) {
+    const link = document.createElement("a");
+    link.href = "#";
+    link.setAttribute("data-row-name", id);
+    list.appendChild(link);
+  }
+  document.body.appendChild(list);
+  keepListPlace({ search: "fox", sort: { key: "created", ascending: false } });
+  leaveRow(list, "threads", "box_b");
+  forgetListPlace();
+  expect(listPlace()).toEqual({ search: "fox", filters: NO_FILTERS, sort: { key: "created", ascending: false }, scroll: { tab: "threads", top: 240 }, left: { tab: "threads", boxId: "box_b", index: 1 } });
+  list.scrollTop = 0;
+  expect(returnToPlace(list, "machines")).toBeNull();
+  expect(list.scrollTop).toBe(0);
+  expect(returnToPlace(list, "threads")).toEqual({ tab: "threads", boxId: "box_b", index: 1 });
+  expect(list.scrollTop).toBe(240);
+  expect(document.activeElement?.getAttribute("data-row-name")).toBe("box_b");
+  expect(listPlace().left).toBeNull();
+  list.removeChild(list.children[1]!);
+  expect(rowToReturnTo(list, { tab: "threads", boxId: "box_b", index: 1 })?.getAttribute("data-row-name")).toBe("box_c");
+  expect(rowToReturnTo(list, { tab: "threads", boxId: "box_b", index: 7 })?.getAttribute("data-row-name")).toBe("box_c");
+  list.remove();
+  expect(placeFrom("not json")).toBeNull();
+  expect(placeFrom('{"search":3,"filters":{"systems":[1]},"sort":{"key":"price","ascending":true},"scroll":{"tab":"other","top":5},"left":{"tab":"threads","boxId":"box_1","index":-1}}')).toEqual(FRESH_PLACE);
 });
 
 function tagged(id: string, name: string, facts: Partial<BoxView>): BoxView {
@@ -6482,7 +6615,7 @@ test("on the Boxes page, the Filters menu lists the tags under one Tags heading,
   await list.findByText("cloud-machine");
   fireEvent.click(list.getByRole("tab", { name: /^Threads/ }));
   await list.findByText("linux-vm");
-  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  const rowNames = listedRowNames;
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
   expect(menu.className).toContain("min-w-56");
   expect(within(menu).getByRole("menuitemcheckbox", { name: "Proxmox" }).className).toContain("whitespace-nowrap");
@@ -7800,7 +7933,7 @@ test("F-19: on the Boxes page, the Filters menu offers iOS and Android under Sys
   const { handlers } = server([box(), MAC_DESKTOP, SHARED_IOS, DEDICATED_IOS, ANDROID]);
   const list = boxesPage(handlers);
   await list.findByText("brisk-wren");
-  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  const rowNames = listedRowNames;
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
   expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent).slice(0, 4)).toEqual(["Linux", "macOS", "iOS", "Android"]);
   fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "iOS" }));
@@ -7943,7 +8076,7 @@ test("F-22: a device box's row reads as a desktop's does: its device's system, i
 test("F-22: the Boxes page's rows and the bare tabs' choosers badge a device box as the Box panel does", async () => {
   const list = boxesPage(server(F22_ROWS.map(([one]) => one)).handlers);
   await list.findByText("brisk-wren");
-  for (const [one, expected] of F22_ROWS) expect([one.name, rowTitle(list.getByRole("button", { name: `${one.name}: details`, hidden: true }))]).toEqual([one.name, expected]);
+  for (const [one, expected] of F22_ROWS) expect([one.name, rowTitle(list.getByRole("link", { name: one.name, hidden: true }))]).toEqual([one.name, expected]);
   cleanup();
   for (const [one, expected] of F22_ROWS) {
     const line = render(<BoxLine box={one} />);

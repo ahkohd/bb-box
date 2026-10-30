@@ -1,7 +1,7 @@
 // One box in the Box panel: its name, kind and status line, its details
 // when open, its quick actions and its menu.
 
-import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useState, type MouseEvent, type ReactNode } from "react";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,8 @@ import { openActions, openableNow, type BoxOpens } from "./box-opens.tsx";
 import { useResizeNote } from "./resize.tsx";
 import { BoxMenu, type BoxAction } from "./box-menu.tsx";
 import { releaseUnfinished, unreachableWhy } from "./box-words.ts";
+import { followPageLink, type PageLink } from "./box-nav.tsx";
+import { ROW_NAME } from "./list-place.ts";
 
 /** The viewer IDs this browser tab holds, one per box, as the desktop tabs keep them. */
 export function myViewers(): Set<string> {
@@ -33,7 +35,38 @@ export function myViewers(): Set<string> {
 
 /** True when the click landed on a control inside the row, which handles it itself. */
 function onControl(event: MouseEvent<HTMLElement>): boolean {
+  if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return true;
   return event.target instanceof Element && event.target.closest("a, button, [data-row-action]") !== null;
+}
+
+function selectingText(): boolean {
+  return (window.getSelection?.()?.toString() ?? "") !== "";
+}
+
+export type RowOpening = { readonly details: boolean; readonly toggle: () => void } | { readonly page: PageLink };
+
+export const PAGE_ROW = "group -mx-4 cursor-pointer px-4 transition-colors duration-150 hover:bg-state-hover/40 has-[[data-state=open]]:bg-state-hover/40";
+
+export function openPageOnClick(page: PageLink): (event: MouseEvent<HTMLElement>) => void {
+  return (event) => {
+    if (!onControl(event) && !selectingText()) page.go();
+  };
+}
+
+export function RowChevron({ page }: { page: PageLink }) {
+  return (
+    <a href={page.href} tabIndex={-1} aria-hidden onClick={followPageLink(page)} className="ml-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-subtle-foreground transition-colors duration-150 hover:bg-state-hover hover:text-foreground group-hover:text-muted-foreground">
+      <Icon name="ChevronRight" className="size-4" aria-hidden />
+    </a>
+  );
+}
+
+export function RowNameLink({ box, page, children }: { box: Pick<BoxView, "id" | "name">; page: PageLink; children: ReactNode }) {
+  return (
+    <a href={page.href} aria-label={box.name} {...{ [ROW_NAME]: box.id }} onClick={followPageLink(page)} className="block min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+      {children}
+    </a>
+  );
 }
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
@@ -55,8 +88,7 @@ export interface Held {
 export function BoxRow({
   box,
   threadId,
-  open,
-  onToggle,
+  opening,
   act,
   now,
   held = null,
@@ -68,8 +100,7 @@ export function BoxRow({
 }: {
   box: BoxView;
   threadId: string;
-  open: boolean;
-  onToggle: () => void;
+  opening: RowOpening;
   act: (method: BoxAction, box: BoxView) => Promise<void>;
   now: number;
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
@@ -100,6 +131,8 @@ export function BoxRow({
       setBusy(null);
     }
   };
+  const page = "page" in opening ? opening.page : null;
+  const open = !page && "details" in opening && opening.details;
   const status = statusOf(box, now, myViewers());
   const ready = box.state === "ready";
   const showsError = box.error !== null;
@@ -114,25 +147,35 @@ export function BoxRow({
   return (
     <div
       data-resource-row
-      className={cn("group grid min-w-0 cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", box.state === "releasing" && !releaseUnfinished(box) && "opacity-60")}
-      onClick={(event) => {
-        if (!onControl(event)) onToggle();
-      }}
+      className={cn("group grid min-w-0 cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", page && PAGE_ROW, box.state === "releasing" && !releaseUnfinished(box) && "opacity-60")}
+      onClick={
+        page
+          ? openPageOnClick(page)
+          : (event) => {
+              if (!onControl(event) && "toggle" in opening) opening.toggle();
+            }
+      }
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
         <BoxGlyph />
       </span>
       <div className="min-w-0">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={`${box.name}: details`}
-          onClick={onToggle}
-          className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
-          <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
-        </button>
+        {page ? (
+          <RowNameLink box={box} page={page}>
+            <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
+          </RowNameLink>
+        ) : (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${box.name}: details`}
+            onClick={"toggle" in opening ? opening.toggle : undefined}
+            className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
+            <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
+          </button>
+        )}
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
@@ -194,6 +237,7 @@ export function BoxRow({
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
         <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method) => void run(method) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
+        {page ? <RowChevron page={page} /> : null}
       </span>
     </div>
   );
