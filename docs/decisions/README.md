@@ -75,3 +75,4 @@ which records still stand as written. The current design as a whole is in
 | [067](067-settings-page.md) | The settings page is an overview, with a page one step in for each backend, kind and option | Accepted; built |
 | [068](068-boat-backend.md) | A boat.dev box is a sandbox forked from a template sandbox, held on a renewed auto-stop and deleted on release | Proposed; being built |
 | [069](069-boxes-page.md) | A box has a page of its own, and the Boxes page says how each box is now | Accepted; being built |
+| [070](070-snapshots.md) | A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them | Proposed; not built yet |
