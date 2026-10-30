@@ -17,14 +17,12 @@ import { switchKey, useSettings } from "./settings-context.tsx";
 import { BOXES_PART, FILES_PART, MONITOR_PART, NETWORK_PART, SNAPSHOTS_PART } from "./settings-drafts.ts";
 import { snapshotsPast, snapshotsSummary } from "./settings-snapshots.tsx";
 import { IMPORT_PART } from "./settings-import.ts";
-import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
+import { BackendChips, Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import { useRegistry } from "./settings-saving.tsx";
 import {
   backendHealth,
   backendLabel,
   backendLine,
-  hostChip,
-  onBbMachine,
   KIND_GROUPS,
   kindAvailability,
   kindGroup,
@@ -169,7 +167,6 @@ function BackendRow({ config, showAge, machines }: { config: BackendConfig; show
   const now = Date.now();
   const health = backendHealth(state, config, now, machines.hosts);
   const label = backendLabel(state, config);
-  const chip = hostChip(config, label, state.backends.find((candidate) => candidate.id === config.id)?.hosts);
   const key = switchKey.backend(config.id);
   const pending = instant.pendingValue<boolean>(key);
   const stateId = `settings-backend-state-${config.id.replace(/[^a-z0-9]/gi, "-")}`;
@@ -188,8 +185,7 @@ function BackendRow({ config, showAge, machines }: { config: BackendConfig; show
               {label}
             </span>
             <span id={chipsId} className="pointer-events-none flex items-center gap-1.5 empty:hidden">
-              {chip ? <Badge>{chip}</Badge> : null}
-              {onBbMachine(config) ? <Badge>BB machine</Badge> : null}
+              <BackendChips state={state} config={config} />
               {draftChip([backendPart(config.id)])}
             </span>
           </span>

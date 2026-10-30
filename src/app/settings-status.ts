@@ -107,6 +107,10 @@ export function backendLabel(state: ConfigState, config: BackendConfig): string 
   return live?.label ?? config.label ?? state.drivers.find((driver) => driver.type === config.type)?.label ?? config.type;
 }
 
+export function backendHostChip(state: ConfigState, config: BackendConfig): string | null {
+  return hostChip(config, backendLabel(state, config), state.backends.find((candidate) => candidate.id === config.id)?.hosts);
+}
+
 export function backendHealth(state: ConfigState, config: BackendConfig, now: number, machines: MachineHosts = null): BackendHealth {
   const live: BackendState | undefined = state.backends.find((candidate) => candidate.id === config.id);
   const stored = problemsUnder(state.problems, `backends.${config.id}`);

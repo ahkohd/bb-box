@@ -4,7 +4,10 @@ import { CloudIcon } from "@hugeicons/core-free-icons";
 import { useId, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Meta, StatusDot, type Tone } from "./common.tsx";
+import type { BackendConfig } from "../core/document.ts";
+import type { ConfigState } from "../plugin/configuration.ts";
+import { Badge, Meta, StatusDot, type Tone } from "./common.tsx";
+import { backendHostChip, onBbMachine } from "./settings-status.ts";
 import { useSettings } from "./settings-context.tsx";
 
 export const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
@@ -193,5 +196,15 @@ export function NotHere({ what }: { what: string }) {
         Go to BB Box settings
       </Button>
     </div>
+  );
+}
+
+export function BackendChips({ state, config }: { state: ConfigState; config: BackendConfig }) {
+  const chip = backendHostChip(state, config);
+  return (
+    <>
+      {chip ? <Badge>{chip}</Badge> : null}
+      {onBbMachine(config) ? <Badge>BB machine</Badge> : null}
+    </>
   );
 }
