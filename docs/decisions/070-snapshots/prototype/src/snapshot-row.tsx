@@ -147,7 +147,7 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
               <Icon name="GitFork" aria-hidden />
               Fork…
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={snap.state === "failed"} onSelect={() => setAsking("rename")}>
+            <DropdownMenuItem disabled={snap.state === "failed" || !!store.eligible(snap.id, "rename")} onSelect={() => setAsking("rename")}>
               <Icon name="Pencil" aria-hidden />
               Rename…
             </DropdownMenuItem>
@@ -184,8 +184,8 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
-      {asking === "restore" ? <RestoreDialog box={box} snap={snap} onClose={() => setAsking(null)} /> : null}
-      {asking === "fork" ? <ForkDialog box={box} snap={snap} onClose={() => setAsking(null)} /> : null}
+      {asking === "restore" ? <RestoreDialog box={box} snap={snap} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
+      {asking === "fork" ? <ForkDialog box={box} snap={snap} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
       {asking === "delete" ? <DeleteDialog boxes={[box]} snaps={[snap]} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
       {asking === "rename" ? <TextDialog title={`Rename "${snap.name}"`} label="Name" value={snap.name} returnTo={menuButton} onSave={(value) => store.rename(snap.id, value)} onClose={() => setAsking(null)} /> : null}
       {asking === "note" ? <TextDialog title={`A note on "${snap.name}"`} label="Note" value={snap.note ?? ""} long returnTo={menuButton} onSave={(value) => store.annotate(snap.id, value)} onClose={() => setAsking(null)} /> : null}
@@ -201,7 +201,7 @@ export function Shell({ title, children, footer, onClose, returnTo }: { title: s
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          (returnTo?.current ?? opener.current)?.focus();
+          (opener.current?.isConnected ? opener.current : returnTo?.current)?.focus();
         }}
       >
         <AlertDialogHeader>
@@ -214,12 +214,13 @@ export function Shell({ title, children, footer, onClose, returnTo }: { title: s
   );
 }
 
-export function RestoreDialog({ box, snap, onClose }: { box: FakeBox; snap: FakeSnap; onClose: () => void }) {
+export function RestoreDialog({ box, snap, onClose, returnTo }: { box: FakeBox; snap: FakeSnap; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const store = useStore();
   const { now } = store;
   const plan = store.plan(box.id, snap.id);
   const losses = store.losses(box.id, BY_PERSON);
-  const [undo, setUndo] = useState(true);
+  const undoBlocked = store.whyNotUndo(box.id);
+  const [undo, setUndo] = useState(!undoBlocked);
   const [refused, setRefused] = useState<string | null>(null);
   const noteId = useId();
   const counted = store.counted(box.id).length;
@@ -230,7 +231,7 @@ export function RestoreDialog({ box, snap, onClose }: { box: FakeBox; snap: Fake
   const onCurrent = store.snaps.filter((each) => each.boxId === box.id && each.state === "ready" && !each.onEarlierGuest && each.undoWay !== "held-copy").length;
   if (plan.refused) {
     return (
-      <Shell title={`Restore ${box.name} to "${snap.name}"?`} onClose={onClose} footer={<AlertDialogCancel autoFocus>Close</AlertDialogCancel>}>
+      <Shell title={`Restore ${box.name} to "${snap.name}"?`} onClose={onClose} returnTo={returnTo} footer={<AlertDialogCancel autoFocus>Close</AlertDialogCancel>}>
         <AlertDialogDescription asChild>
           <p className="rounded-md border border-surface-warning-border bg-surface-warning px-3 py-2 text-foreground">{plan.refused}</p>
         </AlertDialogDescription>
@@ -246,6 +247,7 @@ export function RestoreDialog({ box, snap, onClose }: { box: FakeBox; snap: Fake
     <Shell
       title={`Restore ${box.name} to "${snap.name}"?`}
       onClose={onClose}
+      returnTo={returnTo}
       footer={
         <>
           <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
@@ -284,7 +286,8 @@ export function RestoreDialog({ box, snap, onClose }: { box: FakeBox; snap: Fake
         </div>
       </AlertDialogDescription>
       <div className="space-y-1">
-        <Checkbox checked={undo} onChange={setUndo} describedBy={noteId} label={undoWords(plan.undoWay, box, plan.undoAboutMs)} />
+        <Checkbox checked={undo} disabled={!!undoBlocked} onChange={setUndo} describedBy={noteId} label={undoWords(plan.undoWay, box, plan.undoAboutMs)} />
+        {undoBlocked ? <p className="pl-5.5 text-xs text-warning-text">No undo can be taken: {undoBlocked}. Raise the ceiling in Settings to restore with one.</p> : null}
         <p id={noteId} className="pl-5.5 text-xs text-subtle-foreground">
           {`Named "before the restore at ${clockOf(now)}". Undos do not count against the ${store.settings.perBox} for ${box.name} (${counted} used); it keeps the last ${UNDOS_A_BOX}, now ${undos}.`}
           {memory && plan.undoWay !== "suspend-copy" ? " Undo brings back its files, not its running apps." : ""}
@@ -299,7 +302,7 @@ export function RestoreDialog({ box, snap, onClose }: { box: FakeBox; snap: Fake
   );
 }
 
-export function ForkDialog({ box, snap, onClose }: { box: FakeBox; snap: FakeSnap; onClose: () => void }) {
+export function ForkDialog({ box, snap, onClose, returnTo }: { box: FakeBox; snap: FakeSnap; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const store = useStore();
   const released = box.state === "released";
   const [name, setName] = useState(() => forkName(store.boxes.map((each) => each.name)));
@@ -317,6 +320,7 @@ export function ForkDialog({ box, snap, onClose }: { box: FakeBox; snap: FakeSna
     <Shell
       title={`Fork "${snap.name}" into a new box`}
       onClose={onClose}
+      returnTo={returnTo}
       footer={
         <>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -517,7 +521,15 @@ export function KeepDialog({ box, snaps, onClose, onDone, returnTo }: { box: Fak
         </label>
       ) : null}
       {valid && keeping.length === 1 ? <p className="text-xs leading-snug text-subtle-foreground">{keepCostWords(boxOf(keeping[0]!), keeping[0]!, at, store.now)}</p> : null}
-      {valid && keeping.length > 1 ? <p className="text-xs leading-snug text-subtle-foreground">On Proxmox each is copied in full into a template at its box's release: {keeping.reduce((sum, snap) => sum + boxOf(snap).usedGB, 0)} GB in all, at today's sizes.</p> : null}
+      {valid && keeping.length > 1 ? (
+        <ul className="list-disc space-y-1 pl-5 text-xs leading-snug text-subtle-foreground">
+          {keeping.map((snap) => (
+            <li key={snap.id}>
+              "{snap.name}": {keepCostWords(boxOf(snap), snap, at, store.now)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <SkippedList skipped={skipped} />
     </Shell>
   );

@@ -44,6 +44,8 @@ export interface RestorePlan {
   readonly leavesOnEarlierGuest: number;
 }
 
+export type Change = "delete" | "evict" | "sweep" | "undo-replace" | "keep" | "unkeep" | "rename";
+
 export interface Skipped {
   readonly name: string;
   readonly why: string;
@@ -82,6 +84,8 @@ interface Store {
   whyNotKeep(snapId: string): string | null;
   whyNotFork(snapId: string): string | null;
   whyNotDelete(snapId: string): string | null;
+  eligible(snapId: string, change: Change): string | null;
+  whyNotUndo(boxId: string): string | null;
   take(boxId: string, ask: TakeAsk, by: Actor): Outcome;
   whyNotTake(boxId: string, by: Actor, memory: boolean): string | null;
   restore(boxId: string, snapId: string, options: { readonly undo: boolean; readonly anyway: boolean; readonly consentIn?: string; readonly formId?: string }, by: Actor): Outcome;
@@ -221,6 +225,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const losses = useCallback((boxId: string, by: Actor): Loss[] => {
     const box = boxesRef.current.find((each) => each.id === boxId);
     if (!box) return [];
+    if (box.snapshotting?.scope === "device") return [];
     const ownBox = by.is === "agent" && box.threadId === by.threadId;
     const found: Loss[] = box.workspaces.map((threadId) => {
       const thread = threadsRef.current.find((each) => each.id === threadId);
@@ -255,6 +260,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return { refused, undoWay, undoAboutMs, undoGB, sizeBack, swap, leavesOnEarlierGuest };
   }, []);
 
+  const eligible = useCallback((snapId: string, change: Change): string | null => {
+    const snap = snapsRef.current.find((each) => each.id === snapId);
+    if (!snap) return "it is gone";
+    if (pinnedRef.current.has(snapId)) return "a restore is using it";
+    if (snap.state === "taking" || snap.state === "deleting") return snap.state === "taking" ? "it is being taken" : "it is being deleted";
+    const automatic = change === "evict" || change === "sweep" || change === "undo-replace";
+    if (automatic && snap.keptUntil !== null) return "you kept it";
+    if (automatic && snap.by.is === "person" && !snap.undoOf) return "you took it";
+    return null;
+  }, []);
+
   const whyNotFork = useCallback((snapId: string): string | null => {
     const snap = snapsRef.current.find((each) => each.id === snapId);
     const box = snap && boxesRef.current.find((each) => each.id === snap.boxId);
@@ -268,20 +284,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const snap = snapsRef.current.find((each) => each.id === snapId);
     const box = snap && boxesRef.current.find((each) => each.id === snap.boxId);
     if (!snap || !box) return "That snapshot is gone.";
+    const blocked = eligible(snapId, "keep");
+    if (blocked) return `Not while ${blocked}.`;
     if (box.snapshotting?.keeps === "no") return box.snapshotting.keepsWhyNot ?? "This backend cannot keep a snapshot past the release.";
     const fork = whyNotFork(snapId);
     if (fork) return `It could not be used after a release. ${fork}`;
     if (snap.price && rate() > settingsRef.current.ceiling) return `Snapshots held on ${box.backend} come to ${money(rate())} a month, past your ceiling of ${money(settingsRef.current.ceiling)}. Raise it or delete some first.`;
     return null;
-  }, [whyNotFork, rate]);
+  }, [whyNotFork, rate, eligible]);
 
-  const whyNotDelete = useCallback((snapId: string): string | null => {
-    const snap = snapsRef.current.find((each) => each.id === snapId);
-    if (!snap) return "That snapshot is gone.";
-    if (pinnedRef.current.has(snapId)) return "a restore is using it";
-    if (snap.state === "taking" || snap.state === "deleting") return snap.state === "taking" ? "it is being taken" : "it is being deleted";
+  const whyNotUndo = useCallback((boxId: string): string | null => {
+    const box = boxesRef.current.find((each) => each.id === boxId);
+    const price = box?.snapshotting?.price;
+    if (box && price && rate() + price.amount * 30 > settingsRef.current.ceiling) return `the undo would bring snapshots held on ${box.backend} to about ${money(rate() + price.amount * 30)} a month, past your ceiling of ${money(settingsRef.current.ceiling)}`;
+    if (box?.storage && box.storage.full >= settingsRef.current.roomPercent) return `${box.host}'s storage is ${box.storage.full}% full`;
     return null;
-  }, []);
+  }, [rate]);
+
+  const whyNotDelete = useCallback((snapId: string): string | null => eligible(snapId, "delete"), [eligible]);
 
   const whyNotTake = useCallback((boxId: string, by: Actor, memory: boolean): string | null => {
     const box = boxesRef.current.find((each) => each.id === boxId);
@@ -311,21 +331,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (by.is !== "agent") return;
     const held = counted(boxId);
     if (held.length <= settingsRef.current.perBox) return;
-    const oldest = held.filter((snap) => snap.by.is === "agent" && snap.by.threadId === by.threadId && snap.keptUntil === null && !protect.includes(snap.id) && !pinnedRef.current.has(snap.id)).sort((a, b) => a.takenAt - b.takenAt)[0];
+    const oldest = held.filter((snap) => snap.by.is === "agent" && snap.by.threadId === by.threadId && !protect.includes(snap.id) && !eligible(snap.id, "evict")).sort((a, b) => a.takenAt - b.takenAt)[0];
     if (!oldest) return;
     setSnapsNow((current) => current.filter((snap) => snap.id !== oldest.id));
     log(boxId, `Deleted "${oldest.name}": the limit of ${settingsRef.current.perBox} a box`, { is: "bb-box", why: "the per-box limit" });
-  }, [counted, setSnapsNow, log]);
+  }, [counted, setSnapsNow, log, eligible]);
 
   const pruneUndos = useCallback((boxId: string, keepId: string) => {
-    const spare = undos(boxId).filter((snap) => snap.id !== keepId && !pinnedRef.current.has(snap.id)).sort((a, b) => a.takenAt - b.takenAt);
+    const spare = undos(boxId).filter((snap) => snap.id !== keepId && !eligible(snap.id, "undo-replace")).sort((a, b) => a.takenAt - b.takenAt);
     const over = undos(boxId).length - UNDOS_A_BOX;
     if (over <= 0) return;
     const going = spare.slice(0, over);
     if (!going.length) return;
     setSnapsNow((current) => current.filter((snap) => !going.some((each) => each.id === snap.id)));
     for (const each of going) log(boxId, `Deleted the oldest undo, "${each.name}": ${UNDOS_A_BOX} a box`, { is: "bb-box", why: "undos a box" });
-  }, [undos, setSnapsNow, log]);
+  }, [undos, setSnapsNow, log, eligible]);
 
   const startTake = useCallback((box: FakeBox, ask: TakeAsk, by: Actor, undoOf: FakeSnap["undoOf"], undoWay: UndoWay | null): FakeSnap => {
     const at = Date.now();
@@ -395,6 +415,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const planned = plan(boxId, snapId);
     if (planned.refused) return { ok: false, why: planned.refused };
     const undo = by.is === "agent" ? true : options.undo;
+    const undoBlocked = undo ? whyNotUndo(boxId) : null;
+    if (undoBlocked) return { ok: false, why: by.is === "agent" ? `Refused before anything changed: ${undoBlocked}, and an agent never restores without an undo.` : `No undo can be taken: ${undoBlocked}. Untick the undo to restore without one, or raise the ceiling in Settings.` };
     if (by.is === "agent") {
       if (!settingsRef.current.agentsRestore) return { ok: false, why: "Agents may not restore boxes by themselves: Settings turned it off. Ask through the form." };
       if (target.holds === "disk-and-memory" && box.snapshotting?.scope === "box" && !settingsRef.current.agentsMemory) return { ok: false, why: "Agents may not restore memory snapshots: Settings turned it off." };
@@ -413,7 +435,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         then?.();
       });
     log(box.id, `Restore to "${target.name}" asked${undo ? "" : ", no undo"}${options.consentIn ? `, on a yes given in ${options.consentIn}` : ""}`, by);
-    updateBox(boxId, { state: "restoring", step: "Stopping" });
+    const device = box.snapshotting?.scope === "device";
+    const tart = box.snapshotting?.whileRunning === "suspends";
+    updateBox(boxId, { state: "restoring", step: device ? "Pausing the device" : tart ? "Suspending" : box.snapshotting?.restore === "new-guest" ? "Taking the undo while it runs" : "Stopping" });
     let undoSnap: FakeSnap | null = null;
     const undoMs = undo ? Math.min(planned.undoAboutMs, planned.undoWay === "held-copy" ? 2_500 : 900) : 0;
     if (undo) {
@@ -421,7 +445,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (cancelled.current.has(op)) return;
         const names = snapsRef.current.filter((snap) => snap.boxId === boxId).map((snap) => snap.name);
         const current = boxesRef.current.find((each) => each.id === boxId)!;
-        updateBox(boxId, { step: planned.undoWay === "held-copy" ? `Copying ${box.name}, stopped, for the undo` : "Taking the undo, of the stopped box" });
+        updateBox(boxId, { step: planned.undoWay === "held-copy" ? `Copying ${box.name}, stopped, for the undo` : device ? "Saving the device for the undo" : tart ? "Copying the suspended VM for the undo" : "Taking the undo, of the stopped box" });
         undoSnap = startTake(current, { name: undoName(at, names), note: "", memory: false }, by, { at, to: target.name }, planned.undoWay);
         const taken = undoSnap;
         pin([taken.id], true);
@@ -461,7 +485,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (by.is === "person" && !onBoxPage(boxId)) say({ words: `Restored ${box.name} to "${target.name}".`, ...(undoSnap ? { action: { label: "Undo", run: () => setUndoOpen(undoSnap!.id) } } : {}) });
     });
     return { ok: true, id: op };
-  }, [plan, losses, pin, startTake, later, updateBox, updateSnap, log, pruneUndos, setSnapsNow, notice, updateForm, say]);
+  }, [plan, losses, whyNotUndo, pin, startTake, later, updateBox, updateSnap, log, pruneUndos, setSnapsNow, notice, updateForm, say]);
 
   const fork = useCallback((snapId: string, into: "thread" | "machine", name: string): Outcome => {
     const source = snapsRef.current.find((snap) => snap.id === snapId);
@@ -512,7 +536,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     for (const id of ids) {
       const snap = snapsRef.current.find((each) => each.id === id);
       if (!snap) continue;
-      const why = until === null ? null : whyNotKeep(id);
+      const why = until === null ? eligible(id, "unkeep") : whyNotKeep(id);
       if (why) skipped.push({ name: snap.name, why });
       else allowed.push(id);
     }
@@ -522,9 +546,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (snap) log(snap.boxId, until ? `Kept "${snap.name}" until ${new Date(until).toDateString()}` : `Stopped keeping "${snap.name}"`, BY_PERSON);
     }
     return skipped;
-  }, [whyNotKeep, log, setSnapsNow]);
+  }, [whyNotKeep, eligible, log, setSnapsNow]);
 
-  const rename = useCallback((id: string, name: string) => updateSnap(id, { name }), [updateSnap]);
+  const rename = useCallback((id: string, name: string) => {
+    if (!eligible(id, "rename")) updateSnap(id, { name });
+  }, [eligible, updateSnap]);
   const annotate = useCallback((id: string, note: string) => updateSnap(id, { note: note.trim() || null }), [updateSnap]);
 
   const remove = useCallback((ids: readonly string[], by: Actor): Skipped[] => {
@@ -602,7 +628,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     later(1_200, () => {
       const shown = notices.find((each) => each.boxId === boxId);
       const target = snapsRef.current.find((snap) => snap.name === shown?.to && snap.boxId === boxId) ?? null;
-      if (target) pin([target.id], false);
+      pin(snapsRef.current.filter((snap) => snap.boxId === boxId && pinnedRef.current.has(snap.id)).map((snap) => snap.id), false);
+      void target;
       updateBox(boxId, { state: "ready", step: null });
       notice("finished-after-restart", boxId, target, BY_PERSON, undos(boxId).at(-1)?.id ?? null, null);
       log(boxId, "Proxmox's rollback task had ended OK; bb-box started the box, wrote current access and finished the restore", { is: "bb-box", why: "finishing a restore cut short" });
@@ -613,18 +640,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     boxesRef.current = boxesRef.current.map((box) => (box.host === host && box.storage ? { ...box, storage: { ...box.storage, full: 93 } } : box));
     setBoxes(boxesRef.current);
     const onHost = new Set(boxesRef.current.filter((box) => box.host === host).map((box) => box.id));
-    const victims = snapsRef.current
-      .filter((snap) => onHost.has(snap.boxId) && alive(snap) && snap.by.is === "agent" && snap.keptUntil === null && !snap.undoOf && !pinnedRef.current.has(snap.id))
+    const candidates = snapsRef.current
+      .filter((snap) => onHost.has(snap.boxId) && alive(snap) && snap.by.is === "agent" && !snap.undoOf && !eligible(snap.id, "sweep"))
       .sort((a, b) => a.takenAt - b.takenAt)
-      .slice(0, 2);
-    later(1_200, () => {
+      .slice(0, 3);
+    later(2_500, () => {
+      const victims = candidates.filter((snap) => !eligible(snap.id, "sweep"));
+      const spared = candidates.filter((snap) => eligible(snap.id, "sweep"));
       setSnapsNow((current) => current.filter((snap) => !victims.some((victim) => victim.id === snap.id)));
       for (const victim of victims) log(victim.boxId, `Deleted "${victim.name}"`, { is: "bb-box", why: `${host}'s storage was 93% full` });
+      for (const each of spared) log(each.boxId, `The room sweep spared "${each.name}": ${eligible(each.id, "sweep")}`, { is: "bb-box", why: `${host}'s storage was 93% full` });
       boxesRef.current = boxesRef.current.map((box) => (box.host === host && box.storage ? { ...box, storage: { ...box.storage, full: 88 } } : box));
       setBoxes(boxesRef.current);
       say(`${host}'s storage passed ${settingsRef.current.roomPercent + SWEEP_DELETES_AT}%: bb-box deleted ${victims.length} agents' snapshots nobody kept. New snapshots there are refused until it is under ${settingsRef.current.roomPercent}%.`);
     });
-  }, [later, setSnapsNow, log, say]);
+  }, [later, setSnapsNow, log, say, eligible]);
 
   const reset = useCallback(() => {
     timers.current.forEach((timer) => window.clearTimeout(timer));
@@ -667,6 +697,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       whyNotKeep,
       whyNotFork,
       whyNotDelete,
+      eligible,
+      whyNotUndo,
       take,
       whyNotTake,
       restore,
@@ -693,7 +725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rate,
       reset,
     }),
-    [now, boxes, snaps, threads, events, notices, forms, settings, toast, failNext, undoOpen, deletedSpend, pinned, counted, undos, losses, plan, whyNotKeep, whyNotFork, whyNotDelete, take, whyNotTake, restore, fork, keep, rename, annotate, remove, agentDemo, askPerson, submitForm, cancelForm, restartMidRestore, checkNow, fillStorage, updateBox, say, rate, reset],
+    [now, boxes, snaps, threads, events, notices, forms, settings, toast, failNext, undoOpen, deletedSpend, pinned, counted, undos, losses, plan, whyNotKeep, whyNotFork, whyNotDelete, eligible, whyNotUndo, take, whyNotTake, restore, fork, keep, rename, annotate, remove, agentDemo, askPerson, submitForm, cancelForm, restartMidRestore, checkNow, fillStorage, updateBox, say, rate, reset],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
@@ -706,5 +738,6 @@ export function undoWords(way: UndoWay, box: FakeBox, ms: number): string {
   if (way === "held-copy") return `Copy ${box.name} once stopped, so you can undo this: about ${seconds(ms)} and ${box.usedGB} GB on ${box.host}, as a template that cannot start. ZFS cannot keep a snapshot newer than the one it restores.`;
   if (way === "suspend-copy") return `Take a copy of ${box.name} first, memory included, so you can undo this: about ${seconds(ms)}, as it suspends and resumes.`;
   if (box.snapshotting?.scope === "device") return `Take a device snapshot first, so you can undo this. About ${seconds(ms)}.`;
+  if (box.snapshotting?.restore === "new-guest") return `Take a snapshot of it first, while it runs, so you can undo this. About ${seconds(ms)}.`;
   return `Take a snapshot of it, once stopped, so you can undo this. About ${seconds(ms)}.`;
 }

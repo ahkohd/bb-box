@@ -1,8 +1,8 @@
 # 070: A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them
 
 Status: proposed, 30 October 2026, with the owner's answers to the
-research's four questions built in. Revised twice the same day after two
-rounds of two independent reviews; every finding of each round is answered
+research's four questions built in. Revised three times the same day after
+three rounds of two independent reviews; every finding of each round is answered
 in [What changed after the reviews](#what-changed-after-the-reviews). Not
 built yet: see [How it is built](#13-how-it-is-built) and its
 [gates](#gated-in-unit-n).
@@ -12,7 +12,7 @@ measurements on Proxmox LXC and QEMU, Docker, Tart, microsandbox, boat.dev,
 Hetzner, Namespace and device boxes. This note does not repeat them; it
 cites them where a rule depends on a number. The research measured
 Proxmox on LVM-thin only; what this note says of other Proxmox storage and
-of Proxmox's clone is from Proxmox's own code, and unit 0 and unit 2
+of Proxmox's clone is from Proxmox's own code, and unit 0 and unit 3
 measure it. Anything a gate cannot prove live stays off.
 
 The prototype is [070-snapshots/prototype.html](070-snapshots/prototype.html):
@@ -296,25 +296,34 @@ A held copy is a full clone made inert, used for two things: Keep past a
 release (section 7) and the undo on ZFS (below). Proxmox's clone copies
 `onboot`, the network settings and the disk, so a plain clone could start
 by itself at the node's next boot as its source. Its steps, each recorded
-before it runs:
+before it runs, with its source (the snapshot, or the stopped guest) pinned
+until the last is done:
 
-1. **Clone** the snapshot, or the stopped guest, in full, into a VMID from
-   bb-box's range, in its pool, labelled as a held copy with the install,
-   box, snapshot and keep date.
+1. **Clone** the source in full into a VMID from bb-box's range, in its
+   pool, labelled as a held copy with the install, box, snapshot and keep
+   date.
 2. **Disarm**, in one config write: `onboot` 0, every network interface's
    link down, and on QEMU a new SMBIOS UUID.
 3. **Make it a template.** A Proxmox template cannot start; it can still
    be cloned, in full or linked. The token's `VM.Allocate` on the pool
    allows the conversion, and `VM.Clone` the clones.
 
-A held copy is used only by cloning it: a fork clones it as a new box
-(section 9); an undo clones it for the same box with `adoptCopy`. Until
-step 3 is done, the sweep's first act at start is to finish it. If the node
-boots between steps 1 and 2, the copy can start: its identity marker no
-longer matches its MAC address, so its reset runs before its network,
-BB's daemon or Tailscale can start (section 9). That is why a held copy is
-made only of a snapshot with `forkSafe`. The sweep then stops it, finishes
-steps 2 and 3, and logs it. G16 proves this, with a node reboot.
+**A copy that is not yet a template is never trusted.** If bb-box restarts,
+or the node boots, before step 3 is done, the copy may have started: its
+identity reset would then have removed the saved credentials and access,
+and its boot may have changed other files, so it no longer holds what it
+copied. So the sweep's first act at start is to delete every held copy
+that is not a template, and to make it again from its source, which is
+still pinned. It never finishes or adopts such a copy. A held copy is made
+only of a snapshot with `forkSafe`, so even a copy that does start resets
+before its network, BB's daemon or Tailscale can start (section 9). G16
+proves this, with a node reboot and a check of the remade copy's files.
+
+**Cloning a held copy re-arms the clone.** A held copy is used only by
+cloning it: a fork clones it as a new box (section 9); an undo clones it
+for the same box with `adoptCopy`. Both inherit its disarm, so both set
+`onboot` back and their links up, as the box they become needs, before
+the first start. G4 and G14 check it.
 
 #### Restore by storage, on Proxmox
 
@@ -323,7 +332,7 @@ Proxmox decides per storage whether a rollback may go past newer snapshots
 
 | Storage | Restore to | The undo | In the first units |
 | --- | --- | --- | --- |
-| LVM-thin, Ceph RBD, qcow2 files (directory, NFS, CIFS), BTRFS | any snapshot | a snapshot of the stopped guest, taken after the stop | LVM-thin, measured by the research; the others each once unit 2 has run its gate on one |
+| LVM-thin, Ceph RBD, qcow2 files (directory, NFS, CIFS), BTRFS | any snapshot | a snapshot of the stopped guest, taken after the stop | LVM-thin, measured by the research; the others each once unit 3 has run its gate on one |
 | ZFS | the newest snapshot only | a held copy of the stopped guest, which is not a snapshot and so does not block the rollback | off until G4 passes on a ZFS node: an older snapshot is never restored in place; "pve-3 uses ZFS, which restores only the newest snapshot. Fork this one, or delete the 2 newer ones yourself first." bb-box never deletes newer snapshots to make a rollback possible |
 | LVM (thick, VMs only, a preview in Proxmox VE 9) | none | | the doctor says so |
 | a directory of raw files | none: it takes no snapshots | | the doctor says so |
@@ -350,8 +359,11 @@ box keeps its ID, name, record, BB machine and host ID. Its other snapshots
 stay where they are, on the guest it ran on until then, which becomes the
 box's **earlier guest**:
 
-- it is disarmed as step 2 of a held copy is, and labelled as the box's
-  earlier guest; it is never started again;
+- it is disarmed as step 2 of a held copy is, and its network interfaces
+  also get new MAC addresses, so that if it is ever started, by hand, by
+  Proxmox's high availability or by a fault, its identity marker no longer
+  matches and its reset runs before its network (section 9); it is
+  labelled as the box's earlier guest and never started by bb-box;
 - its snapshots are listed under the box as "on amber-fox's earlier guest:
   fork only", with Fork, Keep and Delete, and no Restore;
 - it is deleted when its last snapshot goes, and at the box's release,
@@ -366,17 +378,17 @@ boat's new-guest restores keep the box the same machine.
 
 | Backend | `scope`, `holds` | `whileRunning` | `restore` | The undo | `fork` | `keepsPastRelease` | `price` | Unit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Proxmox LXC | box; disk | live (0.7 s) | in-place, after a hard stop; by storage, above | a snapshot after the stop, or a held copy on ZFS | copy (9.3 s for 4 GiB used) | held-copy | none | 1a, 2, 6, 7 |
-| Proxmox QEMU, Linux | box; disk, or disk and memory | live (1.1 s); memory about 1 s a GiB | in-place; by storage | as LXC | copy (6.5 s) | held-copy, disk only | none | 1b, 2, 6, 7 |
-| Proxmox QEMU, Windows | box; disk | live | in-place; by storage | as LXC | none until a unit builds Windows' reset | no: with no fork, a kept copy could not be used | none | 2 |
-| Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 8 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 8 |
-| Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 8 |
-| microsandbox | box; disk, or disk and memory | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot | copy: a disk snapshot restored as a new sandbox; never `msb fork`, which copies memory | as-is, if unit 9 confirms a snapshot outlives its sandbox | none | 9 |
-| boat.dev, paid plan | box; disk | live; `capturedAt` is the fresh capture a saved snapshot makes | new-guest, a swap | a saved snapshot | copy | as-is | $0.056 a day past the plan's | 10 |
-| boat.dev, trial | box; disk | | none: no saved snapshots on the trial, and a stopped fork's capture can be a minute old, so it cannot be an exact undo | | copy, of the newest capture | no | | 10 |
-| Docker on a host of the person's | box; disk, with the box's own Docker volume, both captured while the container is paused | pauses (15 s for 1 GiB changed) | new-guest, a swap | a snapshot | copy | as-is | none | 11 |
-| Hetzner, Namespace Linux | box; as Docker | pauses | new-guest, a swap | a snapshot | copy | no: Hetzner deletes a host with no boxes, and Namespace an instance at release | none | 11 |
-| Android emulator (in its box) | device; the device's disk and memory | live (14.8 s) | in-place, the device only (3.2 s) | a device snapshot | none | no | none | 12 |
+| Proxmox LXC | box; disk | live (0.7 s) | in-place, after a hard stop; by storage, above | a snapshot after the stop, or a held copy on ZFS | copy (9.3 s for 4 GiB used) | held-copy | none | 1a, 2, 3, 7, 8 |
+| Proxmox QEMU, Linux | box; disk, or disk and memory | live (1.1 s); memory about 1 s a GiB | in-place; by storage | as LXC | copy (6.5 s) | held-copy, disk only | none | 1b, 2, 3, 7, 8 |
+| Proxmox QEMU, Windows | box; disk | live | in-place; by storage | as LXC | none until a unit builds Windows' reset | no: with no fork, a kept copy could not be used | none | 3 |
+| Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 9 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 9 |
+| Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 9 |
+| microsandbox | box; disk, or disk and memory | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot | copy: a disk snapshot restored as a new sandbox; never `msb fork`, which copies memory | as-is, if unit 10 confirms a snapshot outlives its sandbox | none | 10 |
+| boat.dev, paid plan | box; disk | live; `capturedAt` is the fresh capture a saved snapshot makes | new-guest, a swap | a saved snapshot | copy | as-is | $0.056 a day past the plan's | 11 |
+| boat.dev, trial | box; disk | | none: no saved snapshots on the trial, and a stopped fork's capture can be a minute old, so it cannot be an exact undo | | copy, of the newest capture | no | | 11 |
+| Docker on a host of the person's | box; disk, with the box's own Docker volume, both captured while the container is paused | pauses (15 s for 1 GiB changed) | new-guest, a swap | a snapshot | copy | as-is | none | 12 |
+| Hetzner, Namespace Linux | box; as Docker | pauses | new-guest, a swap | a snapshot | copy | no: Hetzner deletes a host with no boxes, and Namespace an instance at release | none | 12 |
+| Android emulator (in its box) | device; the device's disk and memory | live (14.8 s) | in-place, the device only (3.2 s) | a device snapshot | none | no | none | 13 |
 | SSH host pool, iOS slots, Namespace macOS | none | | | | | | | none |
 
 Never on a shared host to act on one slot: no snapshot or restore of a
@@ -501,7 +513,9 @@ repair.
   restore dev-desk to 'before the upgrade'. End your turn now: nothing you
   do on dev-desk after this survives the restore." This is also the only
   way an agent asks for a restore of one of the person's machines: as the
-  owner asked, never without a yes in the thread.
+  owner asked, never without a yes in the thread. Such a box is an
+  execution machine, so this ships off with them (below), until G17
+  passes.
 - **The person**, from a box's page or the Snapshots tab, through the
   restore dialog.
 
@@ -524,18 +538,31 @@ starts a turn on the restored box, whose session files went back too: the
 form says so. A timeout, a stop of the thread or a restart of BB's server
 cancels the form and nothing happens.
 
-**Holding turns on the box (admission).** A restore of a box threads run on
-is a restore of their working disk, so no turn may start on it while it
-runs. From the yes until the box is ready again, bb-box holds every turn
-for a thread on the box with the SDK's `message.dispatch` hook, and holds
-it again after a restart of bb-box while the operation is not settled.
-BB's "Send now" bypasses the hook, so bb-box checks again immediately
-before the stop: if a turn is running then, it restores nothing, as nothing
-has changed yet, and says why. A box threads run on is restored from disk
-snapshots only: a memory restore would bring back BB's daemon mid-session.
-If G17 cannot prove this, restores of boxes threads run on stay off, on the
-page and through the form, and the person restores such a box only after
-moving its threads off it.
+**Holding turns on the box (admission).** A restore of a box threads run
+on, an execution machine, is a restore of their working disk, so no turn
+may start on it while it runs. From the yes until the box is ready again,
+bb-box holds every turn for a thread on the box with the SDK's
+`message.dispatch` hook. Two things can let a turn through:
+
+- BB's "Send now" bypasses the hook. bb-box checks for a running turn
+  before each step that changes the box, the stop first, and stops the
+  restore with nothing more changed if it finds one. A check is not atomic
+  with the step after it, so a turn sent in that moment, or while the box
+  reconnects to BB after the restore, can still start.
+- A held turn is released by BB's orphan sweep if bb-box stops, as at an
+  update. When the operation resumes after a restart, bb-box holds the
+  turns again and checks for a running turn before its next step.
+
+A box threads run on is restored from disk snapshots only: a memory
+restore would bring back BB's daemon mid-session.
+
+**Restores of execution machines ship off.** They stay off, on the page,
+through the form and in the CLI, until G17 passes with "Send now" injected
+after the final check and during the box's reconnection, and a bb-box
+restart mid-restore. Until then the person restores such a box only after
+moving its threads off it, when it is no longer an execution machine.
+Restores of a thread's other boxes, which no thread runs on, are not
+affected.
 
 #### What a restore does, in order
 
@@ -559,16 +586,17 @@ moving its threads off it.
    dialog names them all, and goes on only with "Restore anyway".
 3. **Pins** the target and records the operation (section 6); for a box
    threads run on, starts holding their turns.
-4. **Stops** the guest hard (bb-box's own stop, 1.3 s; `pct rollback` on a
-   running container shut it down for 45 s), after checking again that no
-   turn runs.
-5. **Takes the undo** of the stopped guest, so it holds exactly what the
-   restore replaces: a snapshot; on ZFS a held copy; on Tart macOS a copy
-   of the suspended VM, memory included. It is named "before the restore at
-   11:02", with " (2)" if that name is taken. Until it is `ready`, nothing
-   else changes. If it cannot be taken, bb-box starts the box again as it
-   was, and the restore stops and says why. Only the person can restore
-   without an undo, by unticking it, which turns the button red.
+4. **Admits the undo**: its space and, on a paid provider, its price are
+   reserved against the room rule and the ceiling (section 8) before
+   anything stops. If either refuses, an agent's restore is refused; the
+   person is told why and can untick the undo, or raise the ceiling.
+5. **Captures the undo**, in the order the backend's capture needs (table
+   below), so it holds exactly what the restore replaces. It is named
+   "before the restore at 11:02", with " (2)" if that name is taken. Until
+   it is `ready`, nothing else changes. If it cannot be taken, bb-box
+   brings the box back as it was, and the restore stops and says why. Only
+   the person can restore without an undo, by unticking it, which turns the
+   button red.
 6. **Logs** `restore-asked`, then **restores**: Proxmox rolls back; a
    new-guest restore or an undo by held copy makes the new guest with the
    box's identity (`adoptCopy`), while the old guest stays stopped, then
@@ -578,7 +606,7 @@ moving its threads off it.
    holds the guest's cores and memory as they were, and the dialog said so
    beforehand ("amber-fox goes back to 4 cores and 8 GiB memory, as it was
    then"). A restore to a snapshot from before the disk was grown is
-   refused until unit 2 has measured what Proxmox does with the file
+   refused until unit 3 has measured what Proxmox does with the file
    system.
 9. **Sets the box straight**, before it says ready:
    - writes the access file from the thread's current access, `env` on
@@ -593,11 +621,28 @@ moving its threads off it.
    - joins the tailnet again if its node is gone (050).
 10. **Logs** `restored`, stops holding turns, and answers.
 
+The capture order, per backend:
+
+| Backend | Before the undo | The undo | Then |
+| --- | --- | --- | --- |
+| Proxmox LXC and QEMU, not ZFS | a hard stop (bb-box's own, 1.3 s; `pct rollback` on a running container shut it down for 45 s), after checking no turn runs | a snapshot of the stopped guest | rollback, start |
+| Proxmox on ZFS | the same stop | a held copy of the stopped guest | rollback to the newest, start |
+| Tart, macOS | a suspend, which saves memory; never a hard stop | an APFS copy of the suspended VM, memory included | put the target's copy back, resume |
+| Tart, Linux | a shutdown, as its snapshots are stopped-only | an APFS copy | put the target's copy back, start |
+| microsandbox, boat, Docker | none: the box keeps running while its undo is taken (a pause for microsandbox and Docker; a fresh capture for boat) | a snapshot of the running box | stop the old guest, start the new one with the box's identity, swap |
+| Android device | none: the host box keeps running; the device pauses while its state saves | a device snapshot | load the target on the device |
+
+A device restore puts back the device only, so its guard and its dialog
+name what the device loses (the apps open on it since, their state), not
+the box's worktrees, sessions or terminals, which it does not touch.
+
 What this does not do, and the dialog says so:
 
 - A restore brings back what was saved on the disk, not what the box did
-  to the world since (a push, a message, an upload). With the stop before
-  the undo, nothing written before the restore is in neither.
+  to the world since (a push, a message, an upload). On Proxmox and Tart
+  the undo is taken after the stop or suspend, so nothing written before
+  the restore is in neither; on microsandbox, boat and Docker, what the box
+  writes between its undo and the old guest's stop, about a second, is.
 - A memory restore brings back running processes as they were, with the
   credentials they held then and their connections, as a Tart resume does
   today. bb-box cannot change a running process's environment. A token
@@ -669,11 +714,22 @@ resize is a `ResizeRecord`:
 | `state` | `running`, `done`, `failed`, or `unknown` until bb-box has observed the outcome |
 | `reserved` | the storage and the price it reserved (section 8) |
 
-- **Pins are checked in one place.** A pinned snapshot cannot be deleted,
-  expired, evicted, kept away, renamed or replaced as an undo, by any path:
-  a row, a menu, a dialog already open when the pin began, a bulk action,
-  the CLI, the sweep or the limit. Bulk actions go through the same check
-  for each snapshot, skip the pinned ones and say which.
+- **One eligibility check, at the moment of the change.** Whether a
+  snapshot may be deleted, expired, evicted by the limit or the room
+  sweep, replaced as an undo, kept, unkept or renamed is one function,
+  `eligible(snapshot, change)`. It refuses a pinned snapshot for every one
+  of those, and a kept or the person's snapshot for every automatic
+  deletion. It is called when the change is made, on the box's `#chain`,
+  not when it is chosen: a sweep that picked its candidates a moment
+  earlier checks each again before deleting it, so a snapshot that became
+  a restore's target or was kept meanwhile stays. Every path uses it: a
+  row, a menu, a dialog already open when the pin began, a bulk action,
+  the CLI, the sweep and the limit. Bulk actions skip what it refuses and
+  say which, and why.
+- **Pins end with their operation.** An operation's pins (its target, its
+  undo, a fork's source, a held copy's source) are released together when
+  it is `done` or `failed`, including when Check now settles one cut short
+  by a restart.
 - **One at a time per box.** Every snapshot operation runs on the box's
   `#chain` with its start, stop, resize and release. A release waits for a
   take that is running, then deletes what it made. Two takes on one box
@@ -711,7 +767,7 @@ it. "Keep 30 more days" renews it.
 **Keep only what can be used after the release.** After a release the
 only way to use a kept snapshot is to fork it. So Keep is offered for a
 snapshot only when its fork plan is `ok`: its box forks (not Windows,
-not macOS until unit 8), and it was taken with `forkSafe`. Otherwise Keep is
+not macOS until unit 9), and it was taken with `forkSafe`. Otherwise Keep is
 disabled with why: "Taken before brisk-lake's image had the identity reset:
 it could not be forked after a release." The Keep dialog says what keeping
 costs on that backend before the person confirms:
@@ -720,7 +776,7 @@ costs on that backend before the person confirms:
 | --- | --- | --- |
 | Proxmox LXC and QEMU | **A held copy** (section 2), made at the release before the guest is deleted. A memory snapshot's copy holds the disk only, and its row says "disk" from the release on | At the release: about 9 s for each 4 GiB used, and the snapshot's used disk in space (the dialog says "13 GB on pve-1"), plus a VMID from bb-box's range, until the keep date |
 | Tart | As is: the snapshot's folder stays beside the VMs; bb-box deletes the VM only | Nothing at the release; then its whole size, up to the VM's disk, as APFS no longer shares its blocks |
-| microsandbox | As is, if unit 9 confirms a snapshot outlives its sandbox; otherwise no Keep | |
+| microsandbox | As is, if unit 10 confirms a snapshot outlives its sandbox; otherwise no Keep | |
 | boat.dev, paid | As is: a saved snapshot never expires | its daily price, until the keep date |
 | Docker on a host of the person's | As is: the commit and the volume's copy stay on the host | their size |
 | Windows, boat.dev trial, Hetzner, Namespace, Android devices | **No Keep.** No fork on Windows yet; a stopped fork lasts 14 days; a Hetzner host and a Namespace instance go when their boxes go; a device snapshot lives in the box | |
@@ -745,6 +801,9 @@ costs on that backend before the person confirms:
   each box has room for 2 undos of its own besides. A kept undo is an
   ordinary kept snapshot: it counts in the 5 and is no longer replaced as
   an undo.
+- **An undo is admitted like any snapshot.** Its space and, on a paid
+  provider, its price are reserved before the box stops (section 5, step
+  4), so a restore's undo can never pass the room rule or the ceiling.
 - **A new undo replaces an old one only when it may.** It replaces the
   oldest undo that is not kept, not pinned and not the target of a running
   operation, once the new one is `ready`. If no undo may go, the box holds
@@ -786,7 +845,7 @@ costs on that backend before the person confirms:
   - a price bb-box does not know is shown as unknown and admitted only by
     the person;
   - paid snapshots stay off until a live check on a real paid plan passes
-    (unit 10). A fake priced backend proves the arithmetic only.
+    (unit 11). A fake priced backend proves the arithmetic only.
 
 ### 9. A fork is a new box with a new identity
 
@@ -818,16 +877,23 @@ costs on that backend before the person confirms:
 - **How a guest knows it is a fork: an identity marker that bb-box writes
   and checks.** bb-box writes `/etc/bb-box/identity` over SSH when a box
   is first ready and after each reset: the box's ID, and the MAC addresses
-  of its network interfaces. At each boot the unit compares the interfaces'
-  MAC addresses with the marker's. If they differ, or the marker is
-  missing or unreadable, it resets, failing closed. The MAC address is the
-  value because of what changes it:
+  of the interfaces its backend gives it, and no others. On Proxmox LXC
+  those are the `ethN` interfaces of its `netN` settings; on QEMU and Tart,
+  the interfaces with a device under `/sys/class/net/<name>/device`.
+  Interfaces the box makes for itself, `docker0`, `br-*`, `veth*` and
+  `tailscale0`, are never written or compared: they do not exist yet when
+  the unit runs, before `network-pre.target`. At each boot the unit
+  compares that same set's MAC addresses with the marker's. If they differ,
+  or the marker is missing or unreadable, it resets, failing closed. The
+  MAC address is the value because of what changes it:
 
   | Event | MAC addresses | So |
   | --- | --- | --- |
   | A fork, a held copy, any Proxmox clone (LXC and QEMU) or `tart clone` | new: the provider gives a clone new ones | the reset runs |
   | A restart, a stop and start, a resize, a rename by `relabel` or a spare claimed (036) | unchanged | no reset; a renamed box keeps its BB machine |
-  | A same-box swap: an undo by held copy, an earlier guest, microsandbox's and boat's new-guest restores | set by bb-box to the box's own on the new guest (`adoptCopy`), with the old guest stopped first | no reset; the box stays the same BB machine and host ID |
+  | A same-box swap: an undo by held copy, microsandbox's and boat's new-guest restores | set by bb-box to the box's own on the new guest (`adoptCopy`), with the old guest stopped first | no reset; the box stays the same BB machine and host ID |
+  | The old guest of a swap, kept as an earlier guest | made new by bb-box when it is disarmed | the reset runs if it is ever started |
+  | Docker inside the box, joining the tailnet | the backend's interfaces unchanged; the box's own interfaces are not compared | no reset |
   | microsandbox, boat, Docker | a value bb-box sets on each guest in place of a MAC address, passed on in a same-box swap | as above |
 
   A fork's name does not matter, so a fork given its source's name still
@@ -960,8 +1026,10 @@ Machines 2   Threads 7   Snapshots 14                           [⚙] [+ New box
   is disabled, with why, when its plan or a pin refuses it.
 - **Select**: a Select button beside Sort shows a checkbox on each row;
   with some ticked, a bar offers Keep… and Delete…. Each opens a dialog
-  that applies the same plans, pins and refusals to each snapshot, says
-  which are skipped and why, and what the rest free or cost.
+  that applies the same plans, `eligible` and refusals to each snapshot,
+  says which are skipped and why, and what each of the rest frees or costs
+  on its own backend: a held copy's size on Proxmox, a daily price on
+  boat.
 - **Filters**, with counts: Where (each backend and host), Holds, Taken by
   (you; agents), Kept, Undos, Goes within 7 days. **Sort**: newest, oldest,
   largest, price, box name. **Search**: the snapshot's name and note, the
@@ -1093,25 +1161,40 @@ a live check on a separate BB in a box: a fresh `npx bb-app` with no
 account, bb-box installed from the unit's branch, with boxes made through
 it. Proxmox first. A unit lands only when its gates pass (below). Safety
 comes before screens: operations, permissions and the undo before any
-tool restores, durable Keep before the Keep UI, and a backend or storage
-whose gates cannot run live stays unavailable.
+tool restores, the identity reset before any held copy or fork, durable
+Keep before the Keep UI, and a backend, storage or path whose gates cannot
+run live stays unavailable.
+
+**The identity reset comes second, on its own (unit 2).** Held copies
+(ZFS's undo in unit 3, Keep in unit 8) and forks (unit 7) all rely on it,
+and so does `forkSafe` on every snapshot taken from then on. Folding it
+into unit 1a would double that unit, and folding it into unit 3 would put a
+change to every Linux template inside the restore's own risky change. As a
+unit of its own it is a template change, a marker and a boot step, checked
+live with a plain Proxmox clone, before anything depends on it.
+
+**Off when they ship.** Restores of execution machines, boxes threads run
+on, ship off and turn on only when G17 passes (unit 5). ZFS restores ship
+off and turn on only when G4 passes on a ZFS node (unit 3). Paid snapshots
+ship off until a live check on a real paid plan (unit 11).
 
 | Unit | Change | Size | Live check |
 | --- | --- | --- | --- |
 | 0 | **The Proxmox permission change**: `VM.Snapshot` and `VM.Snapshot.Rollback` in `setup-token.sh` and the LXC guide's table; the doctor's `proxmox.snapshots` check of the token's rights and of each storage's type and what it restores. Ships first, so installs run `setup-token.sh` again before the feature arrives | S | A token from the branch's script and one from `origin/main`'s: the doctor passes the first and names the two missing for the second, without printing either; an LVM-thin and a ZFS storage each described as section 2 says |
-| 1a | The record and `snapshots.db`; operations, pins and their restart recovery for take and delete; `mayAct`; `Snapshotting` and `planSnapshots`; Proxmox LXC take, delete, `heldSnapshots`, the reconcile with `unavailable`, `lost`, `incomplete` and found orphans; the box log's events; `box_list` and `box_status` words; `bb box snapshot take`, `list` and `delete` | M | Through the CLI on an LXC box: take, list, delete. Gates G1, G2, G3, G9 |
+| 1a | The record and `snapshots.db`; operations, pins, `eligible` and their restart recovery for take and delete; `mayAct`; `Snapshotting` and `planSnapshots`; Proxmox LXC take, delete, `heldSnapshots`, the reconcile with `unavailable`, `lost`, `incomplete` and found orphans; the box log's events; `box_list` and `box_status` words; `bb box snapshot take`, `list` and `delete` | M | Through the CLI on an LXC box: take, list, delete. Gates G1, G2, G3, G9 |
 | 1b | Proxmox QEMU: take with and without memory, delete, the reconcile | S | Through the CLI on a QEMU box: take with and without memory, list, delete |
-| 2 | Restore on Proxmox: plans by storage, the stop before the undo, held copies (made inert) for ZFS's undo, swaps with `adoptCopy` and earlier guests, the guard of section 5, operations and restart recovery, locks, size read back, access over SSH first, outside restores from task records; `bb box snapshot restore` | M | Gates G4, G5, G6, G7, G8, G13, G16; ZFS only where a ZFS node is free, and off otherwise |
-| 3 | Settings' Snapshots page: limits, undos apart, room and the sweep's thresholds, keep length, the agents' switches, pictures, the paid ceiling as a rate, what each backend offers; through 067's drafts and Save | M | Each setting seen to bite; gate G10 |
-| 4 | The agent's tools, the form through `bb.ui.requestInput`, the `message.dispatch` hold, the skill's words and the reference | M | Gates G11, G12, G17 |
-| 5 | The box page's Snapshots card, Take snapshot, the restore dialog, its notice and Undo, Delete, Rename and Note, and the pictures | M | Take, restore and undo from the page; a guarded restore names every thread, the control and a terminal; keyboard only; 390 px with the header's actions on their own row |
-| 6 | Forks on Proxmox Linux: the identity unit and marker in every Linux template and image, `forkSafe` per snapshot, `forkSnapshot` by full clone, the check before ready, `box_fork`, Fork on the pages | M | Gate G14 |
-| 7 | Keep: held copies at release on Proxmox, the release that waits for them, keep dates in labels, Keep's recovery check; the Snapshots tab with Keep…, expiry and Select | L | Gates G15, G16 |
-| 8 | Tart: macOS snapshots as APFS copies of the suspended VM beside the VMs, with memory; Linux VMs, disk only; restore by putting a copy back; macOS's own identity reset, then forks and Keep; a guard against a state saved under another macOS build | M | On a Tart Mac box, never a pool Mac someone else holds: take, restore, undo, fork and keep of a 16 GiB macOS box, timed; a copy on another volume refused |
-| 9 | microsandbox: native snapshots, restore as a swap, fork from a disk snapshot, dependent snapshots | S | Take with memory, restore, fork; the fork holds no process of its source; the restored box keeps its BB machine |
-| 10 | boat.dev: saved snapshots on a paid plan within the ceiling, restore as a swap; on the trial, no restore and no Keep | M | Only once the owner gives a paid plan: take, restore, the price on the row and the rate in Settings, and what a restore costs in boat's starts. Until then paid snapshots stay off |
-| 11 | Docker, Hetzner and Namespace Linux boxes: a paused commit with the box's Docker volume; restore as a swap | M | A Docker box with images in its own Docker: take, restore, and its images are still there; Keep disabled on Hetzner and Namespace with why |
-| 12 | Android devices' own snapshots, `scope: device` | S | Save, restore, and the open app comes back; the words say the device only |
+| 2 | **The identity reset**: the marker and its boot unit in every Linux template and image, written after a box is first ready, the backend's interfaces only; its version read at each take as `forkSafe`. No fork or held copy yet | M | Gate G14's first part |
+| 3 | Restore on Proxmox: plans by storage, the capture order, undo admission, held copies (inert, remade if not yet a template) for ZFS's undo, swaps with `adoptCopy` and earlier guests, the guard of section 5, operations and restart recovery, locks, size read back, access over SSH first, outside restores from task records; `bb box snapshot restore`. Execution machines refused | M | Gates G4, G5, G6, G7, G8, G13, G16; ZFS only where a ZFS node is free, and off otherwise |
+| 4 | Settings' Snapshots page: limits, undos apart, room and the sweep's thresholds, keep length, the agents' switches, pictures, the paid ceiling as a rate, what each backend offers; through 067's drafts and Save | M | Each setting seen to bite; gate G10 |
+| 5 | The agent's tools, the form through `bb.ui.requestInput`, the `message.dispatch` hold, the skill's words and the reference. Execution-machine restores stay off unless G17 passes | M | Gates G11, G12, G17 |
+| 6 | The box page's Snapshots card, Take snapshot, the restore dialog, its notice and Undo, Delete, Rename and Note, and the pictures | M | Take, restore and undo from the page; a guarded restore names every thread, the control and a terminal; keyboard only; 390 px with the header's actions on their own row |
+| 7 | Forks on Proxmox Linux: `forkSnapshot` by full clone, re-armed, the check before ready, `box_fork`, Fork on the pages | M | Gate G14's second part |
+| 8 | Keep: held copies at release on Proxmox, the release that waits for them, keep dates in labels, Keep's recovery check; the Snapshots tab with Keep…, expiry and Select | L | Gates G15, G16 |
+| 9 | Tart: macOS snapshots as APFS copies of the suspended VM beside the VMs, with memory, and the suspend before the undo; Linux VMs, disk only; restore by putting a copy back; macOS's own identity reset, then forks and Keep; a guard against a state saved under another macOS build | M | On a Tart Mac box, never a pool Mac someone else holds: take, restore, undo, fork and keep of a 16 GiB macOS box, timed; a copy on another volume refused |
+| 10 | microsandbox: native snapshots, restore as a swap, fork from a disk snapshot, dependent snapshots | S | Take with memory, restore, fork; the fork holds no process of its source; the restored box keeps its BB machine |
+| 11 | boat.dev: saved snapshots on a paid plan within the ceiling, restore as a swap; on the trial, no restore and no Keep | M | Only once the owner gives a paid plan: take, restore, the price on the row and the rate in Settings, and what a restore costs in boat's starts. Until then paid snapshots stay off |
+| 12 | Docker, Hetzner and Namespace Linux boxes: a paused commit with the box's Docker volume; restore as a swap | M | A Docker box with images in its own Docker: take, restore, and its images are still there; Keep disabled on Hetzner and Namespace with why |
+| 13 | Android devices' own snapshots, `scope: device`, with the device's own capture order and losses | S | Save, restore, and the open app comes back; the words say the device only, and name no worktree |
 | Later | Restores with the network down on QEMU (the guest agent and `VM.GuestAgent.FileWrite`); moving a snapshot between hosts by export; forks into another thread; Windows and iOS forks and Keep; a registry push for Namespace | | |
 
 ## Gated in unit N
@@ -1125,38 +1208,39 @@ Tokens are never printed.
 | G1 confirmed-take | 1a | A take is `ready` only when the provider confirms it complete (section 1) | A take whose task is killed part way is `incomplete`, never `ready`; Delete finishes Proxmox's cleanup |
 | G2 unavailable-not-lost | 1a | A failed listing marks nothing; `lost` needs two successful listings without it; a backend with snapshots cannot be removed without Forget (section 1) | With pve-1 cut off for an hour, its snapshots are `unavailable` and come back `ready`; removing its backend asks to forget them, naming their size |
 | G3 orphans-quarantined | 1a | A labelled snapshot of a gone box is listed, not deleted, for 7 days; one with a keep date gets its record back (section 1) | With `snapshots.db` deleted while bb-box is stopped, the next start finds every snapshot and held copy, kept ones as kept, and deletes none |
-| G4 storage-rollback | 2 | The plan reads the storage; the stop comes before the undo; ZFS restores the newest only, with a held-copy undo; an undo of it is a swap that keeps the box's identity and leaves an earlier guest; nothing newer is deleted (section 2) | On LVM-thin, a restore to the oldest of three with its undo, and nothing written after the stop is lost. On ZFS, an older target is refused with the words; the newest restores with its held copy; every newer snapshot is still there; undoing it makes a new guest with the box's MAC addresses, the box keeps its BB host ID with no reset, and its other snapshots show on its earlier guest, fork only; a second restore and undo, expiry, release and a bb-box restart at each step leave every guest and snapshot accounted for, on LXC and QEMU. Until this passes, ZFS restores stay off |
-| G5 restore-guard | 2 | The guard reads `threadsOn`, control and terminals; an agent is refused while any is so (section 5) | With an idle thread's worktree on the box, a person holding control, or a terminal open, an agent's restore is refused naming it; the person's dialog lists each |
-| G6 restart-recovery | 2 | Every step is recorded first and finished or reported at start (section 6) | bb-box killed after the stop, after the undo, after the rollback, and after a swap's new guest starts: each restore finishes or says it could not confirm, and no guest is released as a leftover |
-| G7 lock-words | 2 | A locked guest is refused with the host's command (section 6) | A guest left with `lock: rollback` refuses take and restore with "Run `pct unlock <vmid>`", in the page, the tool and the doctor |
-| G8 access-first | 2 | The access file is bb-box's first command after a restore, and the size is read back (section 5) | A sentinel value changed after a take is the new one after a restore before any other command bb-box runs, on LXC and QEMU; a restore across a memory resize shows the old memory, as the dialog said |
-| G9 serialised-and-pinned | 1a, 2, 7 | All operations on a box run one at a time; pins hold for every path; room and money are reserved at once for all boxes (section 6) | Two takes at once, take and release, take and restore, delete and restore, expiry and fork, and a repeated `request`, each end in one consistent state. Restore twice then restore the oldest undo: the target stays. Restore twice, keep the oldest undo, restore again: the kept undo stays. Start a restore, then bulk-delete its target from the tab: it is skipped and named |
-| G10 ceiling-rate | 3 | The ceiling bounds the rate held, checked on take, undo, Keep, renewal and held copy; never deletes to get under (section 8) | On a fake priced backend: a ceiling lowered below the rate refuses the next take, Keep and renewal, single and bulk, and warns, and deletes nothing; deleting keeps the month's spend |
-| G11 form | 4 | A restore of a box a thread runs on is only through the form, bound to its plan, run as bb-box's own operation; its words claim a yes given in the thread, nothing more (section 5) | On a machine of the person's, `box_restore` opens the form; Cancel, timeout, a stop of the thread and a BB restart do nothing; Restore from the app restores with the undo taken then, and logs "on a yes given in the thread"; a changed loss list asks again. Then the asking agent runs `bb thread interactions respond --self` on its own form: what BB does and what bb-box logs are recorded in the unit's results and in request 38 |
-| G12 permissions | 4 | `mayAct` for every operation, picture and bulk action (section 3) | A thread guessing another thread's snapshot ID can list, see, restore, fork, delete and fetch the picture of none of them |
-| G13 outside-restore | 2 | Outside restores only from a provider task, by its status (section 4) | An outside take, delete, two restores to one parent, a rollback task that fails, one still running at a sweep, and several changes between sweeps each log as section 4 says |
-| G14 fork-identity | 6 | The unit runs before the network and identity services, fails closed, compares MAC addresses with the marker, and only snapshots with `forkSafe` fork (section 9) | On each Linux template, `systemd-analyze` shows the order; a fork's BB host ID, tailnet node, SSH host keys, machine ID and access file are new, and the source's host ID never shows a second connection; a fork given its source's name resets; a spare claimed and renamed, then restarted, does not reset and keeps its host ID; a snapshot from an image without the unit refuses to fork |
-| G15 keep-lasts | 7 | Keep lasts the release through a held copy, and is offered only where a fork can use it (section 7) | Keep, release, restart BB, then fork from the kept snapshot and read a file written before the take; with too little room, the release stops and deletes nothing; Keep is refused, with why, on a Windows box and on a snapshot taken before the identity reset |
-| G16 held-copy-inert | 2, 7 | A held copy and an earlier guest cannot start by themselves (section 2) | `pct config` and `qm config` of each show a template (or for an earlier guest, `onboot` 0 and links down); after the node reboots, neither is running and neither connects to BB or the tailnet; bb-box killed after a clone and before its disarm finishes it at start; a copy started on purpose before its disarm resets before its network |
-| G17 turns-held | 4 | No turn starts on a box threads run on while it is restored; a turn that started anyway stops the restore before anything changes (section 5) | A message queued to a thread on the box during its restore waits until the box is ready; "Send now" during the wait makes the restore stop before the stop, with nothing changed; a bb-box restart mid-restore keeps the turns held. If this cannot pass, restores of boxes threads run on stay off |
+| G4 storage-rollback | 3 | The plan reads the storage; the capture order is the backend's; ZFS restores the newest only, with a held-copy undo; an undo of it is a swap that keeps the box's identity, re-arms the clone, and leaves an earlier guest; nothing newer is deleted (section 2) | On LVM-thin, a restore to the oldest of three with its undo, and nothing written before the stop is lost. On ZFS, an older target is refused with the words; the newest restores with its held copy; every newer snapshot is still there; undoing it makes a new guest with the box's MAC addresses, `onboot` set and links up, the box keeps its BB host ID with no reset, and its other snapshots show on its earlier guest, fork only; a second restore and undo, expiry, release and a bb-box restart at each step leave every guest and snapshot accounted for, on LXC and QEMU. Until this passes, ZFS restores stay off |
+| G5 restore-guard | 3 | The guard reads `threadsOn`, control and terminals; an agent is refused while any is so (section 5) | With an idle thread's worktree on the box, a person holding control, or a terminal open, an agent's restore is refused naming it; the person's dialog lists each |
+| G6 restart-recovery | 3 | Every step is recorded first and finished or reported at start; pins end with their operation (section 6) | bb-box killed after the stop, after the undo, after the rollback, and after a swap's new guest starts: each restore finishes or says it could not confirm, no guest is released as a leftover, and once settled, by itself or by Check now, none of its snapshots stays pinned |
+| G7 lock-words | 3 | A locked guest is refused with the host's command (section 6) | A guest left with `lock: rollback` refuses take and restore with "Run `pct unlock <vmid>`", in the page, the tool and the doctor |
+| G8 access-first | 3 | The access file is bb-box's first command after a restore, and the size is read back (section 5) | A sentinel value changed after a take is the new one after a restore before any other command bb-box runs, on LXC and QEMU; a restore across a memory resize shows the old memory, as the dialog said |
+| G9 serialised-and-eligible | 1a, 3, 8 | All operations on a box run one at a time; `eligible` is checked at the moment of each change, for every path; room and money are reserved at once for all boxes (section 6) | Two takes at once, take and release, take and restore, delete and restore, expiry and fork, and a repeated `request`, each end in one consistent state. Restore twice then restore the oldest undo: the target stays. Restore twice, keep the oldest undo, restore again: the kept undo stays. Start a restore, then bulk-delete, bulk-keep and rename its target: each is refused for it and named. Let the room sweep pick its candidates, then start a restore to one and keep another before it deletes: both stay |
+| G10 ceiling-rate | 4 | The ceiling bounds the rate held, checked on take, undo, Keep, renewal and held copy; never deletes to get under (section 8) | On a fake priced backend: a ceiling lowered below the rate refuses the next take, Keep and renewal, single and bulk, and warns, and deletes nothing; at a rate one snapshot below the ceiling, a restore's undo is refused before the box stops, and the person can restore without it; deleting keeps the month's spend |
+| G11 form | 5 | A restore asked through the form is bound to its plan and run as bb-box's own operation; its words claim a yes given in the thread, nothing more (section 5) | With execution-machine restores turned on for the test, on a machine of the person's, `box_restore` opens the form; Cancel, timeout, a stop of the thread and a BB restart do nothing; Restore from the app restores with the undo taken then, and logs "on a yes given in the thread"; a changed loss list asks again. Then the asking agent runs `bb thread interactions respond --self` on its own form: what BB does and what bb-box logs are recorded in the unit's results and in request 38 |
+| G12 permissions | 5 | `mayAct` for every operation, picture and bulk action (section 3) | A thread guessing another thread's snapshot ID can list, see, restore, fork, delete and fetch the picture of none of them |
+| G13 outside-restore | 3 | Outside restores only from a provider task, by its status (section 4) | An outside take, delete, two restores to one parent, a rollback task that fails, one still running at a sweep, and several changes between sweeps each log as section 4 says |
+| G14 fork-identity | 2, 7 | The unit runs before the network and identity services, fails closed, compares the backend's interfaces' MAC addresses with the marker, and only snapshots with `forkSafe` fork; a fork is re-armed (section 9) | Unit 2: on each Linux template, `systemd-analyze` shows the order; a plain Proxmox clone of a box, made with the production token, resets, and its BB host ID, tailnet node, SSH host keys, machine ID and access file are new; a `linux-docker` box with containers running and a box on the tailnet each restart three times without a reset; a spare claimed and renamed, then restarted, does not reset and keeps its host ID. Unit 7: a fork, also one given its source's name, resets, starts with `onboot` set and links up, and the source's host ID never shows a second connection; a snapshot from an image without the unit refuses to fork |
+| G15 keep-lasts | 8 | Keep lasts the release through a held copy, and is offered only where a fork can use it (section 7) | Keep, release, restart BB, then fork from the kept snapshot and read a file written before the take; with too little room, the release stops and deletes nothing; Keep is refused, with why, on a Windows box and on a snapshot taken before the identity reset |
+| G16 held-copy-inert | 3, 8 | A held copy and an earlier guest cannot start by themselves; a copy not yet a template is remade from its source, never trusted (section 2) | `pct config` and `qm config` show each held copy a template, and each earlier guest with `onboot` 0, links down and MAC addresses that are not the box's; after the node reboots, none is running and none connects to BB or the tailnet; bb-box killed after a clone and before it is a template, and the node rebooted at that moment: the copy is deleted and made again, and the remade copy's files, read through a fork of it, match the source's, credentials included; an earlier guest started by hand resets before its network |
+| G17 turns-held | 5 | No turn starts on an execution machine while it is restored, or the restore stops before the next change; execution-machine restores stay off until this passes (section 5) | A message queued to a thread on the box during its restore waits until the box is ready; "Send now" while waiting, after the final check and before the stop, and while the restored box reconnects to BB: each either waits, or stops the restore with nothing more changed and says so; a bb-box restart mid-restore, with BB's orphan sweep releasing the held turns, holds them again and checks before the next step. If any case lets a turn run on a box being changed, the path stays off |
 
 ## Open questions for the owner
 
 Each has a default the build follows unless the owner says otherwise.
 
 1. **The paid ceiling.** Default: $5 a month per provider, on the rate of
-   everything held; it refuses new paid snapshots, never deletes kept
-   ones. Or $0 until set.
-2. **An agent restoring the box its thread runs on.** Default: refused; it
-   asks through the form. Or: run it when the turn ends.
-3. **Snapshots per box.** Default: 5, undos apart (2 a box), a restore's
-   target never deleted. Or 10.
-4. **The form's yes.** The asking agent can answer it itself with BB's
-   command line, until BB can say who answered (request 38). Default: keep
-   it for the person's machines, recorded as "a yes given in the thread",
-   with the skill forbidding agents to answer. Or: no agent-asked restores
-   of the person's machines until request 38 is met; the person restores
-   from the page.
+   everything held, undos included; it refuses new paid snapshots, never
+   deletes kept ones. Or $0 until set.
+2. **The form's yes.** The asking agent can answer the form itself with
+   BB's command line, until BB can say who answered (request 38). Default:
+   once execution-machine restores pass G17, keep the form for the
+   person's machines, recorded as "a yes given in the thread", with the
+   skill forbidding agents to answer it. Or: no agent-asked restores of
+   the person's machines until request 38 is met; the person restores from
+   the page.
+
+The research's other questions are settled by the owner's answers and the
+reviews: an agent never restores the box its thread runs on by itself, and
+each box holds 5 snapshots with undos apart, which Settings can change.
 
 ## Alternatives considered
 
@@ -1225,6 +1309,11 @@ Worth trying:
    it is skipped and named.
 7. In Settings, lower the ceiling below the rate held and Save; then try
    Keep on quick-wren's snapshot.
+8. On quick-wren, restore with its undo at the default ceiling: the undo is
+   refused before the box stops, and the dialog offers to restore without
+   it.
+9. "pve-1's storage passes 92%", then at once restore brisk-lake to
+   "schema v41" and keep another of its snapshots: the sweep spares both.
 
 Screenshots, at 1,440 px wide unless named, taken by a script that drives
 the prototype on a box: [the Snapshots
@@ -1270,12 +1359,17 @@ guest](070-snapshots/new/38-locked.png), [a storage past
 guest](070-snapshots/new/40-zfs-earlier-guest.png), [an undo's target kept
 through a third undo](070-snapshots/new/41-undo-target-kept.png), [a bulk
 delete skipping a restore's target](070-snapshots/new/42-bulk-skips-pinned.png),
-and [Keep refused over the ceiling](070-snapshots/new/43-keep-over-ceiling.png).
+[Keep refused over the ceiling](070-snapshots/new/43-keep-over-ceiling.png),
+[the room sweep leaving a restore's target and a newly kept
+snapshot](070-snapshots/new/44-sweep-spares-protected.png), and [a paid
+undo refused before the stop](070-snapshots/new/45-paid-undo-refused.png).
 
 What it does not do, where the build follows this note:
 
 - The tools and the CLI; a real form in BB's composer, and an agent
-  answering it (a stand-in thread shows the form); the turn hold.
+  answering it (a stand-in thread shows the form); the turn hold. It shows
+  restores of boxes threads run on, such as work-pc, as they will work
+  once G17 passes; they ship off.
 - Keep's expiry by the sweep, the reconcile, `unavailable`, `lost` and
   found orphans, held copies' templates and node reboots.
 - Real room on a host: each storage's fullness is a fixed number until the
@@ -1300,11 +1394,12 @@ writes `prototype.html` beside the folder. `npx tsc -p tsconfig.json
   (unit 0); until then the doctor and the pages say so, and nothing else
   changes.
 - Every Linux template and image gains a boot step that resets a fork's
-  inherited identity when its MAC addresses differ from bb-box's marker
-  (unit 6), beside 017's.
+  inherited identity when its backend's MAC addresses differ from bb-box's
+  marker (unit 2), beside 017's.
 - A release of a box with kept snapshots on Proxmox makes held copies,
   templates that cannot start, first, and can stop for want of room.
-- ZFS restores stay off until G4 passes on a ZFS node.
+- ZFS restores stay off until G4 passes on a ZFS node, and restores of
+  boxes threads run on until G17 passes.
 - Agents gain five tools; an agent's restore of the box it runs on, or of a
   machine of the person's, goes through a form in the thread, whose yes
   bb-box records as given in the thread, not as proof of who gave it.
@@ -1347,6 +1442,9 @@ after changes. Numbers are each review's own.
 
 ### After the second reviews
 
+(Unit numbers in this table are those of round 2; the identity reset was
+made unit 2 after round 3, and the units after it moved up by one.)
+
 The same two reviewers read the revision and ran its prototype again.
 Both said: build after these changes. Their numbers are N1 to N8 in each
 review; the lead's decisions are marked.
@@ -1371,3 +1469,26 @@ review; the lead's decisions are marked.
 | The prototype counted a ZFS held copy as a newer snapshot | Astra N2 | Held copies are left out of a rollback's ordering | Prototype tidy-glade |
 | Unit 1 still large | Astra 14 (round 2) | Split into 1a (core and LXC with the CLI) and 1b (QEMU) | Section 13 |
 | Weight 500 left in bb-box's own components | Astra 13 (round 2) | Said plainly: the style pass is not complete until the build moves them | Section 12, "Look and motion" |
+
+### After the third reviews
+
+Opus said build, with two points before units 2 and 6 of that round;
+Astra said build after named changes, with the foundation free to start.
+Their numbers are R1 to R6 in each review; the lead's decisions are
+marked.
+
+| Finding | Reviews | Change | Where shown |
+| --- | --- | --- | --- |
+| A held copy that booted before it was a template no longer holds the saved state (its reset removed the credentials); recovery finished it anyway | Astra R1 (lead's decision) | A copy that is not yet a template is never trusted: at start the sweep deletes it and makes it again from its source, which stays pinned until the copy is a template; G16 kills bb-box and reboots the node at that moment, and checks the remade copy's files through a fork | Section 2, "A held copy"; G16 |
+| An earlier guest keeps the box's MAC addresses, so the marker would not stop it if started | Opus R1 | Its disarm also gives it new MAC addresses, so any start resets before its network; G16 checks its config and starts one by hand | Section 2, "Undoing a ZFS restore is a swap"; section 9's table; G16 |
+| The marker must list only the backend's interfaces, or every Docker or tailnet box resets at each boot | Opus R2 | Only the interfaces the backend gives (`ethN` of `netN` on LXC; those with a device under `/sys/class/net` on QEMU and Tart) are written and compared; G14 restarts a `linux-docker` box with containers and a tailnet box three times each without a reset | Section 9; G14 |
+| BB's orphan sweep releases held turns if bb-box stops | Opus R3 | Named in section 5; the operation holds the turns again and checks for a running turn before its next step after a restart; G17 includes it | Section 5, "Holding turns on the box"; G17 |
+| "Send now" can start a turn after the final check, or while the box reconnects | Astra R2 (lead's decision) | Execution-machine restores ship off, on the page, the form and the CLI; they turn on only when G17 passes with Send now after the final check and during reconnection, and a restart; the units say so | Section 5, "Restores of execution machines ship off"; section 13; G17 |
+| Clones of a held copy inherit its disarm | Opus R4 | A fork and an `adoptCopy` set `onboot` back and their links up before the first start; G4 and G14 check it | Section 2, "Cloning a held copy re-arms the clone"; G4, G14 |
+| The sweep deleted a restore's target and a newly kept snapshot; bulk Keep and Rename touched pinned targets; Check now left the undo pinned | Astra R3 (lead's decision) | One `eligible(snapshot, change)` check, called at the moment of each change on the box's chain, by every path including the sweep, the limit, undos, bulk actions, Keep and Rename; pins end together with their operation, Check now included; G9 adds the sweep, bulk Keep and Rename sequences | Section 6; G6, G9; prototype, [screenshot](070-snapshots/new/44-sweep-spares-protected.png) |
+| A paid undo bypassed the ceiling | Astra R4 (lead's decision) | A restore's undo is admitted like any snapshot, its space and price reserved before the box stops; refused, an agent's restore is refused and the person may untick the undo; G10 adds it | Section 5, step 4; section 8; G10; [screenshot](070-snapshots/new/45-paid-undo-refused.png) |
+| Held copies need the identity reset, which came in unit 6 | Astra R5 (lead's decision) | The identity reset is unit 2, on its own, before any held copy or fork, with why; the units after it move up by one | Section 13 |
+| One hard stop for every backend is wrong for Tart's memory undo and Android's device restore | Astra R5 | A capture order per backend: stop on Proxmox, suspend on Tart macOS, shutdown on Tart Linux, a live capture then swap on microsandbox, boat and Docker, the device only on Android; what each loses is said | Section 5, the capture order |
+| Mixed bulk Keep costs; Android's dialog promised and denied the host's disk; Fork's focus at 390 px | Astra R6 | Bulk Keep says each snapshot's own cost (a held copy's size, a daily price); a device restore names only what the device loses; every row dialog returns focus to its opener, or to the row's menu button when opened from the menu | Section 5; section 12; prototype |
+| Open questions | Lead | Two left that are the owner's: the ceiling, and the form's yes; the others settled | Open questions |
+
