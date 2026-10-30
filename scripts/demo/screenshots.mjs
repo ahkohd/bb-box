@@ -8,6 +8,8 @@ mkdirSync(out, { recursive: true });
 const browser = await chromium.connectOverCDP(process.env.DEMO_CDP_URL ?? "http://127.0.0.1:9222");
 const context = browser.contexts()[0];
 const page = context.pages()[0];
+const cdp = await context.newCDPSession(page);
+await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
 const theme = process.env.DEMO_THEME === "light" ? "light" : "dark";
 await page.emulateMedia({ colorScheme: theme });
 const fileFor = (name) => `${out}/${theme === "light" ? name.replace(/(-2x)?$/, "-light$1") : name}.png`;
