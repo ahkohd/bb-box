@@ -14,7 +14,7 @@ for i, frame in enumerate(frames):
     lines.append(f"file 'frames/{frame['name']}'\nduration {span:.4f}")
 lines.append(f"file 'frames/{frames[-1]['name']}'")
 open(f"{take}/list.txt", "w").write("\n".join(lines) + "\n")
-poster_at = events["maximized"] + 3.0
+poster_at = events["monitor"] + 2.5
 poster = min(frames, key=lambda f: abs(f["at"] - poster_at))["name"]
 subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{take}/frames/{poster}", "-vf", "scale=1920:1200:flags=lanczos", "-q:v", "3", f"{take}/demo-poster.jpg"], check=True)
 print(json.dumps({"length": round(clock, 2), "poster": poster}))
