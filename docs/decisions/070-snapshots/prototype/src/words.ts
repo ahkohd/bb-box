@@ -1,4 +1,4 @@
-import { DAY, HOUR, MINUTE, type Actor, type FakeBox, type FakeSnap, type FakeThread, type Holds, type Price } from "./data";
+import { DAY, MINUTE, type Actor, type FakeSnap, type FakeThread, type Holds, type Price } from "./data";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -17,6 +17,10 @@ export function when(at: number, now: number): string {
   if (sameDay(at, now - DAY)) return `Yesterday ${clock(at)}`;
   if (now - at < 6 * DAY) return `${WEEKDAYS[new Date(at).getDay()]} ${clock(at)}`;
   return day(at);
+}
+
+export function whenInSentence(at: number, now: number): string {
+  return when(at, now).replace(/^Today/, "today at").replace(/^Yesterday/, "yesterday at");
 }
 
 export function clockOf(at: number): string {
@@ -94,30 +98,23 @@ export function lifeOf(snap: FakeSnap, now: number): Life {
   return { words: `kept until ${day(snap.keptUntil)}`, warn: false };
 }
 
-export function endOfMonth(now: number): number {
-  const date = new Date(now);
-  return new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
+export function monthlyRate(snaps: readonly FakeSnap[]): number {
+  return snaps.filter((snap) => snap.price && snap.state !== "failed" && snap.state !== "deleting").reduce((total, snap) => total + snap.price!.amount * 30, 0);
 }
 
-export function projectedThisMonth(snaps: readonly FakeSnap[], boxes: readonly FakeBox[], now: number): number {
+export function spentThisMonth(snaps: readonly FakeSnap[], deletedSpend: number, now: number): number {
   const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
-  const monthEnd = endOfMonth(now);
-  return snaps.reduce((total, snap) => {
-    if (!snap.price || snap.state === "failed") return total;
-    const box = boxes.find((each) => each.id === snap.boxId);
-    const ends = Math.min(monthEnd, snap.keptUntil ?? (box?.state === "released" ? now : monthEnd));
-    const starts = Math.max(monthStart, snap.takenAt);
-    return total + (Math.max(0, ends - starts) / DAY) * snap.price.amount;
-  }, 0);
+  return snaps.reduce((total, snap) => (snap.price && snap.state !== "failed" ? total + (Math.max(0, now - Math.max(monthStart, snap.takenAt)) / DAY) * snap.price.amount : total), deletedSpend);
+}
+
+export function undoName(at: number, taken: readonly string[]): string {
+  const base = `before the restore at ${clock(at)}`;
+  if (!taken.includes(base)) return base;
+  let count = 2;
+  while (taken.includes(`${base} (${count})`)) count += 1;
+  return `${base} (${count})`;
 }
 
 export function plural(count: number, word: string, words = `${word}s`): string {
   return `${count} ${count === 1 ? word : words}`;
 }
-
-export function within(ms: number, now: number, at: number): boolean {
-  return at - now <= ms;
-}
-
-export const SEVEN_DAYS = 7 * DAY;
-export const HOURS = HOUR;

@@ -102,14 +102,15 @@ const FRAME = "relative flex h-10 w-16 shrink-0 items-center justify-center over
 
 export function Thumbnail({ snap, box, now }: { snap: FakeSnap; box: FakeBox; now: number }) {
   const [open, setOpen] = useState(false);
-  if (snap.picture === null || box.screen === "none") {
+  if (box.screen === "none") return null;
+  if (snap.picture === null) {
     return (
       <span className={cn(FRAME, "text-subtle-foreground")} aria-hidden>
         <BoxGlyph className="size-4" />
       </span>
     );
   }
-  const label = `${box.name}'s screen at ${when(snap.takenAt, now)}`;
+  const label = `${box.name}'s screen around ${when(snap.takenAt, now)}`;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>

@@ -12,18 +12,82 @@ import { BoxesList } from "./list";
 import { go, useRoute, type Route } from "./nav";
 import { SettingsOverview, SnapshotSettingsPage } from "./settings";
 import { useUndoDialog } from "./snapshot-row";
+import { BY_PERSON } from "./data";
+import { span, whenInSentence } from "./words";
 import { StoreProvider, useStore } from "./store";
 
 const PROJECTS = ["web-app", "mobile", "infra", "docs"];
 
+function FormCard({ formId }: { formId: string }) {
+  const store = useStore();
+  const form = store.forms.find((each) => each.id === formId);
+  if (!form) return null;
+  const box = store.boxes.find((each) => each.id === form.boxId);
+  const snap = store.snaps.find((each) => each.id === form.snapId);
+  if (!box || !snap) return null;
+  const losses = store.losses(box.id, BY_PERSON);
+  const open = form.state === "waiting";
+  return (
+    <section aria-label="BB Box asks you" className="rounded-lg border border-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5 text-sm text-foreground">
+        <BoxGlyph className="size-4 text-muted-foreground" />
+        {open ? `Restore ${box.name} to "${snap.name}"?` : `Restore ${box.name}`}
+        <span className="flex-1" />
+        <span className="text-2xs text-subtle-foreground">Only you can answer this</span>
+      </div>
+      <div className="space-y-2 px-4 py-3 text-sm text-muted-foreground">
+        <p>
+          The agent asks to restore {box.name}, one of your machines, to "{snap.name}", taken {whenInSentence(snap.takenAt, store.now)}. {span(store.now - snap.takenAt)} of changes on its disk go: files, installed apps and settings. {box.name} restarts.
+        </p>
+        {losses.length ? (
+          <ul className="list-disc space-y-0.5 pl-5 text-foreground">
+            {losses.map((loss) => (
+              <li key={loss.words}>{loss.words}</li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="text-xs text-subtle-foreground">bb-box takes an undo first, when it restores. It waits up to 2 minutes for every thread on {box.name} to finish its turn, and restores nothing if one has not.</p>
+        {form.words ? (
+          <p role="status" className="flex items-center gap-1.5 text-xs text-foreground">
+            {form.state === "waiting-idle" || form.state === "restoring" ? <Icon name="Loading" className="size-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+            {form.words}
+          </p>
+        ) : null}
+      </div>
+      {open ? (
+        <div className="flex justify-end gap-1.5 border-t border-border px-4 py-2.5">
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => store.cancelForm(form.id)}>
+            Cancel
+          </Button>
+          <Button type="button" size="sm" className="h-8" onClick={() => store.submitForm(form.id)}>
+            Restore {box.name}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ThreadStandIn({ id }: { id: string }) {
   const store = useStore();
   const thread = store.threads.find((each) => each.id === id);
+  const forms = store.forms.filter((form) => form.threadId === id);
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-6 pt-3 md:px-5 md:pt-4">
       <TopRow trail={[{ words: "Back", go: () => history.back() }, { words: "Thread" }]} />
-      <h1 className="text-base font-medium text-foreground">{thread?.title ?? id}</h1>
-      <p className="text-sm text-muted-foreground">BB's thread, not part of this prototype.</p>
+      <h1 className="text-base font-normal text-foreground">{thread?.title ?? id}</h1>
+      <p className="text-xs text-subtle-foreground">A stand-in for BB's thread, with the form bb-box opens through bb.ui.requestInput.</p>
+      {forms.length ? (
+        <>
+          <div className="rounded-lg bg-surface-raised px-4 py-3 text-sm text-foreground">The upgrade broke the display manager. I'll ask you to restore work-pc to the snapshot I took before it.</div>
+          <div className="rounded-md border border-border px-3 py-2 font-mono text-xs text-muted-foreground">box_restore · work-pc · "before the upgrade" → I asked you to restore work-pc to "before the upgrade". End your turn now: nothing you do on work-pc after this survives the restore.</div>
+          {forms.map((form) => (
+            <FormCard key={form.id} formId={form.id} />
+          ))}
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">BB's thread, not part of this prototype.</p>
+      )}
     </div>
   );
 }
@@ -44,6 +108,8 @@ function Panel({ route }: { route: Route }) {
 const JUMPS: readonly { label: string; route: Route }[] = [
   { label: "Snapshots tab", route: { page: "list", tab: "snapshots" } },
   { label: "A desktop box", route: { page: "box", id: "bxamberfox2q7k" } },
+  { label: "A box on ZFS", route: { page: "box", id: "bxtidyglade3z" } },
+  { label: "A machine of yours", route: { page: "box", id: "bxworkpc5n2hq" } },
   { label: "A VM with memory", route: { page: "box", id: "bxbrisklake8m3" } },
   { label: "A Mac on Tart", route: { page: "box", id: "bxsilverpine6z" } },
   { label: "A paid one (boat)", route: { page: "box", id: "bxquickwren7d" } },
@@ -59,7 +125,7 @@ function ScenarioBar({ dark, setDark }: { dark: boolean; setDark: (dark: boolean
   const [open, setOpen] = useState(() => !new URLSearchParams(location.search).has("closed"));
   return (
     <aside aria-label="Prototype controls" className="fixed bottom-3 left-3 z-50 w-72 max-w-[calc(100vw-1.5rem)] rounded-lg border border-dashed border-input bg-popover/95 text-xs shadow-lg backdrop-blur max-sm:bottom-auto max-sm:left-auto max-sm:right-3 max-sm:top-3">
-      <button type="button" className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left font-medium text-foreground" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+      <button type="button" className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-foreground" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
         <span className="rounded-sm bg-foreground px-1 py-0.5 text-2xs leading-none text-background">Prototype</span>
         <span className="flex-1">Decision 070</span>
         <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5 text-muted-foreground" aria-hidden />
@@ -76,12 +142,32 @@ function ScenarioBar({ dark, setDark }: { dark: boolean; setDark: (dark: boolean
               ))}
             </div>
           </div>
-          <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => {
-            go({ page: "box", id: "bxamberfox2q7k" });
-            store.agentDemo();
-          }}>
-            An agent snapshots and restores amber-fox
-          </Button>
+          <div className="grid gap-1">
+            <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => {
+              go({ page: "box", id: "bxrosyreef4k1" });
+              store.agentDemo();
+            }}>
+              An agent snapshots and restores rosy-reef
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => {
+              store.askPerson();
+              go({ page: "thread", id: "thr_cleanup" });
+            }}>
+              An agent asks to restore work-pc
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => {
+              go({ page: "box", id: "bxamberfox2q7k" });
+              store.restartMidRestore();
+            }}>
+              bb-box restarts mid-restore
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => {
+              go({ page: "list", tab: "snapshots" });
+              store.fillStorage("pve-1");
+            }}>
+              pve-1's storage passes 92%
+            </Button>
+          </div>
           <label className="flex items-center justify-between gap-2 text-muted-foreground">
             The next take, restore or fork fails
             <Switch checked={store.failNext} onCheckedChange={store.setFailNext} aria-label="The next take, restore or fork fails" />
@@ -139,7 +225,7 @@ function Chrome({ children }: { children: ReactNode }) {
         ))}
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-sm font-medium text-foreground">
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-sm text-foreground">
           <BoxGlyph className="size-4 text-muted-foreground" />
           Boxes
         </header>

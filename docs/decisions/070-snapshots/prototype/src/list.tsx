@@ -33,6 +33,7 @@ function filtersFor(boxes: readonly FakeBox[], now: number): Filter[] {
     { key: "holds:memory", group: "Holds", words: "Disk and memory", test: (snap) => snap.holds === "disk-and-memory" },
     { key: "by:you", group: "Taken by", words: "You", test: (snap) => snap.by.is === "person" },
     { key: "by:agents", group: "Taken by", words: "Agents", test: (snap) => snap.by.is === "agent" },
+    { key: "undo", group: "Kind", words: "Undos", test: (snap) => snap.undoOf !== null },
     { key: "kept:yes", group: "Kept", words: "Kept", test: (snap) => snap.keptUntil !== null },
     { key: "kept:no", group: "Kept", words: "Not kept", test: (snap) => snap.keptUntil === null },
     { key: "soon", group: "Goes", words: "Goes within 7 days", test: (snap) => snap.keptUntil !== null && snap.keptUntil - now <= 7 * DAY },
@@ -60,27 +61,31 @@ function SummaryLine() {
   const store = useStore();
   const { snaps, boxes, now } = store;
   const counted = snaps.filter((snap) => snap.state !== "failed");
+  const undoCount = counted.filter((snap) => snap.undoOf).length;
   const agents = counted.filter((snap) => snap.by.is === "agent").length;
   const byHost = new Map<string, number>();
   for (const snap of counted) {
     const box = boxes.find((each) => each.id === snap.boxId);
-    if (box && snap.sizeGB !== null) byHost.set(box.host, (byHost.get(box.host) ?? 0) + snap.sizeGB);
+    if (box && (snap.heldCopyGB ?? snap.sizeGB) !== null) byHost.set(box.host, (byHost.get(box.host) ?? 0) + (snap.heldCopyGB ?? snap.sizeGB ?? 0));
   }
   const space = [...byHost.values()].reduce((sum, size) => sum + size, 0);
-  const cost = store.monthCost();
+  const rate = store.rate();
   const soon = counted.filter((snap) => snap.keptUntil !== null && snap.keptUntil - now <= 7 * DAY).length;
-  const cannot = boxes.filter((box) => box.cannotTakeWhy && box.state !== "released");
+  const cannot = [...new Set(boxes.filter((box) => box.cannotTakeWhy && box.state !== "released").map((box) => box.host))];
+  const fullHosts = [...new Map(boxes.filter((box) => box.storage && box.storage.full >= store.settings.roomPercent).map((box) => [box.host, box.storage!.full])).entries()];
   const failed = snaps.filter((snap) => snap.state === "failed").length;
   const attention = [
     soon ? `${plural(soon, "snapshot goes", "snapshots go")} within 7 days` : null,
     failed ? `${plural(failed, "take")} failed` : null,
-    ...cannot.map((box) => `${box.host} cannot take snapshots`),
+    ...cannot.map((host) => `${host} cannot take snapshots`),
+    ...fullHosts.map(([host, full]) => `${host}'s storage is ${full}% full: new snapshots refused`),
+    rate > store.settings.ceiling ? `boat.dev's ${money(rate)} a month held is past your ${money(store.settings.ceiling)} ceiling` : null,
   ].filter((item): item is string => item !== null);
   return (
     <div className="space-y-1 text-sm leading-5 text-muted-foreground">
       <p>
-        {plural(counted.length, "snapshot")}, {agents} by agents · {sizeWords(space)} on {plural(byHost.size, "host")}
-        {cost > 0 ? ` · about ${money(cost)} this month` : ""}
+        {plural(counted.length - undoCount, "snapshot")}{undoCount ? ` and ${plural(undoCount, "undo")}` : ""}, {agents} by agents · {sizeWords(space)} on {plural(byHost.size, "host")}
+        {rate > 0 ? ` · boat.dev ${money(rate)} a month held` : ""}
       </p>
       {attention.length ? (
         <p className="flex items-start gap-1.5 text-xs text-warning-text">
@@ -100,9 +105,9 @@ function BoxHead({ box }: { box: FakeBox }) {
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-4 pr-3 pt-3">
       <BoxGlyph className="size-4 text-muted-foreground" />
       {released ? (
-        <span className="text-sm font-medium text-muted-foreground">{box.name}</span>
+        <span className="text-sm text-muted-foreground">{box.name}</span>
       ) : (
-        <a href={hrefOf({ page: "box", id: box.id })} className="rounded-sm text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+        <a href={hrefOf({ page: "box", id: box.id })} className="rounded-sm text-sm text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
           {box.name}
         </a>
       )}
