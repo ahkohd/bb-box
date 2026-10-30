@@ -102,6 +102,7 @@ export function HistoryChart({
   gapWords,
   bands = [],
   notes,
+  reserveTicks = false,
 }: {
   series: readonly ChartSeries[];
   times: readonly number[];
@@ -117,6 +118,7 @@ export function HistoryChart({
   gapWords: string | ((index: number) => string);
   bands?: readonly Band[];
   notes?: (index: number) => string | null;
+  reserveTicks?: boolean;
 }) {
   const clipId = useId();
   const summaryId = useId();
@@ -210,7 +212,7 @@ export function HistoryChart({
             {ticks.map((tick) => (
               <line key={`tick-${tick.at}`} x1={x(tick.at)} x2={x(tick.at)} y1={height - 3} y2={height + 2} stroke="var(--input)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
             ))}
-            <g clipPath={`url(#${clipId})`}>
+            <g clipPath={`url(#${clipId})`} data-reveal={count ? "" : undefined}>
               {series.map((line) =>
                 line.peaks
                   ? peakRuns(line.values, line.peaks, times, longestStepMs).map((run) => (
@@ -261,7 +263,7 @@ export function HistoryChart({
             </div>
           ) : null}
         </div>
-        {ticks.length ? (
+        {ticks.length || reserveTicks ? (
           <div aria-hidden data-ticks className="relative mt-1.5 h-4 text-2xs tabular-nums text-subtle-foreground">
             {ticks.map((tick) => {
               const part = share(tick.at);

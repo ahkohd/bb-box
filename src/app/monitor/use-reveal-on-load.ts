@@ -8,7 +8,7 @@ const REVEAL_FRAMES: Keyframe[] = [
 const REVEAL_TIMING: KeyframeAnimationOptions = { duration: 320, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
 
 function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return typeof window.matchMedia !== "function" || typeof Element.prototype.animate !== "function" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export function useRevealOnLoad(container: RefObject<HTMLElement | null>, machineId: string, loaded: boolean) {

@@ -7,6 +7,8 @@ import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep,
 import type { BoxView } from "../plugin/views.ts";
 import { STALL_LIMITS } from "../monitor/health.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
+import { useRevealOnLoad } from "./monitor/use-reveal-on-load.ts";
+import { HISTORY_RANGES, historyWindow } from "../monitor/history-view.ts";
 import { LoadingText, Pill } from "./monitor/metric-parts.tsx";
 import { MiddleTruncate } from "./monitor/middle-truncate.tsx";
 import { loadErrorCopy } from "./monitor/load-error-copy.ts";
@@ -63,13 +65,13 @@ const DASHES = { memory: "6 4", up: "6 4", host: "10 4", disk: "1 4" } as const;
 
 const HISTORY_REFRESH_MS = 60_000;
 
-const HISTORY_HEIGHT = 168;
+const CHART_HEIGHT = 160;
+
+export const PROCESS_ROWS = 6;
 
 const CARD = "overflow-hidden rounded-lg border border-border bg-card";
 
 const TILES = "grid grid-cols-2 border-b border-border [&>*]:border-border max-lg:[&>*:nth-child(odd)]:border-r max-lg:[&>*:not(:nth-last-child(-n+2))]:border-b lg:divide-x";
-
-const USAGE_HEIGHT = 152;
 
 const NETWORK_HEIGHT = 56;
 
@@ -91,11 +93,11 @@ function Tile({ label, icon, pill, value, unit, foot, loading, sample }: { label
         </span>
         {loading ? null : pill}
       </div>
-      <p className="flex items-baseline gap-1 leading-none">
+      <p className="flex items-baseline gap-1 leading-none" data-reveal={loading ? undefined : ""}>
         <span className="text-xl tabular-nums text-foreground">{loading ? <LoadingText sample="00" /> : value}</span>
         <span className="text-xs text-muted-foreground">{loading ? " " : unit}</span>
       </p>
-      <p className="truncate text-xs text-subtle-foreground">{loading ? <LoadingText sample={sample} /> : foot}</p>
+      <p className="truncate text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>{loading ? <LoadingText sample={sample} /> : foot}</p>
     </section>
   );
 }
@@ -149,39 +151,62 @@ function NowTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   );
 }
 
-function SlotTiles({ snapshot, slot, share }: { snapshot: MonitorSnapshot; slot: NonNullable<MonitorSnapshot["slot"]>; share: SlotShare }) {
-  const host = slot.host;
-  const own = snapshot.own ?? null;
-  const percents = nowPercents(snapshot);
+const SLOT_SHARE_GUESS: SlotShare = { slots: 3, cores: 4, memoryBytes: 8 * 1024 ** 3 };
+
+function SlotTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+  const slot = snapshot?.slot ?? null;
+  const share = slot?.share ?? null;
+  const loading = !snapshot || !share;
+  const host = slot?.host ?? "its Mac";
+  const owner = `${hostAtStart(host)}'s`;
+  const own = snapshot?.own ?? null;
+  const percents = snapshot && share ? nowPercents(snapshot) : null;
   const ownMemory = own ? splitWords(bytesWords(own.memoryBytes)) : null;
-  const disk = snapshot.disk;
+  const disk = snapshot?.disk ?? null;
   const free = disk ? splitWords(bytesWords(disk.freeBytes)) : null;
-  const macCpu = snapshot.cpu.usagePercent;
-  const load = snapshot.cpu.loadAverage;
-  const busy = hostBusy(snapshot);
+  const macCpu = snapshot?.cpu.usagePercent ?? null;
+  const load = snapshot?.cpu.loadAverage ?? null;
+  const busy = snapshot ? hostBusy(snapshot) : false;
   return (
     <div className="border-b border-border">
-      <div data-tiles className={cn(TILES, "border-b-0", slot.encoder ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-        <Tile label="This slot's CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} loading={false} sample="" value={wholePercent(percents.cpu)} unit={own ? "% of its share" : "not read"} foot={slotCpuWords(own?.cpuCores ?? null, share, host, snapshot.cpu.cores)} />
-        <Tile label="This slot's memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} loading={false} sample="" value={ownMemory?.value ?? "–"} unit={ownMemory?.unit ?? "not read"} foot={`of its ${bytesWords(share.memoryBytes)}${own ? ` · ${wholePercent(percents.memory)}%` : ""}`} />
+      <div data-tiles className={cn(TILES, "border-b-0", slot?.encoder ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+        <Tile label="This slot's CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} loading={loading} sample="1.5 of its 4 cores, of mac-1's 12" value={wholePercent(percents?.cpu)} unit={own ? "% of its share" : "not read"} foot={share && snapshot ? slotCpuWords(own?.cpuCores ?? null, share, host, snapshot.cpu.cores) : null} />
+        <Tile label="This slot's memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} loading={loading} sample="of its 8 GiB · 20%" value={ownMemory?.value ?? "–"} unit={ownMemory?.unit ?? "not read"} foot={share ? `of its ${bytesWords(share.memoryBytes)}${own ? ` · ${wholePercent(percents?.memory)}%` : ""}` : null} />
         <Tile
           label={`${hostAtStart(host)}, all slots`}
           icon={<TileIcon icon={ComputerIcon} color={CHART_COLOURS.host} />}
           pill={busy ? <Pill tone="warn">busy</Pill> : null}
-          loading={false}
-          sample=""
+          loading={loading}
+          sample="memory 50% · 12 cores"
           value={macCpu !== null ? wholePercent(macCpu) : load ? load[0].toFixed(2) : "–"}
           unit={macCpu !== null ? "% CPU" : load ? "host load" : "not read"}
-          foot={[macCpu !== null && load ? `host load ${load[0].toFixed(2)}` : null, `memory ${Math.round(snapshot.memory.usagePercent)}%`, `${snapshot.cpu.cores} cores`].filter(Boolean).join(" · ")}
+          foot={snapshot ? [macCpu !== null && load ? `host load ${load[0].toFixed(2)}` : null, `memory ${Math.round(snapshot.memory.usagePercent)}%`, `${snapshot.cpu.cores} cores`].filter(Boolean).join(" · ") : null}
         />
-        {slot.encoder ? (
-          <Tile label={`${hostAtStart(host)}'s encoder`} icon={<TileIcon icon={VideoReplayIcon} color={CHART_COLOURS.host} />} loading={false} sample="" value={wholePercent(slot.encoder.usedPercent)} unit="% used" foot={<span title={slot.encoder.words}>{slot.encoder.words}</span>} />
+        {slot?.encoder ? (
+          <Tile label={`${hostAtStart(slot.host)}'s encoder`} icon={<TileIcon icon={VideoReplayIcon} color={CHART_COLOURS.host} />} loading={false} sample="" value={wholePercent(slot.encoder.usedPercent)} unit="% used" foot={<span title={slot.encoder.words}>{slot.encoder.words}</span>} />
         ) : null}
-        <Tile label={`${hostAtStart(host)}'s disk`} icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} loading={false} sample="" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `of ${bytesWords(disk.totalBytes)}, every slot's files together` : "Its disk could not be read."} />
+        <Tile label={`${owner} disk`} icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} loading={loading} sample="of 460 GiB, every slot's files" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `of ${bytesWords(disk.totalBytes)}, every slot's files together` : "Its disk could not be read."} />
       </div>
-      <p data-slot-line className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">
-        {slotLineWords(host, share.slots)}
+      <p data-slot-line className="border-t border-border px-4 py-2 text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>
+        {loading ? <LoadingText sample={slotLineWords("mac-1", SLOT_SHARE_GUESS.slots)} /> : slotLineWords(slot!.host, share!.slots)}
       </p>
+    </div>
+  );
+}
+
+function TilesNow({ snapshot, shared }: { snapshot: MonitorSnapshot | null; shared: boolean }) {
+  return shared || snapshot?.slot ? <SlotTiles snapshot={snapshot} /> : <NowTiles snapshot={snapshot} />;
+}
+
+function TilesSayWhy({ shared, children }: { shared: boolean; children: ReactNode }) {
+  return (
+    <div className="relative" data-tiles-frame>
+      <div aria-hidden className="invisible">
+        <TilesNow snapshot={null} shared={shared} />
+      </div>
+      <div data-activity-quiet className="absolute inset-0 flex items-center overflow-hidden px-4 text-sm text-muted-foreground">
+        <p className="line-clamp-3">{children}</p>
+      </div>
     </div>
   );
 }
@@ -222,8 +247,120 @@ function usageLines(snapshot: MonitorSnapshot, share: SlotShare | null): (ChartS
   ];
 }
 
-function Charts({ snapshot: live, share }: { snapshot: MonitorSnapshot; share: SlotShare | null }) {
-  const [hidden, setHidden] = useState<ReadonlySet<LineKey>>(() => new Set(["host"]));
+type ChartSpec = Omit<Parameters<typeof HistoryChart>[0], "series" | "height" | "ceiling" | "axis" | "reserveTicks">;
+
+interface NetworkSpec {
+  readonly whose: string | null;
+  readonly series: readonly ChartSeries[];
+  readonly ceiling: number;
+  readonly chart: Omit<ChartSpec, "ticks">;
+}
+
+function ChartsBody<Key extends string>({
+  lines,
+  hidden,
+  onToggle,
+  words,
+  usage,
+  network,
+  held,
+  onFocus,
+  onBlur,
+}: {
+  lines: readonly (ChartSeries & { key: Key })[];
+  hidden: ReadonlySet<Key>;
+  onToggle: (key: Key) => void;
+  words: ReactNode;
+  usage: ChartSpec;
+  network: NetworkSpec;
+  held?: boolean;
+  onFocus?: () => void;
+  onBlur?: (event: FocusEvent<HTMLDivElement>) => void;
+}) {
+  const downUp = [
+    { key: "down", label: "Download", color: CHART_COLOURS.down },
+    { key: "up", label: "Upload", color: CHART_COLOURS.up, dash: DASHES.up },
+  ];
+  return (
+    <div className="space-y-4 px-4 pb-3 pt-3" onFocus={onFocus} onBlur={onBlur} data-held={held ? "" : undefined} data-charts>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 sm:flex-nowrap">
+        <div className="-ml-2 flex flex-wrap items-center gap-1" role="group" aria-label="Lines shown">
+          {lines.map((line) => (
+            <LegendChip key={line.key} line={line} off={hidden.has(line.key)} onToggle={() => onToggle(line.key)} />
+          ))}
+        </div>
+        <span className="min-w-0 truncate text-xs text-subtle-foreground max-sm:w-full sm:text-right" data-chart-words>
+          {words}
+        </span>
+      </div>
+      <HistoryChart {...usage} series={lines.filter((line) => !hidden.has(line.key))} ceiling={100} height={CHART_HEIGHT} axis={["100%", "50%", "0%"]} reserveTicks />
+      <div className="space-y-1.5">
+        <p className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>Network</span>
+          {downUp.map((line) => (
+            <span key={line.key} className="flex items-center gap-1.5">
+              <SeriesSample color={line.color} dash={line.dash} />
+              {line.label}
+            </span>
+          ))}
+          {network.whose ? (
+            <span data-network-whose className="min-w-0 truncate text-subtle-foreground">
+              {network.whose}
+            </span>
+          ) : null}
+        </p>
+        <HistoryChart {...network.chart} series={network.series} ceiling={network.ceiling} height={NETWORK_HEIGHT} axis={[rateWords(network.ceiling), "0"]} ticks={[]} />
+      </div>
+    </div>
+  );
+}
+
+function useHidden<Key extends string>(first: readonly Key[]): [ReadonlySet<Key>, (key: Key) => void] {
+  const [hidden, setHidden] = useState<ReadonlySet<Key>>(() => new Set(first));
+  const toggle = (key: Key) =>
+    setHidden((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  return [hidden, toggle];
+}
+
+function slotLabels(host: string | null) {
+  return { cpu: "This slot's CPU", memory: "This slot's memory", host: `${hostAtStart(host ?? "its Mac")}'s CPU, all slots` };
+}
+
+function liveSkeleton(shared: boolean): (ChartSeries & { key: LineKey })[] {
+  const labels = shared ? slotLabels(null) : { cpu: "CPU", memory: "Memory", host: "" };
+  return [
+    { key: "cpu", label: labels.cpu, color: CHART_COLOURS.cpu, values: [], format: percentWords },
+    { key: "memory", label: labels.memory, color: CHART_COLOURS.memory, dash: DASHES.memory, values: [], format: percentWords },
+    ...(shared ? [{ key: "host" as const, label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: [], format: percentWords }] : []),
+  ];
+}
+
+const LIVE_FRAME_MS = 6 * 60_000;
+
+type LiveLines = [ReadonlySet<LineKey>, (key: LineKey) => void];
+
+function LiveFrame({ shared, words, lines: [hidden, toggle] }: { shared: boolean; words: string; lines: LiveLines }) {
+  const now = Date.now();
+  const window = { from: now - LIVE_FRAME_MS, to: now };
+  const empty = { times: [], window, longestStepMs: LIVE_FRAME_MS, timeWords: clockWithSeconds, gapWords: "No reading" };
+  return (
+    <ChartsBody
+      lines={liveSkeleton(shared)}
+      hidden={hidden}
+      onToggle={toggle}
+      words={words}
+      usage={{ ...empty, ticks: liveTicks(window), label: `${shared ? "This slot's CPU and memory" : "CPU and memory"}, Live`, summary: words }}
+      network={{ whose: shared ? "Its Mac, all slots" : null, series: [], ceiling: LEAST_RATE_CEILING * 1.15, chart: { ...empty, label: shared ? "Its Mac's download and upload, Live" : "Download and upload, Live", summary: words } }}
+    />
+  );
+}
+
+function Charts({ snapshot: live, share, lines: [hidden, toggle] }: { snapshot: MonitorSnapshot; share: SlotShare | null; lines: LiveLines }) {
   const [held, setHeld] = useState<MonitorSnapshot | null>(null);
   const snapshot = held ?? live;
   const holdWhileRead = () => setHeld((current) => current ?? live);
@@ -234,94 +371,45 @@ function Charts({ snapshot: live, share }: { snapshot: MonitorSnapshot; share: S
   const times = points.map((point) => point.timestamp);
   const interval = snapshot.refreshIntervalMs;
   const window = liveWindow(points, interval);
-  const ticks = liveTicks(window);
   const words = liveWords(interval);
   const lines = usageLines(snapshot, share);
-  const shown = lines.filter((line) => !hidden.has(line.key));
   const cpuLine = lines.find((line) => line.key === "cpu")!;
   const memoryLine = lines.find((line) => line.key === "memory")!;
-  const usageGaps = gapsOf(times, cpuLine.values, interval);
   const down = points.map((point) => point.networkRxBytesPerSecond);
   const up = points.map((point) => point.networkTxBytesPerSecond);
-  const networkGaps = gapsOf(times, down, interval);
   const ceiling = Math.max(LEAST_RATE_CEILING, ...down.map((value) => value ?? 0), ...up.map((value) => value ?? 0)) * 1.15;
-  const network: ChartSeries[] = [
-    { key: "down", label: "Download", color: CHART_COLOURS.down, values: down, format: rateWords },
-    { key: "up", label: "Upload", color: CHART_COLOURS.up, dash: DASHES.up, values: up, format: rateWords },
-  ];
-  const toggle = (key: LineKey) =>
-    setHidden((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const step = longestStepMs(interval);
+  const host = share ? snapshot.slot!.host : null;
+  const common = { times, window, longestStepMs: longestStepMs(interval), timeWords: clockWithSeconds, gapWords: "No reading" };
   return (
-    <div className="space-y-4 px-4 pb-3 pt-3" onFocus={holdWhileRead} onBlur={goOnWhenLeft} data-held={held ? "" : undefined}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="-ml-2 flex flex-wrap items-center gap-1" role="group" aria-label="Lines shown">
-          {lines.map((line) => (
-            <LegendChip key={line.key} line={line} off={hidden.has(line.key)} onToggle={() => toggle(line.key)} />
-          ))}
-        </div>
-        <span className="text-xs text-subtle-foreground">{held ? `Held at ${clockWithSeconds(Date.parse(held.timestamp))} while you read it` : `% used, ${words}`}</span>
-      </div>
-      {points.length ? (
-        <HistoryChart
-          series={shown}
-          times={times}
-          window={window}
-          longestStepMs={step}
-          ceiling={100}
-          height={USAGE_HEIGHT}
-          axis={["100%", "50%", "0%"]}
-          ticks={ticks}
-          label={`${share ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`}
-          summary={usageSummary(words, times, { cpu: cpuLine, memory: memoryLine }, usageGaps, clockWithSeconds)}
-          timeWords={clockWithSeconds}
-          gapWords="No reading"
-        />
-      ) : null}
-      {points.length ? (
-        <div className="space-y-1.5">
-          <p className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>Network</span>
-            {network.map((line) => (
-              <span key={line.key} className="flex items-center gap-1.5">
-                <SeriesSample color={line.color} dash={line.dash} />
-                {line.label}
-              </span>
-            ))}
-            {share ? <span data-network-whose className="min-w-0 truncate text-subtle-foreground">{hostAtStart(snapshot.slot!.host)}, all slots</span> : null}
-          </p>
-          <HistoryChart
-            series={network}
-            times={times}
-            window={window}
-            longestStepMs={step}
-            ceiling={ceiling}
-            height={NETWORK_HEIGHT}
-            axis={[rateWords(ceiling), "0"]}
-            ticks={[]}
-            label={`${share ? `${hostAtStart(snapshot.slot!.host)}'s download and upload` : "Download and upload"}, ${words}`}
-            summary={networkSummary(words, times, down, up, networkGaps, clockWithSeconds)}
-            timeWords={clockWithSeconds}
-            gapWords="No reading"
-          />
-        </div>
-      ) : null}
-    </div>
+    <ChartsBody
+      lines={lines}
+      hidden={hidden}
+      onToggle={toggle}
+      words={held ? `Held at ${clockWithSeconds(Date.parse(held.timestamp))} while you read it` : `% used, ${words}`}
+      held={Boolean(held)}
+      onFocus={holdWhileRead}
+      onBlur={goOnWhenLeft}
+      usage={{ ...common, ticks: liveTicks(window), label: `${share ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`, summary: usageSummary(words, times, { cpu: cpuLine, memory: memoryLine }, gapsOf(times, cpuLine.values, interval), clockWithSeconds) }}
+      network={{
+        whose: host ? `${hostAtStart(host)}, all slots` : null,
+        series: [
+          { key: "down", label: "Download", color: CHART_COLOURS.down, values: down, format: rateWords },
+          { key: "up", label: "Upload", color: CHART_COLOURS.up, dash: DASHES.up, values: up, format: rateWords },
+        ],
+        ceiling,
+        chart: { ...common, label: `${host ? `${hostAtStart(host)}'s download and upload` : "Download and upload"}, ${words}`, summary: networkSummary(words, times, down, up, gapsOf(times, down, interval), clockWithSeconds) },
+      }}
+    />
   );
 }
 
 export type ActivityRange = "live" | HistoryRange;
 
-const HISTORY_RANGES: readonly HistoryRange[] = ["1h", "24h", "7d"];
+const RANGE_ORDER: readonly HistoryRange[] = ["1h", "24h", "7d"];
 
 function RangeGroup({ value, onChange, liveWhy }: { value: ActivityRange; onChange: (range: ActivityRange) => void; liveWhy: string | null }) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
-  const options: { id: ActivityRange; label: string; why: string | null }[] = [{ id: "live", label: "Live", why: liveWhy }, ...HISTORY_RANGES.map((id) => ({ id, label: RANGE_LABELS[id], why: null }))];
+  const options: { id: ActivityRange; label: string; why: string | null }[] = [{ id: "live", label: "Live", why: liveWhy }, ...RANGE_ORDER.map((id) => ({ id, label: RANGE_LABELS[id], why: null }))];
   const open = options.flatMap((option, index) => (option.why ? [] : [index]));
   const keys = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
@@ -364,13 +452,13 @@ function ActivityCard({ status, group, children }: { status: ReactNode; group?: 
   return (
     <section aria-labelledby="activity-heading" data-activity className={cn(CARD, CHART_TONES)}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-2">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 id="activity-heading" className="text-sm font-normal text-foreground">
+        <div className="flex min-w-0 flex-1 items-baseline gap-x-3">
+          <h2 id="activity-heading" className="shrink-0 text-sm font-normal text-foreground">
             Activity
           </h2>
-          {status ? <span className="text-xs tabular-nums text-subtle-foreground">{status}</span> : null}
+          {status ? <span className="min-w-0 truncate text-xs tabular-nums text-subtle-foreground">{status}</span> : null}
         </div>
-        {group}
+        {group ? <div className="max-sm:w-full">{group}</div> : null}
       </div>
       {children}
     </section>
@@ -429,15 +517,14 @@ function useBoxHistory(boxId: string, range: HistoryRange, state: string) {
 
 type HistoryLineKey = "cpu" | "memory" | "disk" | "host";
 
-function historyLines(view: BoxHistoryView): (ChartSeries & { key: HistoryLineKey })[] {
-  const steps = view.steps;
-  const busiest = view.range !== "1h";
-  const host = view.slot?.host ?? null;
+function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared: boolean, host: string | null): (ChartSeries & { key: HistoryLineKey })[] {
+  const busiest = range !== "1h";
+  const labels = shared ? slotLabels(host) : { cpu: "CPU", memory: "Memory", host: "" };
   return [
-    { key: "cpu", label: host ? "This slot's CPU" : "CPU", color: CHART_COLOURS.cpu, values: steps.map((step) => step.cpu), ...(busiest ? { peaks: steps.map((step) => step.cpuBusiest) } : {}), format: percentWords },
-    { key: "memory", label: host ? "This slot's memory" : "Memory", color: CHART_COLOURS.memory, dash: DASHES.memory, values: steps.map((step) => step.memory), format: percentWords },
-    host
-      ? { key: "host", label: `${host}'s CPU, all slots`, color: CHART_COLOURS.host, dash: DASHES.host, values: steps.map((step) => step.host), format: percentWords }
+    { key: "cpu", label: labels.cpu, color: CHART_COLOURS.cpu, values: steps.map((step) => step.cpu), ...(busiest ? { peaks: steps.map((step) => step.cpuBusiest) } : {}), format: percentWords },
+    { key: "memory", label: labels.memory, color: CHART_COLOURS.memory, dash: DASHES.memory, values: steps.map((step) => step.memory), format: percentWords },
+    shared
+      ? { key: "host", label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: steps.map((step) => step.host), format: percentWords }
       : { key: "disk", label: "Disk", color: CHART_COLOURS.down, dash: DASHES.disk, values: steps.map((step) => step.disk), format: percentWords },
   ];
 }
@@ -448,134 +535,98 @@ function gapAtStep(view: BoxHistoryView, step: HistoryStep | undefined): string 
   return GAP_WORDS[gap?.kind ?? "no-reading"];
 }
 
-function HistoryOff() {
-  return (
-    <p data-history-off className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-      Box history is off, so bb-box keeps nothing new. What it kept stays until it ages out.{" "}
-      <SettingsLink view={{ page: "option", id: "monitor" }} className="cursor-pointer text-foreground underline underline-offset-2 hover:no-underline">
-        Monitor settings
-      </SettingsLink>
-    </p>
-  );
+function HistoryWords({ view, range, held }: { view: BoxHistoryView | null; range: HistoryRange; held: boolean }) {
+  if (held) return <>Held while you read it</>;
+  if (view && view.monitor && !view.kept) {
+    return (
+      <span data-history-off>
+        Box history is off: what it kept stays.{" "}
+        <SettingsLink view={{ page: "option", id: "monitor" }} className="cursor-pointer text-foreground underline underline-offset-2 hover:no-underline">
+          Monitor settings
+        </SettingsLink>
+      </span>
+    );
+  }
+  if (view?.full) {
+    return (
+      <span data-history-full className="text-warning-text" title={view.full}>
+        Box history's file is full, so it keeps nothing new
+      </span>
+    );
+  }
+  return <>{`% used, ${RANGE_WORDS[range]}${range === "1h" ? "" : "; the light band is each step's busiest minute"}`}</>;
 }
 
-function HistoryCharts({ box, range, quietWhenNone = false }: { box: BoxView; range: HistoryRange; quietWhenNone?: boolean }) {
+function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
   const { view: latest, error } = useBoxHistory(box.id, range, box.state);
-  const [hidden, setHidden] = useState<ReadonlySet<HistoryLineKey>>(() => new Set(["disk", "host"]));
+  const shared = box.shared || Boolean(latest?.slot);
+  const [hidden, toggle] = useHidden<HistoryLineKey>(["disk", "host"]);
   const [held, setHeld] = useState<BoxHistoryView | null>(null);
+  const container = useRef<HTMLDivElement>(null);
+  useRevealOnLoad(container, `${box.id}:${range}`, latest !== null);
   const view = held ?? latest;
-  if (!view) {
-    return error ? <Quiet>{`bb-box could not read ${box.name}'s history: ${error}`}</Quiet> : <Quiet><LoadingText sample="Reading its history" /></Quiet>;
-  }
-  if (quietWhenNone && view.newest === null) return <span data-history-none hidden />;
   const holdWhileRead = () => setHeld((current) => current ?? latest);
   const goOnWhenLeft = (event: FocusEvent<HTMLDivElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHeld(null);
   };
-  const { stepMs } = view;
-  const steps = view.steps;
+  const now = view?.now ?? Date.now();
+  const shape = view ?? { ...historyWindow(range, now), steps: [] as HistoryStep[], gaps: [], slot: null };
+  const stepMs = view?.stepMs ?? HISTORY_RANGES[range].stepMs;
+  const steps = shape.steps;
   const times = steps.map((step) => step.at + stepMs / 2);
-  const window = historyBoundsOf(view.from, view.to, stepMs);
-  const ticks = historyTicks(range, window);
+  const window = historyBoundsOf(shape.from, shape.to, stepMs);
   const words = RANGE_WORDS[range];
-  const clockOf = historyTimeWords(range, view.now);
+  const clockOf = historyTimeWords(range, now);
   const timeWords = (centre: number) => stepSpanWords(range, centre - stepMs / 2, stepMs, clockOf);
-  const lines = historyLines(view);
-  const shown = lines.filter((line) => !hidden.has(line.key));
+  const host = view?.slot?.host ?? null;
+  const lines = historyLines(steps, range, shared, host);
   const cpuLine = lines.find((line) => line.key === "cpu")!;
   const memoryLine = lines.find((line) => line.key === "memory")!;
-  const bands: Band[] = view.gaps.map((gap) => ({ from: gap.from, to: gap.to, label: GAP_WORDS[gap.kind] }));
-  const down = steps.map((step) => step.down);
-  const up = steps.map((step) => step.up);
+  const gaps = view?.gaps ?? [];
+  const bands: Band[] = gaps.map((gap) => ({ from: gap.from, to: gap.to, label: GAP_WORDS[gap.kind] }));
+  const down = shared ? [] : steps.map((step) => step.down);
+  const up = shared ? [] : steps.map((step) => step.up);
   const ceiling = Math.max(LEAST_RATE_CEILING, ...down.map((value) => value ?? 0), ...up.map((value) => value ?? 0)) * 1.15;
-  const network: ChartSeries[] = [
-    { key: "down", label: "Download", color: CHART_COLOURS.down, values: down, format: rateWords },
-    { key: "up", label: "Upload", color: CHART_COLOURS.up, dash: DASHES.up, values: up, format: rateWords },
-  ];
-  const gapWords = (index: number) => gapAtStep(view, steps[index]);
+  const gapWords = (index: number) => (view ? gapAtStep(view, steps[index]) : GAP_WORDS["no-reading"]);
   const notes = (index: number) => {
     const step = steps[index];
     return step?.partial ? partlyReadWords(range, step.covered) : null;
   };
-  const toggle = (key: HistoryLineKey) =>
-    setHidden((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const host = view.slot?.host ?? null;
+  const waiting = error ? `bb-box could not read ${box.name}'s history: ${error}` : "Reading its history…";
+  const common = { times, window, longestStepMs: stepMs * 1.5, timeWords, gapWords, notes, bands };
+  const usageSummaryWords = view ? historySummary(words, times, { cpu: cpuLine, memory: memoryLine }, gaps, clockOf, now) : waiting;
+  const networkSummaryWords = !view ? waiting : shared ? `${hostAtStart(host ?? "its Mac")}'s network is every slot's, so box history keeps none of it for a slot; Live shows it.` : historyNetworkSummary(words, times, down, up, gaps, clockOf, now);
   return (
-    <div data-history={range} onFocus={holdWhileRead} onBlur={goOnWhenLeft} data-held={held ? "" : undefined}>
-      {view.monitor && !view.kept ? <HistoryOff /> : null}
-      {view.full ? (
-        <p role="status" data-history-full className="border-b border-border px-4 py-2 text-xs text-warning-text">
-          {view.full}
-        </p>
-      ) : null}
-      <div className="space-y-4 px-4 pb-3 pt-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="-ml-2 flex flex-wrap items-center gap-1" role="group" aria-label="Lines shown">
-            {lines.map((line) => (
-              <LegendChip key={line.key} line={line} off={hidden.has(line.key)} onToggle={() => toggle(line.key)} />
-            ))}
-          </div>
-          <span className="text-xs text-subtle-foreground">
-            {held ? `Held while you read it` : `% used, ${words}${range === "1h" ? "" : "; the light band is each step's busiest minute"}`}
-          </span>
-        </div>
-        <HistoryChart
-          series={shown}
-          times={times}
-          window={window}
-          longestStepMs={stepMs * 1.5}
-          ceiling={100}
-          height={HISTORY_HEIGHT}
-          axis={["100%", "50%", "0%"]}
-          ticks={ticks}
-          bands={bands}
-          label={`${host ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`}
-          summary={historySummary(words, times, { cpu: cpuLine, memory: memoryLine }, view.gaps, clockOf, view.now)}
-          timeWords={timeWords}
-          gapWords={gapWords}
-          notes={notes}
-        />
-        {host ? null : (
-          <div className="space-y-1.5">
-            <p className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>Network</span>
-              {network.map((line) => (
-                <span key={line.key} className="flex items-center gap-1.5">
-                  <SeriesSample color={line.color} dash={line.dash} />
-                  {line.label}
-                </span>
-              ))}
-            </p>
-            <HistoryChart
-              series={network}
-              times={times}
-              window={window}
-              longestStepMs={stepMs * 1.5}
-              ceiling={ceiling}
-              height={NETWORK_HEIGHT}
-              axis={[rateWords(ceiling), "0"]}
-              ticks={[]}
-              bands={bands}
-              label={`Download and upload, ${words}`}
-              summary={historyNetworkSummary(words, times, down, up, view.gaps, clockOf, view.now)}
-              timeWords={timeWords}
-              gapWords={gapWords}
-              notes={notes}
-            />
-          </div>
-        )}
-      </div>
+    <div ref={container} data-history={range} data-history-ready={view ? "" : undefined}>
+      <ChartsBody
+        lines={lines}
+        hidden={hidden}
+        onToggle={toggle}
+        words={view ? <HistoryWords view={view} range={range} held={Boolean(held)} /> : waiting}
+        held={Boolean(held)}
+        onFocus={holdWhileRead}
+        onBlur={goOnWhenLeft}
+        usage={{ ...common, ticks: historyTicks(range, window), label: `${shared ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`, summary: usageSummaryWords }}
+        network={{
+          whose: shared ? `${hostAtStart(host ?? "its Mac")}, all slots` : null,
+          series: [
+            { key: "down", label: "Download", color: CHART_COLOURS.down, values: down, format: rateWords },
+            { key: "up", label: "Upload", color: CHART_COLOURS.up, dash: DASHES.up, values: up, format: rateWords },
+          ],
+          ceiling,
+          chart: { ...common, label: `${shared ? `${hostAtStart(host ?? "its Mac")}'s download and upload` : "Download and upload"}, ${words}`, summary: networkSummaryWords },
+        }}
+      />
     </div>
   );
 }
 
-function Quiet({ children }: { children: ReactNode }) {
-  return <p data-activity-quiet className="px-4 py-3 text-sm text-muted-foreground">{children}</p>;
+function SettingsWord({ children }: { children: ReactNode }) {
+  return (
+    <SettingsLink view={{ page: "option", id: "monitor" }} className="cursor-pointer text-foreground underline underline-offset-2 hover:no-underline">
+      {children}
+    </SettingsLink>
+  );
 }
 
 export function notReadWords(box: BoxView, now: number): string {
@@ -586,15 +637,24 @@ export function notReadWords(box: BoxView, now: number): string {
   return `${box.name} is not running, so bb-box is not reading it.`;
 }
 
-function MonitorOff() {
-  return (
-    <Quiet>
-      The Monitor is off, so bb-box reads nothing now. What it read before stays.{" "}
-      <SettingsLink view={{ page: "option", id: "monitor" }} className="cursor-pointer text-foreground underline underline-offset-2 hover:no-underline">
-        Turn it on in Monitor settings
-      </SettingsLink>
-    </Quiet>
-  );
+function notReadWhy(page: BoxPageState, box: BoxView, now: number): ReactNode {
+  const reach = page.monitor;
+  if (reach.is === "off") {
+    return (
+      <>
+        The Monitor is off, so bb-box reads nothing now. What it read before stays. <SettingsWord>Turn it on in Monitor settings</SettingsWord>
+      </>
+    );
+  }
+  if (reach.is === "not-running") return notReadWords(box, now);
+  return reach.why ?? `bb-box cannot read ${box.name}.`;
+}
+
+function processesWhy(page: BoxPageState, box: BoxView): string {
+  const reach = page.monitor;
+  if (reach.is === "off") return "The Monitor is off, so bb-box lists no processes.";
+  if (reach.is === "not-running") return `bb-box lists ${box.name}'s processes while it runs.`;
+  return `bb-box cannot list ${box.name}'s processes.`;
 }
 
 function liveWhyNot(page: BoxPageState, box: BoxView): string | null {
@@ -616,8 +676,9 @@ function useChosenRange(boxId: string): [ActivityRange | null, (range: ActivityR
   return [chosenRanges.get(boxId) ?? chosen, choose];
 }
 
-export function forgetChosenRanges(): void {
+export function forgetActivity(): void {
   chosenRanges.clear();
+  keptHistory.clear();
 }
 
 export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView; now: number }) {
@@ -626,12 +687,16 @@ export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView;
   const liveWhy = liveWhyNot(page, box);
   const range: ActivityRange = chosen === "live" && liveWhy ? "24h" : (chosen ?? (liveWhy ? "24h" : "live"));
   const group = <RangeGroup value={range} onChange={setChosen} liveWhy={liveWhy} />;
-  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} />;
+  const liveLines = useHidden<LineKey>(["host"]);
+  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} />;
   return (
-    <ActivityCard status={reach.is === "off" ? "Not read" : null} group={group}>
-      {reach.is === "off" ? <MonitorOff /> : reach.is === "not-running" ? <Quiet>{notReadWords(box, now)}</Quiet> : <Quiet>{reach.why ?? `bb-box cannot read ${box.name}.`}</Quiet>}
-      {range === "live" ? null : <HistoryCharts key={range} box={box} range={range} quietWhenNone={reach.is === "unreadable"} />}
-    </ActivityCard>
+    <div className="space-y-5" data-activity-frame>
+      <ActivityCard status={reach.is === "off" ? "Not read" : null} group={group}>
+        <TilesSayWhy shared={box.shared}>{notReadWhy(page, box, now)}</TilesSayWhy>
+        {range === "live" ? <LiveFrame shared={box.shared} words={liveWhy ?? ""} lines={liveLines} /> : <HistoryCharts key={range} box={box} range={range} />}
+      </ActivityCard>
+      <Processes snapshot={null} slot={box.shared} host={null} why={processesWhy(page, box)} />
+    </div>
   );
 }
 
@@ -642,30 +707,25 @@ function readStatus(snapshot: MonitorSnapshot | null, error: string | null, acti
   return active ? "Reading…" : "Read while this page is shown";
 }
 
-function LiveActivity({ machineId, box, range, group }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode }) {
+function LiveActivity({ machineId, box, range, group, lines }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines }) {
   const { container, active, snapshot, error } = useMonitorSnapshot(machineId);
+  useRevealOnLoad(container, machineId, snapshot !== null);
   const errorWords = error ? loadErrorCopy(error, box.name) : null;
   const share = snapshot?.slot?.share ?? null;
+  const shared = box.shared || Boolean(snapshot?.slot);
+  const unanswered = errorWords && !snapshot ? `${errorWords} bb-box tries again while this page is open.` : null;
   return (
-    <div ref={container} className="space-y-5" aria-busy={active && !snapshot && !error}>
+    <div ref={container} className="space-y-5" aria-busy={active && !snapshot && !error} data-activity-frame>
       <ActivityCard status={readStatus(snapshot, error, active)} group={group}>
-          {errorWords && snapshot ? (
-            <p role="status" data-stale className="border-b border-border px-4 py-2 text-xs text-warning-text">
-              {errorWords} Showing data from {minuteClock(Date.parse(snapshot.timestamp))}.
-            </p>
-          ) : null}
-          {errorWords && !snapshot ? (
-            <Quiet>
-              {errorWords} bb-box tries again while this page is open.
-            </Quiet>
-          ) : snapshot?.slot && share ? (
-            <SlotTiles snapshot={snapshot} slot={snapshot.slot} share={share} />
-          ) : (
-            <NowTiles snapshot={snapshot} />
-          )}
-          {range === "live" ? (snapshot ? <Charts snapshot={snapshot} share={share} /> : null) : <HistoryCharts key={range} box={box} range={range} />}
+        {errorWords && snapshot ? (
+          <p role="status" data-stale className="border-b border-border px-4 py-2 text-xs text-warning-text">
+            {errorWords} Showing data from {minuteClock(Date.parse(snapshot.timestamp))}.
+          </p>
+        ) : null}
+        {unanswered ? <TilesSayWhy shared={shared}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} />}
+        {range !== "live" ? <HistoryCharts key={range} box={box} range={range} /> : snapshot ? <Charts snapshot={snapshot} share={share} lines={lines} /> : <LiveFrame shared={shared} words={unanswered ? "Not read" : "Reading…"} lines={lines} />}
       </ActivityCard>
-      {snapshot ? <Processes snapshot={snapshot} slot={Boolean(snapshot.slot)} host={snapshot.slot?.host ?? null} /> : null}
+      <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `bb-box cannot list ${box.name}'s processes now.` : null} />
     </div>
   );
 }
@@ -674,20 +734,54 @@ function processMemory(bytes: number): string {
   return bytesWords(bytes);
 }
 
-export function Processes({ snapshot, slot, host }: { snapshot: MonitorSnapshot; slot: boolean; host: string | null }) {
-  const { processes } = snapshot;
+type ProcessRow = MonitorSnapshot["processes"]["top"][number];
+
+function ProcessCells({ process }: { process: ProcessRow }) {
   return (
-    <section id="processes" aria-labelledby="processes-heading" data-processes className={cn("scroll-mt-4", CARD)}>
+    <>
+      <td className="px-4 py-1.5 font-mono text-foreground" data-reveal="">
+        <MiddleTruncate text={process.name} className="flex w-full" />
+      </td>
+      <td className="px-2 py-1.5 text-right tabular-nums text-subtle-foreground max-sm:hidden" data-reveal="">
+        {process.pid}
+      </td>
+      <td className={cn("px-2 py-1.5 text-right tabular-nums", process.cpuPercent >= 100 ? "text-warning-text" : "text-muted-foreground")} data-reveal="">{`${process.cpuPercent.toFixed(process.cpuPercent >= 100 ? 0 : 1)}%`}</td>
+      <td className="py-1.5 pl-2 pr-4 text-right tabular-nums text-muted-foreground" data-reveal="">
+        {processMemory(process.rssBytes)}
+      </td>
+    </>
+  );
+}
+
+const PROCESS_SAMPLES = ["node", "com.apple.Webkit", "dockerd", "systemd", "sshd", "bash"] as const;
+
+function PlaceholderCells({ index, pulse }: { index: number; pulse: boolean }) {
+  const text = (sample: string) => (pulse ? <LoadingText sample={sample} /> : "\u00a0");
+  return (
+    <>
+      <td className="px-4 py-1.5 font-mono">{text(PROCESS_SAMPLES[index % PROCESS_SAMPLES.length]!)}</td>
+      <td className="px-2 py-1.5 text-right tabular-nums max-sm:hidden">{text("1234")}</td>
+      <td className="px-2 py-1.5 text-right tabular-nums">{text("0.0%")}</td>
+      <td className="py-1.5 pl-2 pr-4 text-right tabular-nums">{text("100 MiB")}</td>
+    </>
+  );
+}
+
+export function Processes({ snapshot, slot, host, why = null }: { snapshot: MonitorSnapshot | null; slot: boolean; host: string | null; why?: string | null }) {
+  const processes = snapshot?.processes ?? null;
+  const read = processes?.available ? processes.top.slice(0, PROCESS_ROWS) : [];
+  const said = why ?? (processes && !processes.available ? "bb-box could not list its processes." : null);
+  const pulse = !snapshot && !said;
+  return (
+    <section id="processes" aria-labelledby="processes-heading" data-processes className={cn("scroll-mt-4", CARD)} aria-busy={pulse || undefined}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-4 py-2.5">
         <h2 id="processes-heading" className="text-sm font-normal text-foreground">
           {slot ? "This slot's processes" : "Top processes"}
         </h2>
         <span className="text-xs text-subtle-foreground">{slot ? `Its own user's only, not ${host ?? "its Mac"}'s` : "By CPU, by name only"}</span>
       </div>
-      {!processes.available ? (
-        <Quiet>bb-box could not list its processes.</Quiet>
-      ) : (
-        <table className="w-full table-fixed text-xs">
+      <div className="relative">
+        <table className="w-full table-fixed text-xs" aria-hidden={said ? true : undefined}>
           <thead>
             <tr className="text-subtle-foreground">
               <th scope="col" className="px-4 py-2 text-left font-normal">
@@ -704,20 +798,27 @@ export function Processes({ snapshot, slot, host }: { snapshot: MonitorSnapshot;
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border border-t border-border">
-            {processes.top.map((process) => (
-              <tr key={process.pid}>
-                <td className="px-4 py-1.5 font-mono text-foreground">
-                  <MiddleTruncate text={process.name} className="flex w-full" />
-                </td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-subtle-foreground max-sm:hidden">{process.pid}</td>
-                <td className={cn("px-2 py-1.5 text-right tabular-nums", process.cpuPercent >= 100 ? "text-warning-text" : "text-muted-foreground")}>{`${process.cpuPercent.toFixed(process.cpuPercent >= 100 ? 0 : 1)}%`}</td>
-                <td className="py-1.5 pl-2 pr-4 text-right tabular-nums text-muted-foreground">{processMemory(process.rssBytes)}</td>
-              </tr>
-            ))}
+          <tbody className={cn("divide-y divide-border border-t border-border", said && "invisible")}>
+            {Array.from({ length: PROCESS_ROWS }, (_, index) => {
+              const process = said ? null : read[index];
+              return process ? (
+                <tr key={process.pid}>
+                  <ProcessCells process={process} />
+                </tr>
+              ) : (
+                <tr key={`empty-${index}`} aria-hidden data-process-placeholder>
+                  <PlaceholderCells index={index} pulse={pulse} />
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-      )}
+        {said ? (
+          <p data-processes-quiet className="absolute inset-x-0 bottom-0 top-[33px] flex items-center px-4 text-sm text-muted-foreground">
+            {said}
+          </p>
+        ) : null}
+      </div>
       <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%. bb-box reads names and PIDs only, never arguments or environment.</p>
     </section>
   );
