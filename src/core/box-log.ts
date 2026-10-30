@@ -38,6 +38,11 @@ export const BOX_EVENT_KINDS = [
   "released",
   "release-failed",
   "forgotten",
+  "snapshot-taken",
+  "snapshot-failed",
+  "snapshot-deleted",
+  "snapshot-lost",
+  "snapshot-unavailable",
 ] as const;
 
 export type BoxEventKind = (typeof BOX_EVENT_KINDS)[number];

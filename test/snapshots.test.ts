@@ -1,0 +1,958 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { test } from "node:test";
+import Database from "better-sqlite3";
+import { scopedStorage } from "../src/backends/index.ts";
+import type { Backend } from "../src/backends/types.ts";
+import { BY_COMMAND, type BoxEventKind } from "../src/core/box-log.ts";
+import { BoxError, Boxes, type BoxRecord } from "../src/core/boxes.ts";
+import type { GeneralConfig } from "../src/core/config.ts";
+import { checkDocument, emptyDocument } from "../src/core/document.ts";
+import { LOST_AFTER_MISSING_MS, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
+import { Snapshots, type HoldStep } from "../src/core/snapshots.ts";
+import { writeFileSync } from "node:fs";
+import { SNAPSHOT_TABLES, migrateFile, moveFromMain, openBoxFiles, unopenedFiles, type DatabaseSource } from "../src/plugin/attached-files.ts";
+import { BOX_LOG_MIGRATIONS, BoxLogStore } from "../src/plugin/box-log-store.ts";
+import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "../src/plugin/snapshot-store.ts";
+import { FakeBackend } from "./fake-backend.ts";
+import { FakeSnapshots as Provider, type Held } from "./fake-snapshots.ts";
+import { MemoryStorage, tempDir } from "./helpers.ts";
+
+const THREAD = "thr_one";
+const COMMAND: Caller = { is: "command" };
+const HOUR = 60 * 60_000;
+const DAY = 24 * HOUR;
+
+function world() {
+  const root = tempDir("snapshots");
+  const kv = new MemoryStorage();
+  const backendStorage = scopedStorage(kv, "backend/fake/");
+  let handle: Database.Database | null = null;
+  const source = { database: () => (handle?.open ? handle : (handle = new Database(join(root, "data.db")))) as never };
+  let files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
+  let clock = Date.UTC(2026, 9, 30, 10, 42);
+  const now = () => clock;
+  const provider = new Provider();
+  const holds: { step: HoldStep | null } = { step: null };
+  const state = {
+    root,
+    kv,
+    provider,
+    holds,
+    active: true,
+    threadState: "live" as "live" | "ended",
+    backend: new FakeBackend({ root, storage: backendStorage }),
+    log: new BoxLogStore({ file: files.log, now }),
+    store: new SnapshotStore({ file: files.snapshots, now }),
+    boxes: null as unknown as Boxes,
+    snapshots: null as unknown as Snapshots,
+    errors: [] as string[],
+    logs: [] as string[],
+    boxLogs: [] as string[],
+    tick(ms: number) {
+      clock += ms;
+    },
+    get now() {
+      return clock;
+    },
+    kinds(boxId: string): BoxEventKind[] {
+      return state.log.events(boxId).map((event) => event.kind);
+    },
+    async restart() {
+      state.snapshots.dispose();
+      await state.boxes.dispose();
+      files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
+      state.log = new BoxLogStore({ file: files.log, now });
+      state.store = new SnapshotStore({ file: files.snapshots, now });
+      state.backend = new FakeBackend({ root, storage: backendStorage });
+      build();
+    },
+    source,
+    forgetBox(box: BoxRecord) {
+      return Promise.all([kv.delete(`box/${box.threadId}/${box.id}`), kv.delete(`index/${box.id}`)]);
+    },
+    forgetRecords() {
+      handle!.prepare("DELETE FROM boxsnapshots.snapshots").run();
+      handle!.prepare("DELETE FROM boxsnapshots.snapshot_operations").run();
+    },
+  };
+  const backends = {
+    get: (id: string): Backend | null => (state.active && id === state.backend.id ? state.backend : null),
+    active: (): Backend[] => (state.active ? [state.backend] : []),
+    on: (): Backend[] => (state.active ? [state.backend] : []),
+    kinds: () => (state.active ? state.backend.kinds().map((kind) => ({ kind, backend: state.backend as Backend })) : []),
+  };
+  const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {} } as unknown as GeneralConfig;
+  const build = () => {
+    provider.attach(state.backend, now);
+    provider.ledger = state.store;
+    const boxes: Boxes = new Boxes({
+      kv,
+      backends,
+      general: async () => general,
+      notify: () => {},
+      thread: async () => ({ state: state.threadState, said: state.threadState }),
+      logError: (operation, error) => state.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
+      events: state.log,
+      log: (message) => state.boxLogs.push(message),
+      ended: (box, how) => state.snapshots.boxEnded(box, how),
+      keepsGuest: (backendId, guestRef) => state.snapshots.holdsGuest(backendId, guestRef),
+      now,
+    });
+    state.boxes = boxes;
+    state.snapshots = new Snapshots({
+      ledger: state.store,
+      boxes,
+      backends,
+      events: state.log,
+      notify: () => {},
+      logError: (operation, error) => state.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
+      log: (message) => state.logs.push(message),
+      hold: async (_operation, step, signal) => {
+        if (holds.step !== step) return;
+        holds.step = null;
+        await new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      },
+      now,
+      timeZone: "UTC",
+    });
+  };
+  build();
+  return state;
+}
+
+type World = ReturnType<typeof world>;
+
+async function readyBox(state: World): Promise<BoxRecord> {
+  const box = await state.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: BY_COMMAND });
+  const settled = await state.boxes.settled(box);
+  assert.equal(settled?.state, "ready");
+  return settled!;
+}
+
+function standing(box: BoxRecord): Standing {
+  return { box: { id: box.id, threadId: box.threadId }, runsOn: false };
+}
+
+async function rejection(work: Promise<unknown>): Promise<BoxError> {
+  const error = await work.then(
+    () => null,
+    (caught: unknown) => caught,
+  );
+  assert.ok(error instanceof BoxError, `expected a BoxError, got ${String(error)}`);
+  return error;
+}
+
+test("a take is recorded and pinned before the backend is asked, records the provider's task before it waits, and is ready once confirmed", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const answer = await state.snapshots.take(COMMAND, box, standing(box), { note: "a note" });
+  assert.equal(state.provider.stepsSeen[0], "task", "the task was recorded before the backend waited on it");
+  const snapshot = answer.snapshot!;
+  assert.equal(snapshot.state, "ready");
+  assert.equal(snapshot.name, "Fri 10:42");
+  assert.equal(snapshot.note, "a note");
+  assert.deepEqual(snapshot.by, { is: "command" });
+  assert.equal(snapshot.ref, `bb${snapshot.id}`);
+  assert.equal(snapshot.owner, "thread");
+  assert.equal(answer.counted, 1);
+  assert.equal(answer.operation.state, "done");
+  assert.equal(answer.operation.task?.ref, "task-1");
+  assert.equal(state.store.pins().size, 0, "its pin ended with its operation");
+  assert.deepEqual(state.kinds(box.id).slice(-1), ["snapshot-taken"]);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /^"Fri 10:42" \(sn[a-z2-7]{12}\): disk, in 0\.0 s\.$/);
+});
+
+test("names are unique per box: a repeat gets (2); a long or empty name and a note over 1 KB are refused before anything is recorded", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "before the migration" });
+  const second = await state.snapshots.take(COMMAND, box, standing(box), { name: "before the migration" });
+  assert.equal(second.snapshot?.name, "before the migration (2)");
+  assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "x".repeat(61) }))).code, "invalid_name");
+  assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box), { note: "n".repeat(1025) }))).code, "invalid_name");
+  assert.equal(state.store.records().length, 2);
+});
+
+test("a sixth snapshot is refused, naming the five to delete from; undos do not count", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  for (let n = 1; n <= 5; n++) {
+    await state.snapshots.take(COMMAND, box, standing(box), { name: `n${n}` });
+    state.tick(60_000);
+  }
+  const refused = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
+  assert.equal(refused.code, "limit_reached");
+  assert.equal(refused.message, `Box ${box.name} holds 5 snapshots, the most a box may. Delete one first: "n1", "n2", "n3", "n4", "n5".`);
+  state.store.updateRecord(state.store.records()[0]!.id, { undoOf: "oprestore" });
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.state, "ready", "an undo is apart from the five");
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const refusedAgent = await rejection(state.snapshots.take(agent, box, standing(box)));
+  assert.match(refusedAgent.message, /Delete one first: "n2", "n3", "n4", "n5", "Fri 10:47"\.$/);
+});
+
+test("room: a take is refused past 85% full, or when it would pass 85%, or past 80% of thin metadata, and reservations of unsettled takes count", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.percentFull = 86;
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /storage fast is 86% full, and bb-box takes no snapshot past 85%/);
+  state.provider.percentFull = 84.5;
+  const memory = await rejection(state.snapshots.take(COMMAND, box, standing(box), { memory: true }));
+  assert.match(memory.message, /would be \d+% full with its memory/);
+  state.provider.percentFull = 30;
+  state.provider.metadataPercentFull = 81;
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /metadata is 81% full, and bb-box takes no snapshot past 80%/);
+  state.provider.metadataPercentFull = 10;
+  state.provider.percentFull = 84;
+  const reserved: SnapshotOperation = {
+    id: "opreservedaaaa",
+    request: null,
+    requestDigest: null,
+    kind: "take",
+    box: "bxother",
+    guest: null,
+    snapshots: [],
+    by: { is: "person" },
+    consent: null,
+    undo: null,
+    guests: null,
+    step: "task",
+    task: null,
+    state: "unknown",
+    reserved: { storage: "fake:fast", bytes: 2 * 2 ** 30, price: null },
+    error: null,
+    startedAt: state.now,
+    endedAt: null,
+    snapshotsGoneAt: null,
+  };
+  state.store.insertOperation(reserved);
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /would be 86% full/, "another take's room is still reserved");
+  assert.equal(state.store.records().length, 0, "nothing was recorded for a refused take");
+});
+
+test("a locked guest and a plan that cannot take are refused with their words, before anything is recorded", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.locked = { lock: "rollback", fix: "Run `pct unlock 214` on pve-1." };
+  const locked = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
+  assert.equal(locked.code, "locked");
+  assert.equal(locked.message, `Fake host left box ${box.name} locked (rollback), so it takes no snapshot. Run \`pct unlock 214\` on pve-1.`);
+  state.provider.locked = null;
+  state.provider.takeWhy = "The Proxmox token lacks VM.Snapshot on /pool/bbbox.";
+  assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, `bb-box cannot take a snapshot of box ${box.name} now: The Proxmox token lacks VM.Snapshot on /pool/bbbox.`);
+  assert.equal(state.store.records().length, 0);
+});
+
+test("a take the provider fails holds nothing and is failed, logged, and removed after 24 hours", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.take = "failed";
+  const error = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
+  assert.equal(error.code, "failed");
+  const [failed] = state.store.records();
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.error, "snapshot feature is not available.");
+  assert.equal(state.kinds(box.id).at(-1), "snapshot-failed");
+  state.tick(23 * HOUR);
+  await state.snapshots.tidy();
+  assert.equal(state.store.records().length, 1);
+  state.tick(HOUR);
+  await state.snapshots.tidy();
+  assert.equal(state.store.records().length, 0);
+});
+
+test("G1: a take the provider leaves part-made is incomplete, never ready; deleting it finishes the clean-up", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.take = "incomplete";
+  const error = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
+  assert.match(error.message, /Part of it is left on .*: delete it to finish the clean-up there\./);
+  const [incomplete] = state.store.records();
+  assert.equal(incomplete?.state, "incomplete");
+  await state.snapshots.sweep();
+  assert.equal(state.store.records()[0]?.state, "incomplete", "the reconcile keeps it incomplete, never ready");
+  await state.snapshots.delete(COMMAND, standing(box), incomplete!.id);
+  assert.equal(state.store.records().length, 0);
+  assert.equal(state.provider.held.size, 0);
+});
+
+test("a take bb-box cannot confirm stays taking and pinned, and the next sweep settles it from the provider", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.take = "unknown";
+  const error = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
+  assert.equal(error.code, "unreachable");
+  const [taking] = state.store.records();
+  assert.equal(taking?.state, "taking");
+  assert.equal(state.store.unsettled()[0]?.state, "unknown");
+  const refused = await rejection(state.snapshots.delete(COMMAND, standing(box), taking!.id));
+  assert.match(refused.message, /is in use by the take that began at 10:42 UTC/);
+  await state.snapshots.sweep();
+  assert.equal(state.store.records()[0]?.state, "ready");
+  assert.equal(state.store.unsettled().length, 0);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /confirmed after bb-box restarted/);
+});
+
+test("G9: two takes at once run one after the other and end in two ready snapshots with their own names", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  let open!: () => void;
+  state.provider.gate = new Promise((resolve) => (open = resolve));
+  const first = state.snapshots.take(COMMAND, box, standing(box));
+  const second = state.snapshots.take(COMMAND, box, standing(box));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(state.store.records().length, 1, "the second waits for the first on the box's queue");
+  open();
+  state.provider.gate = null;
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(state.provider.most, 1);
+  assert.deepEqual([a.snapshot?.name, b.snapshot?.name], ["Fri 10:42", "Fri 10:42 (2)"]);
+  assert.deepEqual(state.store.records().map((record) => record.state), ["ready", "ready"]);
+});
+
+test("G9: a repeated request is the same take, and the same delete, also after the delete finished and after a restart", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const [a, b] = await Promise.all([state.snapshots.take(COMMAND, box, standing(box), { request: "req-1" }), state.snapshots.take(COMMAND, box, standing(box), { request: "req-1" })]);
+  assert.equal(a.operation.id, b.operation.id);
+  assert.equal(b.repeated, true);
+  assert.equal(state.store.records().length, 1);
+  const id = a.snapshot!.id;
+  const first = await state.snapshots.delete(COMMAND, standing(box), id, { request: "del-1" });
+  assert.equal(first.repeated, false);
+  const again = await state.snapshots.delete(COMMAND, standing(box), id, { request: "del-1" });
+  assert.equal(again.repeated, true, "the delete's receipt answers once the snapshot is gone");
+  assert.equal(again.operation?.id, first.operation?.id);
+  assert.equal(again.snapshot, null);
+  await state.restart();
+  const afterRestart = await state.snapshots.delete(COMMAND, standing(box), id, { request: "del-1" });
+  assert.equal(afterRestart.operation?.id, first.operation?.id);
+  const take = await state.snapshots.take(COMMAND, box, standing(box), { request: "req-1" });
+  assert.equal(take.operation.id, a.operation.id, "and the take's, after a restart");
+  assert.equal(take.snapshot, null, "whose snapshot is gone");
+});
+
+test("a request ID is bound to its caller, box, kind and arguments: a reuse is refused in plain words, and another caller's is its own", async () => {
+  const state = world();
+  const one = await readyBox(state);
+  const two = await readyBox(state);
+  const taken = await state.snapshots.take(COMMAND, one, standing(one), { request: "r", name: "first" });
+  const otherBox = await rejection(state.snapshots.take(COMMAND, two, standing(two), { request: "r", name: "first" }));
+  assert.equal(otherBox.code, "reused_request");
+  assert.equal(otherBox.message, 'Request ID "r" was used already, for another take or delete. Make a new one for this.');
+  assert.equal((await rejection(state.snapshots.take(COMMAND, one, standing(one), { request: "r", name: "other" }))).code, "reused_request", "other arguments");
+  assert.equal((await rejection(state.snapshots.delete(COMMAND, standing(one), taken.snapshot!.id, { request: "r" }))).code, "reused_request", "a delete with a take's request");
+  assert.equal(state.store.records().length, 1);
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const agents = await state.snapshots.take(agent, one, standing(one), { request: "r", name: "first" });
+  assert.equal(agents.repeated, false, "another caller's request r is its own");
+  assert.notEqual(agents.snapshot?.id, taken.snapshot!.id);
+  const stranger: Caller = { is: "agent", threadId: "thr_stranger" };
+  assert.equal((await rejection(state.snapshots.take(stranger, one, { box: { id: one.id, threadId: THREAD }, runsOn: false }, { request: "r", name: "first" }))).code, "not_owner", "and a stranger gets nothing back");
+  assert.equal(state.store.problem, null);
+});
+
+test("the same request on two boxes at once makes one take, refuses the other in plain words, and leaves the store sound", async () => {
+  const state = world();
+  const one = await readyBox(state);
+  const two = await readyBox(state);
+  const results = await Promise.allSettled([state.snapshots.take(COMMAND, one, standing(one), { request: "both" }), state.snapshots.take(COMMAND, two, standing(two), { request: "both" })]);
+  assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+  const refused = (results.find((result) => result.status === "rejected") as PromiseRejectedResult).reason as BoxError;
+  assert.equal(refused.code, "reused_request");
+  assert.equal(state.store.records().length, 1);
+  assert.equal(state.store.problem, null);
+  assert.equal(state.store.checks()[0]?.status, "ok");
+});
+
+test("G9: a take and a release: the release waits for the take, then its snapshots go with the box, logged", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  let open!: () => void;
+  state.provider.gate = new Promise((resolve) => (open = resolve));
+  const take = state.snapshots.take(COMMAND, box, standing(box));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const release = state.boxes.release(THREAD, box.id, "test", BY_COMMAND);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(await state.boxes.find(box.id), "the release waits for the take");
+  open();
+  state.provider.gate = null;
+  const taken = await take;
+  assert.equal(taken.snapshot?.state, "ready");
+  assert.equal(await release, null);
+  assert.equal(state.store.records().length, 0);
+  const kinds = state.kinds(box.id);
+  assert.deepEqual(kinds.slice(kinds.indexOf("snapshot-taken")), ["snapshot-taken", "released", "snapshot-deleted"]);
+  assert.deepEqual(state.log.events(box.id).at(-1)?.by, { is: "bb-box", why: "its box was released" });
+});
+
+test("G9: a delete and a take of the same box, and two deletes of one snapshot, end consistent", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const kept = await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" });
+  const [deleted, taken] = await Promise.all([state.snapshots.delete(COMMAND, standing(box), kept.snapshot!.id), state.snapshots.take(COMMAND, box, standing(box), { name: "new" })]);
+  assert.equal(deleted.snapshot?.id, kept.snapshot!.id);
+  assert.deepEqual(state.store.records().map((record) => record.name), ["new"]);
+  const twice = await Promise.allSettled([state.snapshots.delete(COMMAND, standing(box), taken.snapshot!.id), state.snapshots.delete(COMMAND, standing(box), taken.snapshot!.id)]);
+  assert.deepEqual(twice.map((each) => each.status), ["fulfilled", "rejected"]);
+  assert.match(((twice[1] as PromiseRejectedResult).reason as Error).message, /deleted already/);
+  assert.equal(state.provider.held.size, 0);
+});
+
+test("restart in the middle of a take: after its task began it is confirmed ready; before the backend was asked it is failed, never taken again", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.holds.step = "task";
+  const held = state.snapshots.take(COMMAND, box, standing(box), { name: "mid-task" }).catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(state.store.records()[0]?.state, "taking");
+  await state.restart();
+  await held;
+  assert.equal(state.store.unsettled()[0]?.step, "task", "its task was recorded before bb-box stopped");
+  assert.equal(await state.snapshots.recover(), 1);
+  assert.equal(state.store.records()[0]?.state, "ready");
+  assert.equal(state.store.pins().size, 0);
+
+  state.holds.step = "planned";
+  const early = state.snapshots.take(COMMAND, box, standing(box), { name: "mid-plan" }).catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await state.restart();
+  await early;
+  await state.snapshots.recover();
+  const failed = state.store.records().find((record) => record.name === "mid-plan");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.error, "bb-box restarted before the take began, and fake has no such snapshot.");
+  assert.equal(state.provider.held.size, 1, "it was never taken again");
+});
+
+test("restart in the middle of a delete: after its task began it is confirmed gone; before the backend was asked it is finished", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const one = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+  const two = (await state.snapshots.take(COMMAND, box, standing(box), { name: "two" })).snapshot!;
+  state.holds.step = "task";
+  const first = state.snapshots.delete(COMMAND, standing(box), one.id).catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(state.store.record(one.id)?.state, "deleting");
+  await state.restart();
+  await first;
+  state.holds.step = null;
+  await state.snapshots.recover();
+  assert.equal(state.store.record(one.id), null);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /confirmed after bb-box restarted/);
+
+  state.holds.step = "planned";
+  const second = state.snapshots.delete(COMMAND, standing(box), two.id).catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await state.restart();
+  await second;
+  assert.equal(state.provider.held.has(two.id), true, "the backend was never asked");
+  await state.snapshots.recover();
+  assert.equal(state.store.record(two.id), null);
+  assert.equal(state.provider.held.has(two.id), false, "the delete was finished from the step it reached");
+  assert.equal(state.store.unsettled().length, 0);
+});
+
+test("a delete the provider refuses goes back as it was; one it leaves part-deleted is incomplete", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.provider.remove = "failed";
+  assert.match((await rejection(state.snapshots.delete(COMMAND, standing(box), snapshot.id))).message, /CT is locked \(backup\)/);
+  assert.equal(state.store.record(snapshot.id)?.state, "ready");
+  state.provider.remove = "incomplete";
+  await rejection(state.snapshots.delete(COMMAND, standing(box), snapshot.id));
+  assert.equal(state.store.record(snapshot.id)?.state, "incomplete");
+  await state.snapshots.delete(COMMAND, standing(box), snapshot.id);
+  assert.equal(state.store.record(snapshot.id), null);
+});
+
+test("G2: a listing that fails makes snapshots unavailable, never lost, and they come back ready when it answers", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.tick(1000);
+  state.provider.listing = new Error("cannot reach the Proxmox API: timed out");
+  for (let sweep = 0; sweep < 20; sweep++) {
+    await state.snapshots.sweep();
+    state.tick(3 * 60_000);
+  }
+  const unavailable = state.store.record(snapshot.id)!;
+  assert.equal(unavailable.state, "unavailable", "an hour cut off");
+  assert.match(unavailable.error!, /timed out/);
+  assert.equal(state.kinds(box.id).filter((kind) => kind === "snapshot-unavailable").length, 1, "logged once");
+  assert.match((await rejection(state.snapshots.delete(COMMAND, standing(box), snapshot.id))).message, /cannot reach .* now/);
+  state.provider.listing = null;
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "ready");
+});
+
+test("G2: lost needs two successful listings without it, 10 minutes apart; a lost one goes after 7 days", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.tick(1000);
+  state.provider.held.delete(snapshot.id);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "ready", "once missing is not lost");
+  state.tick(LOST_AFTER_MISSING_MS - 1000);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "ready");
+  state.tick(1000);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "lost");
+  assert.equal(state.kinds(box.id).at(-1), "snapshot-lost");
+  state.tick(7 * DAY);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id), null);
+});
+
+test("G2: a missing one listed again is ready, and an incomplete one gone from its host is removed", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.tick(1000);
+  const held = state.provider.held.get(snapshot.id)!;
+  state.provider.held.delete(snapshot.id);
+  await state.snapshots.sweep();
+  state.provider.held.set(snapshot.id, held);
+  state.tick(LOST_AFTER_MISSING_MS);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.missingSince, null);
+  assert.equal(state.store.record(snapshot.id)?.state, "ready");
+  held.state = "incomplete";
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "incomplete");
+  state.provider.held.delete(snapshot.id);
+  state.tick(1000);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id), null);
+  assert.deepEqual(state.log.events(box.id).at(-1)?.by, { is: "outside" });
+});
+
+test("G2: a backend that leaves the settings makes its snapshots unavailable, and a configuration that removes it is refused, naming them", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.tick(1000);
+  state.active = false;
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(snapshot.id)?.state, "unavailable");
+  assert.equal(state.store.record(snapshot.id)?.error, "its backend is not in bb-box's settings");
+  const held = state.snapshots.heldOn(state.backend.id)!;
+  assert.equal(held.words, "1 snapshot on fake, an unknown size, at no charge");
+  const problems = checkDocument(emptyDocument(), {}, [], { backends: new Map(), hosts: new Map(), snapshots: new Map([[state.backend.id, held]]) });
+  assert.deepEqual(problems, [
+    {
+      path: `backends.${state.backend.id}`,
+      message: `Backend ${state.backend.id} holds 1 snapshot on fake, an unknown size, at no charge, so it cannot be removed or renamed. Delete them first, or forget them with bb box snapshot forget ${state.backend.id}: bb-box then drops its records of them, and they may still exist there and be billed.`,
+    },
+  ]);
+  assert.equal(state.snapshots.forgetBackend(state.backend.id).length, 1);
+  assert.equal(state.snapshots.heldOn(state.backend.id), null);
+});
+
+test("G3: with snapshots.db's records gone, the next sweep finds every snapshot, kept ones as kept, and deletes none; a gone box's unkept one is listed 7 days, then deleted", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const ordinary = (await state.snapshots.take(COMMAND, box, standing(box), { name: "ordinary" })).snapshot!;
+  const fromGone: Held = { id: "sngoneaaaaaaaa", box: "bxgoneboxaaaaa", guest: box.guest!, state: "complete", holds: "disk", takenAt: state.now - HOUR, keptUntil: null };
+  const keptGone: Held = { id: "snkeptaaaaaaaa", box: "bxkeptboxaaaaa", guest: box.guest!, state: "complete", holds: "disk", takenAt: state.now - HOUR, keptUntil: state.now + 20 * DAY };
+  state.provider.held.set(fromGone.id, fromGone);
+  state.provider.held.set(keptGone.id, keptGone);
+  state.forgetRecords();
+  await state.restart();
+  state.tick(1000);
+  await state.snapshots.sweep();
+  const found = new Map(state.store.records().map((record) => [record.id, record]));
+  assert.equal(found.size, 3);
+  assert.equal(state.provider.held.size, 3, "deletes none");
+  const again = found.get(ordinary.id)!;
+  assert.equal(again.state, "ready");
+  assert.deepEqual(again.by, { is: "unknown" });
+  assert.equal(again.name, "Fri 10:42");
+  assert.equal(again.box.name, box.name);
+  assert.equal(again.boxGone, null);
+  const kept = found.get(keptGone.id)!;
+  assert.equal(kept.keptUntil, keptGone.keptUntil);
+  assert.equal(kept.owner, "person");
+  assert.equal(kept.foundAt, null);
+  const orphan = found.get(fromGone.id)!;
+  assert.notEqual(orphan.foundAt, null);
+  assert.equal(orphan.boxGone?.how, "unknown");
+  state.tick(7 * DAY - 2000);
+  await state.snapshots.sweep();
+  assert.equal(state.provider.held.has(fromGone.id), true, "never deleted at once");
+  state.tick(2000);
+  await state.snapshots.sweep();
+  assert.equal(state.provider.held.has(fromGone.id), false, "deleted after 7 days");
+  assert.equal(state.provider.held.has(keptGone.id), true, "a kept one stays");
+  assert.deepEqual(state.log.events(fromGone.box).at(-1)?.by.is, "bb-box");
+});
+
+test("a forgotten box's snapshots stay as unavailable, marked gone; a released box's go", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box));
+  state.active = false;
+  await state.boxes.forget(THREAD, box.id, BY_COMMAND);
+  const [record] = state.store.records();
+  assert.equal(record?.state, "unavailable");
+  assert.equal(record?.boxGone?.how, "forgotten");
+});
+
+test("an agent sees and deletes only what mayAct lets it; another thread's IDs are not found", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const byPerson = (await state.snapshots.take(COMMAND, box, standing(box), { name: "the person's" })).snapshot!;
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const own = (await state.snapshots.take(agent, box, standing(box), { name: "the agent's" })).snapshot!;
+  assert.match((await rejection(state.snapshots.delete(agent, standing(box), byPerson.id))).message, /not taken by an agent of this thread/);
+  const stranger: Caller = { is: "agent", threadId: "thr_stranger" };
+  const theirs: Standing = { box: { id: box.id, threadId: THREAD }, runsOn: false };
+  assert.deepEqual(state.snapshots.visible(stranger, theirs), []);
+  const guessed = await rejection(state.snapshots.delete(stranger, theirs, own.id));
+  assert.equal(guessed.code, "not_found");
+  assert.equal(guessed.message, `That box has no snapshot "${own.id}".`);
+  assert.equal((await rejection(state.snapshots.take(stranger, box, theirs))).code, "not_owner");
+  const runsOn: Standing = { box: { id: box.id, threadId: THREAD }, runsOn: true };
+  const visitor: Caller = { is: "agent", threadId: "thr_visitor" };
+  const visiting = (await state.snapshots.take(visitor, box, runsOn, { name: "the visitor's" })).snapshot!;
+  assert.deepEqual(state.snapshots.visible(visitor, runsOn).map((record) => record.id), [visiting.id]);
+  assert.deepEqual(state.snapshots.seen(visitor, runsOn).hidden, 2);
+  await state.snapshots.delete(agent, standing(box), own.id);
+});
+
+test("with snapshots.db unwritable, a take is refused before it starts and the doctor fails", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const broken = unopenedFiles(new Error("disk I/O error"));
+  const store = new SnapshotStore({ file: broken.snapshots });
+  const snapshots = new Snapshots({ ledger: store, boxes: state.boxes, backends: { get: () => state.backend, active: () => [state.backend] }, notify: () => {}, logError: () => {} });
+  const error = await rejection(snapshots.take(COMMAND, box, standing(box)));
+  assert.equal(error.code, "unreachable");
+  assert.equal(error.message, "bb-box could not set up snapshots.db: disk I/O error. So bb-box takes no snapshot until it can.");
+  assert.equal(state.provider.held.size, 0);
+  const [check] = store.checks();
+  assert.equal(check?.status, "fail");
+  assert.equal(check?.id, "snapshots");
+});
+
+test("snapshots.db is a file of its own beside bb-box's database, attached with its migrations, and an operation row outlives its snapshot for 30 days only", () => {
+  const state = world();
+  assert.equal(state.store.file.attached, true);
+  assert.equal(state.store.file.spec.file, "snapshots.db");
+  assert.equal(state.store.file.migrationsRun, SNAPSHOT_MIGRATIONS.length);
+  const [check] = state.store.checks();
+  assert.equal(check?.status, "ok");
+  assert.match(check!.detail, /^bb-box's records of snapshots and their operations, in snapshots\.db, attached to bb-box's database: 0 snapshots, 0 operations not settled/);
+  const done: SnapshotOperation = {
+    id: "opdoneaaaaaaaa",
+    request: null,
+    requestDigest: null,
+    kind: "delete",
+    box: "bx",
+    guest: null,
+    snapshots: ["sngoneaaaaaaaa"],
+    by: { is: "person" },
+    consent: null,
+    undo: null,
+    guests: null,
+    step: "done",
+    task: null,
+    state: "done",
+    reserved: null,
+    error: null,
+    startedAt: state.now - 31 * DAY,
+    endedAt: state.now - 31 * DAY,
+    snapshotsGoneAt: null,
+  };
+  state.store.insertOperation(done);
+  state.store.insertOperation({ ...done, id: "oprecentaaaaaa", endedAt: state.now - DAY });
+  assert.equal(state.store.prune(state.now), 1);
+  assert.ok(state.store.operation("oprecentaaaaaa"));
+  assert.equal(state.store.changedSince("sngoneaaaaaaaa", state.now - 2 * DAY), true);
+  assert.equal(state.store.changedSince("sngoneaaaaaaaa", state.now), false);
+});
+
+const FIRST_BOX_LOG_MIGRATION_HASH = "1d3d8c88fc498e322c14d9c2e6da70f6ce1741b9d0fb03968e67d44fdb0faa3e";
+
+test("the box log's first migration is unchanged, and its next one keeps every event while allowing 070's kinds", () => {
+  const root = tempDir("box-log-070");
+  const db = new Database(join(root, "data.db"));
+  const before = BOX_LOG_MIGRATIONS.slice(0, 3);
+  migrateFile(db, "main", "_migrations", before);
+  db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 1, 'stopped', 'person')").run();
+  assert.throws(() => db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'snapshot-taken', 'person')").run(), /CHECK constraint/);
+  assert.equal(migrateFile(db, "main", "_migrations", BOX_LOG_MIGRATIONS), 1);
+  db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'snapshot-taken', 'person')").run();
+  assert.deepEqual(db.prepare("SELECT seq, kind FROM box_events ORDER BY seq").all(), [
+    { seq: 1, kind: "stopped" },
+    { seq: 2, kind: "snapshot-taken" },
+  ]);
+  assert.equal(createHash("sha256").update(BOX_LOG_MIGRATIONS[0]!).digest("hex"), FIRST_BOX_LOG_MIGRATION_HASH);
+});
+
+async function heldAt(state: World, step: "task" | "planned", work: () => Promise<unknown>): Promise<void> {
+  state.holds.step = step;
+  const running = work().catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await state.restart();
+  await running;
+  state.holds.step = null;
+}
+
+test("after a restart, a take whose task Proxmox no longer has and whose snapshot is absent stays unknown and pinned, never failed", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await heldAt(state, "task", () => state.snapshots.take(COMMAND, box, standing(box), { name: "vanished" }));
+  const [record] = state.store.records();
+  state.provider.held.delete(record!.id);
+  state.provider.tasks.clear();
+  await state.snapshots.recover();
+  assert.equal(state.store.record(record!.id)?.state, "taking");
+  const [operation] = state.store.unsettled();
+  assert.equal(operation?.state, "unknown");
+  assert.match(operation!.error!, /no longer has its task, and fake has no such snapshot, so bb-box cannot tell how it ended/);
+  assert.equal(state.store.pins().has(record!.id), true, "its pin stays");
+});
+
+test("after a restart, a task bb-box cannot read leaves the operation unknown and pinned, whatever the listing shows", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await heldAt(state, "task", () => state.snapshots.take(COMMAND, box, standing(box), { name: "unread" }));
+  state.provider.tasksReadable = false;
+  await state.snapshots.recover();
+  const [operation] = state.store.unsettled();
+  assert.equal(operation?.state, "unknown");
+  assert.match(operation!.error!, /could not read its task on fake: cannot reach the provider's task list/);
+  state.provider.tasksReadable = true;
+  await state.snapshots.recover();
+  assert.equal(state.store.records()[0]?.state, "ready", "and settles once the task reads OK");
+});
+
+test("a take is ready only when its task succeeded: a failed task with a whole-looking snapshot is incomplete, in a take and after a restart", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.take = "ok-task-failed";
+  await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "now" }));
+  assert.equal(state.store.records()[0]?.state, "incomplete");
+  await heldAt(state, "task", () => state.snapshots.take(COMMAND, box, standing(box), { name: "after" }));
+  const after = state.store.records().find((record) => record.name === "after")!;
+  for (const [ref, outcome] of state.provider.tasks) if (outcome.state === "ok") state.provider.tasks.set(ref, { state: "failed", words: "vmstate save failed" });
+  await state.snapshots.recover();
+  const settled = state.store.record(after.id)!;
+  assert.equal(settled.state, "incomplete");
+  assert.match(settled.error!, /^Proxmox's task failed \(vmstate save failed\), though it left the snapshot with no part-made state/);
+});
+
+test("the gap between asking the provider and recording its task: an accepted take whose answer was lost is found and confirmed; one that never arrived is failed, after a restart", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.submit = "answer-lost";
+  assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "accepted" }))).code, "unreachable");
+  const accepted = state.store.records()[0]!;
+  assert.equal(accepted.state, "taking");
+  assert.equal(state.store.unsettled()[0]?.step, "submitting");
+  assert.equal(state.store.unsettled()[0]?.task, null);
+  state.tick(1000);
+  state.provider.submit = "never-arrived";
+  await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "never" }));
+  await state.restart();
+  await state.snapshots.recover();
+  assert.equal(state.store.record(accepted.id)?.state, "ready", "its task was found by its guest and time, and read OK");
+  const never = state.store.records().find((record) => record.name === "never")!;
+  assert.equal(never.state, "failed");
+  assert.equal(never.error, "fake has no task and no snapshot for it: the take did not begin.");
+  assert.equal(state.store.unsettled().length, 0);
+});
+
+test("a release during a sweep's listing leaves no ghost record and no false lost", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const snapshot = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  state.tick(1000);
+  let open!: () => void;
+  state.provider.listingGate = new Promise((resolve) => (open = resolve));
+  const sweeping = state.snapshots.reconcile();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await state.boxes.release(THREAD, box.id, "test", BY_COMMAND);
+  state.provider.held.delete(snapshot.id);
+  state.provider.listingGate = null;
+  open();
+  await sweeping;
+  assert.deepEqual(state.store.records(), [], "the stale listing found nothing to record again");
+  state.tick(LOST_AFTER_MISSING_MS * 2);
+  await state.snapshots.sweep();
+  assert.deepEqual(state.kinds(box.id).filter((kind) => kind === "snapshot-lost"), []);
+});
+
+test("the sweeps together: a gone box's guest holding a found snapshot is kept by the box sweep, at its second sweep and after; one with none goes", async () => {
+  const state = world();
+  const keeping = await readyBox(state);
+  const plain = await readyBox(state);
+  await state.snapshots.take(COMMAND, keeping, standing(keeping));
+  await state.forgetBox(keeping);
+  await state.forgetBox(plain);
+  state.forgetRecords();
+  state.threadState = "ended";
+  state.tick(1000);
+  for (let sweep = 0; sweep < 3; sweep++) {
+    await state.snapshots.sweep();
+    await state.boxes.sweep();
+    state.tick(3 * 60_000);
+  }
+  assert.notEqual(await state.backend.power(keeping.guest!), null, "the guest with the found snapshot stays");
+  assert.equal(await state.backend.power(plain.guest!), null, "the other leftover goes");
+  assert.equal(state.provider.held.size, 1);
+  assert.ok(state.boxLogs.some((line) => /^Kept guest .* which no box records and its box's thread .* ended.*: it holds a snapshot bb-box keeps: found and kept 7 days\.$/.test(line)), state.boxLogs.join("\n"));
+});
+
+test("with snapshots.db unreadable, the box sweep keeps every leftover guest", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.forgetBox(box);
+  state.threadState = "ended";
+  const broken = new Snapshots({ ledger: new SnapshotStore({ file: unopenedFiles(new Error("disk I/O error")).snapshots }), boxes: state.boxes, backends: { get: () => state.backend, active: () => [state.backend] }, notify: () => {}, logError: () => {} });
+  assert.match(broken.holdsGuest(state.backend.id, box.guest!.ref)!, /cannot read its snapshots' records/);
+});
+
+test("a memory take checks and reserves the storage Proxmox saves the memory on, and is refused when bb-box cannot plan it", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.memoryStorage = { ...state.provider.storage(), key: "fake:state", name: "state", percentFull: 99, usedBytes: 99 * 2 ** 30 };
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box), { memory: true }))).message, /storage state is 99% full/);
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.state, "ready", "a disk take does not use it");
+  state.provider.memoryStorage = null;
+  state.provider.memoryWhy = "Proxmox would save its memory on one of a, b, and bb-box cannot tell which.";
+  assert.equal(
+    (await rejection(state.snapshots.take(COMMAND, box, standing(box), { memory: true }))).message,
+    `bb-box cannot take a snapshot of box ${box.name} with its memory: Proxmox would save its memory on one of a, b, and bb-box cannot tell which.`,
+  );
+});
+
+test("reservations are by physical storage: another backend's unsettled take on the same pool counts, one on another pool does not", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.percentFull = 84;
+  const elsewhere: SnapshotOperation = {
+    id: "opotherbackend",
+    request: null,
+    requestDigest: null,
+    kind: "take",
+    box: "bxonanotherbackend",
+    guest: "3250",
+    snapshots: [],
+    by: { is: "person" },
+    consent: null,
+    undo: null,
+    guests: null,
+    step: "task",
+    task: null,
+    state: "unknown",
+    reserved: { storage: "fake:fast", bytes: 2 * 2 ** 30, price: null },
+    error: null,
+    startedAt: state.now,
+    endedAt: null,
+    snapshotsGoneAt: null,
+  };
+  state.store.insertOperation(elsewhere);
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /would be 86% full/);
+  state.provider.storageKey = "fake:other";
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.state, "ready");
+});
+
+test("an operation's receipt lasts 30 days from the removal of its last snapshot, not from its end", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const taken = await state.snapshots.take(COMMAND, box, standing(box), { request: "old" });
+  state.tick(40 * DAY);
+  await state.snapshots.delete(COMMAND, standing(box), taken.snapshot!.id);
+  assert.equal(state.store.prune(state.now), 0);
+  assert.ok(state.store.operation(taken.operation.id), "the take's receipt is kept");
+  state.tick(30 * DAY - 1000);
+  state.store.prune(state.now);
+  assert.ok(state.store.operation(taken.operation.id));
+  state.tick(2000);
+  state.store.prune(state.now);
+  assert.equal(state.store.operation(taken.operation.id), null);
+});
+
+test("an existing snapshots.db that cannot be opened fails closed: no empty ledger, takes refused, the doctor fails", () => {
+  const root = tempDir("snapshots-closed");
+  writeFileSync(join(root, "snapshots.db"), "this is not a database file, and it is long enough to be read as one".repeat(200));
+  let handle: Database.Database | null = null;
+  const files = openBoxFiles({ database: () => (handle?.open ? handle : (handle = new Database(join(root, "data.db")))) as never }, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
+  assert.equal(files.shared, false, "the box log still attaches");
+  assert.match(files.snapshots.problem ?? "", /^its existing snapshots\.db cannot be opened: /);
+  const store = new SnapshotStore({ file: files.snapshots });
+  assert.match(store.problem ?? "", /^bb-box could not set up snapshots\.db: its existing snapshots\.db cannot be opened/);
+  assert.equal(store.checks()[0]?.status, "fail");
+  assert.match(store.checks()[0]!.detail, /^bb-box could not set up its snapshots' records in snapshots\.db: its existing snapshots\.db cannot be opened/);
+  const inMain = handle!.prepare("SELECT COUNT(*) AS count FROM main.sqlite_master WHERE name = 'snapshots'").get() as { count: number };
+  assert.equal(inMain.count, 0, "no empty ledger in bb-box's database");
+});
+
+test("records kept in bb-box's database while its handle refused to attach move into snapshots.db once it can", () => {
+  const root = tempDir("snapshots-move");
+  let plain: Database.Database | null = null;
+  const open = () => (plain?.open ? plain : (plain = new Database(join(root, "data.db"))));
+  const refusing: DatabaseSource = {
+    database: () =>
+      new Proxy(open(), {
+        get(target, key) {
+          if (key === "prepare") return (sql: string) => {
+            if (/^ATTACH/i.test(sql)) throw new Error("this handle attaches nothing");
+            return target.prepare(sql);
+          };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as never,
+  };
+  const first = openBoxFiles(refusing, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
+  assert.equal(first.snapshots.attached, false);
+  assert.equal(first.snapshots.problem, null, "no file yet, so the fallback is allowed");
+  const operation: SnapshotOperation = {
+    id: "opbeforemoving",
+    request: null,
+    requestDigest: null,
+    kind: "take",
+    box: "bxmoving",
+    guest: "1",
+    snapshots: [],
+    by: { is: "person" },
+    consent: null,
+    undo: null,
+    guests: null,
+    step: "done",
+    task: null,
+    state: "done",
+    reserved: null,
+    error: null,
+    startedAt: 1,
+    endedAt: 2,
+    snapshotsGoneAt: null,
+  };
+  new SnapshotStore({ file: first.snapshots }).insertOperation(operation);
+  const second = openBoxFiles({ database: open as never }, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
+  assert.equal(second.snapshots.attached, true);
+  assert.equal(second.snapshotsMoved, 1);
+  assert.equal(new SnapshotStore({ file: second.snapshots }).operation("opbeforemoving")?.state, "done");
+  assert.equal(moveFromMain(open(), second.snapshots.spec, SNAPSHOT_TABLES), 0, "nothing is left to move");
+});
+
+test("box_status counts every snapshot against the limit while naming only those the caller may see", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  for (const name of ["a", "b", "c"]) await state.snapshots.take(COMMAND, box, standing(box), { name });
+  const visitor: Caller = { is: "agent", threadId: "thr_visitor" };
+  const runsOn: Standing = { box: { id: box.id, threadId: THREAD }, runsOn: true };
+  await state.snapshots.take(visitor, box, runsOn, { name: "mine" });
+  const seen = state.snapshots.seen(visitor, runsOn);
+  assert.deepEqual(seen.records.map((record) => record.name), ["mine"]);
+  assert.equal(seen.hidden, 3);
+  assert.equal(seen.counted, 4);
+});
+

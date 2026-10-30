@@ -22,3 +22,28 @@ export class ReplyDrops {
     return true;
   }
 }
+
+export const HOLD_STEPS = ["planned", "task"] as const;
+export type HoldStepName = (typeof HOLD_STEPS)[number];
+
+export class SnapshotHolds {
+  #armed: HoldStepName | null = null;
+
+  get armed(): HoldStepName | null {
+    return this.#armed;
+  }
+
+  arm(step: HoldStepName | null): void {
+    this.#armed = step;
+  }
+
+  async hold(operation: { readonly id: string; readonly kind: string }, step: HoldStepName, signal: AbortSignal, log: (message: string) => void): Promise<void> {
+    if (this.#armed !== step) return;
+    this.#armed = null;
+    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after its ${step === "planned" ? "record" : "provider's task began"}, as a live check asked, until bb-box stops.`);
+    await new Promise<never>((_, reject) => {
+      if (signal.aborted) return reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+}

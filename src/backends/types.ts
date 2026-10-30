@@ -700,6 +700,14 @@ export interface Backend {
    * starts another after it.
    */
   maintain?(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void>;
+  snapshotting?(kind: string): Snapshotting | null;
+  planSnapshots?(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan>;
+  snapshot?(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken>;
+  deleteSnapshot?(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
+  heldSnapshots?(signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
+  providerTask?(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome>;
+  findTasks?(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
+
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
@@ -709,6 +717,138 @@ export interface Backend {
   /** Building images in boxes and keeping their builds (049). Only backends that can. */
   readonly images?: BackendImages;
   dispose?(): Promise<void>;
+}
+
+export type Holds = "disk" | "disk-and-memory";
+export type WhileRunning = "live" | "pauses" | "suspends" | "stopped-only";
+export type KeepsPastRelease = "as-is" | "held-copy" | "no";
+export type SnapshotScope = "box" | "device";
+export type SnapshotGuest = "current" | "earlier" | "held-copy";
+
+export interface Price {
+  readonly amount: number;
+  readonly currency: "USD" | "EUR";
+  readonly per: "day" | "month" | "GB-month";
+  readonly known: boolean;
+}
+
+export interface Snapshotting {
+  readonly scope: SnapshotScope;
+  readonly holds: readonly Holds[];
+  readonly whileRunning: WhileRunning;
+  readonly restore: "in-place" | "new-guest" | "none";
+  readonly fork: "copy" | "none";
+  readonly keepsPastRelease: KeepsPastRelease;
+  readonly lives: "host" | "provider";
+  readonly price: Price | null;
+  readonly excludes: string | null;
+}
+
+export interface SnapshotStorage {
+  readonly key: string;
+  readonly name: string;
+  readonly type: string;
+  readonly percentFull: number;
+  readonly metadataPercentFull: number | null;
+  readonly metadataUnread: string | null;
+  readonly totalBytes: number | null;
+  readonly usedBytes: number | null;
+}
+
+export interface SnapshotPlan {
+  readonly storage: SnapshotStorage;
+  readonly take: {
+    readonly ok: boolean;
+    readonly why: string | null;
+    readonly aboutMs: number;
+    readonly memoryAboutMs: number | null;
+    readonly addsBytes: number | null;
+    readonly memory: { readonly storage: SnapshotStorage; readonly addsBytes: number } | null;
+    readonly memoryWhy: string | null;
+  };
+  readonly restore: {
+    readonly way: "rollback" | "rollback-newest-only" | "new-guest" | "none";
+    readonly why: string | null;
+    readonly undo: "snapshot" | "held-copy" | "suspend-copy" | "none";
+    readonly undoAboutMs: number;
+    readonly undoBytes: number | null;
+    readonly sizeBack: BoxSize | null;
+    readonly leavesOnEarlierGuest: number;
+  };
+  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly price: Price | null };
+  readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null };
+  readonly locked: { readonly lock: string; readonly fix: string } | null;
+}
+
+export interface SnapshotTake {
+  readonly id: string;
+  readonly box: string;
+  readonly memory: boolean;
+}
+
+export interface SnapshotSize {
+  readonly bytes: number;
+  readonly means: "own" | "whole";
+}
+
+export interface SnapshotTaken {
+  readonly ref: string;
+  readonly holds: Holds;
+  readonly capturedAt: number;
+  readonly size: SnapshotSize | null;
+}
+
+export interface SnapshotRef {
+  readonly id: string;
+  readonly ref: string;
+  readonly guest: Guest;
+}
+
+export interface TaskRef {
+  readonly ref: string;
+  readonly host: string | null;
+}
+
+export type TaskOutcome =
+  | { readonly state: "running" }
+  | { readonly state: "ok" }
+  | { readonly state: "failed"; readonly words: string }
+  | { readonly state: "missing"; readonly words: string };
+
+export interface SnapshotHooks {
+  submitting(): Promise<void>;
+  task(task: TaskRef): Promise<void>;
+}
+
+export type HeldSnapshotState = "complete" | "incomplete" | "in-progress";
+
+export interface HeldSnapshot {
+  readonly id: string;
+  readonly ref: string;
+  readonly box: string;
+  readonly owner: BoxOwner | null;
+  readonly guest: Guest;
+  readonly where: SnapshotGuest;
+  readonly state: HeldSnapshotState;
+  readonly words: string | null;
+  readonly holds: Holds;
+  readonly takenAt: number | null;
+  readonly keptUntil: number | null;
+  readonly storage: { readonly name: string; readonly type: string } | null;
+}
+
+export class SnapshotFailed extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SnapshotFailed";
+  }
+}
+
+export class SnapshotIncomplete extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SnapshotIncomplete";
+  }
 }
 
 /** The macOS permissions bb-box can grant a program in a box (058). */

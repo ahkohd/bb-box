@@ -17,6 +17,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `box-files` | Files for every box | The files bb-box writes into each box as it joins BB, and whether the last write worked. |
 | `box-history` | Box history's file | Where bb-box will keep each box's readings over time (069): box-history.db beside its database, attached with its own cap, or its database itself where BB's handle refused to attach the file. |
 | `box-log` | Box log | Where bb-box keeps who stopped, started, resized and released each box (069): box-log.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed. |
+| `snapshots` | Snapshots' records | Where bb-box keeps its records of snapshots and their operations (070): snapshots.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed. While it cannot write them, bb-box takes and deletes no snapshots. |
 | `images.nightly` | Nightly rebuilds | When bb box images refresh last ended. It warns when no run ended for 8 days. |
 | `images.bb-update` | Refresh after a BB update | After a BB update, which Linux images have another build of BB's app than BB's server gives, and when their refresh starts. Only while Rebuild each night is on. |
 | `images.<backend>/<ref>` | Rebuild of &lt;backend>/&lt;ref> | A standard image whose last rebuild failed, or waits for room. |

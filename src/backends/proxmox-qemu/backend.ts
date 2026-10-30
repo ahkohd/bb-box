@@ -32,6 +32,7 @@ import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
+import { storagesMetadata } from "../proxmox/snapshotting.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -1268,7 +1269,8 @@ export class ProxmoxQemuBackend implements Backend {
       }
 
       const privileges = await poolPrivileges(api, pool, signal);
-      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages }) });
+      const metadata = await storagesMetadata(api, templateStorages, signal);
+      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages, metadata }) });
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its VMs carry the tag ${installTag(this.#context.installId)}.`);
 

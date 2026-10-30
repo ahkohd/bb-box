@@ -13,10 +13,12 @@ import { PRESETS } from "../core/sizes.ts";
 import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, kindResizeText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 import { setupDocker } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
+import { snapshotCommands } from "./snapshot-cli.ts";
+import { snapshotStatusLine } from "./snapshot-words.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -194,7 +196,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, on ${kind.offers.map((offer) => offer.name).join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, on ${kind.offers.map((offer) => offer.name).join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );
@@ -244,7 +246,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }, ctx) =>
             guard("Checking the box", async () => {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
-              return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
+              if (options.json) return json(app.view(box));
+              const snapshots = snapshotStatusLine(box, app.backends.get(box.backend)?.snapshotting?.(box.kind) ?? null, app.snapshots.seen({ is: "command" }, { box: { id: box.id, threadId: box.threadId }, runsOn: false }));
+              return out(`${boxDetail(box, app.control(box))}${snapshots ? `\n${snapshots}` : ""}`);
             }),
         }),
         run: cliCommand({
@@ -685,12 +689,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
         ...configCommands(app.configuration),
+        ...snapshotCommands(app),
         ...monitorCommands(bb, app.monitor),
         sweep: cliCommand({
-          summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",
+          summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's.",
           options: jsonOption,
           run: ({ options }, ctx) =>
             guard("Sweeping", async () => {
+              await app.snapshots.sweep(ctx.signal);
               const report = await boxes.sweep(ctx.signal);
               if (options.json) return json(report);
               return out(
@@ -701,6 +707,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                   `Guests kept until BB says whether their thread ended: ${report.kept}`,
                   `Boxes and guests kept until the next sweep, as BB says their thread ended only now: ${report.ending}`,
                   `Interrupted acquires and releases carried on: ${report.resumed}`,
+                  `Guests kept for the snapshots they hold: ${report.guarded}`,
                 ].join("\n"),
               );
             }),

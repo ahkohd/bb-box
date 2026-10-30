@@ -166,6 +166,7 @@ export interface ConfigurationDeps {
   readonly drivers: readonly BackendDriver<any>[];
   /** Every box record. */
   boxes(): Promise<readonly BoxRecord[]>;
+  snapshotsHeld?(): ReadonlyMap<string, { readonly count: number; readonly words: string }>;
   /** Each kind's spares now, ready and being made. */
   spareCounts?(): Promise<Readonly<Record<string, { readonly ready: number; readonly making: number }>>>;
   /** Tells open panels and pages that the configuration changed. */
@@ -314,7 +315,7 @@ export class Configuration {
       counts.set(host, (counts.get(host) ?? 0) + 1);
       hosts.set(box.backend, counts);
     }
-    return { backends, hosts };
+    return { backends, hosts, snapshots: this.#deps.snapshotsHeld?.() ?? new Map() };
   }
 
   /** Problems with the stored document. */
