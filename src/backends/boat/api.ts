@@ -80,6 +80,12 @@ export interface Sandbox {
   readonly archiveAfter: number | null;
   readonly dataExpiredAt: number | null;
   readonly hydrated: boolean;
+  readonly stop: SandboxStop | null;
+}
+
+export interface SandboxStop {
+  readonly status: string;
+  readonly error: string | null;
 }
 
 export interface SshReach {
@@ -192,7 +198,19 @@ export function sandboxFrom(raw: Readonly<Record<string, unknown>>): Sandbox {
     archiveAfter: time(raw.archiveAfter),
     dataExpiredAt: time(raw.dataExpiredAt),
     hydrated: raw.hydrated !== false,
+    stop: stopFrom(raw.stop),
   };
+}
+
+function stopFrom(raw: unknown): SandboxStop | null {
+  if (!raw || typeof raw !== "object") return null;
+  const stop = raw as Record<string, unknown>;
+  return typeof stop.status === "string" ? { status: stop.status, error: text(stop.error) } : null;
+}
+
+export function stillArchivingWords(id: string, stop: SandboxStop | null): string {
+  if (stop?.status === "failing") return `boat's sandbox ${id} is still archiving: boat's last attempt to save its disk failed${stop.error ? `, ${stop.error}` : ""}, and boat tries again by itself.`;
+  return `boat's sandbox ${id} is still archiving: boat is still saving its disk.`;
 }
 
 export function reachFrom(raw: Readonly<Record<string, unknown>>): SshReach {
@@ -401,6 +419,16 @@ export class BoatApi {
 
   async sshKey(id: string, publicKey: string, signal?: AbortSignal): Promise<SshReach> {
     return reachFrom(await this.#call("POST", `/sandboxes/${encodeURIComponent(id)}/sshkey`, { key: publicKey }, {}, signal));
+  }
+
+  async waitArchived(id: string, deadline: number, signal?: AbortSignal): Promise<Sandbox> {
+    try {
+      return await this.waitFor(id, (sandbox) => sandbox.state === "archived", deadline, signal);
+    } catch (error) {
+      if (!(error instanceof BoatError && error.kind === "busy")) throw error;
+      const sandbox = await this.get(id, signal).catch(() => null);
+      throw new BoatError("busy", 504, "timeout", stillArchivingWords(id, sandbox?.stop ?? null));
+    }
   }
 
   async waitFor(id: string, wanted: (sandbox: Sandbox) => boolean, deadline: number, signal?: AbortSignal): Promise<Sandbox> {

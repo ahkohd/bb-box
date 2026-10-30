@@ -32,6 +32,7 @@ const BUILD_POLL_MS = 10_000;
 const BUILD_RENEW_MS = 15 * 60_000;
 const CUSTOMIZE_WITHIN_MS = 90 * 60_000;
 const STATE_WITHIN_MS = 10 * 60_000;
+export const ARCHIVE_WITHIN_MS = 60 * 60_000;
 const RECORD = "template/";
 const FAILED = "template-failed/";
 export const FAILED_BUILD_RETRY_MS = 6 * 3_600_000;
@@ -327,7 +328,7 @@ export class BoatTemplates {
       if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
       const devices = TEMPLATE_STEP[kind] === "android" ? await this.#devices(made.id) : null;
       await this.#stop(made.id);
-      await this.#tryAFork(made.id, kind);
+      await this.#tryAFork(made.id, kind, TEMPLATE_STEP[kind] === "android" ? size : "small");
       const record: TemplateRecord = { kind, sandbox: made.id, key, builtAt: now(), buildMs: now() - started, usedAt: null, ...(devices ? { devices } : {}) };
       const previous = await this.record(kind);
       await this.#deps.storage.set(`${RECORD}${kind}`, record);
@@ -355,10 +356,10 @@ export class BoatTemplates {
     return devices;
   }
 
-  async #tryAFork(template: string, kind: BoatKind): Promise<void> {
+  async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trial = await api.fork(template, { size: "small", ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` });
+    const trial = await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` });
     this.#buildSandboxes.add(trial.id);
     try {
       await this.#running(trial.id);
@@ -401,7 +402,7 @@ export class BoatTemplates {
   async #stop(id: string): Promise<void> {
     await this.#deps.forget(id);
     await this.#deps.api.stop(id);
-    await this.#deps.api.waitFor(id, (sandbox) => sandbox.state === "archived", this.#deps.now() + STATE_WITHIN_MS);
+    await this.#deps.api.waitArchived(id, this.#deps.now() + ARCHIVE_WITHIN_MS);
   }
 
   async #follow(id: string, kind: BoatKind): Promise<void> {

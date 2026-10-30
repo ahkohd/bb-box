@@ -290,6 +290,12 @@ So a desktop box now waits for boat to say the sandbox is restored
 made, when it starts again and in the template's trial fork. The wait gives
 up after 5 minutes and checks Cua Driver anyway.
 
+Deployed (main `f2491d7f`), the next `linux-desktop-cpu` acquire was ready
+in 125.6 s: fork 0.4, ready 9.8, ssh 11.0, settle 6.4, tailnet 8.6,
+display 0.2, restore 81.8, computer use 7.2. Mousepad then opened and took
+40 characters through Cua Driver, read back from its window, and Cua
+Driver still answered minutes later.
+
 ## Android, before its live run
 
 Phase 3's code is tested against the fake API: android is withheld, with
@@ -333,3 +339,22 @@ failed sandbox, the Android step run again from `/` made all three devices:
 against 16.9 to 17.5 s cold and 2.1 to 3.3 s from the snapshot for the
 Proxmox QEMU template's build on 8 cores (063). The Android step took
 309 s, and the build's guest scripts before it 6.5 minutes.
+
+### The second build in production
+
+With that fix deployed (main `d5b1eb48`), production built again 6 hours
+after the first failure, at 01:57 UTC. The guest scripts, the devices and
+the finalize passed in 11 minutes. bb-box then stopped the template, and
+boat was still saving its disk, with the SDK, the system image and three
+devices' disks and snapshots on it, 10 minutes later, when the build gave
+up and deleted it.
+
+So a template's stop now waits up to an hour for boat to save its disk,
+and, if boat is still saving then, says how boat's stop stands: still
+saving, or failing with boat's own error, which boat retries by itself.
+A box's stop keeps its 5 minutes, with the same words. The Android
+template's trial fork now runs at the size its build ran at, 4 cores and
+8 GB on the trial, the size an Android box will have, not the smallest.
+
+boat counts its starts over the last 24 hours, not by the day: after the
+first day's building and testing, 2 were left at 02:18 UTC.

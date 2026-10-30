@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_ROLE, buildWaitWords, failedChecks, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
 import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
@@ -479,12 +479,37 @@ test("the Android template's build writes the licence's acceptance before the gu
     setupArchive: async () => Buffer.from("tar"),
   };
   await assert.rejects(new BoatTemplates({ ...deps, androidLicence: () => null }).build("android", "test"), /licence accepted/);
+  fake.stopsArchiveForReads = 4;
   const record = await new BoatTemplates({ ...deps, androidLicence: () => "abc123" }).build("android", "test");
   const licence = scripts.findIndex((each) => each.script.includes("android-sdk-license"));
   const customize = scripts.findIndex((each) => each.script.includes("customize android"));
   assert.ok(licence >= 0 && licence < customize, "the acceptance is written before the guest scripts run");
   assert.equal(scripts[licence]!.stdin, "abc123\n");
   assert.deepEqual(record.devices, ANDROID_DEVICES);
+  assert.equal(fake.sandboxes.get(record.sandbox)?.state, "archived", "the build waited while boat saved the template's disk");
+  const trial = [...fake.sandboxes.values()].find((each) => each.labels[LABELS.role] === TRIAL_ROLE)!;
+  assert.equal(trial.type, "default", "the Android trial runs at the size an Android box will have, not the smallest");
+});
+
+test("a stop waits while boat saves the sandbox's disk, up to an hour for a template, and says how boat's stop stands when it is still saving", async () => {
+  const fake = new FakeBoat();
+  let clock = 0;
+  const api = new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, now: () => clock, sleep: async (ms) => void (clock += ms) });
+  const sandbox = fake.add({ labels: {} });
+  fake.stopsArchiveForReads = 1000;
+  await api.stop(sandbox.id);
+  sandbox.archivingReads = Math.round((ARCHIVE_WITHIN_MS * 0.9) / 500);
+  assert.equal((await api.waitArchived(sandbox.id, clock + ARCHIVE_WITHIN_MS)).state, "archived");
+  assert.ok(clock > 30 * 60_000, "a template's disk can take boat more than half an hour to save");
+
+  const slow = fake.add({ labels: {} });
+  await api.stop(slow.id);
+  await assert.rejects(api.waitArchived(slow.id, clock + 60_000), /boat's sandbox bx_\w+ is still archiving: boat is still saving its disk\./);
+
+  fake.stopsFailWith = "snapshot upload failed";
+  const failing = fake.add({ labels: {} });
+  await api.stop(failing.id);
+  await assert.rejects(api.waitArchived(failing.id, clock + 60_000), /still archiving: boat's last attempt to save its disk failed, snapshot upload failed, and boat tries again by itself\./);
 });
 
 test("a template build that failed is not tried again by the upkeep for hours, and the doctor says why", async () => {
