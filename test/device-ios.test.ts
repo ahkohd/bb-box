@@ -751,6 +751,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       for await (const frame of driver.video().frames(stop.signal)) if (frame.key) keys.push(frame);
     })();
     const before = (JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number }).pid;
+    driver.video().want?.("full");
     driver.video().keyframe();
     await until("a key frame", () => keys.length > 0);
     await wait(100);

@@ -1810,7 +1810,7 @@ test("first run in settings leads until a backend that is on makes a kind: Use D
   const { handlers, changes } = server([], { setups: [setup()], config: { document: empty } });
   const none = settings(handlers);
   expect(await none.findByRole("heading", { name: "Set up BB Box" })).toBeTruthy();
-  expect(none.getByText("Use Docker on this machine")).toBeTruthy();
+  expect(await none.findByText("Use Docker on this machine")).toBeTruthy();
   expect(none.getByText("bb, where BB runs, has Docker 29.8.1. BB Box builds its Linux image there, usually 5 to 12 min, then makes Linux boxes in seconds.")).toBeTruthy();
   expect(none.queryByRole("link", { name: "Other backends" })).toBeNull();
   expect(none.queryByText("Kinds")).toBeNull();
@@ -7058,6 +7058,7 @@ test("Add backend offers Docker on your BB machines first: Add for those that ca
   const headings = slot.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
   expect(headings.indexOf("Docker on your BB machines")).toBeLessThan(headings.indexOf("On BB's server or a machine you have"));
   const row = (name: string) => within(group).getByText(name, { selector: "p, span" }).closest("div.flex, button") as HTMLElement;
+  await within(group).findByText("devpc", { selector: "p, span" });
   expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
   expect(within(row("devpc")).getByText("16 cores")).toBeTruthy();
   expect(within(row("lab")).getByText("Cannot host boxes")).toBeTruthy();

@@ -461,6 +461,10 @@ test("box_list's ios offer on Namespace says its slots are on a Mac made for the
   assert.match(varies?.detail ?? "", /^Namespace's Macs vary by machine: Apple M4 Pro \(Virtual\), iOS devices, video by a hardware H\.264 encoder on 1 of the 2 machines measured, by software \(OpenH264\) on the other\./);
 });
 
+async function measuredAfresh(backend: NamespaceBackend): Promise<void> {
+  while (backend.measuringAfreshUntil() !== null) await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
 test("a Namespace report from an older probe that cannot make an offer is measured again on a Mac bb-box starts for a few minutes, logged, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   fakeSsh();
@@ -480,7 +484,7 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   assert.equal(backend.slots.lends("ios"), false);
   fake.failNext("CreateInstance", "internal", "no Mac now");
   await backend.maintain();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await measuredAfresh(backend);
   const creates = () => fake.calls.filter((call) => call.method === "CreateInstance").length;
   assert.equal(creates(), 1);
   now += 60 * 60_000;
@@ -488,10 +492,10 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   assert.equal(creates(), 1, "not again within the day");
   now += MEASURE_AGAIN_AFTER_MS;
   await backend.maintain();
+  await measuredAfresh(backend);
   const measuring = [...fake.instances.values()].find((instance) => instance.labels[LABELS.role] === MEASURE_ROLE);
   assert.ok(measuring, "a Mac is started to measure");
   assert.equal(measuring.deadline, now + MEASURE_LIFE_MS, "Namespace ends it itself should bb-box lose it");
-  for (let wait = 0; wait < 200 && measuring.status !== "DESTROYED"; wait++) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(measuring.status, "DESTROYED", "it is destroyed once measured");
   assert.ok(backend.macCapabilities().some((report) => report.probe === PROBE_VERSION), "a report from the current probe is kept");
   const logged = context.logs.join("\n");
