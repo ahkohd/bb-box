@@ -6,6 +6,7 @@
 
 import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
 import type { BoxSize, DoctorCheck } from "../backends/types.ts";
+import type { AndroidModelName } from "./device-models.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
 export type Preset = (typeof PRESETS)[number];
@@ -53,32 +54,55 @@ const ANDROID_EMULATOR: KindSizes = {
   largest: size(32, 64, 256),
 };
 
-interface LeastSize {
+export interface LeastSize {
   readonly cores: number;
   readonly memoryGiB: number;
   readonly because: string;
 }
 
-const LEAST_SIZES: Readonly<Record<string, LeastSize>> = {
-  android: {
+const ANDROID_LEAST_SIZES: Readonly<Record<AndroidModelName, LeastSize>> = {
+  "Pixel 8": {
+    cores: 4,
+    memoryGiB: 8,
+    because: "its emulator draws the device on the CPU and holds about 3.9 GiB once booted and busy",
+  },
+  "Pixel Fold": {
     cores: 4,
     memoryGiB: 10,
-    because: "its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted",
+    because: "its emulator draws the device on the CPU and holds about 5.5 GiB once booted and busy, which on 8 GiB left less than 1 GiB free",
+  },
+  "Pixel Tablet": {
+    cores: 4,
+    memoryGiB: 10,
+    because: "its emulator draws the device on the CPU and holds about 5.5 GiB once booted and busy, which on 8 GiB left less than 1 GiB free",
   },
 };
 
-export function leastSize(kind: string): LeastSize | null {
-  return LEAST_SIZES[currentKindId(kind)] ?? null;
+const DEVICE_LEAST_SIZES: Readonly<Record<string, Readonly<Record<string, LeastSize>>>> = {
+  android: ANDROID_LEAST_SIZES,
+};
+
+export function leastSize(kind: string, device?: string): LeastSize | null {
+  const devices = DEVICE_LEAST_SIZES[currentKindId(kind)];
+  if (!devices) return null;
+  if (device !== undefined) return devices[device] ?? null;
+  return Object.values(devices).reduce((least, each) => (each.memoryGiB < least.memoryGiB || (each.memoryGiB === least.memoryGiB && each.cores < least.cores) ? each : least));
 }
 
-export function belowLeast(kind: string, size: BoxSize, changed: { readonly cores: boolean; readonly memory: boolean } = { cores: true, memory: true }): string | null {
-  const least = leastSize(kind);
+export function fitsDevice(kind: string, device: string, size: BoxSize): boolean {
+  const least = leastSize(kind, device);
+  return !least || (size.cores >= least.cores && size.memoryMiB >= least.memoryGiB * 1024);
+}
+
+export function belowLeast(kind: string, size: BoxSize, changed: { readonly cores: boolean; readonly memory: boolean } = { cores: true, memory: true }, device?: string): string | null {
+  const least = leastSize(kind, device);
   if (!least) return null;
   const fewCores = changed.cores && size.cores < least.cores;
   const littleMemory = changed.memory && size.memoryMiB < least.memoryGiB * 1024;
   if (!fewCores && !littleMemory) return null;
   const article = /^[aeiou]/.test(kind) ? "An" : "A";
-  return `${article} ${kind} box needs at least ${least.cores} cores and ${least.memoryGiB} GiB memory, not ${describeSize(size)}: ${least.because}.`;
+  const which = device !== undefined ? ` with the ${device}` : "";
+  return `${article} ${kind} box${which} needs at least ${least.cores} cores and ${least.memoryGiB} GiB memory, not ${describeSize(size)}: ${least.because}.`;
 }
 
 /**
@@ -338,7 +362,7 @@ export type SizeChoice = { readonly ok: true; readonly size: BoxSize } | { reado
  * is not a whole number of at least 1, less than 2 GiB memory for a Linux
  * kind, and a size above the largest.
  */
-export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest = {}): SizeChoice {
+export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest = {}, device?: string): SizeChoice {
   const presets = `Its presets are ${describePresets(sizes)}`;
   const largest = `the largest is ${describeSize(sizes.largest)}`;
   const name = request.preset?.trim().toLowerCase() || sizes.default;
@@ -364,7 +388,7 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
   if (!fits(chosen, sizes.largest)) {
     return { ok: false, message: `A ${kind} box can be at most ${describeSize(sizes.largest)}, not ${describeSize(chosen)}. ${presets}.` };
   }
-  const tooSmall = belowLeast(kind, chosen);
+  const tooSmall = belowLeast(kind, chosen, undefined, device);
   if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   return { ok: true, size: chosen };
 }
@@ -375,7 +399,7 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
  * its disk only when it names one. The same limits as chooseSize, on the
  * parts that change, and the disk only grows.
  */
-export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, request: SizeRequest = {}): SizeChoice {
+export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, request: SizeRequest = {}, device?: string): SizeChoice {
   const presets = `Its presets are ${describePresets(sizes)}`;
   const name = request.preset?.trim().toLowerCase();
   if (name !== undefined && name !== "" && !PRESETS.includes(name as Preset)) {
@@ -403,7 +427,7 @@ export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, r
     (chosen.memoryMiB !== current.memoryMiB && chosen.memoryMiB > largest.memoryMiB) ||
     (chosen.diskGiB !== current.diskGiB && chosen.diskGiB !== null && largest.diskGiB !== null && chosen.diskGiB > largest.diskGiB);
   if (over) return { ok: false, message: `A ${kind} box can be at most ${describeSize(largest)}, not ${describeSize(chosen)}. ${presets}.` };
-  const tooSmall = belowLeast(kind, chosen, { cores: chosen.cores !== current.cores, memory: chosen.memoryMiB !== current.memoryMiB });
+  const tooSmall = belowLeast(kind, chosen, { cores: chosen.cores !== current.cores, memory: chosen.memoryMiB !== current.memoryMiB }, device);
   if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   if (chosen.diskGiB !== null && current.diskGiB !== null && chosen.diskGiB < current.diskGiB) {
     return { ok: false, message: `A box's disk only grows, and this box's is ${current.diskGiB} GiB, more than the ${chosen.diskGiB} GiB asked for. Leave the disk out to keep it.` };

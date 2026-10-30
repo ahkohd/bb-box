@@ -586,7 +586,7 @@ test("a draft's problems are at their fields' paths", () => {
   const withAndroid = [...DRIVERS, { ...fake, kinds: [...fake.kinds, "android"] }];
   const tooSmall = checkDocument(readDraft({ kinds: { android: { presets: { small: { cores: 2 } } } } }, withAndroid).document, {}, withAndroid);
   assert.deepEqual(tooSmall.map((problem) => `${problem.path}: ${problem.message}`), [
-    "kinds.android.presets.small: The small android preset is too small. An android box needs at least 4 cores and 10 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted.",
+    "kinds.android.presets.small: The small android preset is too small. An android box needs at least 4 cores and 8 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds about 3.9 GiB once booted and busy.",
   ]);
 });
 

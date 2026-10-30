@@ -6,7 +6,8 @@ import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type SshAccess } from "../../transports/types.ts";
-import type { DeviceOffer } from "../../core/device.ts";
+import { deviceModels, type DeviceOffer } from "../../core/device.ts";
+import { fitsDevice, leastSize } from "../../core/sizes.ts";
 import { setupDir } from "../setup-dir.ts";
 import {
   BackendError,
@@ -145,6 +146,32 @@ const ANDROID_KIND: BoxKind = {
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
 
+export function largestAllowed(limits: BoatLimits): SizeShape | null {
+  return [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true) ?? null;
+}
+
+function shapeSize(shape: SizeShape): BoxSize {
+  return { cores: shape.cores, memoryMiB: shape.memoryGB * 1024, diskGiB: shape.diskGB };
+}
+
+function modelOfDevice(device: unknown): string {
+  return String((device as { readonly model?: unknown } | null)?.model ?? "");
+}
+
+export function devicesThatFit(devices: readonly unknown[], largest: SizeShape | null): { readonly fit: readonly unknown[]; readonly left: readonly string[] } {
+  if (!largest) return { fit: devices, left: [] };
+  const fit = devices.filter((device) => fitsDevice("android", modelOfDevice(device), shapeSize(largest)));
+  return { fit, left: devices.filter((device) => !fit.includes(device)).map(modelOfDevice) };
+}
+
+function leftOutWords(left: readonly string[], largest: SizeShape): string {
+  const needs = left.map((model) => {
+    const least = leastSize("android", model);
+    return least ? `the ${model} needs ${least.cores} cores and ${least.memoryGiB} GiB` : `the ${model}`;
+  });
+  return `${needs.join("; ")}, more than the plan's largest size, ${largest.cores} cores and ${largest.memoryGB} GB (boat's ${largest.size}), so boat.dev does not offer ${left.length === 1 ? "it" : "them"}`;
+}
+
 function androidKind(device: DeviceOffer): BoxKind {
   return { ...ANDROID_KIND, capabilities: { ...ANDROID_KIND.capabilities, device } };
 }
@@ -248,6 +275,7 @@ export class BoatBackend implements Backend {
   #limits: { readonly at: number; readonly limits: Promise<BoatLimits> } | null = null;
   #bbReach: { readonly at: number; readonly reach: Promise<BbReach> } | null = null;
   #androidOffer: DeviceOffer | null = null;
+  #androidLeftOut: readonly string[] = [];
 
   constructor(config: BoatConfig, context: BackendContext, options: BoatBackendOptions = {}) {
     if (!config.key) throw new BackendError("unsupported", "boat.dev has no API key: set it in BB Box's settings.");
@@ -291,6 +319,14 @@ export class BoatBackend implements Backend {
     if (kind !== "android" || !(this.#offered() as readonly string[]).includes("android")) return [];
     if (!this.#config.androidLicence) return [{ kind, why: "The Android SDK's licence is not accepted in boat.dev's settings in BB Box, so boat.dev offers no Android boxes. Turning Android SDK licence on there is the acceptance.", passing: false }];
     if (this.#androidOffer) return [];
+    const largest = largestAllowed(await this.#readLimits());
+    const everyModel = deviceModels("android").map((model) => model.name);
+    const noneFit = devicesThatFit(everyModel.map((model) => ({ model })), largest).fit.length === 0;
+    const unfit = this.#androidLeftOut.length ? this.#androidLeftOut : noneFit ? everyModel : [];
+    if (largest && unfit.length) {
+      const words = leftOutWords(unfit, largest);
+      return [{ kind, why: `${words.charAt(0).toUpperCase()}${words.slice(1)}. A paid plan allows boat's large size, 8 cores and 16 GB.`, passing: false }];
+    }
     const why = this.templates.building("android")
       ? `boat.dev is building its Android template, about ${buildWaitWords("android", null).match(/about (\d+) minutes/)?.[1] ?? "30"} minutes; Android boxes come once it is ready.`
       : "boat.dev has no Android template yet; bb-box builds it in its next upkeep, within a few minutes, and Android boxes come once it is ready.";
@@ -299,10 +335,13 @@ export class BoatBackend implements Backend {
 
   async #readAndroidOffer(): Promise<void> {
     const record = await this.templates.record("android");
-    const devices = record?.devices;
-    const offer = Array.isArray(devices) && devices.length ? ({ platform: "android", devices } as unknown as DeviceOffer) : null;
+    const devices = Array.isArray(record?.devices) ? (record.devices as readonly unknown[]) : [];
+    const largest = devices.length ? largestAllowed(await this.#readLimits()) : null;
+    const { fit, left } = devicesThatFit(devices, largest);
+    const offer = fit.length ? ({ platform: "android", devices: fit } as unknown as DeviceOffer) : null;
     const changed = JSON.stringify(offer) !== JSON.stringify(this.#androidOffer);
     this.#androidOffer = offer;
+    this.#androidLeftOut = left;
     if (changed) this.#context.kindsChanged?.();
   }
 
@@ -514,6 +553,8 @@ export class BoatBackend implements Backend {
     if (await this.templates.record("android")) return;
     if (await this.templates.keepAdoptable("android", signal)) return;
     if (this.templates.anyBuilding() || (await this.templates.failedLately("android"))) return;
+    const everyModel = deviceModels("android").map((model) => ({ model: model.name }));
+    if (!devicesThatFit(everyModel, largestAllowed(await this.#readLimits(signal))).fit.length) return;
     void this.templates
       .build("android", "Android boxes need it")
       .then(() => this.#readAndroidOffer())
@@ -637,9 +678,15 @@ export class BoatBackend implements Backend {
   #androidCheck(limits: BoatLimits): DoctorCheck {
     const check = { id: "boat.android" as const, name: "Android" };
     if (!this.#config.androidLicence) return { ...check, status: "ok", detail: "Off: the Android SDK's licence is not accepted in boat.dev's settings, so boat.dev offers no Android boxes.", fix: null };
-    const allowed = [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true);
-    const sizes = allowed ? ` The plan allows Android boxes of at most ${allowed.cores} cores and ${allowed.memoryGB} GB (boat's ${allowed.size})${allowed.size === "default" || allowed.size === "small" ? `, less than the kind's presets: ask for cores ${allowed.cores} and memory_gib ${allowed.memoryGB}; a paid plan allows the large size of 8 cores and 16 GB` : ""}.` : "";
-    if (this.#androidOffer) return { ...check, status: "ok", detail: `Offered, with ${(this.#androidOffer.devices as readonly unknown[]).length} devices from the template.${sizes}`, fix: null };
+    const allowed = largestAllowed(limits);
+    const belowPresets = allowed !== null && (allowed.size === "default" || allowed.size === "small");
+    const sizes = allowed ? ` The plan allows Android boxes of at most ${allowed.cores} cores and ${allowed.memoryGB} GB (boat's ${allowed.size})${belowPresets ? `, less than the kind's presets: ask for cores ${allowed.cores} and memory_gib ${allowed.memoryGB}` : ""}.` : "";
+    const leftOut = allowed && this.#androidLeftOut.length ? ` Not offered: ${leftOutWords(this.#androidLeftOut, allowed)}; a paid plan allows boat's large size, 8 cores and 16 GB.` : "";
+    if (this.#androidOffer) {
+      const models = (this.#androidOffer.devices as readonly unknown[]).map(modelOfDevice);
+      return { ...check, status: leftOut ? "warn" : "ok", detail: `Offered, with ${models.length === 1 ? `the ${models[0]}` : `${models.length} devices`} from the template.${sizes}${leftOut}`, fix: null };
+    }
+    if (leftOut) return { ...check, status: "warn", detail: `Not offered.${sizes}${leftOut}`, fix: null };
     return { ...check, status: "warn", detail: `Not offered yet: ${this.templates.building("android") ? "its template is being built" : "its template is built at the next upkeep"}.${sizes}`, fix: null };
   }
 

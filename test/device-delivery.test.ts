@@ -327,6 +327,16 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     await servers.dispose();
   });
 
+  test("a switch to a device the box is too small for is refused before the server is asked, naming the device and its least size (068)", async () => {
+    const servers = make("too-small", 98, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION));
+    const small = { ...box, kind: "android", guest: { ref: "g", size: { cores: 4, memoryMiB: 8 * 1024, diskGiB: null } } } as unknown as BoxRecord;
+    const refused = await servers.control(small, { action: "switch", device: "Pixel Fold" });
+    assert.equal(refused.ok, false);
+    assert.equal(!refused.ok && refused.error.code, "unsupported");
+    assert.match(!refused.ok ? refused.error.words : "", /^An android box with the Pixel Fold needs at least 4 cores and 10 GiB memory, not 4 cores, 8 GiB memory: .* Box b-12 stays on its device; acquire a box of at least that size for the Pixel Fold\.$/);
+    await servers.dispose();
+  });
+
   test("the doctor says the device's state as its server gives it now, and what is not known when the server does not answer or bb-box closed its connection (F-8)", async () => {
     const check = async (servers: DeviceServers) => (await servers.checks()).find((each) => each.id === "device.b-12")!;
     const servers = make("doctor", 90, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { deviceStateWaitMs: 1000 });

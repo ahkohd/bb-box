@@ -8,6 +8,7 @@ import {
   describeSize,
   fits,
   kindSizes,
+  fitsDevice,
   leastSize,
   LINUX_LEAST_MEMORY_GIB,
   parseSizeChanges,
@@ -209,26 +210,33 @@ test("sizes saved before 028 become each kind's default preset, once, and larger
   assert.deepEqual(kept.linux.small, { cores: 6, memoryMiB: 6 * GiB, diskGiB: 20 });
 });
 
-test("an android box is never under 4 cores and 10 GiB, the least E17 drew a device at, in words", () => {
+test("an android box is never under each device's least size, from what 063 and 068 measured, and the refusal names the device", () => {
   const android = kindSizes("android");
   assert.equal(leastSize("linux"), null);
-  assert.deepEqual(leastSize("android"), { cores: 4, memoryGiB: 10, because: "its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted" });
+  assert.deepEqual(leastSize("android", "Pixel 8"), { cores: 4, memoryGiB: 8, because: "its emulator draws the device on the CPU and holds about 3.9 GiB once booted and busy" });
+  assert.deepEqual(leastSize("android", "Pixel Fold"), { cores: 4, memoryGiB: 10, because: "its emulator draws the device on the CPU and holds about 5.5 GiB once booted and busy, which on 8 GiB left less than 1 GiB free" });
+  assert.deepEqual(leastSize("android", "Pixel Tablet"), { cores: 4, memoryGiB: 10, because: "its emulator draws the device on the CPU and holds about 5.5 GiB once booted and busy, which on 8 GiB left less than 1 GiB free" });
+  assert.deepEqual(leastSize("android"), leastSize("android", "Pixel 8"), "without a device, the least any device needs");
+  assert.equal(fitsDevice("android", "Pixel 8", { cores: 4, memoryMiB: 8 * GiB, diskGiB: null }), true);
+  assert.equal(fitsDevice("android", "Pixel Fold", { cores: 4, memoryMiB: 8 * GiB, diskGiB: null }), false);
   assert.deepEqual(chooseSize("android", android), { ok: true, size: { cores: 8, memoryMiB: 16 * GiB, diskGiB: null } });
-  assert.deepEqual(chooseSize("android", android, { cores: 4, memoryGiB: 10 }), { ok: true, size: { cores: 4, memoryMiB: 10 * GiB, diskGiB: null } });
+  assert.deepEqual(chooseSize("android", android, { cores: 4, memoryGiB: 8 }, "Pixel 8"), { ok: true, size: { cores: 4, memoryMiB: 8 * GiB, diskGiB: null } });
   const refusal = (choice: ReturnType<typeof chooseSize>) => (choice.ok ? "" : choice.message);
   assert.equal(
-    refusal(chooseSize("android", android, { cores: 2 })),
-    "An android box needs at least 4 cores and 10 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted. " +
+    refusal(chooseSize("android", android, { cores: 4, memoryGiB: 8 }, "Pixel Fold")),
+    "An android box with the Pixel Fold needs at least 4 cores and 10 GiB memory, not 4 cores, 8 GiB memory: its emulator draws the device on the CPU and holds about 5.5 GiB once booted and busy, which on 8 GiB left less than 1 GiB free. " +
       "Its presets are small (8 cores, 16 GiB memory, the default), medium (12 cores, 24 GiB memory) and large (16 cores, 32 GiB memory).",
   );
-  assert.match(refusal(chooseSize("android", android, { memoryGiB: 8 })), /^An android box needs at least 4 cores and 10 GiB memory, not 8 cores, 8 GiB memory:/);
+  assert.match(refusal(chooseSize("android", android, { cores: 2 }, "Pixel 8")), /^An android box with the Pixel 8 needs at least 4 cores and 8 GiB memory, not 2 cores, 16 GiB memory:/);
+  assert.match(refusal(chooseSize("android", android, { memoryGiB: 6 })), /^An android box needs at least 4 cores and 8 GiB memory, not 8 cores, 6 GiB memory:/);
   const current = { cores: 8, memoryMiB: 16 * GiB, diskGiB: 40 };
-  assert.match(refusal(chooseResize("android", android, current, { cores: 3 })), /needs at least 4 cores and 10 GiB memory, not 3 cores, 16 GiB memory, 40 GiB disk/);
+  assert.match(refusal(chooseResize("android", android, current, { cores: 3 }, "Pixel 8")), /with the Pixel 8 needs at least 4 cores and 8 GiB memory, not 3 cores, 16 GiB memory, 40 GiB disk/);
+  assert.match(refusal(chooseResize("android", android, current, { memoryGiB: 8 }, "Pixel Tablet")), /with the Pixel Tablet needs at least 4 cores and 10 GiB memory, not 8 cores, 8 GiB memory, 40 GiB disk/);
   assert.equal(chooseResize("android", android, current, { cores: 12 }).ok, true);
   assert.equal(chooseResize("android", android, { ...current, cores: 2 }, { memoryGiB: 20 }).ok, true, "a box already under it may still grow its memory");
   assert.equal(chooseSize("linux", kindSizes("linux"), { cores: 1, memoryGiB: 2 }).ok, true, "other kinds have no such floor");
   const { problems } = parseSizeChanges({ android: { small: { cores: 2 } } });
   assert.deepEqual(problems, [
-    "android's small preset is too small. An android box needs at least 4 cores and 10 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted.",
+    "android's small preset is too small. An android box needs at least 4 cores and 8 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds about 3.9 GiB once booted and busy.",
   ]);
 });

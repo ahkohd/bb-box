@@ -4,6 +4,7 @@ import { CLIPBOARD_READ_SINCE_VERSION, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type DeviceChoices, iosEncoderChoice, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
+import { belowLeast } from "../core/sizes.ts";
 import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
@@ -299,6 +300,9 @@ export class DeviceServers {
     const id = options.id ?? newRequestId();
     const last = () => this.#lastState(box.id);
     if (control.action !== "install" && this.#deps.personHasControl(box.id)) return { id, ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: last() };
+    const switchingTo = control.action === "switch" ? control.device : null;
+    const tooSmall = switchingTo && box.guest?.size ? belowLeast(box.kind, box.guest.size, undefined, switchingTo) : null;
+    if (tooSmall) return { id, ok: false, error: { code: "unsupported", words: `${tooSmall} Box ${box.name} stays on its device; acquire a box of at least that size for the ${switchingTo}.` }, state: last() };
     const deadline = controlDeadlineMs(control, undefined, last()) + ANSWER_MARGIN_MS;
     const began = Date.now();
     const link = await this.#controlLink(box);

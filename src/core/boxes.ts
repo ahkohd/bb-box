@@ -1133,7 +1133,8 @@ export class Boxes {
     const inSlotAsked = input.shared === true && isSlotKind(wanted);
     const slotByDefault = this.#slotByDefault(input, wanted, impliedOwnVm, offered);
     const claims = claimsSpare && !tried && !inSlotAsked && (image !== null || (general.spares[wanted] ?? 0) > 0);
-    const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
+    const bootsDevice = askedDevice ?? ofKind.find((candidate) => candidate.kind.capabilities.device)?.kind.capabilities.device?.devices[0].model;
+    const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size, bootsDevice);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const { box, claimed } = await this.#admission.run(() =>
       this.#locked(input.threadId, async () => {
@@ -2430,7 +2431,7 @@ export class Boxes {
       const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
       if (current.state !== "ready" && current.state !== "stopped") this.#require(current, "ready");
       const from = current.guest!.size ?? (await this.#size(current));
-      const chosen = chooseResize(current.kind, sizes, from, request);
+      const chosen = chooseResize(current.kind, sizes, from, request, current.device?.model ?? current.askedDevice ?? current.capabilities.device?.devices[0].model);
       if (!chosen.ok) throw new BoxError("invalid_size", chosen.message);
       const to = chosen.size;
       if (sameSize(to, from)) return { box: current, from, to, plan: null, changed: false };

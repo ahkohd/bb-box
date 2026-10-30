@@ -422,6 +422,31 @@ test("android is offered only once the Android SDK's licence is accepted and a t
   assert.match((await on.backend.doctor()).checks.find((check) => check.id === "boat.android")?.detail ?? "", /at most 4 cores and 8 GB \(boat's default\), less than the kind's presets: ask for cores 4 and memory_gib 8/);
 });
 
+const ALL_ANDROID_DEVICES = [
+  ...ANDROID_DEVICES,
+  { model: "Pixel Fold", native: "pixel_fold", runtime: { platform: "android", api: 36 } },
+  { model: "Pixel Tablet", native: "pixel_tablet", runtime: { platform: "android", api: 36 } },
+];
+
+test("boat offers each Android device only where the plan's largest size meets that device's least size, and the doctor and box_list say which and why", async () => {
+  const { fake, backend, storage } = setup({ config: { androidLicence: true } });
+  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived", type: "default" });
+  await storage.set("template/android", { kind: "android", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null, devices: ALL_ANDROID_DEVICES });
+  await backend.maintain(undefined, new Set());
+  const offered = backend.kinds().find((kind) => kind.id === "android")?.capabilities.device;
+  assert.deepEqual(offered?.devices.map((device) => device.model), ["Pixel 8"], "on the trial's 4 cores and 8 GB, only the phone");
+  const detail = (await backend.doctor()).checks.find((check) => check.id === "boat.android")?.detail ?? "";
+  assert.match(detail, /^Offered, with the Pixel 8 from the template\./);
+  assert.match(detail, /Not offered: the Pixel Fold needs 4 cores and 10 GiB; the Pixel Tablet needs 4 cores and 10 GiB, more than the plan's largest size, 4 cores and 8 GB \(boat's default\), so boat\.dev does not offer them; a paid plan allows boat's large size, 8 cores and 16 GB\./);
+
+  const small = setup({ config: { androidLicence: true } });
+  small.fake.sizes = { small: true, default: false, large: false, xlarge: false };
+  await small.backend.maintain(undefined, new Set());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(small.fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 0, "no Android template is built when no device fits the plan");
+  assert.match((await small.backend.withheldKinds("android"))[0]?.why ?? "", /^The Pixel 8 needs 4 cores and 8 GiB; the Pixel Fold needs 4 cores and 10 GiB; the Pixel Tablet needs 4 cores and 10 GiB, more than the plan's largest size, 2 cores and 4 GB \(boat's small\), so boat\.dev does not offer them\. A paid plan allows/);
+});
+
 test("an Android box forks the template, and shows its device, not a desktop", async () => {
   const { fake, backend, storage } = setup({ config: { androidLicence: true } });
   const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived", type: "default" });

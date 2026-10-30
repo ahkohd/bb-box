@@ -358,3 +358,32 @@ template's trial fork now runs at the size its build ran at, 4 cores and
 
 boat counts its starts over the last 24 hours, not by the day: after the
 first day's building and testing, 2 were left at 02:18 UTC.
+
+### Each Android device's least size
+
+The third build in production, at 08:20 UTC, made the template in 30
+minutes: its guest scripts and devices in 25, boat's save of its disk in
+about a minute, and its trial at 4 cores and 8 GB in 3. But an android box
+was refused at the trial's largest size, 4 cores and 8 GB, as the kind's
+least size was 4 cores and 10 GiB for every device.
+
+So the least size is now each device's. Each device was measured in a fork
+of production's Android template at 4 cores and 8 GB (7.75 GiB to Linux,
+with a 2 GiB swap file): booted from its snapshot, then 10 minutes of 063's
+load, the launcher's app list swiped up and down, with frames by shared
+memory to `bb-box-h264` with OpenH264, as a box's device server does. Free
+memory, swap and the emulator's resident memory were read every 10 s, and
+the kernel's log for OOM kills. BB's daemon, about 260 MB in a box, was not
+running, so a box has that much less.
+
+| Device | Boot from its snapshot, first in a fork | Least available | Swap used, most | Emulator resident, most | OOM kills | Busy fps (063, 4 cores) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Pixel 8 | 14 s | 1.57 GiB | 115 MiB, none new | 3.70 GiB | 0 | 10 to 16 (23.5) |
+| Pixel Fold, open | 70 s | 0.68 GiB | 88 MiB | 5.46 GiB | 0 | 5 to 9 (12.6) |
+| Pixel Tablet | 32 s | 0.62 GiB | 144 MiB | 5.48 GiB | 0 | 6 to 10 (11.2) |
+
+The phone kept more than 1 GiB free, so its least size is 4 cores and
+8 GiB. The Fold and the Tablet did not, so theirs stay 4 cores and 10 GiB,
+and their refusal says why. boat offers each device only where its plan's
+largest size meets the device's least size: on the trial, the Pixel 8. A
+box is refused a switch to a device it is too small for.

@@ -93,7 +93,15 @@ boat.dev's machines have KVM, so they can run the Android emulator. An Android b
 
 BB Box then builds boat.dev's Android template at its next upkeep, about 30 minutes, as no box can ask for a kind that is not offered yet. Android boxes come once it is ready.
 
-The Android kind's own sizes start at 8 cores and 16 GB, boat.dev's `large`, which the free trial does not allow. On the trial, ask for 4 cores and 8 GiB, boat.dev's `default`. The doctor's **Android** check says the largest size your plan allows.
+The Android kind's own sizes start at 8 cores and 16 GB, boat.dev's `large`, which the free trial does not allow. Each device also has a least size, from what its emulator holds when busy:
+
+| Device | Least size |
+| --- | --- |
+| Pixel 8 | 4 cores, 8 GiB |
+| Pixel Fold | 4 cores, 10 GiB |
+| Pixel Tablet | 4 cores, 10 GiB |
+
+So on the trial, whose largest size is boat.dev's `default`, 4 cores and 8 GB, boat.dev offers the Pixel 8 only: ask for 4 cores and 8 GiB. The Pixel Fold and Pixel Tablet need a paid plan. The doctor's **Android** check says the largest size your plan allows, and which devices it leaves out.
 
 ## Check that nothing is left running
 
