@@ -8,14 +8,13 @@ const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
 <StarlightFooter {...Astro.props} />
 <p class="site-footer">
   <a href={fileUrl("LICENSE")}>MIT licence</a>
-  <span aria-hidden="true">·</span>
   <a href={fileUrl("THIRD-PARTY.md")}>Third-party software</a>
 </p>
 
 <style>
   .site-footer {
     display: flex;
-    gap: 0.5rem;
+    gap: 1rem;
     margin: 3rem 0 0;
     font-size: 0.75rem;
     line-height: 1rem;
