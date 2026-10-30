@@ -161,7 +161,7 @@ These ranges come from box history: BB Box reads every running box once a minute
 
 - **1 h** has a point for each minute, **24 h** for each 10 minutes, and **7 d** for each hour. Each point is the box's mean over that time, not a sample of it.
 - Over 24 h and 7 d, a light band above CPU's line is each step's busiest minute, so a short spike is not averaged away. Reading a point names the busiest minute where it is 5 points or more above the mean.
-- **Disk** is a third line, hidden until you select it, as it moves slowly. A shared slot's third line is the Mac's CPU instead, and it has no network chart, as the Mac's network is every slot's.
+- **Disk** is a third line, hidden until you select it, as it moves slowly. A shared slot's third line is the Mac's CPU instead, and it has no network chart, as the Mac's network is every slot's. Over 24 h and 7 d, a slot says that its work shorter than a minute may not show, and that Live shows it.
 - A gap says why: **Not made yet**, **Starting**, **Stopped**, **Not read** (the Monitor or box history was off) or **No reading** (a reading failed or was skipped). Only a stop BB Box confirmed shows as Stopped. A step read for less than half its time says 'partly read'.
 - Each chart's description says its numbers and its gaps, such as 'Over the last 24 hours, by 10 minutes: CPU averaged 31%, highest 78% at today at 4:10 PM; memory last 58%. Stopped from today at 3:53 PM.'
 

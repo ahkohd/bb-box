@@ -1281,8 +1281,9 @@ changed `src/app/activity.tsx`, `activity-words.ts`, `history-chart.tsx`,
 On a Linux box, 8 cores, in a clone of the commits delivered, on main
 `7bd9f833`: `tsc` clean; the node suite 3,023 tests, 2,735 passed, 288
 skipped, 0 failed, the docs and site tests among them; vitest 392 tests
-passed in 5 files, three runs in a row; `scripts/reference.ts --check`
-passes. New tests:
+passed in 5 files, three runs in a row, and 393 with the slot's line on
+24 h and 7 d; `scripts/reference.ts` leaves the reference unchanged; the
+site builds, its 21,065 links none broken. New tests:
 
 - `test/box-history.test.ts`, with a set clock and a real `box-history.db`
   where it matters:
@@ -1308,7 +1309,8 @@ passes. New tests:
   box on 24 h with its Stopped band and why Live cannot be chosen; the
   busiest minute in the read-out only 5 points above the mean, and a
   partly read step; 7 d's midnights and a Not read hour; history off and a
-  full file; the Monitor off; a slot's lines; disk hidden at first; a box
+  full file; the Monitor off; a slot's lines, and its line on 24 h and 7 d
+  about work shorter than a minute; disk hidden at first; a box
   that cannot be read with and without kept history; the range kept when
   BB draws the page again.
 - `test/activity-words.test.ts`: ticks in local time; the summary with the
@@ -1513,13 +1515,14 @@ window.
 
 ### Open questions
 
-- History reads every running box, including a person's own machines and
-  boxes whose thread has ended but not yet been released. Should a
-  machine of the person's own be read in the background, as boxes are, or
-  only while its page is open?
-- Short builds in a shared slot are missed by a minute reader (G2 above).
-  Is that acceptable, or should a slot's reading look further, at the cost
-  of a heavier reading?
+None now. The lead answered the two this run raised, and both are in
+[Decided during unit 3](069-boxes-page.md#decided-during-unit-3):
+
+- History reads a person's own machines in the background, like every
+  box, as its cost is small and history helps only if it is already there.
+- Missing a shared slot's work that is shorter than a minute (G2 above) is
+  accepted. A slot's 24 h and 7 d say so under the chart, and that Live
+  shows it.
 
 ### Follow-ups
 

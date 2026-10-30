@@ -517,6 +517,34 @@ test("a slot's history is its own CPU and memory against its share, with the Mac
   expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/This slot's CPU 30%.*mac-1's CPU, all slots 70%/);
 });
 
+test("a slot's 24 h and 7 d say from their first frame that work shorter than a minute may not show, and that Live shows it; its 1 h and other boxes do not", async () => {
+  const shortWork = "Work shorter than a minute may not show here, as box history reads this slot once a minute. Live shows it.";
+  let release: () => void = () => {};
+  const loaded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView({ shared: true, os: "macos", state: "stopped" } as Partial<BoxView>), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: (async (range: HistoryRange) => (await loaded, historyView(range, { slot: { host: "mac-1" } }))) as never }));
+  const card = await activity();
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 24 hours/ });
+  expect(card.querySelector("[data-history-ready]")).toBeNull();
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  release();
+  await waitFor(() => expect(card.querySelector("[data-history-ready]")).toBeTruthy());
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  fireEvent.click(within(card).getByRole("radio", { name: "7 d" }));
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 7 days/ });
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  fireEvent.click(within(card).getByRole("radio", { name: "1 h" }));
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last hour/ });
+  expect(card.querySelector("[data-usage-note]")).toBeNull();
+  cleanup();
+  forgetActivity();
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
+  const other = await activity();
+  await within(other).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  expect(other.querySelector("[data-usage-note]")).toBeNull();
+});
+
 test("disk starts hidden as it moves slowly, and its chip shows it", async () => {
   open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
   const card = await activity();

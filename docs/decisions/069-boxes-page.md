@@ -978,6 +978,14 @@ On 30 October 2026, during unit 3:
 - **A slot's counters are not kept in the file.** A shared slot's own
   processes' counters stay in memory, so after a restart of bb-box its
   first reading is a new baseline.
+- **History reads a person's own machines too.** Box history reads every
+  running box in the background, a person's own machines included, not
+  only while a page is open: its cost is small (G19), and history is
+  useful only if it is there before you look. The switch turns it off.
+- **A slot's 24 h and 7 d say what a minute's reading misses.** A reading
+  once a minute misses work in a shared slot that is shorter than a
+  minute, such as an 18-second build (G2). That is accepted. On a slot's
+  24 h and 7 d, a line under the chart says so and that Live shows it.
 
 ## Decided during unit 5
 

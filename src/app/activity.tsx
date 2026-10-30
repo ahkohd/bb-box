@@ -262,6 +262,7 @@ function ChartsBody<Key extends string>({
   onToggle,
   words,
   usage,
+  usageNote,
   network,
   held,
   onFocus,
@@ -272,6 +273,7 @@ function ChartsBody<Key extends string>({
   onToggle: (key: Key) => void;
   words: ReactNode;
   usage: ChartSpec;
+  usageNote?: string | null;
   network: NetworkSpec;
   held?: boolean;
   onFocus?: () => void;
@@ -293,7 +295,14 @@ function ChartsBody<Key extends string>({
           {words}
         </span>
       </div>
-      <HistoryChart {...usage} series={lines.filter((line) => !hidden.has(line.key))} ceiling={100} height={CHART_HEIGHT} axis={["100%", "50%", "0%"]} reserveTicks />
+      <div className="space-y-1.5">
+        <HistoryChart {...usage} series={lines.filter((line) => !hidden.has(line.key))} ceiling={100} height={CHART_HEIGHT} axis={["100%", "50%", "0%"]} reserveTicks />
+        {usageNote ? (
+          <p className="text-xs text-subtle-foreground" data-usage-note>
+            {usageNote}
+          </p>
+        ) : null}
+      </div>
       <div className="space-y-1.5">
         <p className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>Network</span>
@@ -326,6 +335,8 @@ function useHidden<Key extends string>(first: readonly Key[]): [ReadonlySet<Key>
     });
   return [hidden, toggle];
 }
+
+const SLOT_SHORT_WORK_WORDS = "Work shorter than a minute may not show here, as box history reads this slot once a minute. Live shows it.";
 
 function slotLabels(host: string | null) {
   return { cpu: "This slot's CPU", memory: "This slot's memory", host: `${hostAtStart(host ?? "its Mac")}'s CPU, all slots` };
@@ -595,6 +606,7 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
   const waiting = error ? `bb-box could not read ${box.name}'s history: ${error}` : "Reading its history…";
   const common = { times, window, longestStepMs: stepMs * 1.5, timeWords, gapWords, notes, bands };
   const usageSummaryWords = view ? historySummary(words, times, { cpu: cpuLine, memory: memoryLine }, gaps, clockOf, now) : waiting;
+  const shortWorkNote = shared && range !== "1h" ? SLOT_SHORT_WORK_WORDS : null;
   const networkSummaryWords = !view ? waiting : shared ? `${hostAtStart(host ?? "its Mac")}'s network is every slot's, so box history keeps none of it for a slot; Live shows it.` : historyNetworkSummary(words, times, down, up, gaps, clockOf, now);
   return (
     <div ref={container} data-history={range} data-history-ready={view ? "" : undefined}>
@@ -607,6 +619,7 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
         onFocus={holdWhileRead}
         onBlur={goOnWhenLeft}
         usage={{ ...common, ticks: historyTicks(range, window), label: `${shared ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`, summary: usageSummaryWords }}
+        usageNote={shortWorkNote}
         network={{
           whose: shared ? `${hostAtStart(host ?? "its Mac")}, all slots` : null,
           series: [
