@@ -1,10 +1,12 @@
-import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type { Contract } from "../plugin/contract.ts";
 import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
 import { useSettings } from "./settings-context.tsx";
 import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } from "./settings-find-index.ts";
+import { knownStandardImages, rememberStandardImages, type StandardImage } from "./settings-images.tsx";
 
 export const FIND_ROW = "find-a-setting";
 
@@ -26,6 +28,24 @@ function hint(total: number, query: string): string {
   return total > FIND_SHOWN ? `${count}, the first ${FIND_SHOWN} listed; add a word to narrow them` : `${count} · ↑ ↓ to move, Enter to open, Esc to clear`;
 }
 
+function useStandardImagesOnFocus(): { readonly images: readonly StandardImage[]; readonly ask: () => void } {
+  const rpc = useRpc<Contract>();
+  const [images, setImages] = useState<readonly StandardImage[]>(() => knownStandardImages() ?? []);
+  const asked = useRef(false);
+  const ask = () => {
+    if (asked.current) return;
+    asked.current = true;
+    rpc.call("images.list").then(
+      (answer) => {
+        rememberStandardImages(answer.images);
+        setImages(answer.images);
+      },
+      () => undefined,
+    );
+  };
+  return { images, ask };
+}
+
 export function FindSettings({ wide = false }: { wide?: boolean }) {
   const { state, nav } = useSettings();
   const navigate = useBbNavigate();
@@ -35,7 +55,8 @@ export function FindSettings({ wide = false }: { wide?: boolean }) {
   const listId = useId();
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
-  const index = useMemo(() => settingsIndex(state), [state]);
+  const standard = useStandardImagesOnFocus();
+  const index = useMemo(() => settingsIndex(state, standard.images), [state, standard.images]);
   const results = useMemo(() => searchSettings(index, query), [index, query]);
   const shown = results.slice(0, FIND_SHOWN);
   const typed = query.trim() !== "";
@@ -106,7 +127,10 @@ export function FindSettings({ wide = false }: { wide?: boolean }) {
         placeholder="Find a setting: memory, template, tailnet…"
         value={query}
         onChange={(event) => change(event.target.value)}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setOpen(true);
+          standard.ask();
+        }}
         onClick={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onKeyDown={onKeyDown}

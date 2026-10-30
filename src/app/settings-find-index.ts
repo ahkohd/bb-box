@@ -3,9 +3,9 @@ import type { ConfigState, DriverView, FieldView } from "../plugin/configuration
 import { effectiveKind, formValue, gib, groupFields, inheritedValues, inheritSource, isSecretField, isSecretState, PRESET_NAMES, sourceName } from "./config.ts";
 import { COPY_BUTTON, EXPORT_BUTTON, OPEN_IMPORT } from "./settings-configuration.tsx";
 import { ADD_FILE } from "./settings-files.tsx";
-import { BAKE_WORDS } from "./settings-images.tsx";
+import { BAKE_WORDS, type StandardImage } from "./settings-images.tsx";
 import { runsOn } from "./settings-kinds.tsx";
-import { backendEnabledPath, backendFieldPath, backendLabelPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
+import { backendEnabledPath, backendFieldPath, backendLabelPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, standardImagePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
 import type { SettingsView } from "./settings-route.ts";
 import { backendLabel, hostChip, isMachineDocker, kindName, plural } from "./settings-status.ts";
 
@@ -143,6 +143,22 @@ function backendEntries(state: ConfigState, config: BackendConfig): FindEntry[] 
   return entries;
 }
 
+function standardImageValue(image: StandardImage): string {
+  if (image.outcome?.state === "failed") return "Its last rebuild failed";
+  if (image.outcome?.state === "waiting") return "Its last rebuild waited";
+  return image.due ? "Due" : "Up to date";
+}
+
+function standardImageEntries(state: ConfigState, images: readonly StandardImage[]): FindEntry[] {
+  return images.flatMap((image) => {
+    const config = state.document.backends.find((each) => each.id === image.backend);
+    if (!config) return [];
+    const info = state.kinds.find((each) => each.id === image.kind);
+    const kind = info ? kindName(state.kinds, info) : image.kind;
+    return [entry({ key: standardImagePath(image.name), label: `Standard ${kind} image`, where: `${backendTitle(state, config)} › Images`, value: standardImageValue(image), opens: { view: { page: "backend", id: config.id }, path: standardImagePath(image.name) }, words: `standard image template rebuild ${keyWords(image.kind)} ${image.name}` })];
+  });
+}
+
 const SIZE_PART_LABELS: Readonly<Record<SizePart, string>> = { cores: "Cores", memoryGiB: "Memory", diskGiB: "Disk" };
 
 function sizeWords(size: { readonly cores: number; readonly memoryMiB: number; readonly diskGiB: number | null }, largest: boolean): string {
@@ -249,9 +265,10 @@ function configurationEntries(state: ConfigState): FindEntry[] {
   ];
 }
 
-export function settingsIndex(state: ConfigState): FindEntry[] {
+export function settingsIndex(state: ConfigState, standardImages: readonly StandardImage[] = []): FindEntry[] {
   return [
     ...state.document.backends.flatMap((config) => backendEntries(state, config)),
+    ...standardImageEntries(state, standardImages),
     entry({ key: "add backend", label: "Add backend", where: "Backends", opens: { view: { page: "add" }, path: null }, words: "new backend set up another" }),
     ...kindEntries(state),
     ...optionEntries(state),

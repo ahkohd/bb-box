@@ -2623,3 +2623,124 @@ a fresh BB in a box, the live check gained a second Docker backend, off,
 on another host: "docker memory kept free" listed "Docker on bb-1 ›
 Advanced" and "Docker on 192.0.2.30 › Advanced", and every check passed
 3 runs in a row, 27 of 27.
+
+## Follow-up: healthy images folded, and each backend's images on its page
+
+Built on 30 October 2026, on the owner's decision: "fold the healthy ones,
+and list each backend's images on its settings page". Production listed
+22 standard images on the Images page, all "Up to date", each a row.
+
+### What changed
+
+- **The Images page's Standard images card**: Rebuild each night first, as
+  before. Then a row for each image that needs you: one that is due, one a
+  rebuild going on is rebuilding or has next, one whose last rebuild
+  waited for room or failed (with Try again), and one a run did not start.
+  Then one row for the rest, "5 images up to date", a button with
+  `aria-expanded` and the chevron last, that lists them in place, as the
+  rows were, and folds them again. It opens with no animation. With every
+  image needing you there is no fold row; with none, the fold row is alone.
+  Rebuild what is due stays last, and the summary line stays as it was.
+  An image a run rebuilt, or skipped as not due, is up to date.
+- **A backend's page** has an Images group after its settings: its own
+  standard images, from the same `images.list` and `images.progress`, each
+  the same row without "on <backend>", with Try again on a failed one, and
+  "Open the Images page". A backend with no standard images has no group.
+  No fold there.
+- **Find** indexes each standard image as "Standard Linux image" in
+  "<backend> › Images", with its state as its value (Up to date, Due, Its
+  last rebuild failed or waited), and opens its row on the backend's page.
+  The backend's page and not the Images page, because there every image is
+  a row: the found row is on screen, focused and ringed, without opening a
+  fold, and it has Try again when it failed. "Standard" tells it from the
+  Docker backend's own field "Linux image", the image reference, which
+  matches the same words. Find asks `images.list` once, when the field
+  first takes focus, as the index is otherwise built from `config.get`; an
+  image listed later is in the next index.
+- The list of standard images is kept in module memory, so a second page
+  that shows them, or Find, has them at once and then asks again.
+
+Files: `src/app/settings-images.tsx`, `settings-backend-page.tsx`,
+`settings-find-index.ts`, `settings-find.tsx`, `settings-paths.ts`,
+`test/app.test.tsx` and `docs/guide/settings.md`.
+
+### Tests
+
+`test/app.test.tsx` has seven more: every image up to date (the fold row
+alone, after the switch and before Rebuild, opening and closing in place,
+focus kept on it); one failed and one due among two up to date (those two
+as rows, Try again rebuilding the failed one, the fold saying 2); every
+image needing attention (no fold row); a run going on taking what it
+rebuilds and has next out of the fold; a backend's page listing only its
+own images with Try again and the link; a backend with no standard images
+having no group; and Find's entry, its words and opening the row. Four
+older tests open the fold before reading a row that is now in it.
+
+On a Linux box, 8 cores, on the commit delivered, on 2d05731b:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,882 tests: 2,594 pass, 0 fail, 288 skipped (the live suites, as on main), 3 min 38 s |
+| vitest | 358 pass, in 4 files |
+| `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass |
+
+### Live check on a separate BB
+
+A Linux box with Docker 29.1.3, 8 cores, 16 GiB, ran a fresh `npx bb-app`
+0.48.1 with no account, its own data folder and ports, started with
+`env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1` only, set up by
+[`live-setup.sh`](067-settings-page/images-fold/live-setup.sh). bb-box was
+installed from this branch, on 488020d7, with `bb plugin install path:`, and Docker on
+the box set up with `bb box setup docker`, which built the Linux image
+with `setup/docker/build.sh`. Six more Docker backends on the same daemon,
+each by its own socket path, were added over BB's HTTP API by
+[`add-backends.mjs`](067-settings-page/images-fold/add-backends.mjs):
+four running that image, so up to date; one running a copy of it with its
+record label emptied, so due ("it has no record"); and one running another
+such copy, whose rebuild fails. It fails at `build.sh`'s own check that
+the Docker host has about 10 GB of disk free: the box had 4 GB.
+[`docker-shim.sh`](067-settings-page/images-fold/docker-shim.sh), first on
+BB's `PATH`, fails that image's `docker build` too, for a box with the
+disk; here the disk check came first.
+
+[`live-check.mjs`](067-settings-page/images-fold/live-check.mjs) drives
+headless Chromium at 1440 by 1000. Every check passed 4 runs in a row, 20
+of 20. The first runs found one fault in the page: Find's entry was
+labelled "Linux image", as the Docker backend's own field is, so the two
+read alike in the list. They found three in the script: BB's first-run
+screen, the backend view's encoded hash, and a Try again check that the
+row's earlier "Failed:" could pass, now checked by a new run in
+`images.progress`.
+
+| Check | What the page did | Runs |
+| --- | --- | --- |
+| Only what needs you has a row | The due image and the failed one as rows, then "5 images up to date", closed, its chevron last; Rebuild each night before them and Rebuild 2 images after | 4 of 4 |
+| The fold by keys | Focus on the fold row, Enter: the 5 rows under it, the row's `aria-controls` naming their list, focus kept; Space folded them. Nothing moved: the one transition `document.getAnimations()` had was the focus ring's `outline-color` | 4 of 4 |
+| Try again on a backend's page | The failing backend's page listed its one image, "Failed: setup/docker/build.sh exited with 1.", with Try again; pressed, a new run of that image alone started and failed in 2 to 3 s, and the row said so again | 4 of 4 |
+| A healthy backend's page | "The standard images its boxes start from. 0 of 1 image due.", "Linux · Up to date · build.20261030-034724-5ec0, built today"; Open the Images page went to `#option/images` | 4 of 4 |
+| Find | "linux image build-1": 4 results, the backend's Linux image field first and "Standard Linux image · Docker on build-1 on <box> › Images · Up to date" second; ArrowDown, Enter opened that backend's page with the row focused and ringed, 865 px down | 4 of 4 |
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: the Images page folded, with the
+failed image; opened; a backend's page with its failed image; and one with
+its image up to date. 26 in the thread's storage. A selection:
+
+[folded](067-settings-page/images-fold/images-folded-1440-light.png),
+[folded at 390](067-settings-page/images-fold/images-folded-390-dark.png),
+[opened](067-settings-page/images-fold/images-open-760-light.png),
+[opened at 390](067-settings-page/images-fold/images-open-390-dark.png),
+[a backend with a failed image](067-settings-page/images-fold/backend-failed-760-light.png),
+[at 390](067-settings-page/images-fold/backend-failed-390-dark.png),
+[a backend up to date](067-settings-page/images-fold/backend-healthy-1440-dark.png),
+[found by Find](067-settings-page/images-fold/live-found.png).
+
+### Deviations
+
+- The Images group is the last group on a backend's page, after its
+  settings, not beside In use: `images.list` asks every backend, which
+  takes a second or more, and a group arriving above the form would move
+  the fields under the person's pointer.
+- Find's entry is labelled "Standard Linux image", not "Linux image", to
+  tell it from the Docker backend's field of that name.
