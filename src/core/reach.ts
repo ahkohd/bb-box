@@ -103,10 +103,11 @@ export class ReachCheck {
   }
 
   #track(box: BoxRecord, error: string, attempts: number): void {
-    const entry: Unanswered = { since: this.#now(), error, attempts, nextAt: null, timer: null, checking: null, host: box.guest?.host ?? null, name: box.name, thread: box.threadId };
+    const since = this.#now();
+    const entry: Unanswered = { since, error, attempts, nextAt: null, timer: null, checking: null, host: box.guest?.host ?? null, name: box.name, thread: box.threadId };
     this.#unanswered.set(box.id, entry);
     this.#deps.log(`${attempts ? `Check ${attempts} of ` : ""}${boxWords(box)}: it does not answer: ${error} bb-box checks again in ${delayAfter(attempts) / 60_000} min.`);
-    this.#schedule(box.id, entry);
+    this.#schedule(box.id, entry, since);
     this.#deps.changed(box);
   }
 
@@ -137,10 +138,10 @@ export class ReachCheck {
     this.#unanswered.clear();
   }
 
-  #schedule(boxId: string, known: Unanswered): void {
+  #schedule(boxId: string, known: Unanswered, from = this.#now()): void {
     this.#clearTimer(known.timer);
     const delay = delayAfter(known.attempts);
-    known.nextAt = this.#now() + delay;
+    known.nextAt = from + delay;
     known.timer = this.#setTimer(() => void this.#attempt(boxId, known), delay);
   }
 
