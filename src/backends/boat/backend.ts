@@ -30,10 +30,13 @@ import {
   type HeldGuest,
   type PowerState,
   type ReleaseHooks,
+  type ResizePlan,
+  type Resizing,
+  type SizePart,
   type StopReason,
   type WithheldKind,
 } from "../types.ts";
-import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type Sandbox, type SizeShape, type SshReach } from "./api.ts";
+import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type Sandbox, type SandboxSize, type SizeShape, type SshReach } from "./api.ts";
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
 import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
@@ -70,6 +73,8 @@ const SETTLE_KICK_AFTER_MS = 20_000;
 const SETTLE_KICK = "sudo -n systemctl daemon-reload; sudo -n systemctl start --no-block bb-box-boat-ready.service docker.service";
 const NAME_PREFIX = "bb-box:";
 const MIB_PER_GB = 1024;
+const RESIZING: Resizing = { cores: "restart", memory: "restart", disk: "restart", shrinks: true };
+const RESTART_SECONDS: Readonly<Record<BoatKind, number>> = { linux: 60, "linux-desktop-cpu": 150, android: 300 };
 const STALE_DEVICE_MS = 15 * 60_000;
 const BOAT_HOST = "boat.dev";
 
@@ -149,6 +154,10 @@ const ANDROID_KIND: BoxKind = {
 
 export function largestAllowed(limits: BoatLimits): SizeShape | null {
   return [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true) ?? null;
+}
+
+function partOf(size: BoxSize, part: SizePart): number | null {
+  return part === "cores" ? size.cores : part === "memory" ? size.memoryMiB : size.diskGiB;
 }
 
 function shapeSize(shape: SizeShape): BoxSize {
@@ -471,6 +480,10 @@ export class BoatBackend implements Backend {
   }
 
   async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}): Promise<void> {
+    await this.#start(guest, signal, timing);
+  }
+
+  async #start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, size?: SandboxSize): Promise<void> {
     const sandbox = await this.#mine(guest, signal);
     if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
     const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
@@ -485,7 +498,7 @@ export class BoatBackend implements Backend {
     if (!isRunning(sandbox.state)) {
       await this.#forget(sandbox.id);
       await step("resume", async () => {
-        if (!isStarting(sandbox.state)) await this.#whileBusy(signal, () => this.#api.resume(sandbox.id, { ttlSeconds: this.#leaseSeconds() }, signal));
+        if (!isStarting(sandbox.state)) await this.#whileBusy(signal, () => this.#api.resume(sandbox.id, { ttlSeconds: this.#leaseSeconds(), ...(size ? { size } : {}) }, signal));
         await this.#api.waitFor(sandbox.id, (each) => isRunning(each.state), this.#now() + this.#readyMs(), signal);
       });
     }
@@ -500,6 +513,59 @@ export class BoatBackend implements Backend {
     if (kind && KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
     const tailnet = this.#context.tailnet?.() ?? null;
     if (tailnet) await step("tailnet", () => this.#join(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, tailnet, signal));
+  }
+
+  resizing(kind: string): Resizing | null {
+    return (this.#offered() as readonly string[]).includes(kind) ? RESIZING : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, _pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<ResizePlan> {
+    const sandbox = await this.#mine(guest, signal);
+    if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
+    const limits = await this.#readLimits(signal);
+    const shape = sizeFor(to, (each) => limits.sizes.find((size) => size.size === each.size)?.available ?? true);
+    const current = shapeOf(sandbox.size);
+    const from = guest.size ?? (current ? shapeSize(current) : null);
+    const target = shape ? shapeSize(shape) : to;
+    const parts = (["cores", "memory", "disk"] as const satisfies readonly SizePart[])
+      .map((part) => ({ part, from: from ? partOf(from, part) : null, to: partOf(target, part) ?? 0, way: "restart" as const }))
+      .filter((part) => part.from !== part.to);
+    const starts = limits.starts.find((each) => each.remaining <= 0);
+    const problem = !shape
+      ? this.#tooBig(to, limits)
+      : starts
+        ? `boat allows ${starts.limit} sandbox starts ${perWindow(starts.window)}, and a resize starts the sandbox again on a machine of the new size; they are used up. Try again when the ${starts.window} is over.`
+        : null;
+    const room: Capacity = { ok: problem === null, message: problem, warm: { ready: 0, target: 0 }, hosts: [{ host: BOAT_HOST, ok: problem === null, limits: [] }] };
+    return { parts, room, downSeconds: parts.length ? RESTART_SECONDS[this.#kind(kind)] : null };
+  }
+
+  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    const sandbox = await this.#mine(guest, signal);
+    if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
+    const limits = await this.#readLimits(signal);
+    const shape = sizeFor(to, (each) => limits.sizes.find((size) => size.size === each.size)?.available ?? true);
+    if (!shape) throw new BackendError("no_capacity", this.#tooBig(to, limits));
+    const resized = (size: SizeShape): Guest => ({ ...guest, size: shapeSize(size), facts: [{ label: "Size", value: sizeWords(size) }, ...(guest.facts ?? []).filter((fact) => fact.label !== "Size")] });
+    if (sandbox.size === shape.size) return resized(shape);
+    if (!options.restart) throw new BackendError("unsupported", `boat.dev changes a sandbox's size only when it starts: bb-box stops box ${guest.ref}'s sandbox and starts it again on a ${shape.size} machine, which ends everything running in it.`);
+    const wasRunning = isRunning(sandbox.state) || isStarting(sandbox.state);
+    await this.stop(guest, signal);
+    try {
+      await this.#start(guest, signal, undefined, shape.size);
+    } catch (error) {
+      if (wasRunning) await this.#start(guest, signal).catch((cause) => this.#context.logError(`start boat's sandbox ${sandbox.id} again at its old size`, cause));
+      throw this.#resizeError(error, sandbox, shape);
+    }
+    if (!wasRunning) await this.stop(guest, signal);
+    return resized(shape);
+  }
+
+  #resizeError(error: unknown, sandbox: Sandbox, shape: SizeShape): unknown {
+    if (error instanceof BoatError && error.code === "type_too_small") {
+      return new BackendError("unsupported", `boat.dev cannot move sandbox ${sandbox.id} to ${sizeWords(shape)}: the files on its disk would not fit the smaller disk. It keeps its size.`);
+    }
+    return this.#asBackendError(error);
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {

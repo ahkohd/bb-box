@@ -1,5 +1,7 @@
 import type { BoatFetch } from "../src/backends/boat/api.ts";
 
+const DISK_GB: Readonly<Record<string, number>> = { small: 51, default: 51, large: 111, xlarge: 251 };
+
 export const FAKE_BOAT_KEY = "boat_fakeKEYvalue0123456789";
 
 export interface FakeSandbox {
@@ -22,6 +24,7 @@ export interface FakeSandbox {
   restoringReads: number;
   archivingReads: number;
   stopError: string | null;
+  usedDiskGB: number;
 }
 
 export interface FakeCall {
@@ -88,6 +91,7 @@ export class FakeBoat {
       restoringReads: 0,
       archivingReads: 0,
       stopError: null,
+      usedDiskGB: 0,
       ...partial,
     };
     this.sandboxes.set(id, sandbox);
@@ -208,6 +212,10 @@ export class FakeBoat {
         id.stoppedAt = this.#now();
         return reply(202, { type: "sandbox.stopping", status: "archiving" });
       case "POST /sandboxes/:id/resume":
+        if (typeof body.type === "string") {
+          if (id.usedDiskGB > (DISK_GB[body.type] ?? 0)) return refuse(409, "type_too_small");
+          id.type = body.type;
+        }
         id.state = "ready";
         id.restoringReads = this.startsRestoreForReads;
         id.stoppedAt = null;

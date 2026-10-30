@@ -31,10 +31,13 @@ What can change, and how, depends on where the box runs:
 | SSH host pool | cannot change | cannot change | cannot change |
 | Hetzner Cloud | live | live | cannot change |
 | Namespace | cannot change | cannot change | cannot change |
+| boat.dev | restart | restart | restart |
 
 A live change takes effect at once. A restart shuts the box down, gives it its new size and starts it again: everything running in it stops, and a desktop's session ends. Some backends resize only a box that runs: if yours does, the dialog says to start the box first.
 
 The disk only grows: you cannot make it smaller.
+
+On boat.dev, a box's size is one of boat.dev's sizes, such as `small` or `default`, so cores, memory and disk change together, to the smallest size that has what you ask for, among those your plan allows. BB Box stops the box's sandbox and boat.dev starts it again on a machine of the new size, which costs nothing more than the restart. A smaller size is refused when the box's files would not fit its disk. A stopped box is started at its new size and stopped again.
 
 Memory can shrink, but not below what the box uses. A live shrink is refused when the box would be left with less than 512 MiB, or a tenth of the new size, free above what it uses now. A Linux box has at least 2 GiB.
 
