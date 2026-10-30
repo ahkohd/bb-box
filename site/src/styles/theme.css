@@ -162,8 +162,16 @@ button[data-open-modal] kbd {
   color: var(--muted-foreground);
 }
 
-starlight-theme-select select {
-  font-size: 0.8125rem;
+.social-icons::after {
+  display: none;
+}
+
+.social-icons a {
+  color: var(--muted-foreground);
+}
+
+.social-icons a:hover {
+  color: var(--foreground);
 }
 
 .sidebar-pane {

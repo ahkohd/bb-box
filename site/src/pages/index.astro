@@ -76,6 +76,14 @@ const ways = [
     visibility: hidden;
   }
 
+  :global([data-has-hero] button[data-open-modal]) {
+    display: none;
+  }
+
+  :global([data-has-hero] header.header) {
+    border-bottom-color: transparent;
+  }
+
   :global([data-has-hero] .hero) {
     display: block;
     max-width: 42rem;
