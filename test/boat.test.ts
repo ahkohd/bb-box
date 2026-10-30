@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, normalize } from "node:path";
 import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, templateArchive, templateFingerprint, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
+import { setupDir } from "../src/backends/setup-dir.ts";
 import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
@@ -551,4 +556,46 @@ test("a template build that failed is not tried again by the upkeep for hours, a
   const check = (await backend.doctor()).checks.find((each) => each.id === "boat.templates")!;
   assert.equal(check.status, "warn");
   assert.match(check.detail, /linux's last build failed at \d\d:\d\d UTC, and is tried again 6 hours later or when a box needs it: boat has no machine free/);
+});
+
+const WAYLAND_ONLY = "proxmox-lxc/template/guest/customize-desktop-wayland.sh";
+
+function filesTheBuildReads(setup: string): string[] {
+  const reference = /\$\{?(src|build|here)\}?\/([A-Za-z0-9_./-]+)/g;
+  const seen = new Set<string>();
+  const todo = ["boat/template.sh"];
+  while (todo.length) {
+    const file = todo.pop()!;
+    if (seen.has(file) || file === WAYLAND_ONLY) continue;
+    seen.add(file);
+    for (const [, from, path] of readFileSync(join(setup, file), "utf8").matchAll(reference)) {
+      const target = normalize(join(from === "here" ? dirname(file) : "proxmox-lxc/template", path!.replace(/\.+$/, "")));
+      if (existsSync(join(setup, target)) && statSync(join(setup, target)).isFile()) todo.push(target);
+    }
+  }
+  return [...seen].sort();
+}
+
+test("boat's template fingerprint and archive are the files its build reads: what boat's template.sh runs and what those scripts read, not the Wayland desktop's or Proxmox's own build", async () => {
+  assert.deepEqual([...TEMPLATE_FILES].sort(), filesTheBuildReads(setupDir()), "the list follows the scripts; a script that reads another file adds it here");
+  const packed = execFileSync("tar", ["-tzf", "-"], { input: await templateArchive(), encoding: "utf8" }).trim().split("\n").filter((line) => !line.endsWith("/")).sort();
+  assert.deepEqual(packed, [...TEMPLATE_FILES].sort(), "the build gets exactly these");
+
+  const copy = mkdtempSync(join(tmpdir(), "boat-setup-"));
+  try {
+    cpSync(setupDir(), copy, { recursive: true });
+    const before = templateFingerprint(copy);
+    const proxmoxBuild = join(copy, "proxmox-lxc/template/build.sh");
+    const original = readFileSync(proxmoxBuild, "utf8");
+    assert.ok(original.includes("env PATH=/home/box/.local/bin:/home/box/.cargo/bin:"), "78e74984's line is still in build.sh");
+    writeFileSync(proxmoxBuild, original.replace("env PATH=/home/box/.local/bin:/home/box/.cargo/bin:", "env PATH=/home/box/.cargo/bin:"));
+    assert.equal(templateFingerprint(copy), before, "78e74984 changed only Proxmox's own build, which boat never runs");
+    writeFileSync(join(copy, WAYLAND_ONLY), `${readFileSync(join(copy, WAYLAND_ONLY), "utf8")}\n:\n`);
+    assert.equal(templateFingerprint(copy), before, "nor the Wayland desktop, which boat does not build");
+    const guest = join(copy, "proxmox-lxc/template/guest/customize-base.sh");
+    writeFileSync(guest, `${readFileSync(guest, "utf8")}\n:\n`);
+    assert.notEqual(templateFingerprint(copy), before, "a guest script boat runs is part of it");
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
 });

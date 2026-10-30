@@ -17,7 +17,7 @@ boat.dev bills a sandbox for every second it runs. A stopped sandbox costs nothi
 
 A plan's price comes back as sandbox time at these prices, and boat.dev uses it first. BB Box gives each box the smallest size that has at least the cores, memory and disk the box asks for, so a box can have more than it asked for.
 
-BB Box also keeps a stopped template sandbox for each kind, which every box of the kind is a copy of. A stopped sandbox costs nothing. Building one takes a sandbox of the `default` size for about 6 minutes for Linux and 13 for a Linux desktop, one template at a time, when the first box of the kind needs it and again after a week or when BB Box's scripts change.
+BB Box also keeps a stopped template sandbox for each kind, which every box of the kind is a copy of. A stopped sandbox costs nothing. Building one takes a sandbox of the `default` size for about 6 minutes for Linux and 13 for a Linux desktop, one template at a time, when the first box of the kind needs it and again after a week or when the scripts its build runs change.
 
 ### What your plan allows
 

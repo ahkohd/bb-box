@@ -444,3 +444,20 @@ controls, but at about a third of the frame rate and twice the tap
 latency of Proxmox QEMU's 8-core box. A paid plan's `large`, 8 cores and
 16 GB, would match Proxmox's cores, and hold the Pixel Fold and Pixel
 Tablet; boat's saves would stay.
+
+Two things this check found for later:
+
+- **The panel after a deploy.** Production bb-box was deployed three times
+  during the check. One deploy handed the device's control back to the
+  agent while the panel still showed the person holding it; another left
+  the panel's input going nowhere, with its video still live, until the
+  tab was reloaded. Neither said so in the panel.
+- **Rebuilds the build did not need.** boat's template fingerprint covered
+  whole directories of the setup scripts, so a change to Proxmox's own
+  `build.sh` (main `78e74984`), which boat never runs, rebuilt every boat
+  template, for about 6 of the trial's starts and an hour of compute. The
+  fingerprint and the archive the build copies are now the 38 files the
+  build reads: boat's `template.sh` and what it runs, followed through each
+  script's references, without the Wayland desktop's branch, which boat's
+  build never takes. A test follows the references again and fails when a
+  script reads a file the list lacks.
