@@ -461,3 +461,23 @@ Two things this check found for later:
   script's references, without the Wayland desktop's branch, which boat's
   build never takes. A test follows the references again and fails when a
   script reads a file the list lacks.
+
+### The narrower fingerprint, deployed
+
+Deployed (main `7bd9f833`) while production was building its Linux
+template for `78e74984`: the interrupted build's sandbox was deleted by
+the next upkeep, as no build followed it and it was over 10 minutes old,
+and no half-made template was left. The Linux and desktop templates then
+built under the new fingerprint, in 8 and 11 minutes. The Android
+template's build failed: `bb-box-h264`'s C sources include `encoder.h`,
+which the list lacked, as following the scripts' `$src`, `$build` and
+`$here` paths does not see a C include. The list now has it, and the test
+follows `#include "..."` and `#import "..."` too. In a fresh sandbox from
+the narrowed archive with the header added, the Android step made all
+three devices in 243 s, booting from their snapshots in 4.6 to 8.9 s, and
+the finalize passed.
+
+The two templates production had adopted on the first day, built by the
+separate BB's install, were left on the account after production
+replaced them, as an install tidies only the templates it built. They were
+deleted by hand.

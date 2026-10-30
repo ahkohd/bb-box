@@ -562,21 +562,24 @@ const WAYLAND_ONLY = "proxmox-lxc/template/guest/customize-desktop-wayland.sh";
 
 function filesTheBuildReads(setup: string): string[] {
   const reference = /\$\{?(src|build|here)\}?\/([A-Za-z0-9_./-]+)/g;
+  const localInclude = /^#(?:include|import) "([^"]+)"/gm;
   const seen = new Set<string>();
   const todo = ["boat/template.sh"];
   while (todo.length) {
     const file = todo.pop()!;
     if (seen.has(file) || file === WAYLAND_ONLY) continue;
     seen.add(file);
-    for (const [, from, path] of readFileSync(join(setup, file), "utf8").matchAll(reference)) {
-      const target = normalize(join(from === "here" ? dirname(file) : "proxmox-lxc/template", path!.replace(/\.+$/, "")));
-      if (existsSync(join(setup, target)) && statSync(join(setup, target)).isFile()) todo.push(target);
-    }
+    const text = readFileSync(join(setup, file), "utf8");
+    const targets = [
+      ...[...text.matchAll(reference)].map(([, from, path]) => join(from === "here" ? dirname(file) : "proxmox-lxc/template", path!.replace(/\.+$/, ""))),
+      ...[...text.matchAll(localInclude)].map(([, path]) => join(dirname(file), path!)),
+    ].map((target) => normalize(target));
+    for (const target of targets) if (existsSync(join(setup, target)) && statSync(join(setup, target)).isFile()) todo.push(target);
   }
   return [...seen].sort();
 }
 
-test("boat's template fingerprint and archive are the files its build reads: what boat's template.sh runs and what those scripts read, not the Wayland desktop's or Proxmox's own build", async () => {
+test("boat's template fingerprint and archive are the files its build reads: what boat's template.sh runs, what those scripts read and the headers its C includes, not the Wayland desktop's or Proxmox's own build", async () => {
   assert.deepEqual([...TEMPLATE_FILES].sort(), filesTheBuildReads(setupDir()), "the list follows the scripts; a script that reads another file adds it here");
   const packed = execFileSync("tar", ["-tzf", "-"], { input: await templateArchive(), encoding: "utf8" }).trim().split("\n").filter((line) => !line.endsWith("/")).sort();
   assert.deepEqual(packed, [...TEMPLATE_FILES].sort(), "the build gets exactly these");

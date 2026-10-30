@@ -18,6 +18,7 @@ export const BUILD_TTL_SECONDS = 2 * 3600;
 export const TEMPLATE_FILES = [
   "android/bb-box-device-firewall",
   "android/bb-box-emulator",
+  "android/bb-box-h264/encoder.h",
   "android/bb-box-h264/main.c",
   "android/bb-box-h264/openh264.c",
   "android/bb-box-h264/simulator.m",
