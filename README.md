@@ -2,7 +2,7 @@
 
 [![A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop to watch, then makes a server box and runs a command in its terminal](docs/media/demo.webp)](docs/media/demo.mp4)
 
-Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop. You and the thread's agent both use them from BB.
+Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.
 
 ## Why bb-box
 

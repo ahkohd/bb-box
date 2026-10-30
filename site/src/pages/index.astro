@@ -21,11 +21,11 @@ const ways = [
 <StarlightPage
   frontmatter={{
     title: "bb-box",
-    description: "Computers for BB threads: Linux, macOS and Windows boxes, and simulated iOS and Android devices, for you and the thread's agent.",
+    description: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
     template: "splash",
     hero: {
       title: `${mark}bb-box`,
-      tagline: "Computers for BB threads. Each thread gets boxes of its own: Linux, macOS or Windows computers, or simulated iOS and Android phones and tablets. You and the agent share them.",
+      tagline: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
       actions: [
         { text: "Make your first box", link: pageUrl(base, "start/quick-start") },
         { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "secondary" },
@@ -121,6 +121,7 @@ const ways = [
   }
 
   :global([data-has-hero] .hero .sl-link-button) {
+    font-weight: 500 !important;
     height: auto;
     padding: 0.5rem 1rem;
     border-radius: 9999px;
