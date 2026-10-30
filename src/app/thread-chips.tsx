@@ -87,12 +87,15 @@ function MoreThreads({ threads, more, onOpen }: { threads: readonly ThreadOnBox[
   );
 }
 
-export function ThreadChips({ threads, className }: { threads: readonly ThreadOnBox[]; className?: string }) {
+export function ThreadChips({ threads, className, onLeave }: { threads: readonly ThreadOnBox[]; className?: string; onLeave?: () => void }) {
   const navigate = useBbNavigate();
   const ordered = useMemo(() => byActivity(threads), [threads]);
   if (!ordered.length) return null;
   const shown = ordered.slice(0, SHOWN_CHIPS);
-  const open = (id: string) => navigate.toThread(id);
+  const open = (id: string) => {
+    onLeave?.();
+    navigate.toThread(id);
+  };
   return (
     <div className={cn("@container min-w-0", className)}>
       <div className="flex min-w-0 flex-wrap items-center gap-1 @max-md:flex-nowrap" role="list" aria-label="Threads on this box">

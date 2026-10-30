@@ -89,17 +89,21 @@ export interface PageLink {
   readonly go: () => void;
 }
 
+export function followPageLink(page: PageLink): (event: MouseEvent<HTMLAnchorElement>) => void {
+  return (event) => {
+    if (leftToTheBrowser(event)) return;
+    event.preventDefault();
+    page.go();
+  };
+}
+
 export function BoxName({ name, page }: { name: string; page?: PageLink }) {
   if (!page) return <span className="font-medium text-foreground">{name}</span>;
   return (
     <a
       href={page.href}
       title={`${name}'s page`}
-      onClick={(event) => {
-        if (leftToTheBrowser(event)) return;
-        event.preventDefault();
-        page.go();
-      }}
+      onClick={followPageLink(page)}
       className="rounded-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       {name}

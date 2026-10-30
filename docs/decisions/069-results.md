@@ -716,3 +716,193 @@ two flags: one makes `docker exec` into one container hang, as a hung box
 does, and one makes `docker container ls` fail, as a Docker daemon that
 does not answer does. A paused container cannot be stopped by Docker at
 all, so the hung box is made this way.
+
+## Unit 1d: the list opens the page
+
+Built on 30 October 2026, on main `635707e5`. On the Boxes page, a row
+opens the box's page. Its details no longer unfold there. The list keeps
+its place for the way back.
+
+### What it adds
+
+- **A row opens the box's page.** On both tabs, a click anywhere on a row
+  that is not one of its controls, its name and the chevron at its end
+  each open `box/<boxId>/from-list`. The name is a link: Tab reaches it,
+  Enter opens the page, and Ctrl-click, Command-click or a middle click is
+  left to the browser. The chevron comes last, after the menu, and is the
+  same link, out of the tab order and hidden from screen readers. A row
+  whose text is being selected does not open the page, and a click inside
+  a row's menu or dialog, which React passes up to the row, is not a click
+  on the row.
+- **The inline details are gone from the Boxes page.** The box's page has
+  them and more.
+- **Hover** shades the row lightly, edge to edge in its card, and
+  brightens the chevron; nothing moves. The row stays shaded while its
+  menu is open.
+- **The list keeps its place.** `src/app/list-place.ts` keeps the search,
+  filters, sort, scroll and the row last left in module memory, as 067
+  keeps drafts, and in session storage, so a reload keeps them too. The
+  tab is kept in local storage, as before. What it reads back from storage
+  is checked, and anything that is not a place is dropped.
+- **Every way out of a row records it first**: its click, name and
+  chevron, its quick icons, its menu's views, and on the Machines tab its
+  thread chips. Each records the box, its position in the list and the
+  list's scroll.
+- **The way back.** When the list opens again on the tab it was left
+  from, it puts back the scroll and focuses that row's name. If the box
+  has gone, it focuses the row now in its place. The list first shows the
+  rows it remembers, then asks for fresh ones; if a fresh list drops the
+  row that had focus, as after a release from the page, focus moves to
+  the row now in its place. With a search set, the list waits for the
+  threads' titles before it puts its place back, as a search can match a
+  title; titles are now remembered across visits.
+- **The search row and tabs stay above the scrolling rows**, as before,
+  at 1440, 760 and 390 px.
+- The guide's Box panel and Boxes page chapter says how a row opens the
+  page, and what the list keeps.
+
+Files: new `src/app/list-place.ts`; changed `src/app/box-row.tsx`,
+`settings-machines.tsx`, `desktop.tsx`, `box-nav.tsx`, `thread-chips.tsx`
+and `panel.tsx`, `docs/guide/boxes.md`, and `test/app.test.tsx`. No server
+change.
+
+### Scope
+
+The thread's Box panel keeps unfolding a row's details in place, and
+"Open on the Boxes page" stays in its menu (the lead's answer on 30
+October 2026). Only the Boxes page's rows open the page. `BoxRow` takes
+either way of opening.
+
+### Checked
+
+On a Linux box, 8 cores, from a clone of the delivered bundle: `tsc`
+clean; the node suite 2,882 tests, 2,594 passed, 288
+skipped, 0 failed, the docs and site tests among them; vitest 351
+tests passed in 4 files; `scripts/reference.ts --check` passes. New tests
+in `test/app.test.tsx`:
+
+- a row's click, name and chevron open the page with `from-list`; a
+  modified click is left to the browser; Stop and the menu's Check now do
+  not open it; no row unfolds on the Boxes page; the chevron is last, out
+  of the tab order and hidden from screen readers;
+- with a search, a filter and a sort set, opening a box by its name, its
+  chevron, a quick icon and its menu, then coming back: all three kept,
+  the same rows in the same order, and focus on that row's name, each way;
+- a box released while away: focus on the row now in its place, also when
+  the list first shows the remembered rows and the fresh list drops it;
+- a machine's row opens its page, and a thread chip records the row;
+- the place survives a reload through session storage, its scroll only for
+  the tab it was on, and junk in storage is dropped.
+
+The tests that read the Boxes page's rows by their old details buttons now
+read the name links. The Box panel's tests are unchanged.
+
+The live check below ran on the same code before the rebases onto
+`1e8de9d9` and `635707e5`, which change the docs site, guides, demo and
+the Monitor's machine threads, none of this unit's files.
+
+### Live check on a separate BB
+
+A Linux box with Docker, 8 cores, 28 GiB, ran a fresh `npx bb-app` 0.48.0
+with no account, its own data folder and ports, started with `env -i`,
+`HOME` and `PATH` only, set up by
+[`live-setup.sh`](069-boxes-page/unit-1d/live-setup.sh), as unit 1c's
+was. bb-box was installed from this branch with `bb plugin install path:`.
+Unit 1b's custom ACP agent, driven by unit 1c's `agent-call.sh`, made the
+boxes through BB's box tools: three threads with three Docker boxes each,
+and `bb box machines add` made workbench. (The box first had 16 GiB, which
+held 7 of these boxes; it was grown to 28 GiB and the last two made by
+hand with the same commands.)
+
+[`live-check.mjs`](069-boxes-page/unit-1d/live-check.mjs), with unit 1c's
+`live-lib.mjs` and [`runs.sh`](069-boxes-page/unit-1d/runs.sh), drives
+headless Chromium. Each run stops one box if none is stopped, then on the
+Threads tab sets the search to "docker", ticks Ready under Filters, sorts
+by Created, descending, and scrolls the list half way (108 of 216 px at
+1440 by 640). It then opens a box each way and returns each way, and after
+each return checks, through the page itself: the list's path, the search
+text, the filter, the sort, the tab, the same rows in the same order, the
+scroll within 2 px, the search row in the same place and outside the
+scrolling rows, and focus on that row's name link. The box it opens
+rotates among the rows fully in view. Three runs in a row on the commit
+delivered each passed 18 of 18 checks:
+[run 1](069-boxes-page/unit-1d/run-1.md),
+[run 2](069-boxes-page/unit-1d/run-2.md),
+[run 3](069-boxes-page/unit-1d/run-3.md).
+
+| Gate | Result | What each run did |
+| --- | --- | --- |
+| G9 | 3 of 3 | At 1440 by 640: a box opened by its name, its chevron, a quick icon (Open terminal) and its menu (Open terminal), and each returned by the trail, the browser's Back and a view's back, 12 ways: all four kept and focus on that row's name, every time. From the page, "the trail" is its Boxes link and "a view's back" is Terminal, its back arrow to the page, then the trail; from a view, "the trail" is the box's name in the view's bar, then the page's Boxes link |
+| G9, release | 3 of 3 | A box released from its page, then the page's Boxes link: the box gone from the list, focus on the row now in its place, search, filter and sort kept. Each run then made a new box for the thread, so every run starts alike |
+| G9, 390 px | 3 of 3 | At 390 by 700, scrolled half way: name and the trail, chevron and Back, quick icon and the view's back, menu and Back: all four kept, focus on the name |
+
+A Back pressed in the same instant as a click on a quick icon, before the
+list has gone from the page, leaves focus on the button clicked, as the
+list never left. The check waits for the view to show before going back,
+as a person does.
+
+### Keyboard
+
+Each run, at 1440 px, from the search field: Tab reaches Clear search,
+Filters, Sort, the first thread's title, Open thread, then the first row's
+name; Enter opens its page with focus on the box's name; Shift-Tab reaches
+the trail's Boxes link; Enter returns to the list with focus on that name;
+Tab then reaches the row's Open terminal; Enter opens the terminal; the
+browser's Back returns to the list with focus on the name again. The
+chevron is never reached by Tab.
+
+### Screenshots
+
+From the live BB, the list kept and scrolled after a return, at 1440 by
+640: [light](069-boxes-page/unit-1d/list-1440-light.png),
+[dark](069-boxes-page/unit-1d/list-1440-dark.png); 760:
+[light](069-boxes-page/unit-1d/list-760-light.png),
+[dark](069-boxes-page/unit-1d/list-760-dark.png); 390:
+[light](069-boxes-page/unit-1d/list-390-light.png),
+[dark](069-boxes-page/unit-1d/list-390-dark.png). Returned by the
+keyboard, with focus on the row's name:
+[light](069-boxes-page/unit-1d/returned-1440-light.png),
+[dark](069-boxes-page/unit-1d/returned-1440-dark.png); hover:
+[light](069-boxes-page/unit-1d/hover-1440-light.png),
+[dark](069-boxes-page/unit-1d/hover-1440-dark.png); the page opened from
+the list: [light](069-boxes-page/unit-1d/page-from-list-1440-light.png).
+
+### Not checked live, and why
+
+- The Machines tab's ways back: the live BB had one machine, so its list
+  cannot scroll. Its row's click, name, chevron and thread chips are
+  covered by tests, and the same code keeps the place for both tabs.
+- A device box's row: it needs a Mac or a Linux host with KVM. Its quick
+  icon and menu open views through the same recorded ways as a terminal's.
+- A look in production in the owner's browser waits for the lead's deploy.
+
+### Deviations from 069
+
+- The search, filters and sort are shared by the two tabs, as before;
+  the scroll is kept for the tab it was on. The tab itself stays in local
+  storage, as before, so it lasts beyond the browser tab's session.
+- The chevron is a second link to the page, so it is out of the tab order
+  and hidden from screen readers; the name is the one link they reach.
+- The name link's accessible name is the box's name alone, as the old
+  details button's was; the system and badges are read in the page's
+  text.
+- The lines between rows now run the card's full width, as in the
+  prototype, since the hover shade runs edge to edge.
+- Focus returns once: the first time the list opens again on the tab a
+  row was left from, by any way, BB's sidebar included. After that,
+  opening the list moves no focus.
+
+### Open questions
+
+- A thread with no title of its own heads its card with its ID, as BB's
+  thread title is empty until it has one; BB's sidebar shows the first
+  prompt instead. This predates 1d. Should the card fall back to the same
+  words as the sidebar?
+
+### Follow-ups
+
+- Unit 4 can sort by Last active through the same kept sort: a stored
+  sort whose key a later build drops falls back to Name.
+- The terminal keeps Tab, so its back arrow cannot be reached from the
+  keyboard (unit 1c's open question); the browser's Back works and now
+  lands on the row's name.

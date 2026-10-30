@@ -51,9 +51,9 @@ import { BoxRow } from "./box-row.tsx";
 import type { BoxAction } from "./box-menu.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
-import { BoxName, useBoxesNav, useListOpens, type PageLink } from "./box-nav.tsx";
+import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from "./box-nav.tsx";
 import { BoxPage, Loading, NotHere, useBoxPage } from "./box-page.tsx";
-import { otherView, pageOfView, routeOf, wayBack, type BoxViewRoute } from "./box-route.ts";
+import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./device-stage.ts";
@@ -96,7 +96,8 @@ import {
 } from "./viewer.ts";
 import { BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./screens.ts";
-import { choices, filtering, NO_FILTERS, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
+import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
+import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
@@ -2200,10 +2201,16 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   return <DesktopViewer threadId={threadId} boxId={route.boxId} newTab={false} onBack={back} screen={legacyDesktop ? null : route.view} openScreen={legacyDesktop ? undefined : switchView} page={pageLink} />;
 }
 
+const knownTitles = new Map<string, string>();
+
+export function forgetThreadTitles(): void {
+  knownTitles.clear();
+}
+
 /** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
 export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   const sdk = useSdk();
-  const [titles, setTitles] = useState<Record<string, string>>({});
+  const [titles, setTitles] = useState<Record<string, string>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
   const key = threadIds.join(" ");
   useEffect(() => {
     let cancelled = false;
@@ -2212,6 +2219,7 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
       sdk.threads
         .get({ threadId })
         .then((thread) => {
+          knownTitles.set(threadId, thread.title || threadId);
           if (!cancelled) setTitles((current) => ({ ...current, [threadId]: thread.title || threadId }));
         })
         .catch(() => {
@@ -2234,6 +2242,38 @@ export const MACHINES_TAB = "machines";
 
 export const THREADS_TAB = "threads";
 
+interface RowWays {
+  readonly page: (boxId: string) => PageLink;
+  readonly opens: BoxOpens;
+  readonly leave: (boxId: string) => void;
+}
+
+function rowWays(nav: BoxesNav, opens: BoxOpens, leave: (boxId: string) => void): RowWays {
+  return {
+    page: (boxId) => {
+      const route = boxPage(boxId, ["from-list"]);
+      return {
+        href: nav.href(route),
+        go: () => {
+          leave(boxId);
+          nav.go(route);
+        },
+      };
+    },
+    opens: {
+      screen: (box, screen) => {
+        leave(box.id);
+        opens.screen(box, screen);
+      },
+      terminal: (box) => {
+        leave(box.id);
+        opens.terminal(box);
+      },
+    },
+    leave,
+  };
+}
+
 function BoxList({ opening }: { opening?: BoxesTab }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
@@ -2248,9 +2288,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const [problem, setProblem] = useState<string | null>(null);
   const onDemand = useDesktopOnDemand(machinesState?.desktopOnDemand, OPERATOR, refreshBoth);
   useDesktopProblemShownOnce(machinesState?.desktopProblem, setProblem);
-  const [open, setOpen] = useState<string | null>(null);
   const threadActions = useThreadBoxActions(() => refreshBoth());
+  const nav = useBoxesNav();
   const listOpens = useListOpens();
+  const scroller = useRef<HTMLDivElement>(null);
   // The tab chosen last, kept in the browser, so the way back from a box's desktop lands on the tab it left.
   const tabKey = `${pluginId}:boxes-tab`;
   const [chosenTab, setChosenTab] = useState<BoxesTab | null>(() => {
@@ -2271,9 +2312,11 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
     }
   };
   // The search, filters and sort, as the Automations page has them; Name, ascending, as its default.
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [sort, setSort] = useState<Sort>({ key: "name", ascending: true });
+  const [search, setSearch] = useState(() => listPlace().search);
+  const [filters, setFilters] = useState<Filters>(() => listPlace().filters);
+  const [sort, setSort] = useState<Sort>(() => listPlace().sort);
+  useEffect(() => keepListPlace({ search, filters, sort }), [search, filters, sort]);
+  useEffect(() => saveListPlace, []);
   // New box makes one of your machines here (the operator, 4 October 2026): a box made here has no thread. The same form as settings'
   // Add machine; the machine then shows under Machines.
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
@@ -2315,6 +2358,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   for (const row of threadRows) groups.set(row.threadId, [...(groups.get(row.threadId) ?? []), row]);
   const narrowed = !!search.trim() || filtering(kept);
   const listed = tab === "machines" ? machines.length : threads.length;
+  const titlesKnown = threadIds.every((threadId) => titles[threadId] !== undefined);
+  const settled = loaded && (!search.trim() || titlesKnown);
+  useReturnToPlace(scroller, tab, settled, all, machinesState);
+  const ways = rowWays(nav, listOpens, (boxId) => leaveRow(scroller.current, tab, boxId));
   return (
     <div className="h-full min-h-0">
       {/* BB's Automations page's frame and spacing (the operator, 8 October 2026): its width, a line under the title, the tabs
@@ -2350,7 +2397,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
               machineActions.setProblem(null);
             }}
           />
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto" onScroll={(event) => noteListScroll({ tab, top: event.currentTarget.scrollTop })}>
             {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
             {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box.</EmptyPanel> : null}
             {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}
@@ -2363,6 +2410,9 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                       entry={entry}
                       now={now}
                       busy={machineActions.busy}
+                      opens={ways.opens}
+                      page={ways.page(entry.box.id)}
+                      onLeave={() => ways.leave(entry.box.id)}
                       onStop={() => void machineActions.act("stop", entry.box)}
                       onStart={() => void machineActions.act("start", entry.box)}
                       onRemove={() => machineActions.askRemove(entry.box)}
@@ -2390,11 +2440,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                           key={box.id}
                           box={box}
                           threadId={threadId}
-                          open={open === box.id}
-                          onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
+                          opening={{ page: ways.page(box.id) }}
                           act={actOn(threadId)}
                           now={now}
-                          opens={listOpens}
+                          opens={ways.opens}
                           meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
                           threading={false}
                         />
