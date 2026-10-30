@@ -62,8 +62,8 @@ function ThreadItem({ thread, onOpen }: { thread: ThreadOnBox; onOpen: (threadId
   const title = threadTitle(thread);
   return (
     <MenuItem aria-label={`${title}, ${workingWord(thread)}`} title={title} onSelect={() => onOpen(thread.id)}>
-      <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{thread.running ? <WorkingMark /> : null}</span>
-      <span className="min-w-0 truncate">{title}</span>
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {thread.running ? <WorkingMark /> : null}
     </MenuItem>
   );
 }
