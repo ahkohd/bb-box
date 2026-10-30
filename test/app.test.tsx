@@ -9145,11 +9145,11 @@ test("a link to a box that is not here says so, with Back to boxes", async () =>
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "", replace: true } });
 });
 
-test("a machine of yours has its page too: one of your machines, Threads on this machine, Check now, and Remove… with its question", async () => {
+test("a machine of yours has its page too: no line to describe it, Threads on this machine, Check now, and Remove… with its question", async () => {
   const { handlers, changes } = server([], { machines: [machine()] });
   const slot = boxPageAt(handlers, "box/box_m1/from-settings");
-  expect(await slot.findByText("One of your machines. It shows in BB's machine list, and threads can run on it.")).toBeTruthy();
-  expect(slot.getByRole("heading", { name: "Threads on this machine" })).toBeTruthy();
+  expect(await slot.findByRole("heading", { name: "Threads on this machine" })).toBeTruthy();
+  expect(slot.queryByText(/One of your machines/)).toBeNull();
   expect(slot.getByRole("button", { name: /Fix the login form/ })).toBeTruthy();
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
   expect(items(menu)).toContain("Check now");

@@ -742,8 +742,11 @@ on view"). When it shows a box, its header has one small icon button
 between the machine's name and Reload, named "Open", with "Open a view of"
 and the box's name in its tooltip, or "Views and threads of" and the name
 when its menu lists threads (the owner, 29 October 2026). It opens a menu
-of the box's views, each with the Boxes row's icon and words: "Open
-simulator" or "Open emulator", "Open desktop", "Open terminal". BB's server and BB machines that are not
+that starts with "Open details", with an info icon, which opens the box's
+page (the owner, 30 October 2026: it read "Page" before, unlike the
+items under it). Then come the box's views, each with the Boxes row's
+icon and words: "Open simulator" or "Open emulator", "Open desktop",
+"Open terminal". BB's server and BB machines that are not
 boxes have the button only while threads are on them (see below). The owner chose one
 button over a button for each view: in BB's sidebar, 253 px wide, the
 header had 23 px to spare, and three buttons left the name about 19 px. The
@@ -806,7 +809,7 @@ would run to hundreds. A box keeps every such thread, however long ago it
 was active: its threads are few, and all of them hold or use it. A
 machine's button has no views to open, so its name for screen readers and its tooltip say "Threads on" and the
 machine's name, as in "Threads on build-server", and its menu is the
-"Threads" group alone, with no Page, no views and no divider. The threads
+"Threads" group alone, with no Open details, no views and no divider. The threads
 are BB's live list's, matched by the machine's ID, which is its BB host's,
 in the same order and with the same 5 at most. "Last active" is the
 thread's `updatedAt` in that list. After them, "2 more in BB's sidebar"

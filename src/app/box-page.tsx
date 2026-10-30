@@ -152,7 +152,7 @@ function CopyLink({ url }: { url: string }) {
 
 function ThreadLine({ page, now }: { page: BoxPageState; now: number }) {
   const navigate = useBbNavigate();
-  if (page.owner === "yours") return <p className="mt-3 text-xs text-muted-foreground">One of your machines. It shows in BB's machine list, and threads can run on it.</p>;
+  if (page.owner === "yours") return null;
   const thread = page.thread;
   if (!thread || !page.threadId) return null;
   const title = threadTitle(thread);
