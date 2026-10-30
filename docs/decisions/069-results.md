@@ -1185,3 +1185,204 @@ again only every 10 minutes; its tests cover it.
 - Unit 3: read a slot's history with `own-usage.ts`, and add the range
   group, history's disk line, and the busiest minute.
 - Unit 4: busy from a slot's own share, as its health is now.
+
+## Unit 5: the view's bar
+
+Built on 30 October 2026, on main `c8be38e9`. A desktop, device or
+terminal on the Boxes page now has the box's other views in its bar, and
+the box's CPU and memory now.
+
+### What it adds
+
+- **The other views** (`src/app/view-bar.tsx`). The bar of a view on the
+  Boxes page has a button for each other view the box can open now:
+  Desktop, Simulator or Emulator, and Terminal, in that order, as outline
+  buttons with their glyphs, after the state. A view that cannot open now
+  is left out; the view itself says why. A switch replaces the view
+  (`nav.go(…, { replace: true })`) and keeps its origins, so the way back
+  and the browser's Back go where the view was first opened from. The
+  page's view buttons and the bar share one list, `boxViews`.
+- **A switch from an old path names its view.** `otherView` now gives
+  `box/<boxId>/<view>` and the origins. The old `<threadId>/<boxId>` shows
+  whichever screen was last shown, so a switch back to it could show the
+  wrong one.
+- **The live numbers.** Above 640 px, `BarNumbers` sits before Take
+  control: a link to the box's page, "CPU 31% Memory 58%", with the
+  Monitor's colour dots. It reads through `useMonitorSnapshot`, the same
+  source as the page's Activity, so a view opened from the page shows the
+  page's reading at once. Its name says whose and when: "amber-fox: CPU
+  31%, memory 58%. Open amber-fox's page"; a slot's is "this slot's CPU
+  50% of its share". The tiles and the bar take their percentages from one
+  function, `nowPercents`. It shows only where the page would read the box
+  (`monitor.is` is `read`); below 640 px it is `display: none`, so nothing
+  is read. A reading that fails after one worked keeps the numbers and adds
+  "at 5:18 AM" in amber; one that fails first says "Not answering".
+- **Ctrl+Shift+Up leaves the terminal** (the lead's decision, see
+  [Decided during unit 5](069-boxes-page.md#decided-during-unit-5)). The
+  terminal takes Tab and Shift+Tab for the shell, so a keyboard user could
+  not reach the bar from it. Ctrl+Shift+Up now moves focus to the bar's
+  first other view, or its first control, and xterm sends the shell
+  nothing (`attachCustomKeyEventHandler`). The terminal's input is
+  described by "Tab goes to the shell. Ctrl+Shift+Up moves focus to the
+  bar above.", and the bar's view buttons in a terminal have "In the
+  terminal, Ctrl+Shift+Up comes here." as their tooltip.
+- **A slot's host is named by its Mac** (the lead's addition). Activity's
+  tiles, its network label and the Monitor's "on" pill named a Tart
+  slot's host by the host VM's own name, `bb-box-host-` and an ID, which
+  cut off in the tiles and wrapped the network label to four lines. The
+  box's record names the Mac it is on (`guest.host`), so the Monitor's
+  slot reading and a new `slotHost` in the box's view now use it
+  (`slotHostName`), and the page's facts use it before the backend's
+  label. A Namespace Mac has no name of its own, so its slots say "its
+  Namespace Mac" there, "Its Namespace Mac, all slots" at the start of a
+  label, never the host's tag (the lead's answer). The network's label is
+  now "Network", with "mac-1, all slots" after its legend.
+- The box's name in the bar is at weight 400, as the owner's style guide
+  asks.
+- The guide: "A view's bar" in the Boxes page's chapter; the terminal's
+  chapter says how to leave it by keyboard.
+
+Files: new `src/app/view-bar.tsx`; changed `src/app/activity.tsx`,
+`activity-words.ts`, `box-nav.tsx`, `box-page.tsx`, `box-route.ts`,
+`desktop.tsx`, `terminal.tsx`, `src/core/device-host.ts`,
+`src/plugin/setup.ts` and `views.ts`.
+
+### Checked
+
+On a Linux box, 8 cores, in a clean copy of the commit delivered, with a
+fresh `npm ci`: `tsc` clean; vitest 380 tests passed in 5 files;
+`scripts/reference.ts --check` passes; the node suite 2,917 tests, 2,629
+passed, 288 skipped, 0 failed, the docs and site tests among them. A run
+on the first delivery, while the live check ran on the same box, failed
+these, none of them from this change:
+
+- The docs and site tests failed on a link in this section, since fixed.
+- `device-ios.test.ts`' "starts idb_companion again when it is killed"
+  failed once, while the live check loaded the same box, and passed when
+  run again.
+- `plugin.test.ts`' "High resolution doubles a Linux desktop's pixels"
+  failed while the live check's Docker desktop box ran on the same box:
+  its `xfce4-panel` shows in the test's process list, so the test expects
+  a restart of the panel. It failed the same way on an earlier commit
+  there, and passed once that box was released.
+
+New tests:
+
+- `test/box-route.test.ts`: a switch from an old path names its view and
+  keeps `from-settings`; for each of none, `from-list`, `from-settings`,
+  `from-box`, `from-box/from-list` and `from-box/from-settings`, a switch
+  reads back, keeps the way back, and switching back gives the same path.
+- `test/device-host.test.ts`: a Tart or pool slot is named by its Mac, a
+  Namespace slot "its Namespace Mac"; a VM of its own has no host name.
+- `test/activity-words.test.ts`: "its Namespace Mac" starts a sentence as
+  "Its Namespace Mac", and a Mac's own name keeps its case.
+- `test/app.test.tsx`: the bar's other views on a desktop, a terminal and
+  an Android terminal, for every origin, and from an old path with
+  `from-settings`; back after a switch goes back in history; the numbers
+  in the desktop and terminal bars, their link and `max-sm:hidden`, equal
+  to the page's tiles; a slot's numbers against its share, and the
+  network's label; a reading that fails after one worked keeps the
+  numbers with "at" and its time in amber, and says "from" that time in
+  its name, and one that fails first says "Not answering", named by the
+  Monitor's words; a Namespace slot's tiles, chart, network, slot line and
+  facts say its Namespace Mac and never its tag; Ctrl+Shift+Up moves focus to Desktop, is not sent, and
+  every other key (Tab, Shift+Tab, Up with Ctrl, Shift or Ctrl+Shift+Alt,
+  Escape, Ctrl+B) stays in the terminal; the input's description and the
+  tooltip.
+
+### Live check on a separate BB
+
+A Linux box of 8 cores and 16 GiB on Proxmox LXC ran a
+fresh `npx bb-app` 0.48.1 with no account, set up by
+[`live-setup.sh`](069-boxes-page/unit-5/live-setup.sh), with bb-box
+installed from a clone of this branch. Its backends: Docker on the box,
+with the desktop image built, and Proxmox QEMU with only the Android
+template, set up by the lead (2 VMIDs and 2 addresses, KVM on). The
+agent's `box_acquire` made polite-prairie, a Linux desktop (CPU) on
+Docker, 4 cores and 4 GiB, and zesty-acorn, an Android emulator (Pixel 8)
+VM, 8 cores and 16 GiB, ready in 45 s. Both joined BB.
+[`live-check.mjs`](069-boxes-page/unit-5/live-check.mjs) drives headless
+Chromium; [`runs.sh`](069-boxes-page/unit-5/runs.sh) ran it twice.
+[Run 1](069-boxes-page/unit-5/run-1.md) and
+[run 2](069-boxes-page/unit-5/run-2.md) each passed 30 of 30.
+
+| Check | Run 1 | Run 2 |
+| --- | --- | --- |
+| G8, 8 paths for each box: a row's quick view, Terminal, the view again, then back (history back to the list); the same then the browser's Back (the list); with a reload (the list, replacing); the page's view, Terminal, the view, back (history back to the page); settings, the page, the view, Terminal, the view, back, then the trail (the page, then settings), and the same with a reload; a view by its `from-settings` link (its back is the settings link); a view by URL with no origin (back replaces with the page). No switch pushed an entry | 16 of 16 | 16 of 16 |
+| Each view works after a switch: the desktop or emulator "The agent has control.", Terminal "Connected" and a typed `touch` made its file in the box, then the desktop or emulator again | Terminal 436 and 432 ms after the click; the screen's control words 419 and 421 ms after the click back | 2 of 2 |
+| The numbers, under two `yes` in each box: in each view, the bar's numbers, then its link to the page, read at once; compared only when the page's "Read at" is the bar's reading's time | 12 of 12 readings equal, such as "7:05:15 AM: bar CPU 57%, memory 20%; page CPU 57%, memory 20%" | 12 of 12 |
+| 640 px | shown at 641 px, hidden at 639 px, for each box | the same |
+| Keyboard only (below) | 2 of 2 | 2 of 2 |
+| The terminal's keys: in raw mode, `cat` read Tab, Shift+Tab, Up, Ctrl+Up, Shift+Up, Escape and `x`; Ctrl+Shift+Up moved focus to the bar's view button; then `y` | the shell read `\t 033 [ Z 033 [ A 033 [ 1 ; 5 A 033 [ 1 ; 2 A 033 x y`: no `033 [ 1 ; 6 A` between `x` and `y`, on both boxes | the same |
+| vim, less and tmux: vim wrote "hello from vim" after Escape, Ctrl+Up and Shift+Up; `seq 1000 \| less` took G, Tab and `s` and saved 1,000 lines; tmux took Ctrl+B c and had 2 windows | both boxes | both boxes |
+
+The CPU of polite-prairie read 100% for a few minutes in an earlier try,
+with two `yes` on its 4 cores: its desktop's video was being encoded in
+software while the check watched it. With no viewer, the Monitor read
+49.6% and `top` showed the two `yes` at 100% each, 50% of 4 cores.
+
+### Keyboard
+
+From the Threads tab, Enter on a row's quick Desktop or Emulator opened
+the view; 3 Tabs reached its Terminal button. The bar in Tab order: Back
+to boxes, the box's name, the device picker on an emulator ("Device: Pixel
+8. Choose another"), Terminal, the numbers ("polite-prairie: CPU 61%,
+memory 21%. Open polite-prairie's page"), Take control, the view's menu.
+Enter on Terminal put focus in the terminal, where Tab and Shift+Tab stayed
+("Terminal input", the shell's). Ctrl+Shift+Up moved focus to Desktop or
+Emulator, and its tooltip showed; Enter switched back, with focus on the
+screen. Enter on Back to boxes reached the list. Nothing moves or fades on
+a switch.
+
+### Screenshots
+
+From the run, at 1440, 760 and 390 px, light and dark, under load: the
+desktop ([1440](069-boxes-page/unit-5/desktop-desktop-1440-light.png),
+[dark](069-boxes-page/unit-5/desktop-desktop-1440-dark.png),
+[760 dark](069-boxes-page/unit-5/desktop-desktop-760-dark.png),
+[390](069-boxes-page/unit-5/desktop-desktop-390-light.png)); its terminal
+([1440](069-boxes-page/unit-5/desktop-terminal-1440-light.png),
+[390](069-boxes-page/unit-5/desktop-terminal-390-light.png)); the
+emulator ([1440 dark](069-boxes-page/unit-5/android-device-1440-dark.png),
+[760](069-boxes-page/unit-5/android-device-760-light.png),
+[390](069-boxes-page/unit-5/android-device-390-light.png)); and its
+terminal ([1440](069-boxes-page/unit-5/android-terminal-1440-light.png),
+[760 dark](069-boxes-page/unit-5/android-terminal-760-dark.png),
+[390 dark](069-boxes-page/unit-5/android-terminal-390-dark.png)). The
+others of each set are in the same folder. At 390 px the numbers are gone
+and the bar wraps: the name and device, then the state and the other view,
+then Take control and the menu.
+
+### Not checked live, and why
+
+- A shared slot's bar and its Mac's name: the separate BB has no Mac.
+  Tests cover the numbers against a share, the label and the name.
+- A failed reading in the bar ("at 5:18 AM" and "Not answering"): the
+  check did not make a box stop answering. Its words come from unit 2's
+  stale path, which unit 2 checked live, and are under test.
+- VoiceOver and NVDA reading the terminal's description: checked in the
+  page's DOM and in tests only.
+- Ctrl+Shift+Up on a Mac: macOS takes Ctrl+Up for Mission Control. Whether
+  it also takes Ctrl+Shift+Up before the browser sees it needs a look on a
+  Mac's own keyboard.
+- A look in production in the owner's browser waits for the lead's deploy.
+
+### Deviations from 069
+
+- The bar's view buttons leave out a view that cannot open now, rather
+  than show it disabled with the reason, as the prototype did; the view
+  itself says why.
+- A switch from an old path goes to the new form (above).
+- The terminal gains Ctrl+Shift+Up, and the slot's host is named by its
+  Mac, both by the lead's decision during this unit.
+
+### Open questions
+
+- Ctrl+Shift+Up on macOS, above: the lead asks the owner to press it in a
+  terminal on his Mac after the deploy.
+
+### Follow-ups
+
+- The thread's own Terminal tab has no other view in its bar, so there
+  Ctrl+Shift+Up moves focus to the first control in the bar, if any, or
+  leaves the terminal.

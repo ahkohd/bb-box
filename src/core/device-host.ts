@@ -493,6 +493,14 @@ export function inSlot(box: { readonly guest: Guest | null }): boolean {
   return placementOf(box).on === "slot";
 }
 
+export const NAMESPACE_MAC_WORDS = "its Namespace Mac";
+
+export function slotHostName(box: { readonly guest: Guest | null }): string | null {
+  const placement = placementOf(box);
+  if (placement.on !== "slot") return null;
+  return box.guest?.host ?? (placement.hostOn === "namespace" ? NAMESPACE_MAC_WORDS : placement.host);
+}
+
 export const TAKEN_ON_SHARED_HOST = "takenOnSharedHost";
 
 export function takenOnSharedHost(guest: Guest): Guest {

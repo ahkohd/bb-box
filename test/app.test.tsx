@@ -9,7 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, MonitorReach, BoxPageState, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
@@ -182,11 +182,19 @@ const xterm = vi.hoisted(() => {
     data: ((text: string) => void) | null = null;
     resized: ((size: { cols: number; rows: number }) => void) | null = null;
     target: HTMLElement | null = null;
+    textarea: HTMLTextAreaElement | undefined;
+    keys: ((event: KeyboardEvent) => boolean) | null = null;
     constructor() {
       FakeTerminal.made.push(this);
     }
     open(target: HTMLElement) {
       this.target = target;
+      this.textarea = document.createElement("textarea");
+      this.textarea.setAttribute("aria-label", "Terminal input");
+      target.appendChild(this.textarea);
+    }
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keys = handler;
     }
     addons: unknown[] = [];
     loadAddon(addon: unknown) {
@@ -8812,6 +8820,215 @@ test("a view's way back goes back in history when the panel itself made the move
   expect(settingsPage.getByRole("link", { name: "Desktop" }).getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/desktop/from-box/from-settings");
   back.mockRestore();
   window.history.pushState(null, "", "/");
+});
+
+test("a view's bar has the box's other views as buttons, and a switch replaces the view keeping every origin of G8, there and back (069 section 8, unit 5)", async () => {
+  const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
+  const { handlers } = server([desktopBox(), android]);
+  for (const origins of ["", "/from-list", "/from-box", "/from-box/from-list", "/from-box/from-settings", "/from-settings"]) {
+    const desktop = boxPageAt(handlers, `box/box_2/desktop${origins}`);
+    const terminal = await desktop.findByRole("button", { name: "Terminal" });
+    expect(desktop.queryByRole("button", { name: "Desktop" })).toBeNull();
+    fireEvent.click(terminal);
+    expect(desktop.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_2/terminal${origins}`, replace: true } });
+    cleanup();
+    const shell = boxPageAt(handlers, `box/box_2/terminal${origins}`);
+    fireEvent.click(await shell.findByRole("button", { name: "Desktop" }));
+    expect(shell.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_2/desktop${origins}`, replace: true } });
+    cleanup();
+    const emulatorShell = boxPageAt(handlers, `box/box_a/terminal${origins}`);
+    fireEvent.click(await emulatorShell.findByRole("button", { name: "Emulator" }));
+    expect(emulatorShell.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_a/device${origins}`, replace: true } });
+    cleanup();
+  }
+  const old = boxPageAt(handlers, "thr_ui/box_2/from-settings");
+  fireEvent.click(await old.findByRole("button", { name: "Terminal" }));
+  expect(old.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/terminal/from-settings", replace: true } });
+});
+
+function unstubTheMonitor(done: () => void) {
+  done();
+  vi.unstubAllGlobals();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  vi.stubGlobal("ResizeObserver", FakeObserver);
+}
+
+test("a reading that fails after one worked keeps the bar's numbers, says which time they are from, in amber, and says so in its name; one that fails first says Not answering (069 unit 5)", async () => {
+  let readings = 0;
+  const { handlers, done } = readByTheMonitor("host_stale", () => {
+    readings += 1;
+    if (readings > 1) throw new Error("connect ECONNREFUSED 10.0.0.31:7777");
+    return monitorReading({ refreshIntervalMs: 2000 });
+  });
+  const view = boxPageAt(handlers, "box/box_2/terminal/from-list");
+  const fresh = await view.findByRole("link", { name: "bold-heron: CPU 31%, memory 58%. Open bold-heron's page" });
+  expect(fresh.hasAttribute("data-stale")).toBe(false);
+  const stale = await view.findByRole("link", { name: /^bold-heron: CPU 31%, memory 58%, from \d{1,2}:\d{2}\s?[AP]M\. Open bold-heron's page$/ }, { timeout: 8000 });
+  expect(stale.hasAttribute("data-stale")).toBe(true);
+  expect(stale.textContent).toMatch(/^CPU 31%Memory 58%at \d{1,2}:\d{2}\s?[AP]M$/);
+  expect(within(stale).getByText(/^at /).className).toContain("text-warning-text");
+  cleanup();
+  unstubTheMonitor(done);
+
+  const silent = readByTheMonitor("host_silent", () => {
+    throw new Error("connect ECONNREFUSED 10.0.0.31:7777");
+  });
+  const quiet = boxPageAt(silent.handlers, "box/box_2/terminal/from-list");
+  const notAnswering = await quiet.findByRole("link", { name: "Can't reach bold-heron. Open bold-heron's page" });
+  expect(notAnswering.textContent).toBe("Not answering");
+  expect(notAnswering.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/from-list");
+  cleanup();
+  unstubTheMonitor(silent.done);
+}, 15_000);
+
+test("a Namespace slot's Mac, which has no name of its own, is its Namespace Mac in Activity's tiles, chart and network, and in the page's facts, never the host's tag (069 unit 5)", async () => {
+  const slot = box({ id: "box_s", name: "quiet-fjord", kind: "ios", kindLabel: "iOS Simulator", shared: true, slotHost: "its Namespace Mac", backendLabel: "Namespace", form: null, desktop: false, display: null, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: false } });
+  const reading = monitorReading({ own: { cpuCores: 1, memoryBytes: 1024 ** 3 }, slot: { host: "its Namespace Mac", encoder: { usedPercent: 20, words: "1 of about 5 full-size streams' room in use." }, share: { slots: 4, cores: 2, memoryBytes: 4 * 1024 ** 3 } }, history: [{ timestamp: Date.now(), cpuPercent: 30, memoryPercent: 50, networkRxBytesPerSecond: 1, networkTxBytesPerSecond: 1, ownCpuCores: 1, ownMemoryBytes: 1024 ** 3 }] } as Partial<MonitorSnapshot>);
+  const { handlers, done } = readByTheMonitor("host_namespace", () => reading, [slot]);
+  const page = boxPageAt(handlers, "box/box_s");
+  const activity = await page.findByRole("region", { name: "Activity" });
+  expect(await within(activity).findByRole("region", { name: "Its Namespace Mac, all slots" })).toBeTruthy();
+  expect(within(activity).getByRole("region", { name: "Its Namespace Mac's encoder" })).toBeTruthy();
+  expect(within(activity).getByRole("region", { name: "Its Namespace Mac's disk" })).toBeTruthy();
+  expect(within(activity).getByRole("button", { name: "Its Namespace Mac's CPU, all slots" })).toBeTruthy();
+  expect(activity.querySelector("[data-network-whose]")!.textContent).toBe("Its Namespace Mac, all slots");
+  expect(activity.querySelector("[data-slot-line]")!.textContent).toMatch(/^This slot is a macOS user on its Namespace Mac, .* Its Namespace Mac's numbers are every slot's together/);
+  expect(activity.textContent).not.toContain("ios-host");
+  const facts = page.getByRole("region", { name: "Facts" });
+  expect(within(facts).getByText("A share of its Namespace Mac")).toBeTruthy();
+  expect(within(facts).getByText("A shared slot on its Namespace Mac")).toBeTruthy();
+  cleanup();
+  unstubTheMonitor(done);
+});
+
+test("Ctrl+Shift+Up moves focus from the terminal to the bar's view button and never reaches the shell; every other key, Tab and Shift+Tab too, stays the shell's, and a screen reader hears so (WCAG 2.1.2, unit 5)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = boxPageAt(handlers, "box/box_2/terminal/from-list");
+  const desktop = await slot.findByRole("button", { name: "Desktop" });
+  fireEvent.pointerMove(desktop);
+  expect((await screen.findByRole("tooltip")).textContent).toBe("In the terminal, Ctrl+Shift+Up comes here.");
+  fireEvent.pointerLeave(desktop);
+  const fake = await waitFor(() => {
+    const made = xterm.FakeTerminal.made.at(-1);
+    if (!made?.keys) throw new Error("no terminal yet");
+    return made;
+  });
+  const input = fake.textarea!;
+  expect(document.getElementById(input.getAttribute("aria-describedby")!)!.textContent).toBe("Tab goes to the shell. Ctrl+Shift+Up moves focus to the bar above.");
+  input.focus();
+  const key = (init: KeyboardEventInit, type = "keydown") => new KeyboardEvent(type, { cancelable: true, ...init });
+  for (const init of [{ key: "Tab" }, { key: "Tab", shiftKey: true }, { key: "ArrowUp" }, { key: "ArrowUp", ctrlKey: true }, { key: "ArrowUp", shiftKey: true }, { key: "ArrowUp", ctrlKey: true, shiftKey: true, altKey: true }, { key: "Escape" }, { key: "b", ctrlKey: true }]) {
+    expect(fake.keys!(key(init)), JSON.stringify(init)).toBe(true);
+    expect(document.activeElement).toBe(input);
+  }
+  const leave = key({ key: "ArrowUp", ctrlKey: true, shiftKey: true });
+  expect(fake.keys!(leave)).toBe(false);
+  expect(leave.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(desktop);
+  expect(fake.keys!(key({ key: "ArrowUp", ctrlKey: true, shiftKey: true }, "keyup"))).toBe(false);
+});
+
+test("after a switch, the way back still goes back in history to where the view was opened from, as the switch replaced its entry (G8, unit 5)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+  window.history.pushState(null, "", "/plugins/bb-box/desktop/box/box_2");
+  const page = boxPageAt(handlers, "box/box_2");
+  fireEvent.click(await page.findByRole("link", { name: "Desktop" }));
+  cleanup();
+  window.history.pushState(null, "", "/plugins/bb-box/desktop/box/box_2/desktop/from-box");
+  const view = boxPageAt(handlers, "box/box_2/desktop/from-box");
+  fireEvent.click(await view.findByRole("button", { name: "Terminal" }));
+  cleanup();
+  window.history.replaceState(null, "", "/plugins/bb-box/desktop/box/box_2/terminal/from-box");
+  const switched = boxPageAt(handlers, "box/box_2/terminal/from-box");
+  fireEvent.click(await switched.findByRole("button", { name: "Back to bold-heron" }));
+  expect(back).toHaveBeenCalledTimes(1);
+  expect(switched.inspection.navigateCalls).toEqual([]);
+  back.mockRestore();
+  window.history.pushState(null, "", "/");
+});
+
+function monitorReading(patch: Partial<MonitorSnapshot> = {}): MonitorSnapshot {
+  return {
+    timestamp: new Date().toISOString(),
+    refreshIntervalMs: 5000,
+    host: { hostname: "bold-heron", platform: "linux", release: "6.17", arch: "x64", uptimeSeconds: 3600 },
+    cpu: { model: "AMD EPYC", cores: 4, speedMHz: 0, usagePercent: 31.4, perCoreUsagePercent: [], loadAverage: [1.24, 1, 0.8], stallPercent: null },
+    memory: { totalBytes: 8 * 1024 ** 3, usedBytes: 4.64 * 1024 ** 3, freeBytes: 3 * 1024 ** 3, availableBytes: 3.36 * 1024 ** 3, cachedBytes: 0, buffersBytes: 0, swapTotalBytes: 0, swapUsedBytes: 0, usagePercent: 57.6, stallPercent: null },
+    disk: { mount: "/", totalBytes: 32 * 1024 ** 3, usedBytes: 13 * 1024 ** 3, freeBytes: 19 * 1024 ** 3, usagePercent: 40 },
+    network: { interface: "eth0", rxBytesPerSecond: 1024, txBytesPerSecond: 512, rxTotalBytes: 1, txTotalBytes: 1 },
+    battery: null,
+    sensors: null,
+    tailscale: null,
+    processes: { available: true, total: 1, running: 1, top: [] },
+    runtime: null,
+    health: { status: "healthy", issues: [] },
+    history: [],
+    ...patch,
+  } as MonitorSnapshot;
+}
+
+function readByTheMonitor(machineId: string, reading: () => MonitorSnapshot, boxes: BoxView[] = [desktopBox()]) {
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      readonly #callback: IntersectionObserverCallback;
+      constructor(callback: IntersectionObserverCallback) {
+        this.#callback = callback;
+      }
+      observe() {
+        this.#callback([{ isIntersecting: true, intersectionRect: { width: 900, height: 40 } } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  const rects = vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+  const { handlers } = server(boxes, { monitor: { is: "read", machineId, why: null } });
+  const read = handlers as unknown as Record<string, unknown>;
+  read["monitor.machine"] = () => reading();
+  return { handlers, done: () => rects.mockRestore() };
+}
+
+test("a view's bar has the box's CPU and memory now, from the same reading as its page, leading to the page, and gone below 640 px (069 section 8, unit 5)", async () => {
+  const { handlers, done } = readByTheMonitor("host_bold", () => monitorReading());
+  for (const view of ["desktop", "terminal"]) {
+    const slot = boxPageAt(handlers, `box/box_2/${view}/from-list`);
+    const numbers = await slot.findByRole("link", { name: "bold-heron: CPU 31%, memory 58%. Open bold-heron's page" });
+    expect(numbers.textContent).toBe("CPU 31%Memory 58%");
+    expect(numbers.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/from-list");
+    expect(numbers.closest("[data-bar-numbers]")!.className).toContain("max-sm:hidden");
+    fireEvent.click(numbers);
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/from-list" } });
+    cleanup();
+  }
+  const page = boxPageAt(handlers, "box/box_2");
+  const activity = await page.findByRole("region", { name: "Activity" });
+  await waitFor(() => expect(within(activity).getByRole("region", { name: "CPU" }).querySelector(".text-xl")!.textContent).toBe("31"));
+  expect(within(activity).getByRole("region", { name: "Memory" }).querySelector(".text-xl")!.textContent).toBe("58");
+  done();
+  vi.unstubAllGlobals();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  vi.stubGlobal("ResizeObserver", FakeObserver);
+});
+
+test("a shared slot's bar gives its own CPU and memory against its share, as its page's tiles do, and the network names its Mac once (069 unit 5)", async () => {
+  const slotReading = monitorReading({ own: { cpuCores: 2, memoryBytes: 1.5 * 1024 ** 3 }, slot: { host: "mac-1", encoder: null, share: { slots: 3, cores: 4, memoryBytes: 12 * 1024 ** 3 } }, history: [{ timestamp: Date.now(), cpuPercent: 30, memoryPercent: 50, networkRxBytesPerSecond: 1, networkTxBytesPerSecond: 1, ownCpuCores: 2, ownMemoryBytes: 1.5 * 1024 ** 3 }] } as Partial<MonitorSnapshot>);
+  const { handlers, done } = readByTheMonitor("host_slot", () => slotReading);
+  const view = boxPageAt(handlers, "box/box_2/terminal/from-box");
+  const numbers = await view.findByRole("link", { name: "bold-heron: this slot's CPU 50% of its share, memory 13% of its share. Open bold-heron's page" });
+  expect(numbers.textContent).toBe("CPU 50%Memory 13%");
+  cleanup();
+  const page = boxPageAt(handlers, "box/box_2");
+  const activity = await page.findByRole("region", { name: "Activity" });
+  await waitFor(() => expect(within(activity).getByRole("region", { name: "This slot's CPU" }).querySelector(".text-xl")!.textContent).toBe("50"));
+  expect(within(activity).getByRole("region", { name: "This slot's memory" }).textContent).toContain("· 13%");
+  expect(activity.querySelector("[data-network-whose]")!.textContent).toBe("mac-1, all slots");
+  expect(within(activity).getByText("Network")).toBeTruthy();
+  done();
+  vi.unstubAllGlobals();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  vi.stubGlobal("ResizeObserver", FakeObserver);
 });
 
 test("Stop on the page asks while the box's own thread is working, names it, and stops only after Stop it anyway; an idle thread's box stops at once (G3)", async () => {

@@ -17,6 +17,7 @@ import {
   bytesWords,
   clockWithSeconds,
   gapsOf,
+  hostAtStart,
   hostBusy,
   liveTicks,
   liveWindow,
@@ -26,6 +27,7 @@ import {
   memoryPressure,
   minuteClock,
   networkSummary,
+  nowPercents,
   percentOfShare,
   rateWords,
   slotCpuWords,
@@ -43,7 +45,7 @@ export const CHART_COLOURS = {
   gpu: "var(--chart-gpu)",
 } as const;
 
-const CHART_TONES =
+export const CHART_TONES =
   "[--chart-cpu:#15803d] [--chart-memory:#a16207] [--chart-down:#1d4ed8] [--chart-up:#6d28d9] [--chart-host:#525252] [--chart-gpu:#b45309] dark:[--chart-cpu:#22c55e] dark:[--chart-memory:#e5c07b] dark:[--chart-down:#5b8def] dark:[--chart-up:#a78bfa] dark:[--chart-host:#a3a3a3] dark:[--chart-gpu:#f59e0b]";
 
 const DASHES = { memory: "6 4", up: "6 4", host: "10 4" } as const;
@@ -116,14 +118,15 @@ function NowTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   const memory = snapshot?.memory;
   const disk = snapshot?.disk ?? null;
   const network = snapshot?.network ?? null;
+  const percents = snapshot ? nowPercents(snapshot) : null;
   const pressure = memory ? memoryPressure(memory.usagePercent) : null;
   const gpu = snapshot && hasGpuReadings(snapshot) ? snapshot.sensors! : null;
   const free = disk ? splitWords(bytesWords(disk.freeBytes)) : null;
   const down = network?.rxBytesPerSecond == null ? null : splitWords(rateWords(network.rxBytesPerSecond));
   return (
     <div data-tiles className={cn(TILES, gpu ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-      <Tile label="CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} pill={cpu ? <CpuPill cpu={cpu} /> : null} loading={loading} sample="normal · 4 cores" value={wholePercent(cpu?.usagePercent)} unit="%" foot={cpu ? [cpuState(cpu.usagePercent), `${cpu.cores} ${cpu.cores === 1 ? "core" : "cores"}`].filter(Boolean).join(" · ") : null} />
-      <Tile label="Memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} pill={pressure ? <Pill tone={pressure.tone}>{pressure.label}</Pill> : null} loading={loading} sample="4 GiB of 8 GiB" value={wholePercent(memory?.usagePercent)} unit="%" foot={memory ? `${bytesWords(memory.usedBytes)} of ${bytesWords(memory.totalBytes)}` : null} />
+      <Tile label="CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} pill={cpu ? <CpuPill cpu={cpu} /> : null} loading={loading} sample="normal · 4 cores" value={wholePercent(percents?.cpu)} unit="%" foot={cpu ? [cpuState(cpu.usagePercent), `${cpu.cores} ${cpu.cores === 1 ? "core" : "cores"}`].filter(Boolean).join(" · ") : null} />
+      <Tile label="Memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} pill={pressure ? <Pill tone={pressure.tone}>{pressure.label}</Pill> : null} loading={loading} sample="4 GiB of 8 GiB" value={wholePercent(percents?.memory)} unit="%" foot={memory ? `${bytesWords(memory.usedBytes)} of ${bytesWords(memory.totalBytes)}` : null} />
       <Tile label="Disk" icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} pill={disk ? <Pill>{bytesWords(disk.totalBytes)}</Pill> : null} loading={loading} sample="12 GiB used · 40%" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `${bytesWords(disk.usedBytes)} used · ${Math.round(disk.usagePercent)}%` : "Its disk could not be read."} />
       <Tile label="Network" icon={<TileIcon icon={ArrowDataTransferVerticalIcon} color={CHART_COLOURS.down} />} pill={network ? <Pill>{network.interface}</Pill> : null} loading={loading} sample="10 KB/s up" value={down?.value ?? "–"} unit={down ? `${down.unit} down` : network ? "measuring" : "not read"} foot={network ? (network.txBytesPerSecond === null ? "Measuring…" : `${rateWords(network.txBytesPerSecond)} up`) : "Its network could not be read."} />
       {gpu ? <Tile label="GPU" icon={<TileIcon icon={GpuIcon} color={CHART_COLOURS.gpu} />} loading={false} sample="" value={wholePercent(gpu.gpuPercent)} unit="%" foot={[cpuState(gpu.gpuPercent), gpu.gpuTempC === null ? null : `${Math.round(gpu.gpuTempC)}°C`].filter(Boolean).join(" · ") || "Read"} /> : null}
@@ -134,7 +137,7 @@ function NowTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
 function SlotTiles({ snapshot, slot, share }: { snapshot: MonitorSnapshot; slot: NonNullable<MonitorSnapshot["slot"]>; share: SlotShare }) {
   const host = slot.host;
   const own = snapshot.own ?? null;
-  const ownCpu = percentOfShare(own?.cpuCores, share);
+  const percents = nowPercents(snapshot);
   const ownMemory = own ? splitWords(bytesWords(own.memoryBytes)) : null;
   const disk = snapshot.disk;
   const free = disk ? splitWords(bytesWords(disk.freeBytes)) : null;
@@ -144,10 +147,10 @@ function SlotTiles({ snapshot, slot, share }: { snapshot: MonitorSnapshot; slot:
   return (
     <div className="border-b border-border">
       <div data-tiles className={cn(TILES, "border-b-0", slot.encoder ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-        <Tile label="This slot's CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} loading={false} sample="" value={wholePercent(ownCpu)} unit={own ? "% of its share" : "not read"} foot={slotCpuWords(own?.cpuCores ?? null, share, host, snapshot.cpu.cores)} />
-        <Tile label="This slot's memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} loading={false} sample="" value={ownMemory?.value ?? "–"} unit={ownMemory?.unit ?? "not read"} foot={`of its ${bytesWords(share.memoryBytes)}${own ? ` · ${Math.round(memoryOfShare(own.memoryBytes, share) ?? 0)}%` : ""}`} />
+        <Tile label="This slot's CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} loading={false} sample="" value={wholePercent(percents.cpu)} unit={own ? "% of its share" : "not read"} foot={slotCpuWords(own?.cpuCores ?? null, share, host, snapshot.cpu.cores)} />
+        <Tile label="This slot's memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} loading={false} sample="" value={ownMemory?.value ?? "–"} unit={ownMemory?.unit ?? "not read"} foot={`of its ${bytesWords(share.memoryBytes)}${own ? ` · ${wholePercent(percents.memory)}%` : ""}`} />
         <Tile
-          label={`${host}, all slots`}
+          label={`${hostAtStart(host)}, all slots`}
           icon={<TileIcon icon={ComputerIcon} color={CHART_COLOURS.host} />}
           pill={busy ? <Pill tone="warn">busy</Pill> : null}
           loading={false}
@@ -157,9 +160,9 @@ function SlotTiles({ snapshot, slot, share }: { snapshot: MonitorSnapshot; slot:
           foot={[macCpu !== null && load ? `host load ${load[0].toFixed(2)}` : null, `memory ${Math.round(snapshot.memory.usagePercent)}%`, `${snapshot.cpu.cores} cores`].filter(Boolean).join(" · ")}
         />
         {slot.encoder ? (
-          <Tile label={`${host}'s encoder`} icon={<TileIcon icon={VideoReplayIcon} color={CHART_COLOURS.host} />} loading={false} sample="" value={wholePercent(slot.encoder.usedPercent)} unit="% used" foot={<span title={slot.encoder.words}>{slot.encoder.words}</span>} />
+          <Tile label={`${hostAtStart(host)}'s encoder`} icon={<TileIcon icon={VideoReplayIcon} color={CHART_COLOURS.host} />} loading={false} sample="" value={wholePercent(slot.encoder.usedPercent)} unit="% used" foot={<span title={slot.encoder.words}>{slot.encoder.words}</span>} />
         ) : null}
-        <Tile label={`${host}'s disk`} icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} loading={false} sample="" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `of ${bytesWords(disk.totalBytes)}, every slot's files together` : "Its disk could not be read."} />
+        <Tile label={`${hostAtStart(host)}'s disk`} icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} loading={false} sample="" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `of ${bytesWords(disk.totalBytes)}, every slot's files together` : "Its disk could not be read."} />
       </div>
       <p data-slot-line className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">
         {slotLineWords(host, share.slots)}
@@ -200,7 +203,7 @@ function usageLines(snapshot: MonitorSnapshot, share: SlotShare | null): (ChartS
   return [
     { key: "cpu", label: "This slot's CPU", color: CHART_COLOURS.cpu, values: points.map((point) => percentOfShare(point.ownCpuCores, share)), format: percentWords },
     { key: "memory", label: "This slot's memory", color: CHART_COLOURS.memory, dash: DASHES.memory, values: points.map((point) => memoryOfShare(point.ownMemoryBytes, share)), format: percentWords },
-    { key: "host", label: `${host}'s CPU, all slots`, color: CHART_COLOURS.host, dash: DASHES.host, values: points.map((point) => point.cpuPercent), format: percentWords },
+    { key: "host", label: `${hostAtStart(host)}'s CPU, all slots`, color: CHART_COLOURS.host, dash: DASHES.host, values: points.map((point) => point.cpuPercent), format: percentWords },
   ];
 }
 
@@ -268,13 +271,14 @@ function Charts({ snapshot: live, share }: { snapshot: MonitorSnapshot; share: S
       {points.length ? (
         <div className="space-y-1.5">
           <p className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>{share ? `${snapshot.slot!.host}'s network` : "Network"}</span>
+            <span className={cn("shrink-0 text-right text-foreground", AXIS_WIDTH)}>Network</span>
             {network.map((line) => (
               <span key={line.key} className="flex items-center gap-1.5">
                 <SeriesSample color={line.color} dash={line.dash} />
                 {line.label}
               </span>
             ))}
+            {share ? <span data-network-whose className="min-w-0 truncate text-subtle-foreground">{hostAtStart(snapshot.slot!.host)}, all slots</span> : null}
           </p>
           <HistoryChart
             series={network}
@@ -285,7 +289,7 @@ function Charts({ snapshot: live, share }: { snapshot: MonitorSnapshot; share: S
             height={NETWORK_HEIGHT}
             axis={[rateWords(ceiling), "0"]}
             ticks={[]}
-            label={`${share ? `${snapshot.slot!.host}'s download and upload` : "Download and upload"}, ${words}`}
+            label={`${share ? `${hostAtStart(snapshot.slot!.host)}'s download and upload` : "Download and upload"}, ${words}`}
             summary={networkSummary(words, times, down, up, networkGaps, clockWithSeconds)}
             timeWords={clockWithSeconds}
             gapWords="No reading"

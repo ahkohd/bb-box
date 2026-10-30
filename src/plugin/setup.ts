@@ -70,7 +70,7 @@ import { registerTools } from "./tools.ts";
 import { DeviceServers, type DeviceServersDeps } from "./devices.ts";
 import { connectScript, deviceServerFiles } from "../core/device-delivery.ts";
 import { startMonitor, type Monitor, type MonitoredBox } from "./monitor.ts";
-import { inSlot, placementOf } from "../core/device-host.ts";
+import { inSlot, placementOf, slotHostName } from "../core/device-host.ts";
 import { monitorConfig } from "../core/document.ts";
 import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
@@ -1070,7 +1070,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       hostId: box.enrol.state === "enrolled" ? box.enrol.hostId : null,
       os: box.capabilities.os,
       commands: box.capabilities.command !== null,
-      slot: placement.on === "slot" ? { host: placement.host, most: placement.most } : null,
+      slot: placement.on === "slot" ? { host: slotHostName(box) ?? placement.host, most: placement.most } : null,
     };
   };
   const monitor = startMonitor(bb, {

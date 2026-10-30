@@ -100,7 +100,7 @@ export function viewFromPage(page: BoxPageRoute, view: BoxViewName): BoxViewRout
 }
 
 export function otherView(route: BoxViewRoute, view: BoxViewName): BoxViewRoute {
-  return { ...route, view };
+  return boxView(route.boxId, view, route.origins);
 }
 
 export function pageOfView(route: BoxViewRoute): BoxPageRoute {

@@ -15,7 +15,7 @@ import {
   useBbNavigate,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
@@ -137,6 +137,14 @@ function tokenColor(token: string, fallback: string): string {
   }
 }
 
+export const LEAVE_TERMINAL_KEYS = "Ctrl+Shift+Up";
+
+export const TERMINAL_KEYS_WORDS = `Tab goes to the shell. ${LEAVE_TERMINAL_KEYS} moves focus to the bar above.`;
+
+export function leavesTheTerminal(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey">): boolean {
+  return event.key === "ArrowUp" && event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey;
+}
+
 const mounted = new Set<string>();
 
 function randomId(): string {
@@ -202,6 +210,7 @@ export class TerminalClient implements Kept {
   readonly element = document.createElement("div");
   hidden = false;
   onEnded?: () => void;
+  onLeave?: () => void;
   connection: Connection = { state: "connecting" };
   readonly #view: Terminal;
   readonly #fit = new FitAddon();
@@ -235,6 +244,15 @@ export class TerminalClient implements Kept {
     });
     this.#view.loadAddon(this.#fit);
     this.#view.open(this.element);
+    this.#describeItsKeys();
+    this.#view.attachCustomKeyEventHandler((event) => {
+      if (!leavesTheTerminal(event)) return true;
+      if (event.type === "keydown") {
+        event.preventDefault();
+        this.onLeave?.();
+      }
+      return false;
+    });
     this.#view.onData((data) => {
       if (this.#socket?.readyState === WebSocket.OPEN)
         this.#socket.send(encoder.encode(data));
@@ -270,6 +288,15 @@ export class TerminalClient implements Kept {
     } catch {
       // No WebGL 2 here: the DOM renderer stays.
     }
+  }
+
+  #describeItsKeys(): void {
+    const words = document.createElement("span");
+    words.id = `bb-box-terminal-keys-${randomId()}`;
+    words.className = "sr-only";
+    words.textContent = TERMINAL_KEYS_WORDS;
+    this.element.appendChild(words);
+    this.#view.textarea?.setAttribute("aria-describedby", words.id);
   }
 
   subscribe(listener: () => void): () => void {
@@ -433,17 +460,27 @@ function TerminalChooser({ threadId }: { threadId: string }) {
   );
 }
 
+function focusTheBar(bar: HTMLElement | null): void {
+  const target = bar?.querySelector<HTMLElement>("[data-view-switch]") ?? bar?.querySelector<HTMLElement>("a[href], button:not([disabled])");
+  if (target) target.focus();
+  else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+
 /** One box's terminal; `onBack` adds a back arrow, for the Boxes page. */
 export function BoxTerminal({
   threadId,
   boxId,
   onBack,
   page,
+  otherViews,
+  numbers,
 }: {
   threadId: string;
   boxId: string;
   onBack?: BackTo;
   page?: PageLink;
+  otherViews?: (shown: "terminal") => ReactNode;
+  numbers?: ReactNode;
 }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
@@ -471,6 +508,7 @@ export function BoxTerminal({
   const key = `terminal:${boxId}:${session}`;
 
   const holder = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
   // A kept terminal shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(
     () => keptFree<TerminalClient>(key)?.connection ?? { state: "connecting" },
@@ -497,6 +535,7 @@ export function BoxTerminal({
         ),
     );
     const client = claimed.session;
+    client.onLeave = () => focusTheBar(bar.current);
     screen.appendChild(client.element);
     const unsubscribe = client.subscribe(() =>
       setConnection(client.connection),
@@ -508,6 +547,7 @@ export function BoxTerminal({
     client.focus();
     return () => {
       unsubscribe();
+      client.onLeave = undefined;
       client.element.remove();
       if (claimed.kept) releaseKept(key);
       else client.dispose();
@@ -578,7 +618,7 @@ export function BoxTerminal({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
+      <div ref={bar} className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <TerminalGlyph className="text-muted-foreground" />
         <BoxName name={box?.name ?? lastName.current ?? "Terminal"} page={page} />
@@ -586,17 +626,21 @@ export function BoxTerminal({
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
-        {can && connection.state === "ended" ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="ml-auto h-7"
-            onClick={renew}
-          >
-            Start a new shell
-          </Button>
-        ) : null}
+        {otherViews?.("terminal")}
+        <span className="ml-auto flex items-center gap-1.5">
+          {numbers}
+          {can && connection.state === "ended" ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              onClick={renew}
+            >
+              Start a new shell
+            </Button>
+          ) : null}
+        </span>
       </div>
       {problem ? (
         <p

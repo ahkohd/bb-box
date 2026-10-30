@@ -945,6 +945,29 @@ On 30 October 2026, during unit 2:
   on the charts they hold the reading they had, as a screen reader
   otherwise says the changed summary again at each reading.
 
+## Decided during unit 5
+
+On 30 October 2026, during unit 5:
+
+- **Ctrl+Shift+Up leaves the terminal.** A terminal takes Tab and Shift+Tab
+  for the shell, so a keyboard user could not reach the bar from it, which
+  fails WCAG 2.1.2. The lead chose Ctrl+Shift+Up: it moves focus to the
+  bar's first other view, or else its first control, and the shell gets
+  nothing. Every other key stays the shell's. The terminal's accessible
+  description says so, the bar's view buttons in a terminal have it as
+  their tooltip, and the terminal's guide says it.
+- **A switch from an old path names its view.** `<threadId>/<boxId>` shows
+  whichever screen was last shown, so a switch from an old path goes to
+  `box/<boxId>/<view>`, keeping its origins, rather than to the old form.
+- **A slot's host is named by its Mac.** A slot on a Tart shared iOS host
+  was named by the host VM's own name (`bb-box-host-` and an ID) in
+  Activity, and the network's label wrapped. Activity, the Monitor and the
+  page's facts now name the Mac where bb-box knows it (Tart and the pool).
+  A Namespace Mac has no name of its own, so its slots say "its Namespace
+  Mac" in all three, "Its Namespace Mac" at the start of a label, never the
+  host's tag. The network's label is "Network", with the Mac's name after
+  its legend.
+
 ## Open questions for the owner
 
 The owner answered all four on 29 October 2026, each with its default.

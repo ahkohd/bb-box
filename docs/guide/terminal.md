@@ -23,6 +23,8 @@ The shell keeps running when you switch to another tab. When you come back, the 
 
 The toolbar says how the terminal is doing: 'Connecting…', 'Connected', 'Ended', 'Starting', 'Stopped' or 'Released'.
 
+Keys go to the shell, Tab and Shift+Tab too, so completion works. To leave the terminal with the keyboard, press Ctrl+Shift+Up: focus moves to the toolbar, to the box's other view on the Boxes page, and the shell gets nothing. A screen reader says so when the terminal has focus.
+
 ## When the shell ends
 
 A shell ends when you exit it, when its box stops or goes, or when BB Box restarts. The terminal says why. Select **Start a new shell** to carry on.
