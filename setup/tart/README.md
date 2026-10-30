@@ -255,8 +255,11 @@ a VM of the iOS image shared with other ios boxes
 an ios box asked for with no options takes a slot where a host has room or
 can start, and is a VM of its own otherwise. One asked for with
 `shared: true` takes a slot or is refused; one asked for with
-`dedicated: true`, a size, another device than the first or `slim: false`
-is a VM of its own. With `ios-hosts-on` off, every ios box is a VM of its
+`dedicated: true`, another device than the first or `slim: false` is a VM
+of its own. A slot has no size of its own, so an ios box that asks for a
+size without `dedicated: true` is refused, with "A shared ios box has no
+size of its own. Ask for dedicated: true with a size." Ask for both to get
+a VM of that size. With `ios-hosts-on` off, every ios box is a VM of its
 own, as before.
 
 - **A host is made for a box.** When no host has room, bb-box clones the iOS
