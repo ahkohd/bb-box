@@ -31,6 +31,8 @@ An `ios` box's simulator is slimmed unless it asks otherwise: it runs without se
 
 Each kind's first device is its default: the iPhone 18 Pro for `ios`, and the Pixel 8 for `android`. On Namespace, an `ios` box has the first of them that the Mac's Xcode has. To choose another, use the **Device** menu in the New box form, `device` on `box_acquire`, or `--device` on `bb box acquire`, such as `--device "Pixel Fold"`. The devices on offer, with their screens, are in [kinds and sizes](../reference/kinds.md#devices).
 
+An `android` box is at least the size its device needs, as the emulator draws the device on the CPU: 4 cores and 8 GiB for the Pixel 8, and 4 cores and 10 GiB for the Pixel Fold and the Pixel Tablet, which hold about 5.5 GiB when busy. A smaller size is refused, and so is switching a box to a device it is too small for.
+
 To switch a box to another device later, use the device picker in its toolbar, described under [the device's controls](#the-devices-controls), or the agent's `box_device`. Each device keeps its own apps and data.
 
 ## Opening the device
