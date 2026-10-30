@@ -435,7 +435,7 @@ export function stateWords(snapshot: Pick<SnapshotRecord, "state" | "error" | "h
   }
 }
 
-export function takenBeforeIdentityReset(snapshot: SnapshotRecord): boolean {
+export function notForkSafe(snapshot: SnapshotRecord): boolean {
   return snapshot.forkSafe === null && snapshot.box.system === "linux" && snapshot.scope === "box";
 }
 
@@ -451,7 +451,7 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.keptUntil !== null ? [`kept until ${dayWords(snapshot.keptUntil).slice(0, 10)}`] : []),
     ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
-    ...(takenBeforeIdentityReset(snapshot) ? [`taken before ${snapshot.box.name} had the identity reset`] : []),
+    ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),
   ];
   return parts.join(" · ");
 }

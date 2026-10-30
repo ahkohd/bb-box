@@ -90,7 +90,6 @@ import {
   type StopReason,
   type WarmShortfall,
   type WithheldKind,
-  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
@@ -1041,10 +1040,6 @@ export class TartBackend implements Backend {
       this.#context.log?.(`${words} bb-box saw it ${((performance.now() - began) / 1000).toFixed(1)} s after the VM started, and stops waiting for it.`);
       return words;
     }
-  }
-
-  identitySource(kind: string): IdentitySource | null {
-    return this.kinds().find((offered) => offered.id === kind)?.capabilities.os === "linux" ? "device" : null;
   }
 
   kinds(): BoxKind[] {

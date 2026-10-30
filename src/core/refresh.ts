@@ -120,6 +120,7 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string)
     ...(build.gpu ? [`DESKTOP_GPU=${build.gpu}`] : []),
     ...(build.session ? [`DESKTOP_SESSION=${build.session}`] : []),
     `BUILD_ID=${buildId}`,
+    `BOX_IDENTITY_RESET=${kind === "linux" ? "on" : "off"}`,
     "EOF",
     'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',
     `sudo env BBBOX_ENV=/nonexistent BBBOX_BB_URL=${quote(bbUrl ?? "")} bash ${src}/fetch-artifacts.sh ${src}/artifacts ${build.artifacts} "$arch"`,

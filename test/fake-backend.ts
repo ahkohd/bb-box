@@ -60,7 +60,7 @@ import {
 import { CommandLine, quote } from "../src/transports/process.ts";
 import { openRoute } from "../src/transports/route.ts";
 import { openTerminal } from "../src/transports/terminal.ts";
-import { IDENTITY_RESETS, IDENTITY_TOOL } from "../src/core/identity.ts";
+import { IDENTITY_STATE, IDENTITY_TOOL } from "../src/core/identity.ts";
 import {
   TransportError,
   type BoxPointer,
@@ -814,12 +814,12 @@ export class FakeTransport implements CommandTransport {
   readonly #gone: AbortSignal;
 
   readonly #identityTool: string;
-  readonly #identityResets: string;
+  readonly #identityState: string;
 
   constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string, identityTool?: string) {
     this.#home = home;
     this.#identityTool = quote(identityTool ?? join(home, ".no-identity-tool"));
-    this.#identityResets = quote(join(home, ".bb-box-identity-resets"));
+    this.#identityState = join(home, ".bb-box-state");
     // A test's cgroup for the memory a box uses (061), which no real box sets.
     const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}), ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}) };
     const sh = (script: string) => ["sh", "-c", script] as const;
@@ -852,7 +852,8 @@ export class FakeTransport implements CommandTransport {
     const hashed = this.#powerShellHash(script);
     if (hashed) return hashed;
     // A fake box has no root of its own: what bb-box runs as root runs as the test's user, never through the test machine's sudo.
-    return this.#line.run(script.replaceAll("sudo -n ", "").replaceAll(IDENTITY_TOOL, this.#identityTool).replaceAll(IDENTITY_RESETS, this.#identityResets), { ...options, signal: this.#signal(options?.signal) });
+    const own = script.includes(`${IDENTITY_STATE}/identity-`) ? script.replaceAll(IDENTITY_STATE, this.#identityState) : script;
+    return this.#line.run(own.replaceAll("sudo -n ", "").replaceAll(IDENTITY_TOOL, this.#identityTool), { ...options, signal: this.#signal(options?.signal) });
   }
 
   /** A Windows box's file hash (#492), as PowerShell would print it, for a fake box whose scripts run in sh. */

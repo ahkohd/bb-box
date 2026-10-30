@@ -111,8 +111,15 @@ export interface IdentityResetFound {
   readonly why: string;
   readonly machine: string;
   readonly foundAt: number;
+  readonly retiredAt: number | null;
   readonly machineAgain: string | null;
   readonly enrolledAgainAt: number | null;
+}
+
+export interface MachineToCheck {
+  readonly machine: string;
+  readonly at: number;
+  readonly why: string;
 }
 
 /** A box's project's image (049): its name, and its script's run at start, or the baked build it started from. */
@@ -185,6 +192,8 @@ export interface BoxRecord {
   readonly waitingOn?: string | null;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
   readonly identityReset?: IdentityResetFound | null;
+  readonly removedMachineToCheck?: MachineToCheck | null;
+  readonly identityMarkedAt?: number | null;
   /** Its project's image (049), whose script runs as root as the box starts, before it is handed over. */
   readonly image?: BoxImage | null;
   /** The last time the box's guest stopped without bb-box's request (#406). A stop bb-box makes forgets it. */
@@ -295,6 +304,10 @@ export interface UnrequestedStop {
  * stays stopped.
  */
 export const RESTART_GAP_MS = 10 * 60_000;
+
+function threadMachineWords(box: BoxRecord): string {
+  return `It is the machine of thread ${box.threadId}, and bb-box removes no thread's machine, which would release the box with the thread's worktree, so it keeps the box as it is, no longer a BB machine that connects.`;
+}
 
 function utc(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
@@ -1467,49 +1480,103 @@ export class Boxes {
     return `it has waited stopped for ${hoursWords(waited)}, longer than ${spare.backendLabel} restores a saved ${spare.kind} VM reliably, ${hoursWords(restoresWithinMs)}`;
   }
 
+  identityChecked(box: BoxRecord): boolean {
+    return box.capabilities.os === "linux" && !!box.identityMarkedAt;
+  }
+
   async identityResetFound(box: BoxRecord, reset: { readonly at: number; readonly why: string; readonly machine: string }): Promise<BoxRecord | null> {
     const foundAt = this.#now();
+    const ours = (current: BoxRecord) => current.state !== "releasing" && (current.enrol.hostId === reset.machine || current.enrol.hostId === null) && current.identityReset?.machine !== reset.machine;
     const marked = await this.update(box, (current) =>
-      current.state === "releasing" ? {} : { enrol: { state: "off", hostId: null, error: null }, identityReset: { ...reset, foundAt, machineAgain: null, enrolledAgainAt: null } },
+      ours(current)
+        ? { enrol: { state: "off", hostId: null, error: null }, removedMachineToCheck: null, identityReset: { ...reset, foundAt, retiredAt: null, machineAgain: null, enrolledAgainAt: null } }
+        : {},
     );
-    if (!marked || marked.state === "releasing") return null;
+    if (!marked || marked.identityReset?.foundAt !== foundAt) return null;
+    const next = marked.role === "machine" ? threadMachineWords(marked) : "so bb-box enrols the box again as a new BB machine, and keeps it.";
     this.#event(marked, "identity-reset", byBbBox("its BB machine went with its identity reset"), {
-      words: `Box ${marked.name} reset its identity at ${utc(reset.at)}, as ${reset.why}. BB's machine ${reset.machine} went with it, so bb-box enrols the box again as a new BB machine, and keeps it.`,
+      words: `Box ${marked.name} reset its identity at ${utc(reset.at)}, as ${reset.why}. BB's machine ${reset.machine} went with it, ${next}`,
     });
-    this.#deps.log?.(`Box ${marked.name} reset its identity at ${utc(reset.at)}, as ${reset.why}, removing BB's machine ${reset.machine}: bb-box keeps the box and enrols it again as a new BB machine.`);
+    this.#deps.log?.(`Box ${marked.name} reset its identity at ${utc(reset.at)}, as ${reset.why}, removing BB's machine ${reset.machine}: ${next}`);
     return marked;
+  }
+
+  async identityResetRetired(boxId: string): Promise<BoxRecord | null> {
+    const box = await this.find(boxId);
+    if (!box?.identityReset || box.identityReset.retiredAt !== null) return box;
+    const at = this.#now();
+    return this.update(box, (current) => (current.identityReset && current.identityReset.retiredAt === null ? { identityReset: { ...current.identityReset, retiredAt: at } } : {}));
   }
 
   async enrolledAgainAfterReset(boxId: string): Promise<BoxRecord | null> {
     const box = await this.find(boxId);
     const reset = box?.identityReset;
-    if (!box || !reset || reset.enrolledAgainAt !== null || box.enrol.state !== "enrolled" || !box.enrol.hostId) return null;
+    if (!box || !reset || reset.enrolledAgainAt !== null || box.enrol.state !== "enrolled" || !box.enrol.hostId || box.enrol.hostId === reset.machine) return null;
     const machine = box.enrol.hostId;
     const now = this.#now();
-    const updated = await this.update(box, (current) => (current.identityReset ? { identityReset: { ...current.identityReset, machineAgain: machine, enrolledAgainAt: now } } : {}));
-    if (updated?.guest) {
+    const updated = await this.update(box, (current) =>
+      current.identityReset && current.identityReset.enrolledAgainAt === null && current.enrol.hostId === machine ? { identityReset: { ...current.identityReset, machineAgain: machine, enrolledAgainAt: now } } : {},
+    );
+    if (updated?.identityReset?.enrolledAgainAt !== now) return null;
+    if (updated.guest) {
       const backend = this.#deps.backends.get(updated.backend);
       if (backend) await this.#markIdentity(updated, updated.guest, backend, {}, AbortSignal.timeout(MARKER_WRITE_MS * 2));
     }
-    if (updated) {
-      this.#event(updated, "enrolled-again", byBbBox("its BB machine went with its identity reset"), {
-        words: `Box ${updated.name} joined BB again as machine ${machine}, in place of ${reset.machine}, ${Math.max(1, Math.round((now - reset.foundAt) / 1000))} s after bb-box found its identity reset.`,
-      });
-    }
+    this.#event(updated, "enrolled-again", byBbBox("its BB machine went with its identity reset"), {
+      words: `Box ${updated.name} joined BB again as machine ${machine}, in place of ${reset.machine}, ${Math.max(1, Math.round((now - reset.foundAt) / 1000))} s after bb-box found its identity reset.`,
+    });
     return updated;
+  }
+
+  async machineToCheck(box: BoxRecord, machine: string, why: string): Promise<BoxRecord | null> {
+    const at = this.#now();
+    const updated = await this.update(box, (current) =>
+      current.enrol.hostId === machine || (current.enrol.hostId === null && !current.removedMachineToCheck)
+        ? { enrol: current.enrol.hostId === machine ? { state: current.enrol.state === "failed" ? "failed" : "off", hostId: null, error: current.enrol.state === "failed" ? current.enrol.error : null } : current.enrol, removedMachineToCheck: { machine, at, why } }
+        : {},
+    );
+    if (updated?.removedMachineToCheck?.at === at) this.#deps.log?.(`BB no longer has machine ${machine} of box ${updated.name}, and bb-box could not read whether the box's identity reset (${why}), so it keeps the box and reads again at each sweep.`);
+    return updated;
+  }
+
+  async machineChecked(box: BoxRecord, machine: string): Promise<BoxRecord | null> {
+    return this.update(box, (current) => (current.removedMachineToCheck?.machine === machine ? { removedMachineToCheck: null } : {}));
   }
 
   async identityResetChecks(): Promise<DoctorCheck[]> {
     return (await this.all()).flatMap((box): DoctorCheck[] => {
-      const reset = box.identityReset;
-      if (!reset) return [];
-      const what = `Box ${box.name} reset its identity at ${utc(reset.at)}, as ${reset.why}, and BB's machine ${reset.machine} went with it.`;
+      const checks: DoctorCheck[] = [];
       const look = "A box that is not a copy of another should never reset: see /var/lib/bb-box/identity-resets and journalctl -u bb-box-identity in the box.";
-      if (reset.enrolledAgainAt !== null) {
-        return [{ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "warn", detail: `${what} bb-box kept the box and enrolled it again, at ${utc(reset.enrolledAgainAt)}, as BB machine ${reset.machineAgain}.`, fix: look }];
+      const reset = box.identityReset;
+      if (reset) {
+        const what = `Box ${box.name} reset its identity at ${utc(reset.at)}, as ${reset.why}, and BB's machine ${reset.machine} went with it.`;
+        if (box.role === "machine") {
+          checks.push({
+            id: `identity-reset.${box.name}`,
+            name: `Identity reset of ${box.name}`,
+            status: "fail",
+            detail: `${what} ${threadMachineWords(box)}`,
+            fix: `Copy what thread ${box.threadId} needs from the box with bb box run or box_copy, then end the thread or remove machine ${reset.machine} in BB, which releases the box. ${look}`,
+          });
+        } else if (reset.enrolledAgainAt !== null) {
+          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "warn", detail: `${what} bb-box kept the box and enrolled it again, at ${utc(reset.enrolledAgainAt)}, as BB machine ${reset.machineAgain}.`, fix: look });
+        } else {
+          const step = reset.retiredAt === null ? `BB has not yet confirmed the removal of machine ${reset.machine}, which bb-box asks for again at each sweep` : "bb-box has not yet enrolled it again as a BB machine";
+          const why = box.enrol.state === "failed" && box.enrol.error ? ` Its last try failed: ${box.enrol.error}` : "";
+          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "fail", detail: `${what} bb-box kept the box; ${step}.${why}`, fix: `bb-box tries again at each sweep. ${look}` });
+        }
       }
-      const why = box.enrol.state === "failed" && box.enrol.error ? ` Its last try failed: ${box.enrol.error}` : "";
-      return [{ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "fail", detail: `${what} bb-box kept the box, and has not yet enrolled it again as a BB machine.${why}`, fix: `bb-box tries again at each sweep. ${look}` }];
+      const check = box.removedMachineToCheck;
+      if (check) {
+        checks.push({
+          id: `identity-reset.${box.name}`,
+          name: `Identity reset of ${box.name}`,
+          status: "warn",
+          detail: `BB no longer has machine ${check.machine} of box ${box.name}, since ${utc(check.at)}, and bb-box could not read whether the box's identity reset (${check.why}), so it keeps the box.`,
+          fix: "bb-box reads the box's /var/lib/bb-box/identity-resets again at each sweep, once the box answers. If you removed the machine in BB on purpose, release the box in bb-box.",
+        });
+      }
+      return checks;
     });
   }
 
@@ -2158,14 +2225,15 @@ export class Boxes {
 
   async #markIdentity(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
     const source = box.capabilities.os === "linux" ? (backend.identitySource?.(box.kind) ?? null) : null;
-    if (!source) return;
+    if (!source || !(await this.#deps.general()).identityResetBackends?.includes(backend.id)) return;
     const started = this.#now();
     try {
       const command = (await backend.transports(guest, box.kind)).command;
       if (!command) return;
       const written = await writeIdentityMarker(command, box.id, source, signal);
       timings.identity = this.#now() - started;
-      if (!written.written) this.#deps.log?.(`Wrote no identity marker in box ${box.name}, so a copy of it would not reset, and its snapshots cannot be forked: ${written.why}.`);
+      if (written.written) await this.update(box, () => ({ identityMarkedAt: this.#now() }));
+      else this.#deps.log?.(`Wrote no identity marker in box ${box.name}, so a copy of it would not reset, and its snapshots cannot be forked: ${written.why}.`);
     } catch (error) {
       if (!signal.aborted) this.#deps.logError("identity marker", error);
     }

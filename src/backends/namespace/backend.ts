@@ -27,7 +27,6 @@ import {
   type HeldGuest,
   type PowerState,
   type ReleaseHooks,
-  type IdentitySource,
 } from "../types.ts";
 import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, capabilityWords, eachKindOfMacWords, macsVary, measuredByOlderProbe, type MacReport } from "../../core/mac-capabilities.ts";
 import { NamespaceMacReports } from "./mac-reports.ts";
@@ -463,10 +462,6 @@ export class NamespaceBackend implements Backend {
 
   measureMac(instance: string, signal?: AbortSignal): Promise<MacReport> {
     return this.#probes.measure(instance, signal);
-  }
-
-  identitySource(kind: string): IdentitySource | null {
-    return isLinuxKind(kind) ? "value" : null;
   }
 
   kinds(): readonly BoxKind[] {

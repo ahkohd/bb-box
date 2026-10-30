@@ -13,9 +13,11 @@ const BOOT_CHECK_RAN = new Set(["kept", "unarmed", "reset"]);
 
 export interface IdentityStatus {
   readonly version: number;
+  readonly enabled: boolean;
   readonly boot: string;
   readonly marker: string;
   readonly armed: boolean;
+  readonly pending: boolean;
   readonly box: string;
   readonly source: string;
 }
@@ -42,9 +44,11 @@ export function parseIdentityStatus(stdout: string): IdentityStatus | null {
   if (!Number.isInteger(version) || version < 1) return null;
   return {
     version,
+    enabled: fields.get("enabled") === "yes",
     boot: fields.get("boot") ?? "none",
     marker: fields.get("marker") ?? "missing",
     armed: fields.get("armed") === "yes",
+    pending: fields.get("pending") === "yes",
     box: fields.get("box") ?? "",
     source: fields.get("source") ?? "",
   };
@@ -52,7 +56,7 @@ export function parseIdentityStatus(stdout: string): IdentityStatus | null {
 
 export function forkSafeVersion(status: IdentityStatus | null): number | null {
   if (!status) return null;
-  return BOOT_CHECK_RAN.has(status.boot) && status.marker === "matches" && status.armed ? status.version : null;
+  return status.enabled && !status.pending && BOOT_CHECK_RAN.has(status.boot) && status.marker === "matches" && status.armed ? status.version : null;
 }
 
 export async function readForkSafe(command: CommandTransport, signal?: AbortSignal): Promise<number | null> {
@@ -70,7 +74,10 @@ export async function writeIdentityMarker(command: CommandTransport, boxId: stri
   return { written: false, why: ran.timedOut ? `writing it took over ${MARKER_WRITE_MS / 1000} s` : `writing it exited with ${ran.exitCode}${said ? `: ${said}` : ""}` };
 }
 
-export const IDENTITY_RESETS = "/var/lib/bb-box/identity-resets";
+export const IDENTITY_STATE = "/var/lib/bb-box";
+export const IDENTITY_RESETS = `${IDENTITY_STATE}/identity-resets`;
+export const IDENTITY_RESET_PENDING = `${IDENTITY_STATE}/identity-reset-pending`;
+const RECORD_UNREADABLE = 3;
 export const RESETS_READ_MS = 15_000;
 const RESET_LINE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (.*); BB machines removed: (.*)$/;
 
@@ -93,11 +100,23 @@ export function resetThatRemoved(resets: readonly IdentityReset[], machine: stri
 }
 
 export function identityResetsScript(): string {
-  return `cat ${IDENTITY_RESETS} 2>/dev/null; exit 0`;
+  return [
+    `if [ -e ${IDENTITY_STATE} ] && ! { [ -d ${IDENTITY_STATE} ] && [ -r ${IDENTITY_STATE} ] && [ -x ${IDENTITY_STATE} ]; }; then exit ${RECORD_UNREADABLE}; fi`,
+    `[ -e ${IDENTITY_RESETS} ] || [ -e ${IDENTITY_RESET_PENDING} ] || { echo absent; exit 0; }`,
+    "echo present",
+    `for record in ${IDENTITY_RESETS} ${IDENTITY_RESET_PENDING}; do`,
+    '  [ -e "$record" ] || continue',
+    `  { [ -f "$record" ] && [ -r "$record" ] && cat "$record"; } || exit ${RECORD_UNREADABLE}`,
+    "done",
+  ].join("\n");
 }
 
-export async function readIdentityResets(command: CommandTransport, signal?: AbortSignal): Promise<IdentityReset[]> {
+export type ResetRecord = { readonly state: "absent" } | { readonly state: "read"; readonly resets: readonly IdentityReset[] };
+
+export async function readIdentityResets(command: CommandTransport, signal?: AbortSignal): Promise<ResetRecord> {
   const ran = await command.run(identityResetsScript(), { timeoutMs: RESETS_READ_MS, signal, maxOutputBytes: 256 * 1024 });
-  if (ran.exitCode !== 0) throw new Error(`reading ${IDENTITY_RESETS} exited with ${ran.exitCode}${ran.timedOut ? ", out of time" : ""}`);
-  return parseIdentityResets(ran.stdout);
+  const [first, ...rest] = ran.stdout.split("\n");
+  if (ran.exitCode === 0 && first === "absent") return { state: "absent" };
+  if (ran.exitCode === 0 && first === "present") return { state: "read", resets: parseIdentityResets(rest.join("\n")) };
+  throw new Error(`bb-box could not read ${IDENTITY_RESETS}: ${ran.timedOut ? "it took too long" : `the read exited with ${ran.exitCode}`}`);
 }

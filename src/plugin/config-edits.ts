@@ -423,6 +423,7 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "general.enrol", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.enrol, help: "Whether boxes join BB as machines, so threads and terminals can use them." },
   { name: "general.video", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.video, help: "Whether Linux desktops drawn on the CPU show as video." },
   { name: "general.nightlyImages", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.nightlyImages, help: "Whether bb-box rebuilds the standard images that are due at 03:00 each night." },
+  { name: "general.identityResetBackends", type: { kind: "tags" }, default: "", help: "The backends whose new Linux boxes get an identity marker, so that a copy of one resets its identity (070), comma-separated backend IDs. None by default." },
   { name: "general.testDevice", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.testDevice, help: "Advanced: whether Linux and macOS boxes offer the test device in place of a phone." },
   { name: "general.encoderLedger", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.encoderLedger, help: "Advanced: whether each Mac's video encoder is shared out fairly between its iOS streams." },
   { name: "general.iosEncoder", type: { kind: "choice", values: ["auto", "hardware", "software"] }, default: GENERAL_DEFAULTS.iosEncoder, help: "Advanced: how an ios box's device video is encoded." },

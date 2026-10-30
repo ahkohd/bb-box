@@ -459,17 +459,22 @@ this box", and deleted.
 
 ## Unit 2: the identity reset
 
-Built on 30 October 2026, on main `7bd9f833`.
+Built on 30 October 2026, on main `827d3315`, in three commits: the reset,
+a reset never costing a box, and the answers to the reviews. This section
+describes the code as it stands after the third; [After the
+reviews](#after-the-reviews) says what each review changed.
 
 ### What changed
 
 - **The guest program**, `bb-box-identity`
-  (`setup/proxmox-lxc/template/guest/bb-box-identity.sh`), version 1.
+  (`setup/proxmox-lxc/template/guest/bb-box-identity.sh`), version 2.
   `customize-base.sh` installs it at `/usr/local/sbin`, so every Linux image
   bb-box builds has it: the Proxmox LXC templates (Linux, desktops, Wayland),
   Proxmox QEMU's Linux and Android images, Tart's Linux images, boat.dev's
   template, and the Docker images that Docker, Hetzner, Namespace and
-  microsandbox boxes run. It has four commands: `boot`, `write`, `status`
+  microsandbox boxes run. It turns the reset on only when the build sets
+  `BOX_IDENTITY_RESET=on`, which only the checked builds do (Rollout, step
+  2). Its commands: `boot`, `write`, `enable`, `disable`, `unarm`, `status`
   and `version`.
 - **The marker**, `/etc/bb-box/identity`: a first line `bb-box identity 1`,
   then the box's ID, the source, and either one `mac` line for each of the
@@ -477,51 +482,59 @@ Built on 30 October 2026, on main `7bd9f833`.
   `/var/lib/bb-box/identity-armed`, is written after the marker and says a
   marker was written here. `finalize.sh` removes both, and the list of
   resets, so no template, refresh or bake carries them.
-- **The boot unit**, where systemd runs (Proxmox LXC and QEMU, Tart Linux,
-  boat): `bb-box-identity.service`, with no default dependencies, after
-  `local-fs.target`, before `network-pre.target`, `systemd-networkd`,
-  `NetworkManager`, `ssh`, `ssh.socket` and `tailscaled`. A drop-in makes
-  each of those, and `user@.service` (the box user's manager, which runs BB's
-  daemon), require it and start after it. So if the check fails, none of
-  them start: it fails closed. It refuses a manual stop, which would stop
-  them too.
+- **The boot unit**, which `bb-box-identity enable` writes where systemd
+  runs: `bb-box-identity.service`, with no default dependencies, after
+  `local-fs.target`, before `network-pre.target` and the services it gates.
+  A drop-in makes each of them require it and start after it:
+  `systemd-networkd`, `NetworkManager`, `ssh`, `ssh.socket`, `tailscaled`,
+  `user@.service` (the box user's manager, which runs BB's daemon),
+  `docker`, `docker.socket`, `containerd`, `bb-box-docker-containers`, and
+  the desktop's display, session, VNC, Selkies and device firewall. So if
+  the check fails, none of them start: it fails closed. It refuses a manual
+  stop, which would stop them too.
 - **Docker's image** has no systemd. `bb-box-start` runs `bb-box-identity
   boot --value "$BBBOX_IDENTITY"` before it starts anything; if that fails,
   it exits, starts nothing and never writes `/run/bb-box/ready`.
-- **What the marker records**, by backend (`identitySource` in
+- **What the marker records**, by backend and kind (`identitySource` in
   `src/backends/types.ts`):
 
-  | Backend | Source | What it compares |
+  | Backend | Source | What it records |
   | --- | --- | --- |
-  | Proxmox LXC | `eth` | the MAC addresses of the interfaces named `ethN`, as `netN` makes them |
-  | Proxmox QEMU, Linux and Android | `device` | the MAC addresses of the interfaces with a device under `/sys/class/net/<name>/device` |
-  | Tart, Linux | `device` | as QEMU |
-  | Docker, Hetzner, Namespace Linux, microsandbox | `value` | `BBBOX_IDENTITY`, which bb-box sets on each guest when it makes it: the box's ID |
-  | boat.dev | none yet | the unit is in its image, and bb-box writes no marker, so it never resets |
+  | Proxmox LXC, `linux` | `eth` | the MAC addresses of the interfaces named `ethN`, as `netN` makes them |
+  | Proxmox QEMU, `linux` | `device` | the MAC addresses of the interfaces with a device under `/sys/class/net/<name>/device` |
+  | Docker, `linux` | `value` | `BBBOX_IDENTITY`, which bb-box sets on each guest when it makes it: the box's ID |
+  | The other Linux kinds, Tart, microsandbox, Hetzner, Namespace, boat.dev | none until checked | microsandbox, Hetzner and Namespace boxes get `BBBOX_IDENTITY`, unused |
   | macOS, Windows, iOS, the SSH host pool | none | |
 
-  Only Ethernet interfaces count (type 1), so `docker0`, `br-*`, `veth*`,
-  `tailscale0` and a bridge over the card are never written or compared.
+  bb-box writes markers only on the backends in
+  `general.identityResetBackends`, empty by default.
 - **The comparison at boot.** No marker and no armed record: kept, nothing
-  to compare. Otherwise the marker must be readable, its MAC addresses
-  well formed, and the same set as the live ones, or its value the one the
-  guest was given. On a VM it waits up to 30 s for as many cards as the
-  marker names, so a card that appears late does not reset a box; a copy's
-  new cards end the wait at once. Anything else resets.
-- **The reset**, in order, each step's failure failing the boot: the
-  Tailscale state in `/var/lib/tailscale`; in each folder under
-  `~/.bb-machines`, and those set aside, every file at its top
-  (`auth.json`, `config.json`, `host-id`, locks, ports) but the app's
-  digest, and its `logs`, then BB's daemon's user units; the access file
-  `~/.config/bb-box/env`; new SSH host keys of the types there were; a new
-  machine ID; then journald restarts so the boot's logs go under it. BB's
-  installed app and the threads' folders stay. It writes a new marker for
-  the copy's own interfaces, with no box, so the next boot does not reset
-  again and a copy of the copy does; and adds a line to
-  `/var/lib/bb-box/identity-resets` with the time, why and the host IDs it
-  removed.
-- **bb-box writes the marker when a box is first ready**, after a project
-  image's script and before the box is ready, through the box's command
+  to compare. A marker that is unreadable on a box that had one: reset. If
+  any of the marker's MAC addresses is on any Ethernet card, whatever its
+  name: kept, so a card added, removed or renamed changes nothing. Once the
+  cards are known (udev settled, or no udev, as in a container), a new one
+  of the backend's with none of the marker's: a copy, reset. Otherwise it
+  waits, in 150 loops of 0.2 s, then boots as it is and resets nothing
+  (`boot=unknown`). A value is compared as it is.
+- **The reset**, in order, each step's failure failing the boot: first
+  `/var/lib/bb-box/identity-reset-pending`, written and synced, with the
+  time, why and the host IDs it will remove, so a reset cut short is
+  resumed at the next boot with them; the Tailscale state; in each folder
+  under the box user's and root's `~/.bb-machines`, and those set aside,
+  every file at its top (`auth.json`, `config.json`, `host-id`, locks,
+  ports) but the app's digest, and its `logs`, then BB's daemon's user
+  units; the access file `~/.config/bb-box/env`; new SSH host keys (ed25519
+  and ECDSA when none are left); a new machine ID; then journald restarts
+  so the boot's logs go under it. BB's installed app and the threads'
+  folders stay. It writes a marker for the copy's own interfaces, with no
+  box, so the next boot does not reset again and a copy of the copy does,
+  or unarms the box when it has no card of the backend's to write; adds the
+  pending line to `/var/lib/bb-box/identity-resets`; and only then removes
+  the pending record.
+- **bb-box writes the marker when a box is first ready**, on a backend in
+  `general.identityResetBackends`, after a project image's script and
+  before the box is ready, and records that it did on the box
+  (`identityMarkedAt`); only such boxes are ever checked for a reset, through the box's command
   transport, as `sudo bb-box-identity write --box <id> --source <source>`.
   It takes about 60 to 80 ms, shown as `identity` in the box's timings. For
   `value`, the guest writes the value its own boot saw, never one bb-box
@@ -535,18 +548,21 @@ Built on 30 October 2026, on main `7bd9f833`.
   boot's check ran, the box is armed and the marker matches what the box has
   now; otherwise null, as for a stopped box or one that does not answer
   within 10 s. It is on the record from the start, so a restart keeps it.
-  `bb box snapshot list` says of a Linux snapshot without it "taken before
-  amber-fox had the identity reset". `src/core/snapshots.ts`.
+  `bb box snapshot list` says of a Linux snapshot without it "not
+  fork-safe: amber-fox had no working identity reset when it was taken".
+  `src/core/snapshots.ts`.
 - **Docs**: the guide's [Snapshots](../guide/snapshots.md#a-copy-of-a-box-gives-up-its-identity)
   page.
 
 ### Tests
 
-On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's two commits
-over main `7bd9f833`: `npx tsc` passes and the reference is current; the
-node suite ran 3,019 tests, 2,731 passed, 0 failed, 288 skipped (the live
-and conformance ones); vitest ran 380, all passed. The node suite includes
-the docs, site and reference checks.
+On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's three commits
+over main `827d3315`: `npx tsc` passes and the reference is current; the
+node suite ran 3,040 tests, 2,752 passed, 0 failed, 288 skipped (the live
+and conformance ones); vitest ran 384, all passed. The node suite includes
+the docs, site and reference checks. A device-server test that times a
+new version within 2 s failed once under the full suite's load (2,187 ms)
+in an earlier run, and passed 3 of 3 alone; this unit does not touch it.
 
 - `test/identity-reset.test.ts`, 12, which run the guest program on a fake
   root: a box made before the change, with the program and no marker, keeps
@@ -639,43 +655,46 @@ must never cost a box. See [After the lead's answers](#after-the-leads-answers).
 
 ### Rollout
 
-1. **Merge.** Alone it changes nothing in a running box. An image without
-   the program makes bb-box log that it wrote no marker, and the box is
-   ready as before; its snapshots are not fork-safe. Docker and microsandbox
-   boxes made from then on carry `BBBOX_IDENTITY`. The change to
-   `setup/proxmox-lxc/template` and `setup/docker` makes Hetzner's host
-   images and Namespace's Linux images build again at their next use, as
-   any change there does.
-2. **Rebuild the images**, one kind at a time, checking one new box of each
-   (`identity` in its timings; `sudo bb-box-identity status` says `armed=yes`,
-   and `boot=kept` after one reboot) before the next:
-   1. the Proxmox LXC Linux template (`build.sh linux <vmid> --replace`);
-   2. the Proxmox LXC desktops (GPU, CPU, Wayland) and their copies;
-   3. Proxmox QEMU's Linux and Android images;
-   4. Docker's images on each Docker host (`bb box docker-build`, or the
-      nightly rebuild), which microsandbox imports when they change;
-   5. Tart's Linux images on each Mac (`prepare-linux-image.sh`, or its
-      nightly rebuild);
-   6. boat.dev's template: bb-box builds it again by itself when its
-      scripts change, as this merge does (`boat/templates.ts` now names the
-      identity script among the files its build reads); the unit comes with
-      it, unarmed.
-   Warm guests and spares of an older build are replaced by the upkeep, as
-   now, so their boxes are armed when claimed.
-3. **A box made before the change** keeps working as it does. From an old
-   image: no program, never resets. From a new image, but made before the
-   merge: no marker or armed record, so each boot says "kept" and it never
-   resets. A Docker or microsandbox box made before the merge has no value,
-   so bb-box's write is refused and it stays unarmed. bb-box arms a box only
-   at its first ready, so no running box is armed by the rollout. Snapshots
-   of all of these are not fork-safe, and say so.
-4. **If a reset ever fires on a box that is not a copy**, unarm that box
-   with `sudo rm /etc/bb-box/identity /var/lib/bb-box/identity-armed`. Do
-   not mask or disable `bb-box-identity.service`: the network, SSH and the
-   box user's manager require it, and would not start. For every image,
-   revert this unit and rebuild; boxes already armed keep a correct check.
-5. **Watch** `/var/lib/bb-box/identity-resets`, which stays empty in every
-   box that is not a copy.
+The reviews asked for a switch, so the rollout is staged, and each stage can
+be undone on its own.
+
+1. **Merge.** No box gets a marker: `general.identityResetBackends` is
+   empty, so bb-box writes none, and an unarmed box never resets. bb-box
+   checks for a reset only in a box it armed, so nothing else changes
+   either. Docker boxes made from then on carry `BBBOX_IDENTITY`, unused
+   until their backend is turned on. As for any change to
+   `setup/proxmox-lxc/template` or `setup/docker`, Hetzner's host images,
+   Namespace's Linux images and boat.dev's template are built again by
+   bb-box at their next use (`boat/templates.ts` now names the program among
+   the files its build reads); none of them turns the unit on.
+2. **Rebuild the images.** Every Linux image gets the program. Only the
+   builds that were checked turn the unit on (`BOX_IDENTITY_RESET=on`):
+   Linux on Proxmox LXC (`build.sh linux`), Proxmox QEMU (`build-linux.sh
+   linux`), Docker (`customize.sh linux`), and the refresh of those (057).
+   The others have the program with the unit off and refuse a marker: the
+   LXC desktops (GPU, CPU, Wayland), QEMU's desktop and Android, Docker's
+   desktop images, Tart's Linux images and boat.dev's template. Each is
+   turned on in its build only once checked as G14 says.
+3. **Turn it on, one backend at a time**, after one new box of it is
+   checked (`identity` in its timings; `sudo bb-box-identity status` says
+   `enabled=yes`, `armed=yes`, and `boot=kept` after a reboot):
+   `bb box option set general.identityResetBackends=proxmox-lxc`, then
+   adding `proxmox-qemu`, then each Docker backend. microsandbox, Hetzner,
+   Namespace and Tart offer no source yet, so naming them does nothing.
+4. **A box made before** keeps working as it does: it has no marker, so it
+   never resets, and its snapshots say "not fork-safe". bb-box arms a box
+   only at its first ready, so turning a backend on arms no running box.
+5. **Going back.** Take the backend out of `identityResetBackends`: new
+   boxes get no marker. A box already armed keeps its check; unarm it
+   through bb-box with `bb box run <box> 'sudo bb-box-identity unarm'`. Do
+   not mask or disable `bb-box-identity.service` by hand: the network, SSH,
+   Docker, the desktop and the box user's manager require it. A box whose
+   reset failed has no network or SSH; reach it with `pct enter`, `qm
+   terminal` or the console, and either fix what failed and reboot, which
+   resumes the reset, or run `bb-box-identity disable` and reboot.
+6. **Watch** `/var/lib/bb-box/identity-resets`, empty in every box that is
+   not a copy, and the doctor's Identity resets section, empty unless one
+   of bb-box's own boxes reset.
 
 ### After the lead's answers
 
@@ -754,21 +773,100 @@ any sweep. BB called bb-box's provider, which read the box's record: at
 `host_j2s53vjk7e`, connected. The box was kept, with its name and owner,
 and not released.
 
+### After the reviews
+
+Two reviews read units 2's first two commits: Astra (merge after fixes 1
+to 7; do not roll out as it stands) and Opus (merge after 1 to 3, with a
+switch before any image is rebuilt). Where they overlapped, the stricter
+fix was made. A third commit answers them.
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| A card added, removed, renamed or late reset a box that was not a copy, and a renamed or late card reset it at every boot; the wait followed the wall clock | Astra 1, Opus 1 | Kept when any of the marker's MAC addresses is on any card, whatever its name. Reset only once the cards are known (udev settled, or no udev, as in a container) and a new one of the backend's is there with none of the marker's. Otherwise it waits, counted in loops of 0.2 s, then boots as it is, resetting nothing, and logs that it could not tell (`boot=unknown`, not fork-safe). A reset with no card of the backend's to write a marker for unarms the box | `identity-reset.test.ts`: added, one of two removed, renamed (three boots), a VM's second card; a late card; no card: unknown, nothing erased; a copy whose card has no `eth` name unarms |
+| A reset deleted host IDs before any record of them; a later failure, retried, recorded `none`; a receipt that could not be written still counted as done | Astra 2 | `identity-reset-pending`, with the original host IDs, written and synced before anything is removed; resumed at the next boot with those IDs; done only once the marker, the receipt and the pending file's removal succeed; a failure fails the boot | a failure after BB's credentials went, then the next boot: the original host ID in the receipt; a receipt that cannot be written fails the boot, and the next finishes it |
+| `cat ... ; exit 0` turned an unreadable record into no reset, which released one of your machines | Astra 3 | The record is absent, read or unreadable; only a read record without the machine, or one absent, is no reset; unreadable is a check kept on the box | `plugin.test.ts`: a record that is not a readable file keeps the box |
+| A failed delete of the old machine left the box `enrolling` with it; BB gave the old machine back for the box's key | Astra 4, Opus 3 | Recovery is resumable steps on the box's record: the reset found, the old machine removed and BB's removal confirmed (asked again at each sweep), then the enrolment, then done. A re-enrolment that BB answers with the old machine fails, and the next sweep removes it again. The fake BB now gives a new machine a new ID | a delete refused twice: off, never `enrolling`, the doctor failing, then a new machine, `host-<box>-2` |
+| A box that did not answer when BB removed its machine was kept, and never looked at again; the host-deleted event forgot without checking | Astra 5, Opus 4 | The removed machine is kept on the box as a check, which the doctor warns of; at each sweep, once the box answers, bb-box reads its record: a reset of that machine enrols it again, none releases one of your machines (036). Enrolment is cleared only if the box still names that machine, compared in the same write. BB's host-deleted event takes the same path | one of your machines that does not answer: kept, warned of, then released once it answers with no reset |
+| Docker's containers and the desktop started after a failed reset | Astra 6 | Docker, containerd, `docker.socket`, `bb-box-docker-containers`, and the desktop's display, session, VNC, Selkies and device firewall also require the unit | `enable` writes each requirement; live below |
+| Root's set-aside BB folders and daemon units were left | Astra 7 | Cleared as the box user's are | a reset with root's set-aside `auth.json` and unit |
+| A reset found on a thread's own machine (New box, 033) deleted it, which releases the box and its worktree | Opus 2 | Only machines bb-box's own enrolment made are removed and enrolled again. For a thread's machine bb-box records the reset and the doctor fails it, naming the thread and how to recover its work | a New box machine: no delete, no create, no bootstrap, the doctor failing with the thread |
+| The rollout could not be staged | Opus 5 | `general.identityResetBackends`, empty by default: bb-box writes markers only on the backends named, and checks for a reset only in boxes it armed (`identityMarkedAt` on the box). Images turn the unit on only where checked. `bb-box-identity unarm` | engine tests: markers off for a backend, and an image with the reset off; a box never armed is released as before |
+| Copies that keep their MAC addresses | Opus 6 | Noted for units 8 and 9 below | |
+| What a reset leaves | Opus 7 | Listed below | |
+| The snapshot's words claimed a reason | Opus 8 | "not fork-safe: amber-fox had no working identity reset when it was taken" | engine and plugin tests |
+| G14's unchecked templates | Astra, lead | Program installed, unit off, and no source in bb-box, until each is checked (Rollout, step 2) | build scripts' settings tested |
+
+**Live, the gates.** systemd booting in a Docker container on a test box,
+with the branch's program turned on and stand-in units named `docker`,
+`containerd` and `bb-box-display` beside the real `ssh` and
+`systemd-networkd`. Three restarts: `boot=kept`, every service up, the host
+ID kept. A copy (the marker given another MAC address) with `ssh-keygen`
+made to fail: `boot=failed`, the unit failed, and the journal said
+"Dependency failed for" `docker.service`, `containerd.service`,
+`bb-box-display.service`, `ssh.service`, `ssh.socket` and
+`systemd-networkd.service`, all inactive; the pending record held
+`host_systemd_source`. With `ssh-keygen` back, the next boot resumed it:
+`boot=reset`, every service up, new host keys, the receipt naming
+`host_systemd_source`, no pending record; the boot after: `kept`. The first
+run of this check found that a resumed reset made no host keys when the
+failed attempt had removed them; it now makes ed25519 and ECDSA keys then.
+
+**Live, the recovery, on a fresh separate BB** (`npx bb-app` 0.48.1, no
+account, bb-box from this commit, its Docker backend with images built from
+it):
+
+- With `general.identityResetBackends` empty, a new machine, before-switch,
+  got no marker (no `identity` in its timings; `status`: `armed=no`). Set to
+  its Docker backend, the next, keep-four, got one in 70 ms.
+- keep-four (`host_429bg4tra4`): its marker's value changed by hand as root,
+  then the box restarted from outside bb-box at 22:40:00, when it reset. At
+  22:42:21 the sweep logged `identity-reset`, removed the old machine and
+  waited for BB to confirm it, and at 22:42:23 `enrolled-again`: "joined BB
+  again as machine host_r2jb8bi8ra, in place of host_429bg4tra4, 2 s after
+  bb-box found its identity reset". BB listed only `host_r2jb8bi8ra`,
+  connected; `bb box list` said "enrolled as a BB machine in 1.7 s"; its
+  marker named the box again (`boot=reset marker=matches armed=yes
+  box=bxvuyjp5nw2x6r`); the doctor warned, naming both machines.
+- quiet-one, armed, stopped, then its machine `host_36s3i2wtye` removed in
+  BB: kept, stopped, and the doctor warned "BB no longer has machine
+  host_36s3i2wtye of box quiet-one ... and bb-box could not read whether the
+  box's identity reset (Box quiet-one is stopped. Start it first.), so it
+  keeps the box." Started, the next sweep read no reset in it and released
+  it, as 036 does, at 22:45:31.
+
+**For units 8 and 9.** These copies keep their MAC addresses, so they would
+not reset: `pct restore` without `--unique`, a disk copied into a new VM, a
+`docker commit` with its environment, and a `tart clone` that keeps the
+source's MAC address. Every copy bb-box makes must have new MAC addresses
+(`--unique`, `tart set --random-mac`), and G14's unit 7 and unit 9 checks
+should test that.
+
+**What a reset leaves, as section 9 accepts:** every folder under
+`~/.bb-machines/<server>/` but `logs` (`plugins/*/host-data`, providers'
+`bridge-data`, `runtime`, `thread-storage`), `/var/lib/bb-box/vnc-password`,
+the hostname, bb-box's authorized key, and the box user's own SSH keys and
+cloud credentials. No plugin's host data was checked for a credential of
+the machine itself. The unit does not require ifupdown's
+`networking.service`: bb-box's images use systemd-networkd. The journald
+restart was checked on Proxmox LXC and on a production QEMU box, not on
+Tart.
+
 ### Choices and deviations
 
 - **"Missing on a box that had one"** is the armed record. 070 resets when
   the marker is missing; with that alone, a new image's first boot, before
   bb-box writes the marker, and every boot of a box made before markers,
   would reset.
-- **Docker, Hetzner, Namespace and microsandbox** compare a value bb-box sets
-  in the environment at create, the box's ID. Docker gives a container a new
+- **Docker** compares a value bb-box sets in the environment at create, the
+  box's ID; microsandbox, Hetzner and Namespace boxes get it too, but bb-box
+  arms none of them until each is checked. Docker gives a container a new
   MAC address at each start (3 of 3 measured), so a MAC address would reset
   a Docker box at every restart. There the check runs before anything in the
   box starts, not before its network, which Docker makes first. A
   `docker commit` made by hand keeps the variable in its image's settings,
   so a container run from it by hand would not reset; unit 12's commits
   must clear it (`--change "ENV BBBOX_IDENTITY="`).
-- **boat.dev** writes no marker in this unit: whether its stop and start keep
+- **boat.dev, Tart** write no marker in this unit. boat: whether its stop and start keep
   a MAC address is not measured (its files are another worker's, and its
   boxes are paid). Unit 11 settles its source.
 - **After a reset** the unit writes the copy's own marker, with no box, so

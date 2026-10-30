@@ -73,28 +73,36 @@ function seedIdentity(root: string): void {
   mkdirSync(join(root, "var/lib/tailscale"), { recursive: true });
   writeFileSync(join(root, "var/lib/tailscale/tailscaled.state"), '{"_machinekey":"x"}');
   mkdirSync(join(root, "etc/ssh"), { recursive: true });
+  writeFileSync(join(root, "etc/ssh/sshd_config"), "Include /etc/ssh/sshd_config.d/*.conf\n");
   hostKey(root, "ed25519");
   hostKey(root, "ecdsa");
   writeFileSync(join(root, "etc/machine-id"), "b5bdde36761149f39ded9c32f34f25ef\n");
 }
 
-function guest(nics: readonly Nic[]): string {
-  const root = tempDir("identity");
-  setNics(root, nics);
-  seedIdentity(root);
-  return root;
-}
-
-function identity(root: string, args: readonly string[], options: { readonly waitSeconds?: number } = {}) {
+function identity(root: string, args: readonly string[], options: { readonly waitSeconds?: number; readonly path?: string } = {}) {
   const ran = spawnSync("bash", [SCRIPT, ...args], {
-    env: { PATH: process.env.PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: String(options.waitSeconds ?? 0) },
+    env: { PATH: options.path ?? process.env.PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: String(options.waitSeconds ?? 0) },
     encoding: "utf8",
   });
   return { code: ran.status, out: ran.stdout, err: ran.stderr };
 }
 
-function boot(root: string, value?: string) {
-  return identity(root, value === undefined ? ["boot"] : ["boot", "--value", value]);
+function guest(nics: readonly Nic[], options: { readonly on?: boolean } = {}): string {
+  const root = tempDir("identity");
+  setNics(root, nics);
+  seedIdentity(root);
+  if (options.on !== false) assert.equal(identity(root, ["enable"]).code, 0);
+  return root;
+}
+
+function boot(root: string, value?: string, options: { readonly path?: string } = {}) {
+  return identity(root, value === undefined ? ["boot"] : ["boot", "--value", value], options);
+}
+
+function failingSshKeygen(): string {
+  const bin = tempDir("failing-bin");
+  writeFileSync(join(bin, "ssh-keygen"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  return `${bin}:${process.env.PATH}`;
 }
 
 function read(root: string, path: string): string | null {
@@ -157,7 +165,20 @@ test("a box made before the change, with the reset in its image but no marker, k
     assert.match(ran.out, /kept: bb-box has written no identity marker here/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "1", boot: "unarmed", marker: "missing", armed: "no", box: "", source: "" });
+  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
+});
+
+test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
+  const root = guest([LOOP, LXC_ETH0], { on: false });
+  const before = identityOf(root);
+  assert.match(boot(root).out, /the identity reset is off in this image/);
+  const refused = identity(root, ["write", "--box", "bxsource1", "--source", "eth"]);
+  assert.equal(refused.code, 3);
+  assert.match(refused.err, /off in this image, so bb-box writes no marker/);
+  assert.equal(existsSync(join(root, "etc/bb-box/identity")), false);
+  assert.deepEqual(identityOf(root), before);
+  assert.equal(status(root).enabled, "no");
+  assert.equal(status(root).boot, "off");
 });
 
 test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Docker's and Tailscale's own interfaces keeps its identity at each restart", () => {
@@ -173,8 +194,39 @@ test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Do
     assert.match(ran.out, /kept: the identity marker of box bxsource1 matches/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "1", boot: "kept", marker: "matches", armed: "yes", box: "bxsource1", source: "eth" });
+  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
+});
+
+test("a box that is not a copy keeps its identity when a card is added, one of two is removed, or a card is renamed, at every boot", () => {
+  const added = guest([LOOP, LXC_ETH0]);
+  boot(added);
+  written(added, "bxsource1", "eth");
+  setNics(added, [LOOP, LXC_ETH0, { name: "eth1", mac: "bc:24:11:00:00:11" }]);
+  const before = identityOf(added);
+  assert.match(boot(added).out, /kept/, "pct set --net1");
+  assert.deepEqual(identityOf(added), before);
+
+  const removed = guest([LOOP, LXC_ETH0, { name: "eth1", mac: "bc:24:11:00:00:11" }]);
+  boot(removed);
+  written(removed, "bxsource2", "eth");
+  setNics(removed, [LOOP, { name: "eth1", mac: "bc:24:11:00:00:11" }]);
+  assert.match(boot(removed).out, /kept/, "net0 removed, net1 kept");
+
+  const renamed = guest([LOOP, LXC_ETH0]);
+  boot(renamed);
+  written(renamed, "bxsource3", "eth");
+  setNics(renamed, [LOOP, { name: "lan0", mac: LXC_ETH0.mac }]);
+  const unchanged = identityOf(renamed);
+  for (let restart = 0; restart < 3; restart++) assert.match(boot(renamed).out, /kept/, "name=lan0");
+  assert.deepEqual(identityOf(renamed), unchanged);
+
+  const vm = guest([LOOP, { name: "ens18", mac: "bc:24:11:00:00:18", device: true }]);
+  boot(vm);
+  written(vm, "bxvm1", "device");
+  setNics(vm, [LOOP, { name: "ens18", mac: "bc:24:11:00:00:18", device: true }, { name: "ens19", mac: "bc:24:11:00:00:19", device: true }]);
+  assert.match(boot(vm).out, /kept/, "qm set --net1");
+  assert.equal(read(added, "var/lib/bb-box/identity-resets"), null);
 });
 
 test("a copy with new MAC addresses, as any Proxmox clone gets, resets every item of section 9's table once, and keeps the rest of its disk", () => {
@@ -185,17 +237,31 @@ test("a copy with new MAC addresses, as any Proxmox clone gets, resets every ite
   setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
   const ran = boot(root);
   assert.equal(ran.code, 0, ran.err);
-  assert.match(ran.out, /this box is a copy, so it resets its identity: the MAC addresses of its eth interfaces \(bc:24:11:5e:77:01\) are not the marker's \(bc:24:11:aa:f1:b6\)/);
+  assert.match(ran.out, /this box is a copy, so it resets its identity: none of the marker's MAC addresses \(bc:24:11:aa:f1:b6\) is on this box's interfaces \(bc:24:11:5e:77:01\)/);
   assertReset(root, before);
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:5e:77:01\nreset \d{4}-\d\d-\d\dT[\d:]+Z\n$/);
-  assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z the MAC addresses of its eth interfaces .*; BB machines removed: host_source\n$/);
-  assert.deepEqual(status(root), { version: "1", boot: "reset", marker: "matches", armed: "yes", box: "", source: "eth" });
+  assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
+  assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
+  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
   const once = identityOf(root);
   assert.match(boot(root).out, /kept: the identity marker of box none matches/);
   assert.deepEqual(identityOf(root), once, "the next boot does not reset again");
 });
 
-test("on a VM the backend's interfaces are those with a device; a bridge and Docker's are ignored, and a new network card resets", () => {
+test("a copy whose card has no eth name resets, then unarms itself rather than resetting at every boot", () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP, { name: "lan0", mac: "bc:24:11:5e:77:01" }]);
+  const ran = boot(root);
+  assert.match(ran.out, /resets its identity/);
+  assert.match(ran.out, /found no interface of the backend's to write a marker for, so it unarms this box/);
+  assert.equal(existsSync(join(root, "etc/bb-box/identity")), false);
+  assert.equal(existsSync(join(root, "var/lib/bb-box/identity-armed")), false);
+  assert.match(boot(root).out, /kept: bb-box has written no identity marker here/);
+});
+
+test("on a VM the backend's interfaces are those with a device, and a VM whose cards are all new resets", () => {
   const ens18: Nic = { name: "ens18", mac: "bc:24:11:00:00:18", device: true };
   const root = guest([LOOP, ens18]);
   boot(root);
@@ -203,29 +269,31 @@ test("on a VM the backend's interfaces are those with a device; a bridge and Doc
   setNics(root, [LOOP, ens18, ...BOX_MADE, { name: "br0", mac: "bc:24:11:00:00:18" }]);
   assert.match(boot(root).out, /kept/);
   const before = identityOf(root);
-  setNics(root, [LOOP, { ...ens18, mac: "bc:24:11:00:00:99" }]);
-  assert.match(boot(root).out, /resets its identity: the MAC addresses of its device interfaces \(bc:24:11:00:00:99\)/);
+  setNics(root, [LOOP, { ...ens18, mac: "bc:24:11:00:00:99" }, { name: "docker0", mac: "02:42:ac:11:00:01" }]);
+  assert.match(boot(root).out, /resets its identity: none of the marker's MAC addresses \(bc:24:11:00:00:18\)/);
   assertReset(root, before);
 });
 
-test("a VM's network card that appears late in its boot is waited for; one that never appears resets after the wait", async () => {
+test("a card that appears late is waited for; with none of the marker's cards and no new one the box boots as it is, not knowing, and resets nothing", async () => {
   const ens18: Nic = { name: "ens18", mac: "bc:24:11:00:00:18", device: true };
   const root = guest([LOOP, ens18]);
   boot(root);
   written(root, "bxvm1", "device");
   setNics(root, [LOOP]);
-  const started = Date.now();
   const late = spawn("bash", [SCRIPT, "boot"], { env: { PATH: process.env.PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: "20" } });
   let out = "";
   late.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
   setTimeout(() => setNics(root, [LOOP, ens18]), 600);
-  const code = await new Promise<number | null>((resolve) => late.on("close", resolve));
-  assert.equal(code, 0);
+  assert.equal(await new Promise<number | null>((resolve) => late.on("close", resolve)), 0);
   assert.match(out, /kept/);
-  assert.ok(Date.now() - started < 10_000, "it went on once the card was there");
   setNics(root, [LOOP]);
-  const gone = identity(root, ["boot"], { waitSeconds: 1 });
-  assert.match(gone.out, /resets its identity: the MAC addresses of its device interfaces \(none\)/);
+  const before = identityOf(root);
+  const absent = identity(root, ["boot"], { waitSeconds: 1 });
+  assert.equal(absent.code, 0);
+  assert.match(absent.out, /kept, not knowing whether this box is a copy: after waiting about 1 s it found none of the marker's MAC addresses \(bc:24:11:00:00:18\) and no new one/);
+  assert.deepEqual(identityOf(root), before, "never erases credentials on unknown");
+  assert.equal(status(root).boot, "unknown");
+  assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
 test("a marker missing on a box that had one, or unreadable, resets: failing closed", () => {
@@ -243,7 +311,7 @@ test("a marker missing on a box that had one, or unreadable, resets: failing clo
     assert.equal(ran.code, 0, ran.err);
     assert.match(ran.out, /resets its identity: its identity marker is missing or unreadable/, spoil);
     assertReset(root, before);
-    assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:aa:f1:b6\nreset /, `${spoil}: the copy's own marker, so the next boot keeps`);
+    assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:aa:f1:b6\nreset /, `${spoil}: the box's own marker, so the next boot keeps`);
   }
 });
 
@@ -257,6 +325,61 @@ test("a marker whose last line has no newline is still read", () => {
   assert.match(boot(root).out, /kept: the identity marker of box bxsource1 matches/);
 });
 
+test("a reset records what it removes, with the original host IDs, before it removes anything, and the next boot resumes one that failed part way", () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  const failed = boot(root, undefined, { path: failingSshKeygen() });
+  assert.equal(failed.code, 1);
+  assert.match(failed.out, /could not make new SSH host keys/);
+  assert.match(failed.out, /the reset failed, so the network, SSH, Tailscale, Docker, the desktop and the box user's services stay off; the next boot resumes it/);
+  assert.match(read(root, "var/lib/bb-box/identity-reset-pending") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
+  assert.equal(read(root, `${BB_FOLDER}/host-id`), null, "BB's credentials went before the step that failed");
+  assert.equal(read(root, "var/lib/bb-box/identity-resets"), null, "not done, so no receipt");
+  assert.equal(status(root).pending, "yes");
+  assert.equal(identity(root, ["write", "--box", "bxsource1", "--source", "eth"]).code, 3, "bb-box writes no marker while a reset is unfinished");
+  const resumed = boot(root);
+  assert.equal(resumed.code, 0, resumed.err);
+  assert.match(resumed.out, /resuming the reset that began at /);
+  assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /; BB machines removed: host_source\n$/, "the original host ID, not none");
+  assert.ok(read(root, "etc/ssh/ssh_host_ed25519_key.pub") && read(root, "etc/ssh/ssh_host_ecdsa_key.pub"), "host keys made again, though the failed attempt had removed them");
+  assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
+  assert.equal(status(root).boot, "reset");
+});
+
+test("a reset whose receipt cannot be written fails the boot, and the next boot finishes it", () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  mkdirSync(join(root, "var/lib/bb-box/identity-resets"));
+  const failed = boot(root);
+  assert.equal(failed.code, 1);
+  assert.match(failed.out, /could not record the reset in .*identity-resets/);
+  assert.equal(status(root).boot, "failed");
+  assert.match(read(root, "var/lib/bb-box/identity-reset-pending") ?? "", /BB machines removed: host_source/);
+  rmSync(join(root, "var/lib/bb-box/identity-resets"), { recursive: true });
+  assert.equal(boot(root).code, 0);
+  assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /BB machines removed: host_source\n$/);
+});
+
+test("a reset removes root's BB machines and daemon units too, set aside or not", () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  mkdirSync(join(root, "root/.bb-machines/.set-aside/old"), { recursive: true });
+  writeFileSync(join(root, "root/.bb-machines/.set-aside/old/auth.json"), "{}");
+  writeFileSync(join(root, "root/.bb-machines/.set-aside/old/host-id"), "host_root\n");
+  mkdirSync(join(root, "root/.config/systemd/user/default.target.wants"), { recursive: true });
+  writeFileSync(join(root, "root/.config/systemd/user/bb-host-daemon-x-host_root.service"), "[Service]\n");
+  boot(root);
+  written(root, "bxsource1", "eth");
+  setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  assert.equal(boot(root).code, 0);
+  assert.equal(existsSync(join(root, "root/.bb-machines/.set-aside/old/auth.json")), false);
+  assert.equal(existsSync(join(root, "root/.config/systemd/user/bb-host-daemon-x-host_root.service")), false);
+  assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /BB machines removed: host_root host_source\n$/);
+});
+
 test("a box of Docker's image compares the value bb-box set on its guest, which its start passes, not its interfaces", () => {
   const root = guest([LOOP, { name: "eth0", mac: "02:42:ac:11:00:02" }]);
   assert.match(boot(root, "bxdock1").out, /no identity marker/);
@@ -268,12 +391,13 @@ test("a box of Docker's image compares the value bb-box set on its guest, which 
   assertReset(root, before);
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource value\nvalue bxdock2\nreset /);
   assert.match(boot(root, "bxdock2").out, /kept/);
-  assert.match(boot(root, "").out, /resets its identity: the value bb-box set on this guest is not the marker's/, "a guest bb-box set no value on is a copy too");
-  assert.equal(read(root, "etc/bb-box/identity"), null);
-  assert.match(boot(root, "").out, /resets its identity: its identity marker is missing or unreadable/, "with no value to write, each boot resets again");
+  const none = boot(root, "");
+  assert.match(none.out, /resets its identity: the value bb-box set on this guest is not the marker's/, "a guest bb-box set no value on is a copy too");
+  assert.match(none.out, /unarms this box/);
+  assert.match(boot(root, "").out, /kept: bb-box has written no identity marker here/, "unarmed, it does not reset again");
 });
 
-test("write refuses a marker that would not match at the next boot, and names its fault", () => {
+test("write refuses a marker that would not match at the next boot, and names its fault; unarm removes the marker", () => {
   const root = guest([LOOP, { name: "eth0", mac: "02:42:ac:11:00:02" }]);
   boot(root);
   const noValue = identity(root, ["write", "--box", "bxdock1", "--source", "value"]);
@@ -285,6 +409,9 @@ test("write refuses a marker that would not match at the next boot, and names it
   assert.equal(identity(root, ["write", "--box", "BX/1", "--source", "eth"]).code, 2);
   assert.equal(identity(root, ["write", "--box", "bxdock1", "--source", "wifi"]).code, 2);
   assert.equal(identity(root, ["write", "--box", "bxdock1", "--source"]).code, 2, "an option with no value is refused, not looped on");
+  assert.equal(existsSync(join(root, "etc/bb-box/identity")), false);
+  written(root, "bxdock1", "eth");
+  assert.equal(identity(root, ["unarm"]).code, 0);
   assert.equal(existsSync(join(root, "etc/bb-box/identity")), false);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-armed")), false);
 });
@@ -299,38 +426,61 @@ test("a reset that cannot finish fails the boot, so the network and identity ser
     const ran = boot(root);
     assert.equal(ran.code, 1);
     assert.match(ran.out, /could not remove the tailnet node's state/);
-    assert.match(ran.out, /the reset failed, so the network, SSH, Tailscale and the box user's services stay off/);
     assert.equal(status(root).boot, "failed");
   } finally {
     chmodSync(join(root, "var/lib/tailscale"), 0o755);
   }
 });
 
-test("forkSafe is the reset's version only when this boot's check ran and the marker is the box's own", () => {
+test("forkSafe is the reset's version only when it is on, this boot's check ran, no reset is unfinished and the marker is the box's own", () => {
   const status = (lines: string) => forkSafeVersion(parseIdentityStatus(lines));
-  assert.equal(status("version=1\nboot=kept\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n"), 1);
-  assert.equal(status("version=1\nboot=unarmed\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n"), 1, "written by bb-box after this boot's check");
-  assert.equal(status("version=2\nboot=reset\nmarker=matches\narmed=yes\nbox=\nsource=device\n"), 2);
-  assert.equal(status("version=1\nboot=none\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n"), null, "the boot check did not run: the unit is not wired");
-  assert.equal(status("version=1\nboot=failed\nmarker=matches\narmed=yes\n"), null);
-  assert.equal(status("version=1\nboot=kept\nmarker=missing\narmed=no\n"), null);
-  assert.equal(status("version=1\nboot=kept\nmarker=differs\narmed=yes\n"), null);
-  assert.equal(status("version=1\nboot=kept\nmarker=unreadable\narmed=yes\n"), null);
-  assert.equal(status("version=1\nboot=kept\nmarker=matches\narmed=no\n"), null);
+  const on = "version=2\nenabled=yes\npending=no\n";
+  assert.equal(status(`${on}boot=kept\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n`), 2);
+  assert.equal(status(`${on}boot=unarmed\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n`), 2, "written by bb-box after this boot's check");
+  assert.equal(status(`${on}boot=reset\nmarker=matches\narmed=yes\nbox=\nsource=device\n`), 2);
+  assert.equal(status(`${on}boot=unknown\nmarker=matches\narmed=yes\n`), null, "a boot that could not tell");
+  assert.equal(status(`${on}boot=none\nmarker=matches\narmed=yes\n`), null, "the boot check did not run: the unit is not wired");
+  assert.equal(status(`${on}boot=failed\nmarker=matches\narmed=yes\n`), null);
+  assert.equal(status(`${on}boot=kept\nmarker=missing\narmed=no\n`), null);
+  assert.equal(status(`${on}boot=kept\nmarker=differs\narmed=yes\n`), null);
+  assert.equal(status(`${on}boot=kept\nmarker=incomplete\narmed=yes\n`), null);
+  assert.equal(status(`${on}boot=kept\nmarker=matches\narmed=no\n`), null);
+  assert.equal(status("version=2\nenabled=no\npending=no\nboot=kept\nmarker=matches\narmed=yes\n"), null, "off in this image");
+  assert.equal(status("version=2\nenabled=yes\npending=yes\nboot=kept\nmarker=matches\narmed=yes\n"), null, "a reset unfinished");
   assert.equal(status(""), null);
-  assert.equal(status("version=x\nboot=kept\nmarker=matches\narmed=yes\n"), null);
 });
 
-test("every Linux image orders the check before the network and identity services, requires it of them, and clears the marker when it is finalized", () => {
-  const base = readFileSync(CUSTOMIZE_BASE, "utf8");
-  const unit = /cat >\/etc\/systemd\/system\/bb-box-identity\.service <<'EOF'\n([\s\S]*?)\nEOF/.exec(base)?.[1] ?? "";
+test("enable writes the unit before the network and identity services, and requires it of them, Docker's and the desktop's; disable removes it all", () => {
+  const root = tempDir("identity-units");
+  assert.equal(identity(root, ["enable"]).code, 0);
+  const unit = read(root, "etc/systemd/system/bb-box-identity.service") ?? "";
   assert.match(unit, /^DefaultDependencies=no$/m);
   const before = /^Before=(.*)$/m.exec(unit)?.[1]?.split(" ") ?? [];
-  for (const unitName of ["network-pre.target", "systemd-networkd.service", "ssh.service", "tailscaled.service"]) assert.ok(before.includes(unitName), unitName);
+  for (const unitName of ["network-pre.target", "systemd-networkd.service", "ssh.service", "tailscaled.service", "docker.service", "containerd.service", "bb-box-display.service"]) assert.ok(before.includes(unitName), unitName);
   assert.match(unit, /^ExecStart=\/usr\/local\/sbin\/bb-box-identity boot$/m);
-  assert.match(base, /for unit in systemd-networkd\.service NetworkManager\.service ssh\.service ssh\.socket tailscaled\.service user@\.service; do/);
-  assert.match(base, /Requires=bb-box-identity\.service\\nAfter=bb-box-identity\.service/);
-  assert.match(base, /install -m 0755 "\$build\/guest\/bb-box-identity\.sh" \/usr\/local\/sbin\/bb-box-identity/);
+  for (const gated of ["systemd-networkd.service", "ssh.service", "tailscaled.service", "user@.service", "docker.service", "docker.socket", "containerd.service", "bb-box-docker-containers.service", "bb-box-display.service", "bb-box-selkies.service"]) {
+    assert.equal(read(root, `etc/systemd/system/${gated}.d/10-bb-box-identity.conf`), "[Unit]\nRequires=bb-box-identity.service\nAfter=bb-box-identity.service\n", gated);
+  }
+  assert.ok(existsSync(join(root, "etc/systemd/system/multi-user.target.wants/bb-box-identity.service")));
+  assert.equal(read(root, "usr/local/lib/bb-box/identity-reset-on"), "on\n");
+  assert.equal(identity(root, ["disable"]).code, 0);
+  assert.equal(existsSync(join(root, "etc/systemd/system/bb-box-identity.service")), false);
+  assert.equal(existsSync(join(root, "etc/systemd/system/ssh.service.d")), false);
+  assert.equal(existsSync(join(root, "usr/local/lib/bb-box/identity-reset-on")), false);
+  const docker = tempDir("identity-docker");
+  assert.equal(identity(docker, ["enable", "--no-unit"]).code, 0);
+  assert.equal(existsSync(join(docker, "etc/systemd/system/bb-box-identity.service")), false);
+  assert.equal(read(docker, "usr/local/lib/bb-box/identity-reset-on"), "on\n");
+});
+
+test("only the checked builds turn the reset on; every image has the program, and finalizing clears what a box wrote", () => {
+  const base = readFileSync(CUSTOMIZE_BASE, "utf8");
+  assert.match(base, /install -m 0755 "\$build\/guest\/bb-box-identity\.sh" \/usr\/local\/sbin\/bb-box-identity\n\/usr\/local\/sbin\/bb-box-identity disable\nif \[ "\$\{BOX_IDENTITY_RESET:-off\}" = on \]; then/);
+  const on = (file: string) => readFileSync(fileURLToPath(new URL(`../setup/${file}`, import.meta.url)), "utf8");
+  for (const build of ["proxmox-lxc/template/build.sh", "proxmox-qemu/build-linux.sh", "docker/customize.sh"]) {
+    assert.match(on(build), /BOX_IDENTITY_RESET=\$\(\[ "\$kind" = linux \] && echo on \|\| echo off\)/, build);
+  }
+  for (const unchecked of ["tart/prepare-linux-image.sh", "boat/template.sh", "boat/customize-sandbox.sh"]) assert.doesNotMatch(on(unchecked), /BOX_IDENTITY_RESET/, unchecked);
   assert.match(readFileSync(FINALIZE, "utf8"), /rm -f \/etc\/bb-box\/identity .*\/var\/lib\/bb-box\/identity-armed/);
   const start = readFileSync(DOCKER_START, "utf8");
   const check = start.indexOf('bb-box-identity boot --value "${BBBOX_IDENTITY:-}"');

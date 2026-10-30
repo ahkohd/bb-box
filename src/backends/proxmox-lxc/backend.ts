@@ -680,7 +680,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   identitySource(kind: string): IdentitySource | null {
-    return this.#offers().some((offer) => offer.kind.id === kind) ? "eth" : null;
+    return kind === "linux" && this.#offers().some((offer) => offer.kind.id === kind) ? "eth" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {

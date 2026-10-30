@@ -1061,7 +1061,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   }
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
-    void forPurpose("host deleted", () => enrolment.forgetHost(host.id)).catch((error) => logError("host deleted", error));
+    void forPurpose("host deleted", () => enrolment.machineDeleted(host.id)).catch((error) => logError("host deleted", error));
   });
 
   // The nightly rebuilds (049) behind General's switch: BB runs this schedule while bb-box is loaded, and a run goes on

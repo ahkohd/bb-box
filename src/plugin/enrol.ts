@@ -47,6 +47,8 @@ import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../core/identity.ts";
 
+type ResetFound = { readonly found: "reset"; readonly reset: IdentityReset } | { readonly found: "none" } | { readonly found: "unread"; readonly why: string };
+
 export const MACHINE_PROVIDER_ID = "bb-box";
 
 /**
@@ -405,7 +407,7 @@ export class Enrolment {
   readonly #following = new Set<string>();
   /** Boxes whose BB daemon this process is starting again. */
   readonly #reconnecting = new Set<string>();
-  readonly #enrollingAgain = new Set<string>();
+  readonly #recovering = new Set<string>();
   /** The steps of each enrolment this process is following. */
   readonly #phases = new Map<string, Phases>();
   readonly #stopping = new AbortController();
@@ -478,26 +480,11 @@ export class Enrolment {
       remove: async (removal) => {
         const boxId = (removal.resource as { boxId?: unknown }).boxId;
         if (typeof boxId !== "string") return { status: "removed" };
-        const before = await this.#deps.boxes.find(boxId);
-        if (before && this.#enrollingAgain.has(before.id)) return { status: "removed" };
-        const named = (removal as { hostId?: unknown }).hostId;
-        const machine = typeof named === "string" ? named : (before?.enrol.hostId ?? null);
-        if (before?.enrol.hostId && machine && before.enrol.hostId !== machine) return { status: "removed" };
-        const reset = before && machine ? await this.#resetThatRemoved(before, machine) : null;
-        if (before && machine && reset && reset !== "unread") {
-          void this.#enrolAgainAfterReset(before, machine, reset, { removeOld: false });
-          return { status: "removed" };
-        }
-        await this.#off(boxId);
-        // One of your machines lives as its BB machine (036): removing that in BB removes the box.
-        // Its machine is cleared first, so the release does not delete it again and wait on BB.
-        // A box already being released, as when you removed it in settings, is left to that release,
-        // which is waiting for this removal.
         const box = await this.#deps.boxes.find(boxId);
-        if (box?.threadId === OPERATOR && box.state !== "releasing" && box.enrol.state !== "failed") {
-          if (reset === "unread") this.#deps.log?.(`BB removed machine ${machine ?? "of"} your machine ${box.name}, and bb-box could not read whether the box's identity reset, so it keeps the box. Remove it in bb-box if you meant to.`);
-          else await this.#deps.boxes.release(OPERATOR, box.id, "its BB machine was removed in BB");
-        }
+        const named = (removal as { hostId?: unknown }).hostId;
+        const machine = typeof named === "string" ? named : (box?.enrol.hostId ?? null);
+        if (box && machine) await this.#machineGone(box, machine, { removedInBb: true });
+        else if (box) await this.#off(boxId);
         return { status: "removed" };
       },
     };
@@ -645,6 +632,10 @@ export class Enrolment {
       if (!box.enrol.hostId) {
         const host = await this.#create(box);
         if (!host) return;
+        if (since === "reset" && host.id === box.identityReset?.machine) {
+          await this.#deps.boxes.update(box, (latest) => (latest.identityReset ? { identityReset: { ...latest.identityReset, retiredAt: null } } : {}));
+          throw new Error(`BB gave back machine ${host.id}, which the identity reset left, so bb-box removes it again at its next sweep before it enrols the box`);
+        }
         phases.mark("requested");
         const recorded = await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: host.id, error: null } }));
         // Released meanwhile: its release did not know the machine yet.
@@ -663,8 +654,8 @@ export class Enrolment {
         // and its daemon is not running. BB does not create the machine
         // again, so bootstrap with the same key starts the daemon.
         if (box.capabilities.os !== "windows" && host.lifecycle.phase === "active" && host.status !== "connected") {
-          const reset = await this.#resetThatRemoved(current, host.id);
-          if (reset && reset !== "unread") resetFound = { machine: host.id, reset };
+          const found = await this.#resetThatRemoved(current, host.id);
+          if (found.found === "reset") resetFound = { machine: host.id, reset: found.reset };
           else {
             const reach = await this.#reach(current);
             await this.#bootstrapAgain(current, host.id, reach, {
@@ -698,7 +689,7 @@ export class Enrolment {
     }
     if (resetFound) {
       const latest = await this.#deps.boxes.find(box.id);
-      if (latest) await this.#enrolAgainAfterReset(latest, resetFound.machine, resetFound.reset, { removeOld: true });
+      if (latest) await this.#resetFound(latest, resetFound.machine, resetFound.reset);
       return;
     }
     if (!startOver || this.#stopping.signal.aborted) return;
@@ -993,9 +984,9 @@ export class Enrolment {
     this.#reconnecting.add(box.id);
     try {
       const reach = await this.#reach(box);
-      const reset = await this.#resetThatRemoved(box, hostId, stop);
-      if (reset && reset !== "unread") {
-        await this.#enrolAgainAfterReset(box, hostId, reset, { removeOld: true });
+      const found = await this.#resetThatRemoved(box, hostId, stop);
+      if (found.found === "reset") {
+        await this.#resetFound(box, hostId, found.reset);
         return;
       }
       // Its own time limit, or the plugin stopping, whichever comes first.
@@ -1093,7 +1084,11 @@ export class Enrolment {
     if (signal?.aborted) return;
     await this.#sweepManual(signal).catch((error) => this.#deps.logError("sweep manual machines", error));
     const all = await this.#deps.boxes.all();
-    for (const box of all.filter((each) => this.#waitsToEnrolAgain(each))) void this.#enrolAgainAfterFailure(box);
+    for (const box of all) {
+      if (box.state !== "ready") continue;
+      if (box.identityReset && box.identityReset.enrolledAgainAt === null) void this.#recover(box.id);
+      else if (box.removedMachineToCheck) void this.#checkRemovedMachine(box);
+    }
     const enrolled = all.filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
     await Promise.all(
       enrolled.map(async (box) => {
@@ -1103,81 +1098,125 @@ export class Enrolment {
           await this.reconnect(box, signal);
         } catch (error) {
           if (signal?.aborted) return;
-          if (isNotFound(error) && !(await this.#enrolledAgainAfterRemoval(box, signal))) await this.forgetHost(box.enrol.hostId!);
-          else if (!isNotFound(error)) this.#deps.logError("reconnect", error);
+          if (isNotFound(error)) await this.#machineGone(box, box.enrol.hostId!, { removedInBb: false });
+          else this.#deps.logError("reconnect", error);
         }
       }),
     );
   }
 
-  async #resetThatRemoved(box: BoxRecord, machine: string, signal?: AbortSignal): Promise<IdentityReset | "unread" | null> {
-    if (box.capabilities.os !== "linux") return null;
+  async #resetThatRemoved(box: BoxRecord, machine: string, signal?: AbortSignal): Promise<ResetFound> {
+    if (!this.#deps.boxes.identityChecked(box)) return { found: "none" };
     try {
       const { command } = await this.#reach(box);
-      return resetThatRemoved(await readIdentityResets(command, signal), machine);
+      const record = await readIdentityResets(command, signal);
+      if (record.state === "absent") return { found: "none" };
+      const reset = resetThatRemoved(record.resets, machine);
+      return reset ? { found: "reset", reset } : { found: "none" };
     } catch (error) {
       if (this.#isStopping(error) || signal?.aborted) throw error;
-      return "unread";
+      return { found: "unread", why: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  async #enrolAgainAfterReset(box: BoxRecord, machine: string, reset: IdentityReset, options: { readonly removeOld: boolean }): Promise<void> {
-    if (this.#enrollingAgain.has(box.id)) return;
-    this.#enrollingAgain.add(box.id);
+  async #machineGone(box: BoxRecord, machine: string, options: { readonly removedInBb: boolean }): Promise<void> {
+    if (box.identityReset?.machine === machine) {
+      void this.#recover(box.id);
+      return;
+    }
+    if (box.enrol.hostId && box.enrol.hostId !== machine) return;
+    const found = await this.#resetThatRemoved(box, machine);
+    if (found.found === "reset") {
+      await this.#resetFound(box, machine, found.reset);
+      return;
+    }
+    if (found.found === "unread") {
+      await this.#deps.boxes.machineToCheck(box, machine, found.why);
+      return;
+    }
+    await this.#confirmedGone(box, machine, options);
+  }
+
+  async #confirmedGone(box: BoxRecord, machine: string, options: { readonly removedInBb: boolean }): Promise<void> {
+    await this.#deps.kv.delete(`${MANUAL_PREFIX}${machine}`);
+    const cleared = await this.#deps.boxes.update(box, (current) => (current.enrol.hostId === machine ? { enrol: gone(current.enrol) } : {}));
+    if (!options.removedInBb || !cleared) return;
+    // One of your machines lives as its BB machine (036): removing that in BB removes the box.
+    if (cleared.threadId === OPERATOR && cleared.state !== "releasing" && cleared.enrol.state !== "failed" && cleared.enrol.hostId === null) {
+      await this.#deps.boxes.release(OPERATOR, cleared.id, "its BB machine was removed in BB");
+    }
+  }
+
+  async #checkRemovedMachine(box: BoxRecord): Promise<void> {
+    const check = box.removedMachineToCheck;
+    if (!check || this.#recovering.has(box.id)) return;
+    this.#recovering.add(box.id);
     try {
-      const marked = await this.#deps.boxes.identityResetFound(box, { at: reset.at, why: reset.why, machine });
-      if (!marked) return;
-      await this.#removeMachineTheResetLeft(machine, options);
-      await this.enrol(marked, { since: "reset" });
-      await this.#deps.boxes.enrolledAgainAfterReset(marked.id);
+      const found = await this.#resetThatRemoved(box, check.machine);
+      if (found.found === "unread") return;
+      if (found.found === "reset") {
+        await this.#deps.boxes.identityResetFound(box, { at: found.reset.at, why: found.reset.why, machine: check.machine });
+      } else {
+        const cleared = await this.#deps.boxes.machineChecked(box, check.machine);
+        if (cleared) await this.#confirmedGone({ ...cleared, enrol: { ...cleared.enrol, hostId: check.machine } }, check.machine, { removedInBb: true });
+      }
+    } catch (error) {
+      if (!this.#isStopping(error)) this.#deps.logError("check a removed machine for an identity reset", error);
+    } finally {
+      this.#recovering.delete(box.id);
+    }
+    if (!this.#stopping.signal.aborted) void this.#recover(box.id);
+  }
+
+  async #resetFound(box: BoxRecord, machine: string, reset: IdentityReset): Promise<void> {
+    await this.#deps.boxes.identityResetFound(box, { at: reset.at, why: reset.why, machine });
+    await this.#recover(box.id);
+  }
+
+  async #recover(boxId: string): Promise<void> {
+    if (this.#recovering.has(boxId)) return;
+    this.#recovering.add(boxId);
+    try {
+      let box = await this.#deps.boxes.find(boxId);
+      if (!box?.identityReset || box.identityReset.enrolledAgainAt !== null || box.state !== "ready" || box.role === "machine") return;
+      if (box.identityReset.retiredAt === null) {
+        if (!(await this.#retire(box.identityReset.machine))) return;
+        box = await this.#deps.boxes.identityResetRetired(boxId);
+        if (!box?.identityReset) return;
+      }
+      if (box.enrol.state === "failed" || (box.enrol.state === "enrolling" && box.enrol.hostId === box.identityReset.machine)) {
+        box = await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+        if (!box) return;
+      }
+      if (box.enrol.state === "off") await this.enrol(box, { since: "reset" });
+      await this.#deps.boxes.enrolledAgainAfterReset(boxId);
     } catch (error) {
       if (!this.#isStopping(error)) this.#deps.logError("enrol again after an identity reset", error);
     } finally {
-      this.#enrollingAgain.delete(box.id);
+      this.#recovering.delete(boxId);
     }
   }
 
-  #waitsToEnrolAgain(box: BoxRecord): boolean {
-    const pending = box.identityReset && box.identityReset.enrolledAgainAt === null;
-    return !!pending && box.state === "ready" && (box.enrol.state === "off" || box.enrol.state === "failed") && !this.#following.has(box.id) && !this.#enrollingAgain.has(box.id);
-  }
-
-  async #enrolAgainAfterFailure(box: BoxRecord): Promise<void> {
-    this.#enrollingAgain.add(box.id);
+  async #retire(machine: string): Promise<boolean> {
     try {
-      const fresh = box.enrol.state === "failed" ? await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } })) : box;
-      if (!fresh) return;
-      await this.enrol(fresh, { since: "reset" });
-      await this.#deps.boxes.enrolledAgainAfterReset(fresh.id);
+      await this.#deps.hosts().delete({ hostId: machine });
     } catch (error) {
-      if (!this.#isStopping(error)) this.#deps.logError("enrol again after an identity reset", error);
-    } finally {
-      this.#enrollingAgain.delete(box.id);
-    }
-  }
-
-  async #enrolledAgainAfterRemoval(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
-    const machine = box.enrol.hostId;
-    if (!machine) return false;
-    const reset = await this.#resetThatRemoved(box, machine, signal);
-    if (!reset || reset === "unread") return false;
-    await this.#enrolAgainAfterReset(box, machine, reset, { removeOld: true });
-    return true;
-  }
-
-  async #removeMachineTheResetLeft(machine: string, options: { readonly removeOld: boolean }): Promise<void> {
-    if (options.removeOld) {
-      try {
-        await this.#deps.hosts().delete({ hostId: machine });
-      } catch (error) {
-        if (!isNotFound(error)) {
-          this.#deps.logError("remove the BB machine an identity reset left", error);
-          return;
-        }
+      if (!isNotFound(error)) {
+        this.#deps.logError("remove the BB machine an identity reset left", error);
+        return false;
       }
     }
     const left = await this.#removing(machine, this.#manualRemoveMs).catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
-    if (left !== null) this.#deps.log?.(`BB has not finished removing machine ${machine}, which an identity reset left: ${left}. bb-box enrols its box as a new BB machine anyway.`);
+    if (left === null) return true;
+    this.#deps.log?.(`BB has not finished removing machine ${machine}, which an identity reset left: ${left}. bb-box asks again at its next sweep, and enrols the box as a new machine only once it has.`);
+    return false;
+  }
+
+  async machineDeleted(hostId: string): Promise<void> {
+    await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
+    for (const box of await this.#deps.boxes.all()) {
+      if (box.enrol.hostId === hostId || box.identityReset?.machine === hostId) await this.#machineGone(box, hostId, { removedInBb: false });
+    }
   }
 
   /** BB removed a machine, for example from its Machines page: its box is no longer enrolled. */

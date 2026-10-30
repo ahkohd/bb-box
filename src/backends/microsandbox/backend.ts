@@ -63,7 +63,6 @@ import {
   type Limit,
   type PowerState,
   type ReleaseHooks,
-  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { setupDir } from "../setup-dir.ts";
@@ -441,10 +440,6 @@ export class MsbBackend implements Backend {
     if (this.#arch) return;
     if (this.#config.machine && (await this.#context.machines?.connected(this.#config.machine)) !== true) return;
     await this.#hostFacts(signal).catch(() => undefined);
-  }
-
-  identitySource(kind: string): IdentitySource | null {
-    return this.kinds().some((offered) => offered.id === kind) ? "value" : null;
   }
 
   kinds(): BoxKind[] {

@@ -482,7 +482,7 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   identitySource(kind: string): IdentitySource | null {
-    return this.kinds().find((offered) => offered.id === kind)?.capabilities.os === "linux" ? "device" : null;
+    return kind === "linux" && this.kinds().some((offered) => offered.id === kind) ? "device" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {
