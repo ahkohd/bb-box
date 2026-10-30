@@ -44,6 +44,7 @@ import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
 import { forgetConfigurationPage } from "../src/app/settings-configuration.tsx";
+import { forgetStandardImages } from "../src/app/settings-images.tsx";
 import { forgetFindQuery } from "../src/app/settings-find.tsx";
 import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } from "../src/app/settings-find-index.ts";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
@@ -1967,6 +1968,7 @@ function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "", { keepDr
     forgetFormChecks();
     forgetConfigurationPage();
     forgetFindQuery();
+    forgetStandardImages();
     window.sessionStorage.clear();
   }
   window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
@@ -2660,6 +2662,8 @@ test("the Images page lists every standard image with its build, why it is due a
   expect(row("fake/linux").getByText("Due: it is 10 days old, past its 7-day interval")).toBeTruthy();
   expect(row("fake/linux").getByText("on Fake host")).toBeTruthy();
   expect(row("fake/linux").getByText("build.2026-10-01, 10 days old")).toBeTruthy();
+  expect(document.querySelector('[data-image-row="fake/desktop"]')).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "1 image up to date" }));
   expect(row("fake/desktop").getByText("Up to date")).toBeTruthy();
   expect(row("fake/desktop").getByText("build.2026-10-10, 1 day old")).toBeTruthy();
   expect(row("fake/desktop").getByText("Linux desktop")).toBeTruthy();
@@ -2702,6 +2706,7 @@ test("two backends with one label are told apart on the Images page by their hos
   const listed = (name: string, backend: string): ImagesStatus["images"][number] => ({ name, kind: "linux", backend, built: "build.2026-10-11, 2 days old", due: null, last: null, outcome: null });
   const slot = settings(server([], { rebuildable: [listed("fake/linux", "fake"), listed("fake:second/linux", "fake:second")] }).handlers, "#option/images");
   const row = (name: string) => within(document.querySelector<HTMLElement>(`[data-image-row="${name}"]`)!);
+  fireEvent.click(await slot.findByRole("button", { name: "2 images up to date" }));
   expect(await slot.findByText("on Fake host (second)")).toBeTruthy();
   expect(row("fake/linux").getByText("on Fake host")).toBeTruthy();
 });
@@ -2723,6 +2728,8 @@ test("after a run the Images page says what it did to each image: rebuilt, waite
   };
   const slot = settings(server([], { rebuildable: ["fake/linux", "fake/desktop", "fake/old", "fake/arm"].map((name, index) => listed(name, index === 1 ? "linux-desktop" : "linux")), progress }).handlers, "#option/images");
   expect(await slot.findByText("0 of 5 images due. The last rebuild ended 2 hours ago: 1 rebuilt, 1 waited for room, 1 failed, 1 skipped, 1 not started.")).toBeTruthy();
+  expect(slot.queryByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "2 images up to date" }));
   expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
   expect(slot.getByText("Waits: no room for its build and trial boxes: the host is full")).toBeTruthy();
   expect(slot.getByText("Failed: the trial box did not answer.")).toBeTruthy();
@@ -2747,11 +2754,125 @@ test("while a rebuild runs, the Images page shows how far it is, and each image'
   expect(await slot.findByText("Rebuilding images")).toBeTruthy();
   expect(slot.getByText("2 of 3 · fake/desktop")).toBeTruthy();
   expect(slot.getByText("Started 2 min ago. One image at a time; it goes on if you leave this page.")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "1 image up to date" }));
   expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
   expect(slot.getByText("Rebuilding · step 3 of 9")).toBeTruthy();
   expect(slot.getByText("Next")).toBeTruthy();
   expect(slot.getByRole("progressbar", { name: "Rebuilding images" }).getAttribute("aria-valuenow")).toBe("41");
   expect(slot.queryByRole("button", { name: /^Rebuild \d/ })).toBeNull();
+});
+
+function standardImage(name: string, options: Partial<ImagesStatus["images"][number]> = {}): ImagesStatus["images"][number] {
+  return { name, kind: "linux", backend: name.slice(0, name.indexOf("/")), built: "build.2026-10-11, 2 days old", due: null, last: null, outcome: null, ...options };
+}
+
+const FAILED_OUTCOME = { state: "failed" as const, at: Date.now() - 3_600_000, reason: "the trial box did not answer." };
+
+function imageRowNames(): string[] {
+  return Array.from(document.querySelectorAll("[data-image-row]"), (element) => element.getAttribute("data-image-row")!);
+}
+
+test("the Images page folds the images that are up to date into one row after the nightly switch, which opens in place by keyboard or pointer and closes again", async () => {
+  const slot = settings(server([], { rebuildable: [standardImage("fake/linux"), standardImage("fake/desktop", { kind: "linux-desktop" }), standardImage("fake/arm")] }).handlers, "#option/images");
+  const fold = await slot.findByRole("button", { name: "3 images up to date" });
+  expect(slot.getByText("0 of 3 images due.")).toBeTruthy();
+  expect(imageRowNames()).toEqual([]);
+  expect(fold.tagName).toBe("BUTTON");
+  expect(fold.getAttribute("aria-expanded")).toBe("false");
+  expect(fold.getAttribute("aria-controls")).toBeNull();
+  expect(fold.lastElementChild?.getAttribute("aria-hidden")).toBe("true");
+  const nightly = slot.getByRole("switch", { name: "Rebuild each night" });
+  const rebuild = slot.getByRole("button", { name: "Rebuild what is due" });
+  expect(nightly.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(fold.compareDocumentPosition(rebuild) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fold.focus();
+  expect(document.activeElement).toBe(fold);
+  fireEvent.click(fold);
+  expect(fold.getAttribute("aria-expanded")).toBe("true");
+  const list = document.getElementById(fold.getAttribute("aria-controls")!)!;
+  expect(Array.from(list.querySelectorAll("[data-image-row]"), (element) => element.getAttribute("data-image-row"))).toEqual(["fake/linux", "fake/desktop", "fake/arm"]);
+  expect(within(list).getAllByText("Up to date")).toHaveLength(3);
+  expect(within(list).getByText("Linux desktop")).toBeTruthy();
+  expect(list.compareDocumentPosition(rebuild) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(document.activeElement).toBe(fold);
+  fireEvent.click(fold);
+  expect(fold.getAttribute("aria-expanded")).toBe("false");
+  expect(imageRowNames()).toEqual([]);
+  expect(document.activeElement).toBe(fold);
+});
+
+test("an image that is due or failed has its own row on the Images page, and the fold says how many of the rest are up to date", async () => {
+  const images = [standardImage("fake/linux"), standardImage("fake/old", { outcome: FAILED_OUTCOME }), standardImage("fake/arm"), standardImage("fake/desktop", { kind: "linux-desktop", due: "it is 10 days old, past its 7-day interval" })];
+  const { handlers, changes } = server([], { rebuildable: images });
+  const slot = settings(handlers, "#option/images");
+  const fold = await slot.findByRole("button", { name: "2 images up to date" });
+  expect(imageRowNames()).toEqual(["fake/old", "fake/desktop"]);
+  expect(slot.getByText("Due: it is 10 days old, past its 7-day interval")).toBeTruthy();
+  expect(slot.getByText("Its last rebuild failed 1 hour ago: the trial box did not answer.")).toBeTruthy();
+  expect(slot.getByText("1 of 4 images due.")).toBeTruthy();
+  expect(document.querySelector('[data-image-row="fake/desktop"]')!.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Try the Linux image on Fake host again" }));
+  await waitFor(() => expect(changes).toEqual(["images.build fake/old"]));
+  fireEvent.click(fold);
+  expect(imageRowNames()).toEqual(["fake/old", "fake/desktop", "fake/linux", "fake/arm"]);
+});
+
+test("when every standard image needs attention the Images page has no fold row", async () => {
+  const slot = settings(server([], { rebuildable: [standardImage("fake/linux", { outcome: FAILED_OUTCOME }), standardImage("fake/arm", { outcome: { state: "waiting", at: Date.now() - 3_600_000, reason: "no room" } })] }).handlers, "#option/images");
+  expect(await slot.findByText("Its last rebuild waited 1 hour ago: no room")).toBeTruthy();
+  expect(imageRowNames()).toEqual(["fake/linux", "fake/arm"]);
+  expect(slot.queryByRole("button", { name: /up to date$/ })).toBeNull();
+});
+
+test("a rebuild going on takes the images it is rebuilding or has next out of the fold", async () => {
+  const images = [standardImage("fake/linux"), standardImage("fake/desktop", { kind: "linux-desktop" }), standardImage("fake/arm"), standardImage("fake/done")];
+  const progress: ImagesStatus["progress"] = {
+    started: Date.now() - 60_000,
+    ended: null,
+    only: null,
+    images: [
+      { name: "fake/done", kind: "linux", state: "refreshed", detail: "now build.2026-10-12, in 200 s" },
+      { name: "fake/desktop", kind: "linux-desktop", state: "refreshing", detail: "it is 40 days old", since: Date.now() - 20_000, step: { at: 2, of: 9 } },
+      { name: "fake/arm", kind: "linux", state: "next", detail: "it fails the doctor" },
+    ],
+  };
+  const slot = settings(server([], { rebuildable: images, progress }).handlers, "#option/images");
+  expect(await slot.findByRole("button", { name: "2 images up to date" })).toBeTruthy();
+  expect(imageRowNames()).toEqual(["fake/desktop", "fake/arm"]);
+  expect(slot.getByText("Rebuilding · step 2 of 9")).toBeTruthy();
+  expect(slot.getByText("Next")).toBeTruthy();
+});
+
+test("a backend's page lists its own standard images under Images, with Try again on a failed one and a link to the Images page", async () => {
+  const images = [standardImage("fake/linux", { outcome: FAILED_OUTCOME }), standardImage("fake/desktop", { kind: "linux-desktop", due: "it fails the doctor" }), standardImage("fake/arm"), standardImage("other/linux")];
+  const { handlers, changes } = server([], { rebuildable: images });
+  const slot = settings(handlers, "#backend/fake");
+  const group = await slot.findByRole("region", { name: "Images" });
+  const listed = Array.from(group.querySelectorAll("[data-image-row]"), (element) => element.getAttribute("data-image-row"));
+  expect(listed).toEqual(["fake/linux", "fake/desktop", "fake/arm"]);
+  expect(within(group).getByText("The standard images its boxes start from. 1 of 3 images due.")).toBeTruthy();
+  expect(within(group).queryByText(/^on /)).toBeNull();
+  expect(within(group).getByText("Up to date")).toBeTruthy();
+  expect(within(group).getByText("Due: it fails the doctor")).toBeTruthy();
+  expect(within(group).getAllByText("build.2026-10-11, 2 days old")).toHaveLength(3);
+  expect(within(group).queryByRole("button", { name: /up to date$/ })).toBeNull();
+  fireEvent.click(within(group).getByRole("button", { name: "Try the Linux image on Fake host again" }));
+  await waitFor(() => expect(changes).toEqual(["images.build fake/linux"]));
+  fireEvent.click(within(group).getByRole("button", { name: "Open the Images page" }));
+  expect(window.location.hash).toBe("#option/images");
+});
+
+test("a backend with no standard images has no Images group on its page", async () => {
+  let listed = 0;
+  const { handlers } = server([], { rebuildable: [standardImage("other/linux")] });
+  const slot = settings({ ...handlers, "images.list": () => ((listed += 1), { images: [standardImage("other/linux")] }) }, "#backend/fake");
+  await slot.findByRole("heading", { name: "Fake host" });
+  await waitFor(() => expect(listed).toBeGreaterThan(0));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(slot.queryByRole("region", { name: "Images" })).toBeNull();
+  expect(document.querySelector("[data-image-row]")).toBeNull();
 });
 
 const PROJECT_IMAGE = { kinds: ["linux", "linux-desktop"], script: "apt-get install -y ripgrep\n", check: "rg --version\n", projects: ["proj_1"], source: { script: ".bb/box-setup.sh", check: ".bb/box-check.sh" }, updated: new Date(Date.now() - 3 * 86_400_000).toISOString() };
@@ -8548,6 +8669,24 @@ test("Find opens a kind's size at the part the words name, and options from any 
   await findAndOpen(slot, "turn off monitor", "Machine status");
   await foundSetting("monitor/enabled");
   expect(document.activeElement?.getAttribute("role")).toBe("switch");
+});
+
+test("Find finds a standard image by its kind and backend, and opens its row on the backend's page", async () => {
+  const images = [standardImage("fake/linux"), standardImage("fake/desktop", { kind: "linux-desktop", outcome: FAILED_OUTCOME }), standardImage("gone/linux")];
+  const entries = settingsIndex(stateOf(server([]).handlers), images);
+  expect(foundBy(entries, "standard-images/fake/linux")).toMatchObject({ label: "Standard Linux image", where: "Fake host › Images", value: "Up to date", opens: { view: { page: "backend", id: "fake" } } });
+  expect(foundBy(entries, "standard-images/fake/desktop")).toMatchObject({ label: "Standard Linux desktop image", value: "Its last rebuild failed" });
+  expect(foundBy(entries, "standard-images/gone/linux")).toBeUndefined();
+  expect(searchSettings(entries, "linux image fake")[0]?.label).toBe("Standard Linux image");
+  const slot = settings(server([], { rebuildable: images }).handlers);
+  await slot.findByText("Fake host is not working");
+  findField(slot).focus();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await findAndOpen(slot, "linux image fake host", "Standard Linux imageFake host › Images");
+  expect(window.location.hash).toBe("#backend/fake");
+  await foundSetting("standard-images/fake/linux");
 });
 
 test("Find's arrow keys stay within the results shown, Escape clears, and no match says so (067 unit 11)", async () => {

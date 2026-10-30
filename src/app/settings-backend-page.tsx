@@ -20,6 +20,7 @@ import { unplacedProblems } from "./settings-draft-fields.tsx";
 import { MachineCard, useMachineHosts, type Machines } from "./settings-docker-hosts.tsx";
 import { machineIdOf } from "./settings-machine-docker.ts";
 import { drafts } from "./settings-drafts.ts";
+import { BackendImages } from "./settings-images.tsx";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, backendEnabledPath, backendLabelPath, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
@@ -536,6 +537,7 @@ function BackendEditor({ config }: { config: BackendConfig }) {
       <InUseCard state={form.state} config={form.config} />
       <FieldCards form={form} groups={groups} forced={forced} />
       <HostsSection form={form} forced={forced} onRemove={setRemovingHost} />
+      <BackendImages backend={config.id} />
       <GuideLine driver={driver} />
       <SaveBar
         draft={draft}

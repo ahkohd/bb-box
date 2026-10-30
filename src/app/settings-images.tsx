@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,14 +9,14 @@ import type { ConfigState } from "../plugin/configuration.ts";
 import type { Contract, ImageFailure, ImagesStatus } from "../plugin/contract.ts";
 import type { RunProgress } from "../plugin/images.ts";
 import type { ImageOptionView } from "../plugin/views.ts";
-import { Badge, message, relativeTime, useLive, type Tone } from "./common.tsx";
+import { Badge, message, relativeTime, StatusDot, useLive, type Tone } from "./common.tsx";
 import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./rebuild-now.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
-import { imageBakePath, type PlainValue } from "./settings-paths.ts";
+import { imageBakePath, standardImagePath, type PlainValue } from "./settings-paths.ts";
 import { backendLabel, hostChip, kindName, plural, type StatusItem } from "./settings-status.ts";
 
-type StandardImage = ImagesStatus["images"][number];
+export type StandardImage = ImagesStatus["images"][number];
 type ImagesProgress = Pick<ImagesStatus, "progress" | "running" | "failures">;
 
 export const BAKE_WORDS: Readonly<Record<ImageBake, string>> = {
@@ -122,6 +122,19 @@ function rowState(row: StandardRow, now: number): { readonly tone: Tone; readonl
   return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${relativeTime(outcome.at, now)}` : "Up to date", saysWhyDue: false };
 }
 
+const RUN_STATES_NEEDING_ATTENTION: ReadonlySet<RunImage["state"]> = new Set(["next", "refreshing", "failed", "waiting", "not started"]);
+
+function imageNeedsAttention(image: StandardImage | null): boolean {
+  const outcome = image?.outcome?.state;
+  return outcome === "failed" || outcome === "waiting" || !!image?.due;
+}
+
+function needsAttention(row: StandardRow): boolean {
+  if (row.run?.state === "refreshed") return false;
+  if (row.run && RUN_STATES_NEEDING_ATTENTION.has(row.run.state)) return true;
+  return imageNeedsAttention(row.image);
+}
+
 function failedLast(row: StandardRow): boolean {
   if (row.run?.state === "refreshed") return false;
   return row.run?.state === "failed" || row.image?.outcome?.state === "failed";
@@ -159,7 +172,7 @@ function TryAgain({ name, label, running, onStarted }: { name: string; label: st
   );
 }
 
-function StandardImageRow({ row, now, running, onStarted }: { row: StandardRow; now: number; running: boolean; onStarted: () => void }) {
+function StandardImageRow({ row, now, running, onStarted, onItsBackendPage = false }: { row: StandardRow; now: number; running: boolean; onStarted: () => void; onItsBackendPage?: boolean }) {
   const { state } = useSettings();
   const { tone, words, saysWhyDue } = rowState(row, now);
   const kind = kindWords(state, row.kind) ?? row.kind;
@@ -173,11 +186,11 @@ function StandardImageRow({ row, now, running, onStarted }: { row: StandardRow; 
     </code>,
   );
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5" data-image-row={row.name}>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5" data-image-row={row.name} data-setting-row={onItsBackendPage ? standardImagePath(row.name) : undefined} data-draft-path={onItsBackendPage ? standardImagePath(row.name) : undefined}>
       <div className="min-w-0 flex-1 basis-60">
         <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-sm text-foreground">
           <span>{kind}</span>
-          <span className="text-xs text-muted-foreground">on {backend}</span>
+          {onItsBackendPage ? null : <span className="text-xs text-muted-foreground">on {backend}</span>}
         </p>
         <StateLine tone={tone} words={words} items={items} className="mt-0.5 [&_span]:break-words" />
       </div>
@@ -196,20 +209,42 @@ function lastRunWords(progress: RunProgress | null, now: number): string | null 
   return parts.length ? `${ended}: ${parts.join(", ")}.` : `${ended}, with nothing to rebuild.`;
 }
 
-function StandardImages({ nightly }: { nightly: ReactNode }) {
+let lastStandardList: readonly StandardImage[] | null = null;
+
+export function forgetStandardImages(): void {
+  lastStandardList = null;
+}
+
+export function knownStandardImages(): readonly StandardImage[] | null {
+  return lastStandardList;
+}
+
+export function rememberStandardImages(images: readonly StandardImage[]): void {
+  lastStandardList = images;
+}
+
+interface StandardImagesData {
+  readonly list: readonly StandardImage[] | null;
+  readonly problem: string | null;
+  readonly progress: RunProgress | null;
+  readonly rows: readonly StandardRow[];
+  readonly askAgain: () => void;
+}
+
+function useStandardImages(): StandardImagesData {
   const rpc = useRpc<Contract>();
   const live = useImagesProgress();
   const progress = live?.progress ?? null;
   const ended = progress?.ended ?? null;
-  const [list, setList] = useState<readonly StandardImage[] | null>(null);
+  const [list, setList] = useState<readonly StandardImage[] | null>(() => lastStandardList);
   const [problem, setProblem] = useState<string | null>(null);
   const [asked, setAsked] = useState(0);
-  const now = Date.now();
   useEffect(() => {
     let current = true;
     rpc.call("images.list").then(
       (answer) => {
         if (!current) return;
+        rememberStandardImages(answer.images);
         setList(answer.images);
         setProblem(null);
       },
@@ -219,18 +254,78 @@ function StandardImages({ nightly }: { nightly: ReactNode }) {
       current = false;
     };
   }, [rpc, ended, asked]);
-  const rows = list ? standardRows(list, progress) : [];
-  const due = list?.filter((image) => image.due).length ?? 0;
+  return { list, problem, progress, rows: list ? standardRows(list, progress) : [], askAgain: () => setAsked((count) => count + 1) };
+}
+
+function dueIn(rows: readonly StandardRow[]): number {
+  return rows.filter((row) => row.image?.due).length;
+}
+
+function UpToDateFold({ rows, now, running, onStarted }: { rows: readonly StandardRow[]; now: number; running: boolean; onStarted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  return (
+    <>
+      <button type="button" data-row-key="images-up-to-date" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((current) => !current)} className={cn("flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-state-hover", FOCUS_RING)}>
+        <span className="flex min-w-0 flex-1 items-start gap-1.5 text-sm text-foreground">
+          <StatusDot tone="ok" />
+          {plural(rows.length, "image")} up to date
+        </span>
+        <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-4 shrink-0 text-subtle-foreground" aria-hidden />
+      </button>
+      {open ? (
+        <div id={listId} className="divide-y divide-border">
+          {rows.map((row) => (
+            <StandardImageRow key={row.name} row={row} now={now} running={running} onStarted={onStarted} />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function StandardImages({ nightly }: { nightly: ReactNode }) {
+  const { list, problem, progress, rows, askAgain } = useStandardImages();
+  const now = Date.now();
+  const running = isRunning(progress);
+  const due = dueIn(rows);
+  const needing = rows.filter(needsAttention);
+  const upToDate = rows.filter((row) => !needsAttention(row));
   const summary = list === null ? (problem ?? "Reading the images…") : !rows.length ? "No backend that is on has images BB Box rebuilds." : [`${due} of ${plural(rows.length, "image")} due.`, lastRunWords(progress, now)].filter(Boolean).join(" ");
   return (
     <Group title="Standard images" description={summary}>
       <Card>
         <Rows>
           {nightly}
-          {rows.map((row) => (
-            <StandardImageRow key={row.name} row={row} now={now} running={isRunning(progress)} onStarted={() => setAsked((count) => count + 1)} />
+          {needing.map((row) => (
+            <StandardImageRow key={row.name} row={row} now={now} running={running} onStarted={askAgain} />
           ))}
-          {list !== null && rows.length ? <RebuildNow progress={progress} due={due} onStarted={() => setAsked((count) => count + 1)} /> : null}
+          {upToDate.length ? <UpToDateFold rows={upToDate} now={now} running={running} onStarted={askAgain} /> : null}
+          {list !== null && rows.length ? <RebuildNow progress={progress} due={due} onStarted={askAgain} /> : null}
+        </Rows>
+      </Card>
+    </Group>
+  );
+}
+
+export function BackendImages({ backend }: { backend: string }) {
+  const { nav } = useSettings();
+  const { progress, rows, askAgain } = useStandardImages();
+  const now = Date.now();
+  const mine = rows.filter((row) => row.backend === backend);
+  if (!mine.length) return null;
+  const toImagesPage = (
+    <button type="button" data-row-key={`images-of-${backend}`} className="cursor-pointer rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => nav.go({ page: "option", id: "images" }, `images-of-${backend}`)}>
+      Open the Images page
+    </button>
+  );
+  return (
+    <Group title="Images" description={`The standard images its boxes start from. ${dueIn(mine)} of ${plural(mine.length, "image")} due.`} action={toImagesPage}>
+      <Card>
+        <Rows>
+          {mine.map((row) => (
+            <StandardImageRow key={row.name} row={row} now={now} running={isRunning(progress)} onStarted={askAgain} onItsBackendPage />
+          ))}
         </Rows>
       </Card>
     </Group>

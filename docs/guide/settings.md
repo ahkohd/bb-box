@@ -57,6 +57,8 @@ A secret, such as a password or an API token, never shows its value. Its field s
 
 A backend with several hosts lists them under Hosts. A new box goes to the first host in the list with room. Each host has its own switch.
 
+A backend with standard images lists them under Images, each with its state and age, and **Try again** on one whose last rebuild failed. **Open the Images page** goes to all of them.
+
 Select **Check** to run the backend's health checks with the settings in the form, without saving them. Each check says what is wrong and how to fix it.
 
 Select **Save**. Changes reach new boxes; boxes already made keep theirs.
@@ -97,6 +99,7 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 ### Images
 
 - Rebuild each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on; otherwise it is off unless you turn it on.
+- Standard images: an image that needs you has its own row: one that is due, rebuilding or next in a rebuild, waiting for room, or whose last rebuild failed, with **Try again**. The rest are one row, such as "18 images up to date"; select it to list them, and again to fold them.
 - Rebuild now: lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date).
 - Projects' images: the images projects set with `bb box image set`.
 

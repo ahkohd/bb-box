@@ -189,6 +189,10 @@ export function imageBakePath(name: string): Path {
   return `images/${name}/bake`;
 }
 
+export function standardImagePath(name: string): Path {
+  return `standard-images/${name}`;
+}
+
 export function imageDefinitionPath(name: string): Path {
   return `images/${name}/definition`;
 }
