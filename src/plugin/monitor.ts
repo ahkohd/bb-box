@@ -8,7 +8,8 @@ import { createDemandSampler } from "../monitor/demand-sampler.ts";
 import { stopMacSensors } from "../monitor/mac-sensors.ts";
 import { createPressureMonitor, type LightSample } from "../monitor/pressure-monitor.ts";
 import { createRouteCollector, routeScript, routeSections, type RouteOs } from "../monitor/route.ts";
-import type { Machine, MonitorSnapshot, MonitorStatus } from "../monitor/snapshot.ts";
+import type { Machine, MonitorSnapshot, MonitorStatus, SlotReading } from "../monitor/snapshot.ts";
+import { assessHealth } from "../monitor/health.ts";
 import type { MonitorConfig } from "../core/document.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 
@@ -28,7 +29,7 @@ export interface MonitoredBox {
   readonly hostId: string | null;
   readonly os: string | null;
   readonly commands: boolean;
-  readonly slot: { readonly host: string } | null;
+  readonly slot: { readonly host: string; readonly most: number } | null;
 }
 
 export interface MonitorHost {
@@ -58,6 +59,14 @@ export interface LightSampler {
 
 export function unreadableWords(name: string): string {
   return `bb-box cannot read box ${name}: it is not a BB machine and runs no shell bb-box can read.`;
+}
+
+export function offlineMachineWords(name: string): string {
+  return `bb-box cannot read box ${name} now: its BB machine is not answering BB, and it runs no shell bb-box can read without it.`;
+}
+
+export function readableState(state: string): boolean {
+  return state === "ready" || state === "stopping";
 }
 
 export class MonitorOffError extends Error {
@@ -117,15 +126,34 @@ export function listMachines(hosts: readonly MonitorHost[], serverHostId: string
   return sortMachines([...fromHosts, ...routed]);
 }
 
-export function asSlotReading(snapshot: MonitorSnapshot, slot: { host: string; encoder: { usedPercent: number; words: string } | null }): MonitorSnapshot {
-  return {
-    ...snapshot,
-    slot,
-    health: {
-      ...snapshot.health,
-      issues: snapshot.health.issues.map((issue) => (issue.label === "System load" ? { ...issue, label: "Host load", message: `On the shared host: ${issue.message}` } : issue)),
-    },
-  };
+export interface SlotPlace {
+  readonly host: string;
+  readonly most: number;
+  readonly encoder: { usedPercent: number; words: string } | null;
+}
+
+export function slotShare(snapshot: MonitorSnapshot, most: number): NonNullable<SlotReading["share"]> {
+  const slots = Math.max(1, Math.round(most));
+  return { slots, cores: snapshot.cpu.cores / slots, memoryBytes: snapshot.memory.totalBytes / slots };
+}
+
+function percentOf(part: number, whole: number): number {
+  return whole > 0 ? clampPercentage((part / whole) * 100) : 0;
+}
+
+function slotHealth(snapshot: MonitorSnapshot, share: NonNullable<SlotReading["share"]>): MonitorSnapshot["health"] {
+  const own = snapshot.own ?? null;
+  return assessHealth({
+    cpuPercent: own?.cpuCores == null ? null : percentOf(own.cpuCores, share.cores),
+    memoryPercent: own ? percentOf(own.memoryBytes, share.memoryBytes) : null,
+    diskPercent: snapshot.disk?.usagePercent ?? null,
+    load: null,
+  });
+}
+
+export function asSlotReading(snapshot: MonitorSnapshot, place: SlotPlace): MonitorSnapshot {
+  const share = slotShare(snapshot, place.most);
+  return { ...snapshot, slot: { host: place.host, encoder: place.encoder, share }, health: slotHealth(snapshot, share) };
 }
 
 interface RouteReader {
@@ -207,12 +235,12 @@ export function createMonitor(bb: BbPluginApi, deps: MonitorDeps) {
       const os = routeOs(box);
       if (!os) throw new Error(unreadableWords(box.name));
       const snapshot = withInterval(await routeReader(box, os).sampler.sample(force));
-      return box.slot ? asSlotReading(snapshot, { host: box.slot.host, encoder: await deps.encoderRoom(box.id) }) : snapshot;
+      return box.slot ? asSlotReading(snapshot, { ...box.slot, encoder: await deps.encoderRoom(box.id) }) : snapshot;
     }
     const box = boxes.find((candidate) => candidate.hostId === machineId);
     try {
       const snapshot = await deps.hostSnapshot(machineId, { refreshIntervalMs: refreshIntervalMs(), force, scope: box?.slot ? "user" : "machine" }, HOST_TIMEOUT_MS);
-      return box?.slot ? asSlotReading(snapshot, { host: box.slot.host, encoder: await deps.encoderRoom(box.id) }) : snapshot;
+      return box?.slot ? asSlotReading(snapshot, { ...box.slot, encoder: await deps.encoderRoom(box.id) }) : snapshot;
     } catch (error) {
       deps.log.warn(`Machine snapshot failed for ${machineId}: ${error instanceof Error ? error.message.slice(0, 500) : String(error)}`);
       throw error;

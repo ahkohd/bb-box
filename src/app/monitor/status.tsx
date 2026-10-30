@@ -238,7 +238,13 @@ const HEALTH_LABELS = {
   critical: { label: "Critical", tone: "bad", color: METRIC_COLORS.bad },
 } as const;
 
-function SummaryStrip({ snapshot, isServer, waitingFor }: { snapshot: MonitorSnapshot | null; isServer: boolean; waitingFor: string | null }) {
+export function upWords(snapshot: MonitorSnapshot, isBox: boolean): string {
+  const up = formatDuration(snapshot.host.uptimeSeconds);
+  if (!isBox) return `up ${up}`;
+  return snapshot.slot || snapshot.host.container ? `host up ${up}` : `system up ${up}`;
+}
+
+function SummaryStrip({ snapshot, isServer, isBox, waitingFor }: { snapshot: MonitorSnapshot | null; isServer: boolean; isBox: boolean; waitingFor: string | null }) {
   if (!snapshot) {
     return (
       <div className="relative flex flex-wrap items-center gap-1 px-3 py-2">
@@ -275,7 +281,7 @@ function SummaryStrip({ snapshot, isServer, waitingFor }: { snapshot: MonitorSna
       <Pill>{PLATFORM_NAMES[host.platform] ?? host.platform} · {host.arch}</Pill>
       <Pill>{formatBytes(memory.totalBytes)}</Pill>
       <Pill>{cpu.cores} cores</Pill>
-      <Pill>up {formatDuration(host.uptimeSeconds)}</Pill>
+      <Pill>{upWords(snapshot, isBox)}</Pill>
       {isServer && runtime ? <Pill>bb up {formatDuration(runtime.processUptimeSeconds)}</Pill> : null}
       {snapshot.slot ? <SlotPills slot={snapshot.slot} /> : null}
     </div>
@@ -555,10 +561,10 @@ function ProcessesSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   );
 }
 
-function StatusPopover({ snapshot, isServer, expected, waitingFor }: { snapshot: MonitorSnapshot | null; isServer: boolean; expected: PanelShape; waitingFor: string | null }) {
+function StatusPopover({ snapshot, isServer, isBox, expected, waitingFor }: { snapshot: MonitorSnapshot | null; isServer: boolean; isBox: boolean; expected: PanelShape; waitingFor: string | null }) {
   return (
     <>
-      <SummaryStrip snapshot={snapshot} isServer={isServer} waitingFor={waitingFor} />
+      <SummaryStrip snapshot={snapshot} isServer={isServer} isBox={isBox} waitingFor={waitingFor} />
       <CpuSection snapshot={snapshot} />
       {snapshot || expected.gpu ? <GpuSection snapshot={snapshot} /> : null}
       <MemorySection snapshot={snapshot} />
@@ -643,6 +649,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
   const lookOf = useBoxLookOf();
   const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(selected);
   const machineName = selectedMachine(machines, selected).name;
+  const isBox = machines?.find((machine) => machineKey(machine) === selected)?.isBox ?? false;
   const errorMessage = error ? loadErrorCopy(error, machineName) : "";
   const slowLoad = useSlowLoad(selected, !snapshot && !error);
   useRevealOnLoad(container, selected, snapshot !== null);
@@ -673,7 +680,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
       {error && snapshot ? <StaleNotice message={errorMessage} updatedAt={snapshot.timestamp} /> : null}
       {!snapshot && error
         ? <UnavailableState message={errorMessage} />
-        : <StatusPopover snapshot={snapshot} isServer={selected === SERVER_MACHINE} expected={expectedShape} waitingFor={slowLoad ? machineName : null} />}
+        : <StatusPopover snapshot={snapshot} isServer={selected === SERVER_MACHINE} isBox={isBox} expected={expectedShape} waitingFor={slowLoad ? machineName : null} />}
     </div>
     </HudScrollProvider>
     </TooltipProvider>

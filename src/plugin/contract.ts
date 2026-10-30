@@ -166,7 +166,9 @@ export interface ThreadOnBox {
   readonly unchecked?: boolean;
 }
 
+/** Whether the Monitor reads the box now: `read` with its machine, or why not. */
 export interface MonitorReach {
+  readonly is: "read" | "off" | "not-running" | "unreadable";
   readonly machineId: string | null;
   readonly why: string | null;
 }
@@ -332,4 +334,4 @@ export const contract = defineRpcContract({
 });
 
 export type Contract = typeof contract;
-export type { Machine, MonitorSnapshot } from "../monitor/snapshot.ts";
+export type { Machine, MetricPoint, MonitorSnapshot } from "../monitor/snapshot.ts";

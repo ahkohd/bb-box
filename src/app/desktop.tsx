@@ -2208,6 +2208,10 @@ export function forgetThreadTitles(): void {
 }
 
 /** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
+export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, threadId: string): string {
+  return thread.title?.trim() || thread.titleFallback?.trim() || threadId;
+}
+
 export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   const sdk = useSdk();
   const [titles, setTitles] = useState<Record<string, string>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
@@ -2219,8 +2223,9 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
       sdk.threads
         .get({ threadId })
         .then((thread) => {
-          knownTitles.set(threadId, thread.title || threadId);
-          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: thread.title || threadId }));
+          const title = sidebarTitle(thread, threadId);
+          knownTitles.set(threadId, title);
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: title }));
         })
         .catch(() => {
           if (!cancelled) setTitles((current) => ({ ...current, [threadId]: threadId }));

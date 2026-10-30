@@ -8,6 +8,8 @@ const metricPointSchema = z.object({
   networkRxBytesPerSecond: z.number().nullable(),
   networkTxBytesPerSecond: z.number().nullable(),
   gpuPercent: percentageSchema.nullable().optional(),
+  ownCpuCores: z.number().nonnegative().nullable().optional(),
+  ownMemoryBytes: z.number().nonnegative().nullable().optional(),
 });
 const issueSchema = z.object({
   severity: z.enum(["warning", "critical"]),
@@ -108,9 +110,19 @@ export const snapshotSchema = z.object({
     heapTotalBytes: z.number(),
     externalBytes: z.number(),
   }).nullable(),
+  own: z.object({
+    cpuCores: z.number().nonnegative().nullable(),
+    memoryBytes: z.number().nonnegative(),
+    processes: z.number().int().nonnegative(),
+  }).nullable().optional(),
   slot: z.object({
     host: z.string().max(255),
     encoder: z.object({ usedPercent: percentageSchema, words: z.string().max(512) }).nullable(),
+    share: z.object({
+      slots: z.number().int().positive(),
+      cores: z.number().positive(),
+      memoryBytes: z.number().nonnegative(),
+    }).nullable().optional(),
   }).nullable().optional(),
   health: z.object({
     status: z.enum(["healthy", "warning", "critical"]),
@@ -123,6 +135,8 @@ export type MonitorSnapshot = z.infer<typeof snapshotSchema>;
 export type MetricPoint = z.infer<typeof metricPointSchema>;
 export type Processes = MonitorSnapshot["processes"];
 export type Health = MonitorSnapshot["health"];
+export type OwnReading = NonNullable<MonitorSnapshot["own"]>;
+export type SlotReading = NonNullable<MonitorSnapshot["slot"]>;
 
 export const machineSchema = z.object({
   id: z.string(),

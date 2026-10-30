@@ -286,7 +286,7 @@ test("a shared ios slot read through the route: its own processes, its host's lo
     vmstat: "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages wired down: 100000.\nPages purgeable: 0.\nAnonymous pages: 400000.\nPages occupied by compressor: 0.",
   });
   const collector = createRouteCollector({ os: "macos", scope: "user", refreshIntervalMs: () => 5000 });
-  const snapshot = asSlotReading(collector.snapshot({ sections: routeSections(output), receivedAt: 0 }), { host: "ios-host-1", encoder: { usedPercent: 40, words: "On this Mac: 2 of about 5 full-size streams' room in use." } });
+  const snapshot = asSlotReading(collector.snapshot({ sections: routeSections(output), receivedAt: 0 }), { host: "ios-host-1", most: 4, encoder: { usedPercent: 40, words: "On this Mac: 2 of about 5 full-size streams' room in use." } });
   const parsed = snapshotSchema.parse(snapshot);
   assert.deepEqual(parsed.cpu.loadAverage, [3.1, 2.8, 2.5]);
   assert.equal(parsed.cpu.cores, 8);
@@ -295,15 +295,15 @@ test("a shared ios slot read through the route: its own processes, its host's lo
   assert.equal(parsed.processes.total, 2);
   assert.equal(parsed.slot?.host, "ios-host-1");
   assert.equal(parsed.slot?.encoder?.usedPercent, 40);
+  assert.deepEqual(parsed.slot?.share, { slots: 4, cores: 2, memoryBytes: 8 * 1024 ** 3 });
   assert.deepEqual(parseMacLoad("{ 1.00 2.00 3.00 }"), [1, 2, 3]);
   assert.equal(parseDfRoot("garbage"), null);
 });
 
-test("a shared slot's load issues name the shared host, not the box", () => {
-  const snapshot = { health: { status: "critical", issues: [{ severity: "critical", label: "System load", message: "Five-minute load is 20.00 across 8 cores." }] } } as unknown as MonitorSnapshot;
-  const slot = asSlotReading(snapshot, { host: "ios-host-1", encoder: null });
-  assert.equal(slot.health.issues[0]?.label, "Host load");
-  assert.match(slot.health.issues[0]!.message, /^On the shared host:/);
+test("a shared slot never takes the shared host's load as its own issue, even when its reading has no numbers of its own", () => {
+  const snapshot = { cpu: { cores: 8 }, memory: { totalBytes: 32 * 1024 ** 3 }, disk: null, health: { status: "critical", issues: [{ severity: "critical", label: "System load", message: "Five-minute load is 20.00 across 8 cores." }] } } as unknown as MonitorSnapshot;
+  const slot = asSlotReading(snapshot, { host: "ios-host-1", most: 4, encoder: null });
+  assert.deepEqual(slot.health, { status: "healthy", issues: [] });
 });
 
 const SERVER_HOST = "host_server";
@@ -321,8 +321,8 @@ const box = (patch: Partial<MonitoredBox> & Pick<MonitoredBox, "id" | "name">): 
 const BOXES: MonitoredBox[] = [
   box({ id: "bx_lxc", name: "glad-coral", hostId: "host_box" }),
   box({ id: "bx_docker", name: "calm-reed" }),
-  box({ id: "bx_slot", name: "keen-iris", hostId: "host_slot", os: "macos", slot: { host: "ios-host-1" } }),
-  box({ id: "bx_offline_slot", name: "bold-fern", hostId: "host_away", os: "macos", slot: { host: "ios-host-1" } }),
+  box({ id: "bx_slot", name: "keen-iris", hostId: "host_slot", os: "macos", slot: { host: "ios-host-1", most: 4 } }),
+  box({ id: "bx_offline_slot", name: "bold-fern", hostId: "host_away", os: "macos", slot: { host: "ios-host-1", most: 4 } }),
   box({ id: "bx_windows", name: "wide-oak", os: "windows" }),
   box({ id: "bx_stopped", name: "deep-elm", ready: false }),
 ];

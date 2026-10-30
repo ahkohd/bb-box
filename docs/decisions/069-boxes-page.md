@@ -669,9 +669,11 @@ Monitor is open is read by both, and unit 3 measures that extra cost.
   a new point at once.
 - **A shared slot** (gate G1, G2). Its Mac is read once a minute for all
   its slots: CPU, memory, disk and the encoder room, kept as the Mac's own
-  series. Each slot's point is its own user's processes, read with
-  `ps -S -U <user> -o cputime=,rss=`: `-S` adds exited children's time to
-  their parent, so the short-lived compilers of a build are counted. The
+  series. Each slot's point is its own user's processes, read as unit 2
+  reads them (see [Decided during unit 2](#decided-during-unit-2)): each
+  process's CPU time with its waited-for children's, from
+  `proc_pid_rusage`, so the short-lived compilers of a build are counted,
+  and its memory footprint. The
   slot is judged against its share of the Mac: the cores and memory the
   shared host sets aside for each slot (064), or where none is set, the
   Mac's cores and memory divided by the slots it can hold. The page says so:
@@ -852,7 +854,7 @@ pool Mac someone else holds.
 | Gate | Unit | Rule | Passes when |
 | --- | --- | --- | --- |
 | G1 slot-share | 2 | A slot is judged, shown and flagged against its share of the Mac: 064's per-slot cores and memory, or the Mac's divided by the slots it can hold (sections 4, 9, 10) | On a Mac box of 12 cores with 3 shared iOS slots, so a share of 4 cores, a slot using 2 cores reads about 50% of its share, not 17% of the Mac; a slot whose processes use 95% of its share for 5 minutes is busy; the Mac at 90% from other slots leaves it calm |
-| G2 slot-short-processes | 2 | A slot's CPU is read with `ps -S`, so exited children count (section 10) | An `xcodebuild` of a small app in one slot shows on its CPU tile, and in unit 3's history, within 20% of the CPU time `time xcodebuild` reports for the build |
+| G2 slot-short-processes | 2 | A slot's CPU counts its processes' exited children (section 10), read from `proc_pid_rusage` as unit 2 found `ps -S` does not on macOS 26 | An `xcodebuild` of a small app in one slot shows on its CPU tile, and in unit 3's history, within 20% of the build's CPU time, measured as the Mac's own CPU above its idle level with no other slot busy (`time xcodebuild` leaves out Xcode's build service, which does the compiling) |
 | G3 stop-guard | 1c | Stop and Release ask first when the box's own thread is working, as well as when a thread works on its BB machine, from a row, the menu, the page and a notice's retry; `force` stops it (section 9, question 4) | With an agent working in a box through box tools, Stop from each of the four places asks, names the thread, and stops only after "Stop it anyway"; an idle thread's box stops at once; a machine of the person's own behaves as today |
 | G4 attached-files | 1b | `box-log.db` and `box-history.db` are attached to the SDK's handle, with their own migrations, WAL and caps; if `ATTACH` is refused, the tables go in `data.db` under row caps that leave the Monitor's alerts 10 MB (section 10) | On a fresh BB, both files are made and migrated on start, a second start runs no migration again, `PRAGMA boxlog.max_page_count` and `boxhistory.max_page_count` read as set, and filling `boxhistory` past its cap leaves pressure logs still writable; a test with `ATTACH` refused takes the fallback and passes the same checks |
 | G5 log-truth | 1b | Release and forget are distinct events; "released" is written only on the backend's confirmation; a restart between confirmation and record removal is finished by observing; a failed log write makes the page claim nothing from the log; events are bounded to 1 KB and the file to 8 MB (section 10) | Forget on a box whose backend was removed says "forgotten", never "released", and leaves no stopped interval; bb-box killed after the backend deletes a container but before the record goes finishes the release on start; with the log file made read-only, a stop still runs and the page says no "by you"; 10,000 events keep the file under its cap |
@@ -888,6 +890,60 @@ After unit 1c's independent review, on 30 October 2026:
 - **A resize's restart asks too.** A resize that needs a restart asks under
   the same guard as Stop and Release, the box's own working thread
   included. This extends G3.
+
+## Decided during unit 2
+
+On 30 October 2026, during unit 2:
+
+- **Live only until unit 3.** The lead chose to show no range group
+  until box history exists: Activity has Live and nothing else, and a
+  stopped box's card says it is stopped and not read, and since when. Unit
+  3 adds the range group with 1 h, 24 h and 7 d. G16 then reads: Live keeps
+  reading while the box stops, and once the stop is confirmed the card
+  says so.
+- **A slot's own CPU and memory, on a Mac.** On macOS 26, `ps -S` adds
+  nothing of an exited child to its parent (a shell whose child ran `yes`
+  for 3 s reads 0:00.00), and summed resident sizes count shared frameworks
+  again for each process (8 GiB for one idle slot). A slot is read with a
+  few lines of Python run by `/usr/bin/python3`, which Xcode's tools
+  provide: for each of the slot user's processes, `proc_pid_rusage` gives
+  its own CPU time, its waited-for children's, its memory footprint, the
+  figure Activity Monitor and `top` show (1.8 GiB for that slot), and its
+  start; `proc_pidinfo` gives its parent. The reader passes the whole
+  160-byte `rusage_info_v2`, with a 64-byte canary after it that must come
+  back untouched, or it prints nothing and `ps` is read. It runs only
+  where Xcode or the command line tools are installed, as `xcode-select
+  -p`, which never prompts, says: on a Mac without them `/usr/bin/python3`
+  is a shim that asks on the Mac's screen to install them. Elsewhere, and
+  where Python fails, `ps` is read instead, which misses the CPU time of
+  exited children, so a build's compilers count only while they run, and
+  gives resident sizes rather than footprints.
+- **How a slot's CPU is counted between two readings.** A process is known
+  by its PID and its start, so a reused PID is a new process. A reading
+  says which counters it has: the Python reader's own time and children's
+  time, or `ps`'s own time alone; a change between them starts a new
+  baseline rather than a step. CPU is each process's growth in its own
+  time, and with the Python reader also in its children's time. A process
+  that has ended was already counted up to the last reading, so that much
+  is owed by the nearest of its ancestors still running, and taken from
+  what that ancestor's children's time grows by, in that reading or the
+  next; then the debt lapses. So a build's compilers count once, a build
+  service that its tool did not wait for takes at most what its waiter's
+  children grew by for one reading, and the last moments of a process
+  that ends unwaited are lost. A zombie still answers `proc_pid_rusage`
+  but not `proc_pidinfo`: it keeps the parent it had, and one never seen
+  alive waits to be counted with its parent. With `ps` alone nothing is
+  owed, as its counters have no children.
+- **A slot is judged on its own numbers only.** When its own reading fails,
+  its CPU and memory are not read, and only the disk it shares with the
+  Mac can make its health a warning; the Mac's CPU, load and memory never
+  do. The page's words and read-out keep a slot's percentages as they
+  are, 787% of its share included; only the drawn line stops at the top.
+- **The chart is an application with the role description "chart".** As
+  an image, NVDA kept browse mode on it, so the arrow keys never reached
+  the read-out. It still has the chart's name and summary. While focus is
+  on the charts they hold the reading they had, as a screen reader
+  otherwise says the changed summary again at each reading.
 
 ## Open questions for the owner
 

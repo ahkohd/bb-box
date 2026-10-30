@@ -19,6 +19,7 @@ import { ImageBakes } from "./bakes.ts";
 import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
+import { readableState } from "./monitor.ts";
 import { BoxError, Boxes, SPARES, forgetRefusal, ownedByThread, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
@@ -1065,11 +1066,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     return {
       id: box.id,
       name: box.name,
-      ready: box.state === "ready",
+      ready: readableState(box.state),
       hostId: box.enrol.state === "enrolled" ? box.enrol.hostId : null,
       os: box.capabilities.os,
       commands: box.capabilities.command !== null,
-      slot: placement.on === "slot" ? { host: placement.host } : null,
+      slot: placement.on === "slot" ? { host: placement.host, most: placement.most } : null,
     };
   };
   const monitor = startMonitor(bb, {

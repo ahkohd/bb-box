@@ -322,6 +322,13 @@ export function startSteps(timings: Readonly<Record<string, number>>): [string, 
   return Object.entries(timings).filter(([step]) => step.startsWith("start.") && step !== "start.total");
 }
 
+export function namedAfterReady(timings: Readonly<Record<string, number>>): number | null {
+  const relabel = timings.relabel;
+  if (relabel === undefined || timings.spare === undefined || timings.total === undefined) return null;
+  const before = acquireSteps(timings).filter(([step]) => step !== "relabel").reduce((sum, [, ms]) => sum + ms, 0);
+  return timings.total < before + relabel ? relabel : null;
+}
+
 export function joinedAfter(timings: Readonly<Record<string, number>>): number | null {
   return timings.enrol ?? timings.spareReconnect ?? null;
 }

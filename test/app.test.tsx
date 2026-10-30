@@ -9,7 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, BoxPageState, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, MonitorReach, BoxPageState, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
@@ -523,7 +523,9 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
+const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
+
+function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -682,7 +684,7 @@ function server(initial: BoxView[], options: { holder?: ThreadOnBox; deviceFaile
     boxPage: ({ box: id }): BoxPageState => {
       const found = boxes.find((candidate) => candidate.id === id);
       const mine = machines.find((entry) => entry.box.id === id);
-      const blank = { monitor: { machineId: null, why: null }, deviceFailed: options.deviceFailed ?? null, ended: null };
+      const blank = { monitor: options.monitor ?? NOT_READ, deviceFailed: options.deviceFailed ?? null, ended: null };
       if (found) return { ...blank, box: found, threadId: THREAD, owner: "thread", thread: options.holder ?? { id: THREAD, title: "UI thread", running: false }, threads: options.inUse ?? [] };
       if (mine) return { ...blank, box: mine.box, threadId: "operator", owner: "yours", thread: null, threads: mine.threads };
       return { ...blank, box: null, threadId: null, owner: null, thread: null, threads: [], ended: ended.get(id) ?? null };
@@ -9003,7 +9005,7 @@ test("a box's page says a device did not boot, a join that failed, a box deleted
 
 function pageWith(view: () => BoxView, holder: ThreadOnBox = { id: THREAD, title: "UI thread", running: false }): PluginRpcTestHandlers<Contract> {
   const { handlers } = server([view()]);
-  return { ...handlers, boxPage: () => ({ box: view(), threadId: THREAD, owner: "thread", thread: holder, threads: [], monitor: { machineId: null, why: null }, deviceFailed: null, ended: null }) };
+  return { ...handlers, boxPage: () => ({ box: view(), threadId: THREAD, owner: "thread", thread: holder, threads: [], monitor: NOT_READ, deviceFailed: null, ended: null }) };
 }
 
 test("notices are not live regions: one polite announcer says a new notice once, never on opening and never as the clock moves (review 5)", async () => {
