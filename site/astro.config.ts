@@ -1,6 +1,6 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
-import { codeThemes } from "./src/code-themes.ts";
+import { codeStyle, codeThemes } from "./src/code-themes.ts";
 import { readPages, repoRoot, repository } from "./src/repo.ts";
 import { sidebar } from "./src/sidebar.ts";
 
@@ -13,8 +13,8 @@ export default defineConfig({
       description: "Computers for BB threads.",
       logo: { light: "./src/assets/logo-light.svg", dark: "./src/assets/logo-dark.svg" },
       favicon: "/favicon.svg",
-      customCss: ["@fontsource-variable/inter/opsz.css", "./src/styles/theme.css"],
-      expressiveCode: { themes: codeThemes, useStarlightUiThemeColors: true },
+      customCss: ["@fontsource-variable/inter", "./src/styles/theme.css"],
+      expressiveCode: { themes: codeThemes, styleOverrides: codeStyle },
       social: [{ icon: "github", label: "GitHub", href: repository }],
       sidebar: sidebar(readPages()),
     }),
