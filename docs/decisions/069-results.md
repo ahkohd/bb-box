@@ -1186,6 +1186,353 @@ again only every 10 minutes; its tests cover it.
   group, history's disk line, and the busiest minute.
 - Unit 4: busy from a slot's own share, as its health is now.
 
+## Unit 3: box history and the page's 1 h, 24 h and 7 d
+
+Built on 30 October 2026, on main `7bd9f833`. bb-box now reads every
+running box once a minute, keeps what it read, and a box's page shows it
+over 1 hour, 24 hours and 7 days.
+
+### What it adds
+
+- **The light reader** (`src/monitor/light.ts`, `src/monitor/light-local.ts`).
+  One reading is a box's cumulative CPU counters (`/proc/stat`, or its
+  cgroup's `usage_usec` in a namespaced cgroup), memory (`MemTotal` and
+  `MemAvailable`, or `memory.current` less `inactive_file`), the inputs of
+  066's limits (`cpu.max`, `cpuset.cpus.effective`, the CPUs it sees,
+  `memory.max`), CPU and memory pressure, `/proc/loadavg`, `df -Pk /`, its
+  default interface's bytes and its boot time. Through a box's route it is
+  one command whose answer is about 600 bytes; for a BB machine, one call
+  to a new `monitor.light` in bb-box's host entry. A container's CPU and
+  memory are measured with 066's `containerCapacity` and
+  `containerMemory`, unchanged. A shared slot's reading is its own user's
+  processes, as unit 2 reads them, and one slot a minute also reads its
+  Mac for all of them, kept as the Mac's own series (`mac:<host>`).
+- **The reader** (`src/monitor/box-history.ts`). Boxes are spread evenly
+  over the minute, in the order of their IDs' hashes. A fair queue starts
+  readings with as many workers as the minute's readings times their
+  90th-percentile time divided by 50 s, at least 2 and at most 8. A
+  reading times out after 10 s; one that cannot start within 10 s of its
+  second is skipped and counted. A box whose readings fail 3 times in a
+  row is paused and the reach check asked to check it: it is read again
+  once the reach check finds it answers, or, if it answered at once, after
+  15 minutes. Counters are kept between readings, in memory and in the
+  file, so a point is the mean since the last reading with the time it
+  covers. Counters older than 150 s, from before the box's last start,
+  lower than the last, from another boot, or from another capacity start
+  a new baseline. Each hour's readings due, taken, skipped, failed and not
+  tried are tallied.
+- **The store** (`src/plugin/box-history-store.ts`), in `box-history.db`
+  as unit 1b attached it: minute points for 24 hours, hourly rollups for
+  7 days (means weighted by the seconds covered, the busiest minute's
+  CPU, the highest memory, the seconds covered), the reasons the
+  Monitor's rules judged each point high (CPU, CPU pressure, memory,
+  memory pressure, disk, load against its cores for a box with its own
+  kernel), the counters, the times the Monitor or box history was off,
+  and the tallies. Before each minute's readings it prunes by age, drops
+  a released or forgotten box's points 24 hours after it, and checkpoints
+  and truncates its write-ahead log. If the file fills, only history's
+  writes stop, the doctor and Monitor settings say so, and writing starts
+  again once pruning makes room.
+- **`monitor.history`**: a box's 60 minutes, 144 ten-minute steps or 168
+  hours, each with its coverage, busiest minute and whether it was partly
+  read, and its gaps with why: not made yet, starting, stopped (only
+  from a confirmed stop in the box log), not read (the Monitor or box
+  history off, or before box history existed) or no reading.
+- **The page** (`src/app/activity.tsx`). Activity's heading gains the
+  range group, Live, 1 h, 24 h and 7 d, a radio group the arrow keys move
+  through. It opens on Live for a box being read and on 24 h otherwise;
+  Live says why it cannot be chosen. The history chart has CPU, memory
+  and disk (hidden at first, dotted), the light band of each step's
+  busiest minute over 24 h and 7 d, gap bands with their words, ticks
+  every 15 minutes, every 6 hours or at each midnight, and the network
+  below. Reading a point names the busiest minute where it is 5 points or
+  more above the mean, and a partly read step. Each chart's description
+  has its numbers and its gaps. A slot's chart has its own CPU and memory
+  against its share, with the Mac's CPU as a third line. With box history
+  off, the ranges keep what was kept under "Box history is off"; with the
+  Monitor off, too. The tiles and processes stay while the box is read,
+  whatever range is chosen.
+- **The page laid out from its first frame**, as the owner asked during
+  the unit: until the first reading, Activity's tiles, its charts' frames,
+  axes, ticks and legends, and the processes' six rows are placeholders at
+  their final size, revealed as the Monitor's are (a pulse, then a blur
+  that clears over 320 ms, none under reduced motion). A box that is
+  stopped, off or cannot be read keeps the same frame, with why in it. Live
+  and history share one chart body and height, the range group is in place
+  from the start, a chosen range is kept for the session, and the
+  heading's range group has its own line below 640 px in every state.
+- **The switch**: "Keep each box's history" under Monitor in settings,
+  `monitor.boxHistory`, on by default, saved through 067's write engine;
+  `bb box option set monitor.boxHistory=false` from a terminal. The doctor's
+  Box history check says whether it reads, how many boxes, and this hour's
+  and the last's coverage. `bb box monitor history` reports each hour's
+  tallies, each box's newest point and the file's room.
+
+Files: new `src/monitor/light.ts`, `light-local.ts`, `box-history.ts`,
+`history-view.ts`, `src/plugin/box-history.ts` and `box-history-store.ts`;
+changed `src/app/activity.tsx`, `activity-words.ts`, `history-chart.tsx`,
+`settings-pages.tsx` and the settings' paths, `monitor/use-reveal-on-load.ts`
+(safe where a page has no `matchMedia`), `src/core/document.ts`,
+`src/host/contract.ts` and `monitor.ts`, `src/plugin/contract.ts`,
+`config-edits.ts`, `monitor.ts`, `monitor-cli.ts`, `rpc.ts` and `setup.ts`.
+
+### Checked
+
+On a Linux box, 8 cores, in a clone of the commits delivered, on main
+`7bd9f833`: `tsc` clean; the node suite 3,023 tests, 2,735 passed, 288
+skipped, 0 failed, the docs and site tests among them; vitest 392 tests
+passed in 5 files, three runs in a row; `scripts/reference.ts --check`
+passes. New tests:
+
+- `test/box-history.test.ts`, with a set clock and a real `box-history.db`
+  where it matters:
+
+  | Gate | Test |
+  | --- | --- |
+  | G10 | A 2-core, 4 GiB LXC box's route answer (`cpu.max` `max 100000`, a two-CPU cpuset, `memory.max` `max`, `MemTotal` 4 GiB) reads 100% with 2 cores busy and 75% at 3 GiB; an uncapped child cgroup of 16 CPUs reads 6.25% with one busy; a quota of `50000 100000` reads 100% at half a core; a live resize from 2 to 4 cores starts a new baseline, and the next point is against 4 cores |
+  | G11 | 30 boxes 2 s apart; 30 boxes whose readings all take 9.9 s, over an hour: 99.78% taken on time (1,795 of 1,799 due, the other 4 still running when the test stopped), none skipped, up to 7 at once; a box that does not answer counted apart (60 not tried); 3 failures pause a box and ask the reach check once, it is read again once the reach check finds it answers, and one that answers waits 15 minutes; a reading that could not be kept is not a failed reading; the read path takes the host entry of a connected BB machine, falls back to the route when the host entry cannot answer, and tells the reach check of a box that does not answer, with no backend call |
+  | G12 | Counters older than 150 s, from before the box's last start, from another boot, or lower, start a baseline; through a real file: a restart of 30 s loses no point (the reading after it covers both minutes, and every minute shows 25%), one of 4 minutes loses one, and a box restarted inside shows no negative or huge CPU |
+  | G13 | The Monitor off for 10 minutes: no reading; box history off for 3 minutes then on: those minutes, and the Monitor's 10, say Not read after the file is opened again |
+  | G14 | 20 minutes at 90% in an hour: 90%, 1,200 s covered, partly read, the hours after it Stopped; a point across an hour is split by its seconds; each 10 minutes keeps its busiest minute |
+  | G18 | With `boxhistory`'s cap set 4 pages above its use, writes stop, the doctor warns and Monitor settings' words say so, tallies and off times log nothing each minute, the Monitor's pressure logs and the box log still write, and after 24 hours' pruning writing resumes; where `ATTACH` is refused, history stops at its own row cap |
+
+  Also: the light script on the test's own Linux box answers in under
+  1 KB and parses whole; a Mac's answer parses with no CPU counters; minute
+  points kept 24 hours and hours 7 days; a released and a forgotten box's
+  points go 24 hours after it; the write-ahead log stays under 1 MB with
+  30 boxes; each gap's kind; the doctor's words.
+- `test/activity.test.tsx`: the page laid out from its first frame: the
+  page's blocks, chart heights, tick rows, tiles and process rows the same
+  before and after the first reading, for a box read live, a stopped box
+  whose history loads, and a shared slot; the range group and its arrow keys; a stopped
+  box on 24 h with its Stopped band and why Live cannot be chosen; the
+  busiest minute in the read-out only 5 points above the mean, and a
+  partly read step; 7 d's midnights and a Not read hour; history off and a
+  full file; the Monitor off; a slot's lines; disk hidden at first; a box
+  that cannot be read with and without kept history; the range kept when
+  BB draws the page again.
+- `test/activity-words.test.ts`: ticks in local time; the summary with the
+  busiest minute and gaps; the read-out's words.
+- `test/settings-drafts.test.ts`: the switch saved while the Monitor's
+  refresh is being saved, and Boxes per thread saved while the switch is: each
+  lands on the other's revision and both are kept.
+- `test/monitor.test.ts`: the setting's default, bounds and doctor words.
+
+### Live check on a separate BB: G19's run
+
+A fresh `npx bb-app` 0.48.1 with no account in keen-birch, a Proxmox LXC
+box of 16 cores and 32 GiB, set up by [`live-setup.sh`](069-boxes-page/unit-3/live-setup.sh),
+with bb-box from this branch and Docker on the box as its first backend.
+The lead added Proxmox LXC and QEMU backends with their own VMIDs and
+addresses, and later Namespace for the Mac part. [`make-boxes.sh`](069-boxes-page/unit-3/make-boxes.sh)
+made 30 boxes through an agent's `box_acquire`; [`boxes.mjs`](069-boxes-page/unit-3/boxes.mjs)
+gave each its role.
+
+| Backend | Boxes | BB machines (read through the host entry) | Read through their route |
+| --- | --- | --- | --- |
+| Docker on the BB's own box, 2 cores and 2 GiB each | 13 | 4 | 9 (`docker exec`) |
+| Proxmox LXC, 2 cores and 4 GiB each | 16 | 6 | 10 (SSH) |
+| Proxmox QEMU, a VM of 2 cores and 4 GiB | 1 | 0 | 1 (SSH) |
+| In all | 30 | 10 | 20 |
+
+[`run.mjs`](069-boxes-page/unit-3/run.mjs) samples every minute: BB's
+server process (the one with `box-history.db` open: its own CPU, its
+waited-for children's and its memory), every `ssh` process, Docker's
+daemons, each container's cgroup CPU, and `box-history.db` read-only (each
+box's newest point, the tallies, the file and its log); `docker events`
+logs every `docker exec`. In three boxes, a quiet LXC BB machine, a quiet
+routed LXC box and the VM, [`in-box-sampler.sh`](069-boxes-page/unit-3/in-box-sampler.sh)
+logs the box's own CPU each minute. [`report.mjs`](069-boxes-page/unit-3/report.mjs)
+turns them into the numbers below. The run started at 07:18:29 UTC on
+`35c3f75f`, this unit's first commit before its rebases, after two false
+starts in its first 18 minutes (a write-ahead log that sat at its limit,
+then the review's fixes). At 16:48 and 16:51 bb-box was installed again
+from the delivered build (the page's first frame and the rebase onto
+`78e74984`); the server code of history did not change.
+
+Scheduled, in UTC: history off 08:18:30 to 09:18:30 (the A/B of cost);
+wise-cedar stopped 09:48:30 to 10:48:30; hardy-prairie loaded 11:18:30 to
+11:28:30; ready-cedar's host cut off 11:48:30 to 12:48:30; five pages open
+on Live 13:18:30 to 14:18:30; the Monitor off 15:18:30 to 15:28:30 and
+again, at a quiet time, 16:30:30 to 16:40:30; history off 15:38:30 to
+15:43:19; bb-box restarted at 19:18:30; five pages open with history off
+20:18:30 to 21:18:30, then on to 22:18:30; the run ends at 07:18:30 on 31
+October.
+
+#### Budgets so far (the first 10 hours)
+
+| Budget | Measured | How, and what limits it |
+| --- | --- | --- |
+| bb-box's server under 1% of one core over an hour, its SSH and `docker exec` children included | 0.64% of one core: own +0.26, `docker exec` children +0.32, `ssh` about +0.03 | Hour 2 (history on, 1.273%) against hour 1 (off, 0.636%), the same 30 boxes, BB's whole server process with its children; each hour is the difference of two samples an hour apart. Hour 0 read 0.87% above hour 1, as it held the plugin's start and my first look at the page. Docker's daemons spent another 0.14% serving the execs, outside the server. The ssh figure is the live ssh processes' CPU, so it drops when a control master ends; it is under 0.06% either way |
+| Under 30 MB more memory | No difference: 563 to 574 MiB off, 568 to 570 on | The server's RSS, sampled each minute; history's own state is 30 counters and 200 durations |
+| A box under 0.2% of one core over a minute, children included, on a 2-core box | Docker, route: 0.0235% (0.0014% off); Docker BB machine: 0.0984% (0.0915% off); LXC BB machine: 0.094% (0.0995% off); LXC, route: 0.030% (0.011% off); VM, route: 0.035% (0.025% off) | Each box's whole CPU, from its cgroup or `/proc/stat`, over the same two hours. History's share is the difference, 0.010% to 0.022% through a route and within a BB machine's own idle work through the host entry |
+| One command a minute for each box read through its route; one host call a minute for each BB machine | 60 `docker exec` an hour for each routed Docker box, none for a Docker BB machine | `docker events`, hour 0. The tallies count one reading a minute for every box, each one command or one call |
+| At least 99% of due readings taken within 10 s of their second; skipped and failed apart; boxes that do not answer apart | 15,447 of 15,454, 99.955%; none skipped; 7 failed; 65 not tried while their box did not answer | History's own hourly tallies. Readings took 27 to 48 ms on average; two workers were enough throughout |
+| Every box that answers has a point under 2 minutes old | 14,347 of 14,347 box-minutes | Each minute's sample of every box's newest point, leaving out the stopped, cut-off, off and restart windows |
+| With 5 pages open, the server within the first row's budget | 3.24% of one core with 5 pages on Live (hour 6) against 1.26% around it | Live's own readings, 5 boxes every 5 s, as unit 2 and 066 read them, make the difference; history's share while open is measured at 20:18 to 22:18 |
+| `box-history.db` under 10 MB after 7 days, its log under 4 MB | 2.7 MB after 7 days of 30 boxes, the log at most 1.0 MB; in the run, 0.8 MB after 10 hours, the log at most 0.4 MB | [`storage-week.ts`](069-boxes-page/unit-3/storage-week.ts) writes 7 days of 30 boxes through the store with a set clock, pruning each minute as the reader does. Before each minute's pruning truncated the log, it sat at its 4 MiB limit |
+
+#### Gates, live
+
+| Gate | Result |
+| --- | --- |
+| G10 | On two 2-core, 4 GiB Proxmox LXC boxes, one a BB machine and one read through its route, both with `cpu.max` `max 100000`, a two-CPU cpuset, `memory.max` `max` and LXCFS's 4 GiB: two busy cores read 100.0% and 99.9% for whole minutes; a 3 GiB allocation read 76.7% through the route (its idle 1.2% plus 75%) and 82.7% on the BB machine (its BB daemon's 6.4 to 7.1% plus 75%) |
+| G11 | The coverage above. ready-cedar, cut off, failed 3 readings (10 s timeouts at 11:48:42, 11:49:42 and 11:50:42) and was then not tried until it answered: the 65 not tried |
+| G7 with history on | ready-cedar's host cut off for an hour: history paused it and asked the reach check at 11:51:22; the reach check's attempts came at 11:51:24, 11:56:26, 12:11:28, 12:26:30 and 12:41:32, five in the hour, each within 2 s of the time it gave; it answered check 6 at 12:56:32, and history read it again at its next second. A reading that times out is not a transport error, so a box is marked as not answering by the reach check, after history's three tries |
+| G13 | With the Monitor off 16:30:30 to 16:40:30, no `docker exec` to any box (90 in the 10 minutes before) and no reading due or point written; the routed LXC boxes' commands share one kept SSH connection, so their own logs cannot show it either way. The first window, at 15:18:30, held one burst of an exec in every Docker box at 15:19:43: bb-box refreshing each box's capabilities 6 s after I released the Namespace slot, as at 14:28 after other Namespace changes; never after a switch of the Monitor or history. The times history and the Monitor were off are kept and show as Not read (the screenshots below) |
+| G14 | In the run's 7 d of happy-moss, the 08:00 hour, read for 1,068 s before history was turned off, is marked partly read; 09:00, read for 2,472 s, is not; 07:00, which held G10's 5 minutes at 100%, has a mean of 8.6% and 100% as its busiest minute |
+| G12, G18 | In tests; the restart at 19:18:30 and the run's end report the live restart |
+| G19 | Run as above, except the Mac part (below) |
+
+**A stopped box and its words.** wise-cedar's 24 h after its hour stopped:
+"Not made yet" until 06:50, "Not read" 08:20 to 09:10 (history off), "Stopped"
+09:50 to 10:40, its first reading after the start a new baseline, and
+points again from 10:50.
+
+**The Mac part, with one slot, not three.** The lead added Namespace to the
+separate BB. A Namespace host first needs a measured Mac: a macOS box
+there measured it, then was released. The first ios box became slot 1 of
+4 on a Namespace Mac (6 cores, 14 GB) at 14:34; the second and third were
+refused, each after 5 minutes, "The Namespace host gave box … no slot within
+5 minutes", as unit 2 found. So the part with 3 shared slots was not run.
+With the one slot, for 50 minutes:
+
+- History read the slot and its Mac every minute through the route, one
+  slot a minute reading the Mac too: the slot's own CPU against its share
+  (1.5 of the Mac's 6 cores; an idle simulator 84 to 87% of it), the Mac's
+  memory (about 50%), disk and load, and no CPU for the Mac, as decided.
+- Run 20 times in the slot under `time`, a slot's reading with its Mac's
+  part took 37.5 ms of CPU and answered 4.6 KB; without it, 24.5 ms and
+  4.1 KB. One Mac reading and 3 slot readings a minute would be about
+  86.5 ms a minute, 0.14% of one core, before the admin session's `sudo`,
+  `launchctl asuser` and `sudo` around each command and its SSH channel,
+  which a slot user cannot measure.
+- G2's history part, with no other slot: a build of 4,000 Swift files for
+  the iOS Simulator, 115 s, read 426 CPU-seconds above the slot's idle
+  level in its history, against 477 CPU-seconds above idle on the Mac by
+  `iostat` every 2 s: 89%, within G2's 20%. Builds of 600 files, 16 and 18
+  s, were missed: Xcode's build service, which runs the compilers, is not
+  a process `xcodebuild` waits for, and lived between two readings, so no
+  reading saw it. Live, every 5 s, sees such builds.
+
+### The page's first frame, measured
+
+[`layout-check.mjs`](069-boxes-page/unit-3/layout-check.mjs) opens tidy-fern's
+page in Chromium, holds its first Live reading back for 4 s, and measures
+where Facts, Other threads, How it started and Top processes sit, and the
+page's height, before and after the reading lands.
+
+| Build | 1440 px, light and dark | 390 px, light and dark |
+| --- | --- | --- |
+| Before (the run's first build) | Facts 341 → 974 px, page 952 → 1,310 px | Facts 482 → 1,197 px, page 1,122 → 1,837 px |
+| Delivered | Facts 982, Threads 1,158, Top processes 681, page 1,318 px, before and after | Facts 1,201, Threads 1,540, How it started 1,665, Top processes 869, page 1,841 px, before and after |
+
+A first try of the delivered build moved everything by 26 px at 390 px:
+"Read at 4:49:30 PM" pushed the range group onto a second line that
+"Reading…" did not. The group now has its own line below 640 px.
+
+### Screenshots
+
+From the run's BB, on the delivered build, at 1440, 760 and 390 px, light and dark:
+1 h of tidy-fern ([1440](069-boxes-page/unit-3/ready-1h-1440-light.png),
+[dark](069-boxes-page/unit-3/ready-1h-1440-dark.png),
+[760](069-boxes-page/unit-3/ready-1h-760-light.png),
+[760 dark](069-boxes-page/unit-3/ready-1h-760-dark.png),
+[390](069-boxes-page/unit-3/ready-1h-390-light.png),
+[390 dark](069-boxes-page/unit-3/ready-1h-390-dark.png)); 24 h of
+wise-cedar, stopped for an hour ([1440](069-boxes-page/unit-3/stopped-24h-1440-light.png),
+[dark](069-boxes-page/unit-3/stopped-24h-1440-dark.png),
+[760](069-boxes-page/unit-3/stopped-24h-760-light.png),
+[760 dark](069-boxes-page/unit-3/stopped-24h-760-dark.png),
+[390](069-boxes-page/unit-3/stopped-24h-390-light.png),
+[390 dark](069-boxes-page/unit-3/stopped-24h-390-dark.png)); 24 h of
+hardy-prairie, loaded for 10 minutes, with a point read ([1440](069-boxes-page/unit-3/loaded-24h-1440-light.png),
+[dark](069-boxes-page/unit-3/loaded-24h-1440-dark.png),
+[760](069-boxes-page/unit-3/loaded-24h-760-light.png),
+[760 dark](069-boxes-page/unit-3/loaded-24h-760-dark.png),
+[390](069-boxes-page/unit-3/loaded-24h-390-light.png),
+[390 dark](069-boxes-page/unit-3/loaded-24h-390-dark.png)); 7 d of
+hardy-prairie ([1440](069-boxes-page/unit-3/week-7d-1440-light.png),
+[dark](069-boxes-page/unit-3/week-7d-1440-dark.png),
+[760](069-boxes-page/unit-3/week-7d-760-light.png),
+[760 dark](069-boxes-page/unit-3/week-7d-760-dark.png),
+[390](069-boxes-page/unit-3/week-7d-390-light.png),
+[390 dark](069-boxes-page/unit-3/week-7d-390-dark.png)); the first frame,
+before the first reading ([1440](069-boxes-page/unit-3/first-frame-1440-light.png),
+[dark](069-boxes-page/unit-3/first-frame-1440-dark.png),
+[760](069-boxes-page/unit-3/first-frame-760-light.png),
+[760 dark](069-boxes-page/unit-3/first-frame-760-dark.png),
+[390](069-boxes-page/unit-3/first-frame-390-light.png),
+[390 dark](069-boxes-page/unit-3/first-frame-390-dark.png)); 24 h of
+ready-cedar, its host cut off for an hour, its Activity card alone, as its
+facts name a Proxmox node ([1440](069-boxes-page/unit-3/cut-24h-1440-light.png),
+[dark](069-boxes-page/unit-3/cut-24h-1440-dark.png)); Live
+([1440](069-boxes-page/unit-3/ready-live-1440-light.png)); and Monitor
+settings with the switch ([1440](069-boxes-page/unit-3/settings-monitor-1440-light.png),
+[dark](069-boxes-page/unit-3/settings-monitor-1440-dark.png)). The windows are
+tall enough to hold the whole page, as BB's own layout scrolls inside the
+window.
+
+### Not checked live, and why
+
+- Three shared slots on one Mac: Namespace gave no second slot (above).
+  No Tart shared host was reachable from the separate BB without
+  production's settings.
+- G12's 4-minute restart and G18's full file: tested with a set clock and
+  a real `box-history.db`; the run's restarts are quick ones.
+- A slot's counters across a restart of bb-box: not kept in the file (a
+  deviation below).
+- Screen readers: the range group is a radio group whose roles and keys
+  are tested; the chart is unit 2's, which NVDA read.
+- The look in production waits for the lead's deploy.
+
+### Deviations from 069
+
+- Each box's second is spread evenly in the order of its ID's hash, rather
+  than taken from the hash, which clumps (see [Decided during unit 3](069-boxes-page.md#decided-during-unit-3)).
+- A point keeps the time it covers and is spread over the minutes, steps
+  and hours it overlaps; a capacity change makes that reading a new
+  baseline; after 3 failures the reach check is asked, and a box that
+  answers it waits 15 minutes; time before box history existed is Not
+  read; the write-ahead log is truncated each minute; a slot's counters
+  stay in memory. All in the decision's section.
+- The box page keeps one frame in every state, at the owner's request: 069
+  section 4 said a box bb-box can never read shows the Monitor's words
+  instead of a chart, and section 7 that a stopped box shows no processes.
+  Both now keep their cards, with why in them.
+- The tiles and processes stay while a box is read, whatever range is
+  chosen.
+- A slot's history has no network chart of its own: the Mac's network is
+  every slot's, and Live shows it; the frame stays, with that sentence.
+- With box history off and its file full, the chart's line says only that
+  it is off, as nothing is written then.
+- The doctor's coverage covers this hour and the last, as tallies are kept
+  by the hour. `bb box monitor history` is new.
+- A Mac read through its route has no CPU in history, as decided; a
+  slot's Mac CPU line is there for a Mac reached through the host entry.
+
+### Open questions
+
+- History reads every running box, including a person's own machines and
+  boxes whose thread has ended but not yet been released. Should a
+  machine of the person's own be read in the background, as boxes are, or
+  only while its page is open?
+- Short builds in a shared slot are missed by a minute reader (G2 above).
+  Is that acceptable, or should a slot's reading look further, at the cost
+  of a heavier reading?
+
+### Follow-ups
+
+- Namespace's shared host gives no second slot (twice in unit 2, twice
+  here); not part of unit 3.
+- The Docker backend on a BB machine that is itself an LXC container pins
+  each box to cpus by the host's numbering, which may fall outside the
+  container's own cpuset: on keen-birch, boxes of 2 cores ran on 1 CPU,
+  and some on all 16. Not part of unit 3; history measures each box
+  against what it can use, as 066 does.
+- bb-box refreshes every box's capabilities, one command in each, when its
+  kinds change, as when a Namespace host comes or goes.
+
 ## Unit 5: the view's bar
 
 Built on 30 October 2026, on main `c8be38e9`. A desktop, device or

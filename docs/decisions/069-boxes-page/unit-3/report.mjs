@@ -82,14 +82,15 @@ const excluded = (box, at) => {
   const joinAt = eventAt("join it again");
   if (box.id === stopped?.id && stopAt && at >= stopAt && at < (startAt ?? Infinity) + 3 * 60_000) return true;
   if (box.id === cut?.id && cutAt && at >= cutAt && at < (joinAt ?? Infinity) + 20 * 60_000) return true;
-  const off = [["the Monitor off for 10 minutes", "the Monitor on again"], ["history off for 3 minutes", "history on again"], ["history off, for the A/B of cost", "history on again"]];
+  const off = [["the Monitor off for 10 minutes", "the Monitor on again"], ["history off for 3 minutes", "history on again, by hand (the run script skipped its step, named as an earlier one)"], ["history off, for the A/B of cost", "history on again"], ["history off, five pages open", "history on, five pages open"], ["the Monitor off again, at a quiet time, for 10 minutes", "the Monitor on again, after the quiet 10 minutes"]];
   for (const [from, to] of off) {
     const offAt = eventAt(from);
     const onAt = events.filter((event) => event.event === to && event.at > (offAt ?? Infinity))[0]?.at;
     if (offAt && at >= offAt && at < (onAt ?? Infinity) + 3 * 60_000) return true;
   }
-  const reload = eventAt("bb-box restarted half way");
-  if (reload && at >= reload && at < reload + 3 * 60_000) return true;
+  for (const restart of events.filter((event) => event.event === "bb-box restarted half way" || event.event.startsWith("bb-box installed again"))) {
+    if (at >= restart.at && at < restart.at + 3 * 60_000) return true;
+  }
   return false;
 };
 let checked = 0;

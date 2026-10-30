@@ -306,7 +306,7 @@ test("each box has its own second in the minute, in the order of its ID's hash, 
   assert.equal(workersFor(60, 9_900), MOST_WORKERS);
 });
 
-test("G11: 30 boxes whose readings all take 9.9 s keep coverage at 99% by growing workers, and a box that does not answer is counted apart", async () => {
+test("G11: 30 boxes whose readings all take 9.9 s keep coverage at 99% by growing workers, and a box that does not answer is counted apart", async (t) => {
   const clock = new FakeClock(T0);
   const boxes = Array.from({ length: 30 }, (_, index) => new FakeBox(`bxcoverage${String(index).padStart(4, "0")}`, 2, T0));
   const silent = new FakeBox("bxsilentbox00001", 2, T0);
@@ -329,6 +329,7 @@ test("G11: 30 boxes whose readings all take 9.9 s keep coverage at 99% by growin
   history.stop();
   const tally = sumOf(store.tallies);
   assert.ok(tally.due >= 30 * 59, `${tally.due} readings were due`);
+  t.diagnostic(`coverage ${((tally.taken / tally.due) * 100).toFixed(2)}%: ${tally.taken} of ${tally.due}, ${tally.skipped} skipped, up to ${tally.workers} at once, ${tally.unanswered} not tried`);
   assert.ok(tally.taken / tally.due >= 0.99, `coverage ${(tally.taken / tally.due * 100).toFixed(2)}%: ${tally.taken} of ${tally.due}, ${tally.skipped} skipped`);
   assert.equal(tally.failed, 0);
   assert.ok(tally.workers >= 6 && tally.workers <= MOST_WORKERS, `up to ${tally.workers} at once`);
@@ -726,7 +727,7 @@ test("a box's history says why each gap is there: not made yet, starting, stoppe
   assert.equal(hourly.gaps.find((gap) => gap.from === T0 + 104 * MINUTE)?.kind, "no-reading", "a missing minute with nothing to say why is No reading");
 });
 
-test("the doctor says whether box history reads, and its coverage in the last hour", () => {
+test("the doctor says whether box history reads, and its coverage this hour and the last", () => {
   assert.match(historyStateWords({ ...MONITOR_DEFAULTS, enabled: false }, 0, 2, null), /^Off, as the Monitor is off/);
   assert.match(historyStateWords({ ...MONITOR_DEFAULTS, boxHistory: false }, 0, 2, null), /^Off: bb-box reads no box in the background/);
   assert.equal(

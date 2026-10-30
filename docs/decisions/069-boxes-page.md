@@ -945,6 +945,40 @@ On 30 October 2026, during unit 2:
   on the charts they hold the reading they had, as a screen reader
   otherwise says the changed summary again at each reading.
 
+## Decided during unit 3
+
+On 30 October 2026, during unit 3:
+
+- **Each box's second is spread, in the order of its ID's hash.** Seconds
+  taken straight from a hash clump: in a test of 30 boxes whose readings
+  take 9.9 s, several shared their seconds and coverage fell to 93%. So
+  the boxes are ordered by their IDs' hashes and read 60/n seconds
+  apart, planned once a minute; a box is read at most once a minute. The
+  same test then keeps 99% or more.
+- **A point covers its time.** Each point keeps when it starts and ends,
+  and is spread over the minutes, 10-minute steps and hours it overlaps,
+  by the seconds in each. So the reading after one missed, as in a quick
+  restart of bb-box, fills both minutes, and an hour's mean is weighted by
+  the seconds it covers.
+- **A capacity change starts a new baseline.** The reading that sees a
+  new capacity (cores or memory) makes no point, as the minute before it
+  was under the old one; the next is measured against the new.
+- **After 3 failed readings, the reach check is asked.** History pauses
+  the box and asks the reach check to check it once, so a box is marked
+  as not answering only when it does not answer. If it does answer, the
+  failures were not about reaching it, and history reads it again after
+  15 minutes rather than every few.
+- **Before box history existed is Not read.** The time before its file
+  was first made shows as "Not read", not "No reading".
+- **Its write-ahead log is truncated each minute.** After each minute's
+  pruning, `box-history.db` checkpoints and truncates its log, which
+  otherwise stays at its 4 MB limit.
+- **The tiles and processes stay.** While a box is read, Activity keeps
+  its tiles and its top processes on every range; only the chart changes.
+- **A slot's counters are not kept in the file.** A shared slot's own
+  processes' counters stay in memory, so after a restart of bb-box its
+  first reading is a new baseline.
+
 ## Decided during unit 5
 
 On 30 October 2026, during unit 5:

@@ -8,8 +8,19 @@ const base = process.env.LIVE_BASE ?? "http://127.0.0.1:7801";
 const boxes = JSON.parse(readFileSync(join(home, "run", "boxes.json"), "utf8")).filter((box) => box.role === "page").slice(0, 5);
 const note = (event) => appendFileSync(join(home, "run", "events.jsonl"), `${JSON.stringify({ at: Date.now(), event })}\n`);
 
+
+async function skipSetup(page, url) {
+  await page.goto(url);
+  const skip = page.getByText("Skip setup");
+  if (await skip.waitFor({ timeout: 8000 }).then(() => true, () => false)) {
+    await skip.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+await skipSetup(await context.newPage(), `${base}/plugins/bb-box/desktop`);
 for (const box of boxes) {
   const page = await context.newPage();
   await page.goto(`${base}/plugins/bb-box/desktop/box/${box.id}`);

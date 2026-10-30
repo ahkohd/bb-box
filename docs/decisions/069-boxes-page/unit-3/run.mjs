@@ -150,7 +150,7 @@ const steps = [
   { at: 480, name: "the Monitor off for 10 minutes", run: () => bbc("box", "option", "set", "monitor.enabled=false") },
   { at: 490, name: "the Monitor on again", run: () => bbc("box", "option", "set", "monitor.enabled=true") },
   { at: 500, name: "history off for 3 minutes", run: () => bbc("box", "option", "set", "monitor.boxHistory=false") },
-  { at: 503, name: "history on again", run: () => bbc("box", "option", "set", "monitor.boxHistory=true") },
+  { at: 503, name: "history on after 3 minutes", run: () => bbc("box", "option", "set", "monitor.boxHistory=true") },
   { at: 720, name: "bb-box restarted half way", run: () => bbc("plugin", "reload", "bb-box") },
   { at: 1440, name: "24 hours", run: async () => undefined },
 ];
