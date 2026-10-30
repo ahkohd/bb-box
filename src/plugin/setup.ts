@@ -19,7 +19,7 @@ import { ImageBakes } from "./bakes.ts";
 import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
-import { BoxError, Boxes, SPARES, forgetRefusal, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, forgetRefusal, ownedByThread, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
@@ -250,6 +250,7 @@ export interface BbBox {
   resolve(threadId: string, ref: string, signal?: AbortSignal): Promise<{ owner: string; box: BoxRecord; runsOn: boolean }>;
   /** The threads, not archived or deleted, that run on a box's BB machine. */
   threadsOn(box: BoxRecord): Promise<ThreadOnBox[]>;
+  holderOf(box: BoxRecord): Promise<ThreadOnBox | null>;
   /**
    * Refuses, naming them, while threads are working on a box's BB machine:
    * releasing or stopping it would end their work. Returns the idle threads
@@ -1595,6 +1596,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         .filter((thread) => !isSet(thread.archivedAt) && !isSet(thread.deletedAt))
         .map(threadOnBox)
         .sort((a, b) => Number(b.running) - Number(a.running) || (b.activeAt ?? 0) - (a.activeAt ?? 0));
+    },
+    async holderOf(box) {
+      if (!ownedByThread(box.threadId)) return null;
+      const thread = await bb.sdk.threads.get({ threadId: box.threadId }).catch(() => null);
+      return thread && !isSet(thread.archivedAt) && !isSet(thread.deletedAt) ? threadOnBox(thread) : null;
     },
     async checkInUse(box, action) {
       const threads = await api.threadsOn(box);

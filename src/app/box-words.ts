@@ -1,0 +1,260 @@
+import type { Actor, EndedBox, LastFailed, Observation } from "../core/box-log.ts";
+import type { BoxView } from "../plugin/views.ts";
+import type { Tone } from "./common.tsx";
+
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const JUST_NOW_MS = 45 * SECOND;
+
+export function span(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / SECOND));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days} d ${hours % 24} h` : `${days} d`;
+}
+
+export function ago(at: number, now: number): string {
+  return now - at < JUST_NOW_MS ? "just now" : `${span(now - at)} ago`;
+}
+
+export function clock(at: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at);
+}
+
+function sameDay(a: number, b: number): boolean {
+  return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+export function dayAndClock(at: number, now: number): string {
+  if (sameDay(at, now)) return `today at ${clock(at)}`;
+  if (sameDay(at, now - DAY)) return `yesterday at ${clock(at)}`;
+  return `${new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" }).format(at)} at ${clock(at)}`;
+}
+
+export function stepTime(ms: number): string {
+  if (ms < 100) return `${Math.round(ms)} ms`;
+  if (ms >= MINUTE) return span(ms);
+  return `${(ms / SECOND).toFixed(1)} s`;
+}
+
+export type ThreadTitles = Readonly<Record<string, string>>;
+
+export function actorWords(actor: Actor | null | undefined, titles: ThreadTitles): string | null {
+  if (!actor) return null;
+  switch (actor.is) {
+    case "person":
+      return "by you";
+    case "agent":
+      return `by the agent in ${titles[actor.threadId] ?? "its thread"}`;
+    case "command":
+      return "by a bb box command";
+    case "bb-box":
+      return `by bb-box: ${actor.why}`;
+    case "outside":
+      return "outside bb-box";
+    case "unknown":
+      return null;
+  }
+}
+
+export function hostOf(backendLabel: string): string | null {
+  const at = backendLabel.lastIndexOf(" on ");
+  return at > 0 ? backendLabel.slice(at + " on ".length) : null;
+}
+
+export function driverOf(backendLabel: string): string {
+  const at = backendLabel.lastIndexOf(" on ");
+  return at > 0 ? backendLabel.slice(0, at) : backendLabel;
+}
+
+export function notInSettings(box: Pick<BoxView, "reach">): boolean {
+  return box.reach?.is === "not-in-settings";
+}
+
+export function notAnswering(box: Pick<BoxView, "reach">): Extract<NonNullable<BoxView["reach"]>, { is: "not-answering" }> | null {
+  return box.reach?.is === "not-answering" ? box.reach : null;
+}
+
+export function unreachableWhy(box: Pick<BoxView, "name" | "reach">): string | null {
+  if (notInSettings(box)) return "Its backend is not in settings";
+  return notAnswering(box) ? `${box.name} does not answer` : null;
+}
+
+export function releaseUnfinished(box: Pick<BoxView, "state" | "log">): LastFailed | null {
+  const failed = box.log?.lastFailed;
+  return box.state === "releasing" && failed?.operation === "release" ? failed : null;
+}
+
+function upSince(box: Pick<BoxView, "log" | "readyAt" | "createdAt">): number {
+  return box.log?.lastStart?.readyAt ?? box.readyAt ?? box.createdAt;
+}
+
+export function startingAgain(box: Pick<BoxView, "log" | "state">): boolean {
+  const start = box.log?.lastStart;
+  return box.state === "starting" && !!start && !start.first && start.readyAt === null;
+}
+
+export function startingSince(box: Pick<BoxView, "log" | "state" | "createdAt">): number {
+  return startingAgain(box) ? box.log!.lastStart!.askedAt : box.createdAt;
+}
+
+export interface Headline {
+  readonly tone: Tone;
+  readonly words: string;
+  readonly detail: readonly string[];
+}
+
+function lastSeen(box: BoxView, at: number | null, now: number): string {
+  return `last seen ${box.state}${at !== null ? ` ${ago(at, now)}` : ""}`;
+}
+
+export function headline(box: BoxView, now: number, titles: ThreadTitles): Headline {
+  const unfinished = releaseUnfinished(box);
+  if (unfinished) return { tone: "bad", words: "Release did not finish", detail: [ago(unfinished.at, now)] };
+  if (box.reach?.is === "not-in-settings" && box.state !== "releasing") return { tone: "warn", words: "Not checked", detail: [lastSeen(box, box.reach.lastAnswered, now)] };
+  const silent = notAnswering(box);
+  if (silent) return { tone: "warn", words: "Not answering", detail: [silent.lastAnswered !== null ? lastSeen(box, silent.lastAnswered, now) : `since ${clock(silent.since)}`] };
+  switch (box.state) {
+    case "acquiring":
+    case "starting":
+      return { tone: "busy", words: "Starting", detail: [`for ${span(now - startingSince(box))}`] };
+    case "stopping":
+      return { tone: "busy", words: "Stopping…", detail: [] };
+    case "releasing":
+      return { tone: "busy", words: "Releasing…", detail: [] };
+    case "stopped": {
+      const stop = box.log?.lastStop;
+      if (!stop) return { tone: "off", words: "Stopped", detail: [] };
+      const by = actorWords(stop.by, titles);
+      return { tone: "off", words: "Stopped", detail: [[`${ago(stop.at, now)}, ${dayAndClock(stop.at, now)}`, by].filter(Boolean).join(", ")] };
+    }
+    case "failed": {
+      const failedAt = box.log?.lastStart?.failedAt ?? null;
+      return { tone: "bad", words: "Failed", detail: failedAt !== null ? [ago(failedAt, now)] : [] };
+    }
+    case "gone":
+      return { tone: "bad", words: "Gone", detail: ["deleted outside bb-box"] };
+    case "ready":
+      return { tone: "ok", words: "Ready", detail: [`up ${span(now - upSince(box))}`, ...(box.enrol.state === "failed" ? ["Could not join BB"] : [])] };
+  }
+}
+
+const OPERATION_TITLES: Readonly<Record<LastFailed["operation"], string>> = { stop: "Stop failed", start: "Start failed", resize: "Resize failed", release: "Release did not finish" };
+
+export function observedWords(observed: Observation | null): string {
+  if (!observed || observed.state === "unknown") return "bb-box could not confirm its state.";
+  const checked = `(checked ${clock(observed.at)})`;
+  switch (observed.state) {
+    case "running":
+      return `It is still running ${checked}.`;
+    case "stopped":
+      return `It is stopped ${checked}.`;
+    case "gone":
+      return `Its guest is gone ${checked}.`;
+  }
+}
+
+function partsWords(parts: readonly string[]): string {
+  if (!parts.length) return "Its size did not change.";
+  const list = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `Its ${list} changed before it failed.`;
+}
+
+function asSentence(words: string): string {
+  const trimmed = words.trim();
+  return !trimmed || /[.!?)]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+export interface FailedNotice {
+  readonly operation: LastFailed["operation"];
+  readonly title: string;
+  readonly words: string;
+  readonly then: string;
+}
+
+export function failedNotice(box: BoxView, now: number): FailedNotice | null {
+  const failed = box.log?.lastFailed;
+  if (!failed) return null;
+  if ((failed.operation === "release") !== (box.state === "releasing")) return null;
+  const then =
+    failed.operation === "release"
+      ? `The box may still run${hostOf(box.backendLabel) ? ` on ${hostOf(box.backendLabel)}` : ""}; bb-box keeps its record until a release is confirmed.`
+      : failed.operation === "resize"
+        ? partsWords(failed.parts)
+        : observedWords(failed.observed);
+  return { operation: failed.operation, title: `${OPERATION_TITLES[failed.operation]} ${ago(failed.at, now)}`, words: asSentence(failed.words ?? ""), then };
+}
+
+export function reachNotice(box: BoxView, now: number): { readonly title: string; readonly words: string } | null {
+  const silent = notAnswering(box);
+  if (!silent) return null;
+  const next = silent.checking ? "bb-box is checking it now." : silent.nextCheckAt !== null ? `bb-box checks again in ${span(Math.max(0, silent.nextCheckAt - now))}.` : "";
+  const where = silent.host ? ` on ${silent.host}` : "";
+  return {
+    title: `${box.name} does not answer`,
+    words: [silent.error, `Since ${clock(silent.since)}, bb-box cannot read, stop or start it${where}.`, next].filter(Boolean).join(" "),
+  };
+}
+
+export function settingsNotice(box: BoxView): string | null {
+  if (box.reach?.is !== "not-in-settings") return null;
+  const host = hostOf(box.backendLabel);
+  return `${box.reach.backend} was removed from bb-box's settings, so bb-box cannot check, stop or release ${box.name}, which may still be running${host ? ` on ${host}` : " there"}. Add the backend back to manage it, or forget it here.`;
+}
+
+export function endedWords(ended: EndedBox, now: number, titles: ThreadTitles): { readonly title: string; readonly words: string } {
+  const by = actorWords(ended.by, titles);
+  const when = `${ended.how === "released" ? "Released" : "Forgotten"} ${ago(ended.at, now)}, ${dayAndClock(ended.at, now)}${by ? `, ${by}` : ""}.`;
+  if (ended.how === "released") return { title: `${ended.name} was released`, words: `${when} bb-box remembers a released box for 24 hours.` };
+  const host = ended.backend ? hostOf(ended.backend) ?? ended.backend : null;
+  return { title: `${ended.name} was forgotten`, words: `bb-box removed its record. Its box was not deleted and may still run${host ? ` on ${host}` : ""}. ${when}` };
+}
+
+export const NOT_HERE_TITLE = "This box is not here";
+
+export const NOT_HERE_WORDS = "It may have been released more than 24 hours ago, or the link is wrong.";
+
+const STEP_NAMES: Readonly<Record<string, string>> = {
+  warm: "Took a warm box",
+  template: "Waited for the template",
+  clone: "Clone",
+  configure: "Configure",
+  tags: "Tags",
+  start: "Start",
+  boot: "Boot",
+  network: "Network",
+  ssh: "SSH",
+  enrol: "Join BB",
+  spare: "Claimed a spare",
+  spareResume: "Resumed it",
+  spareReconnect: "BB machine back",
+  spareSwitch: "Switched its device",
+  relabel: "Named it",
+  clock: "Set the clock",
+  image: "Its image",
+};
+
+export function stepName(step: string): string {
+  const bare = step.startsWith("start.") ? step.slice("start.".length) : step;
+  return STEP_NAMES[bare] ?? bare.charAt(0).toUpperCase() + bare.slice(1);
+}
+
+const NOT_ACQUIRE_STEPS: ReadonlySet<string> = new Set(["total", "enrol", "spareReconnect"]);
+
+export function acquireSteps(timings: Readonly<Record<string, number>>): [string, number][] {
+  return Object.entries(timings).filter(([step, ms]) => ms >= 0 && !NOT_ACQUIRE_STEPS.has(step) && !step.includes("."));
+}
+
+export function startSteps(timings: Readonly<Record<string, number>>): [string, number][] {
+  return Object.entries(timings).filter(([step]) => step.startsWith("start."));
+}
+
+export function joinedAfter(timings: Readonly<Record<string, number>>): number | null {
+  return timings.enrol ?? timings.spareReconnect ?? null;
+}

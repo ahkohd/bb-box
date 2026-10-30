@@ -13,6 +13,8 @@ import type { BoxAction } from "./box-menu.tsx";
 import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
+import { useBoxesNav } from "./box-nav.tsx";
+import { boxPage } from "./box-route.ts";
 import { IMAGE_REQUEST, NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
@@ -24,6 +26,7 @@ function isMoving(box: BoxView): boolean {
 export function BoxesPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
+  const nav = useBoxesNav();
   const { value: state, error, refresh } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   const [open, setOpen] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -135,7 +138,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
             {rows.map(({ box, held }) => (
-              <BoxRow key={box.id} box={box} threadId={threadId} open={open === box.id} onToggle={() => setOpen((current) => (current === box.id ? null : box.id))} act={act} now={now} held={held} />
+              <BoxRow key={box.id} box={box} threadId={threadId} open={open === box.id} onToggle={() => setOpen((current) => (current === box.id ? null : box.id))} act={act} now={now} held={held} onBoxesPage={() => nav.go(boxPage(box.id))} />
             ))}
           </div>
         </div>

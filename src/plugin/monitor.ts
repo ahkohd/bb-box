@@ -56,6 +56,10 @@ export interface LightSampler {
   reset(): void;
 }
 
+export function unreadableWords(name: string): string {
+  return `bb-box cannot read box ${name}: it is not a BB machine and runs no shell bb-box can read.`;
+}
+
 export class MonitorOffError extends Error {
   constructor() {
     super(MONITOR_OFF_WORDS);
@@ -201,7 +205,7 @@ export function createMonitor(bb: BbPluginApi, deps: MonitorDeps) {
       const box = boxes.find((candidate) => candidate.id === machineId.slice(BOX_MACHINE_PREFIX.length));
       if (!box || !box.ready) throw new Error("That box is not running.");
       const os = routeOs(box);
-      if (!os) throw new Error(`bb-box cannot read box ${box.name}: it is not a BB machine and runs no shell bb-box can read.`);
+      if (!os) throw new Error(unreadableWords(box.name));
       const snapshot = withInterval(await routeReader(box, os).sampler.sample(force));
       return box.slot ? asSlotReading(snapshot, { host: box.slot.host, encoder: await deps.encoderRoom(box.id) }) : snapshot;
     }

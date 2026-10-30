@@ -5896,3 +5896,73 @@ test("the reach check follows a box that stops answering with the Monitor off, a
   const checked = (await harness.behavior.callRpc("refresh", { threadId: THREAD, box: box.name })) as { box: { reach: { is: string } } };
   assert.equal(checked.box.reach.is, "answers", "Check now checks it at once");
 });
+
+test("the panel's Stop and Release ask first while the box's own thread is working, as while a thread works on its BB machine; an idle thread's box stops at once (069 G3)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  const own = world.threads.get(THREAD)!;
+  world.threads.set(THREAD, { ...own, title: "Fix the sign-in flow", status: "active" });
+  for (const method of ["stop", "release"] as const) {
+    const asked = (await harness.behavior.callRpc(method, { threadId: THREAD, box: box.name })) as { box: { state: string }; threads: unknown[] };
+    assert.equal(asked.box.state, "ready", method);
+    assert.deepEqual(asked.threads, [{ id: THREAD, title: "Fix the sign-in flow", running: true, ...(typeof own.updatedAt === "number" ? { activeAt: own.updatedAt } : {}) }], method);
+  }
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build the app", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const both = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { threads: { id: string }[] };
+  assert.deepEqual(both.threads.map((thread) => thread.id), [THREAD, "thr_worker"], "its own thread first, then the threads on its BB machine");
+  const forced = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name, force: true })) as { box: { state: string }; error: string | null };
+  assert.equal(forced.error, null);
+  assert.equal(forced.box.state, "stopped", "Stop it anyway stops it");
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+
+  world.onHost.set(box.enrol.hostId!, []);
+  world.threads.set(THREAD, { ...own, status: "idle" });
+  const idle = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: unknown[] };
+  assert.equal(idle.box.state, "stopped", "an idle thread's box stops at once");
+  assert.equal(idle.threads, undefined);
+});
+
+test("boxPage finds a box by its ID alone, with its thread, the threads on its BB machine and the Monitor's machine; a released box for 24 hours; a box whose release did not finish stays listed (069)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build the app", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const page = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { id: string; name: string }; threadId: string; owner: string; thread: { id: string; running: boolean }; threads: { id: string }[]; monitor: { machineId: string | null; why: string | null }; ended: unknown };
+  assert.equal(page.box.name, box.name);
+  assert.equal(page.threadId, THREAD);
+  assert.equal(page.owner, "thread");
+  assert.equal(page.thread.id, THREAD);
+  assert.equal(page.thread.running, false);
+  assert.deepEqual(page.threads.map((thread) => thread.id), ["thr_worker"]);
+  assert.ok(page.monitor.machineId !== null || page.monitor.why !== null, "the Monitor's machine, or why it cannot read it");
+  assert.equal(page.ended, null);
+
+  const nothing = (await harness.behavior.callRpc("boxPage", { box: "bxnosuchbox000" })) as { box: unknown; ended: unknown };
+  assert.equal(nothing.box, null);
+  assert.equal(nothing.ended, null);
+
+  world.backend!.faults.release = new Error("Proxmox refused: the container is locked by a backup.");
+  await harness.behavior.callRpc("release", { threadId: THREAD, box: box.id });
+  const unfinished = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { state: string; log: { lastFailed: { operation: string } | null } } };
+  assert.equal(unfinished.box.state, "releasing");
+  assert.equal(unfinished.box.log.lastFailed?.operation, "release");
+  const listed = (await harness.behavior.callRpc("allBoxes", null)) as { box: { id: string; state: string } }[];
+  assert.deepEqual(listed.map((entry) => [entry.box.id, entry.box.state]), [[box.id, "releasing"]], "the list shows it with its failure, not hidden");
+
+  delete world.backend!.faults.release;
+  await harness.behavior.callRpc("release", { threadId: THREAD, box: box.id });
+  const released = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: unknown; ended: { name: string; how: string; by: unknown } };
+  assert.equal(released.box, null);
+  assert.equal(released.ended.name, box.name);
+  assert.equal(released.ended.how, "released");
+  assert.deepEqual(released.ended.by, { is: "person" });
+
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const mine = (await harness.behavior.callRpc("boxPage", { box: machine.id })) as { owner: string; threadId: string; thread: unknown };
+  assert.equal(mine.owner, "yours");
+  assert.equal(mine.threadId, OPERATOR);
+  assert.equal(mine.thread, null);
+});

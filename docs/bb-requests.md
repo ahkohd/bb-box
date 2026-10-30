@@ -50,6 +50,7 @@ is a log: bb-box does not file these with BB.
 | [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
 | [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
 | [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each update of bb-box to new code keeps the old version's code in BB's server, about 5 MiB of heap and 4 MiB outside it, and each reload of the same code keeps the old instance, about 0.6 MiB |
+| [Leave a modified click on a panel's link to the browser](#37-leave-a-modified-click-on-a-panels-link-to-the-browser) | not met in 0.48.0 | each link on a box's page stops the click going further when Ctrl or Command is held, so the browser opens the new tab |
 
 ## 1. BB's host app on Windows
 
@@ -1417,6 +1418,29 @@ own, or in a `vm` context it drops with the old version.
 **Until then.** BB's server grows by one version of bb-box's code at each
 deploy, and by one instance at each reload, and a restart of BB's server
 frees them all.
+
+## 37. Leave a modified click on a panel's link to the browser
+
+**Status in BB 0.48.0: not met.**
+
+**What bb-box needs.** A link in a plugin's panel to a path of BB's app, such
+as a box's page or one of its views, opens in a new tab when clicked with
+Ctrl or Command held, or with the middle button, as any link does.
+
+**What BB does now.** On 30 October 2026, on a fresh BB 0.48.0 with no
+account, in headless Chromium: a Ctrl-click on such a link inside the
+panel's main pane had its default prevented before it reached the
+document, and BB routed to the link's path in the same tab, opening no new
+tab. The same link appended outside BB's app, under `body`, opened a new
+tab.
+
+**What we ask.** BB's handling of links in a panel routes in the app only
+a plain left click, and leaves a click with a modifier key or another
+button to the browser.
+
+**Until then.** The links on a box's page and the box's name in a view's bar
+stop the click going further when it has a modifier key or another button,
+so BB never sees it and the browser opens the new tab.
 
 ## Checked, no request needed
 

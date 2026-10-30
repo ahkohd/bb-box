@@ -3,6 +3,7 @@
 
 import type { BoxView } from "../plugin/views.ts";
 import { seconds, type Tone } from "./common.tsx";
+import { releaseUnfinished } from "./box-words.ts";
 
 export interface StatusItem {
   readonly text: string;
@@ -84,7 +85,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
     case "stopping":
       return { tone: "busy", items: [{ text: "Stopping…" }, ...alerts, ...size] };
     case "releasing":
-      return { tone: "busy", items: [{ text: "Releasing…" }] };
+      return releaseUnfinished(box) ? { tone: "bad", items: [{ text: "Release did not finish", tone: "danger" }] } : { tone: "busy", items: [{ text: "Releasing…" }] };
     case "stopped":
       return { tone: "off", items: [{ text: "Stopped" }, ...alerts, ...size] };
     case "failed":

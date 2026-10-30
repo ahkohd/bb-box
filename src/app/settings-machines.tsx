@@ -1,38 +1,28 @@
-import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { MachineEntry } from "../plugin/contract.ts";
-import { BoxBadges, deviceModelOf, hasViewer, IconButton, Meta, OPERATOR, StatusDot, systemName } from "./common.tsx";
-import { DESKTOP_PAGE, desktopSubPath } from "./desktop.tsx";
+import { BoxBadges, deviceModelOf, hasViewer, IconButton, Meta, StatusDot, systemName } from "./common.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { useResizeNote } from "./resize.tsx";
 import { ThreadChips } from "./thread-chips.tsx";
-import type { BoxOpens } from "./box-opens.tsx";
 import { BoxMenu } from "./box-menu.tsx";
+import { releaseUnfinished, unreachableWhy } from "./box-words.ts";
+import { useListOpens } from "./box-nav.tsx";
 
-/**
- * One of your machines as a row: name, OS and badges, state and threads, and its actions. In settings its desktop and
- * terminal open with a way back to settings; on the Boxes page, back to the page, and its menu offers a browser tab too.
- */
-export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from = "settings" }: { entry: MachineEntry; now: number; busy: string | null; onStop: () => void; onStart: () => void; onRemove: () => void; from?: "settings" | "boxes" }) {
+/** One of your machines as a row on the Boxes page: name, OS and badges, state and threads, and its actions. */
+export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, onForget }: { entry: MachineEntry; now: number; busy: string | null; onStop: () => void; onStart: () => void; onRemove: () => void; onForget: () => void }) {
   const { box, threads } = entry;
-  const navigate = useBbNavigate();
   const status = statusOf(box, now);
   const ready = box.state === "ready";
-  const back = from === "settings" ? "settings" : undefined;
-  const opens: BoxOpens = {
-    screen: (machine, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, machine.id, screen, back) }),
-    terminal: (machine) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, machine.id, "terminal", back) }),
-  };
+  const opens = useListOpens();
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
+  const stops = box.canStopStart && unreachableWhy(box) === null;
   const [resizing, setResizing] = useState(false);
   const resizeNote = useResizeNote(box, resizing);
   return (
-    // In settings' card, the first and last rows meet its own padding; on the Boxes page, in Automations' card, every row has the same
-    // padding above and below, as Automations' rows do (the operator, 8 October 2026).
-    <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", from === "settings" && "first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
+    <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", box.state === "releasing" && !releaseUnfinished(box) && "opacity-60")}>
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
         <BoxGlyph />
       </span>
@@ -62,9 +52,9 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
         {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => opens.screen(box, "desktop")} /> : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => opens.terminal(box)} /> : null}
-        {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
-        {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
-        <BoxMenu box={box} of={{ owner: "yours", inBrowser: from === "boxes", stop: onStop, start: onStart, remove: onRemove }} opens={opens} resizing={resizing} onResizing={setResizing} />
+        {stops && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
+        {stops && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
+        <BoxMenu box={box} of={{ owner: "yours", inBrowser: true, stop: onStop, start: onStart, remove: onRemove, forget: onForget }} opens={opens} resizing={resizing} onResizing={setResizing} />
       </span>
     </div>
   );

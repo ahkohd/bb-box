@@ -15,6 +15,7 @@ import { BoxGlyph } from "./glyphs.tsx";
 import { openActions, openableNow, type BoxOpens } from "./box-opens.tsx";
 import { useResizeNote } from "./resize.tsx";
 import { BoxMenu, type BoxAction } from "./box-menu.tsx";
+import { releaseUnfinished, unreachableWhy } from "./box-words.ts";
 
 /** The viewer IDs this browser tab holds, one per box, as the desktop tabs keep them. */
 export function myViewers(): Set<string> {
@@ -63,6 +64,7 @@ export function BoxRow({
   meta = [],
   extra = null,
   threading: offersThread = true,
+  onBoxesPage,
 }: {
   box: BoxView;
   threadId: string;
@@ -80,6 +82,7 @@ export function BoxRow({
   extra?: ReactNode;
   /** "New thread on this box…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
   threading?: boolean;
+  onBoxesPage?: () => void;
 }) {
   const navigate = useBbNavigate();
   const openInPanel = useOpenScreen(threadId);
@@ -101,16 +104,17 @@ export function BoxRow({
   const ready = box.state === "ready";
   const showsError = box.error !== null;
   const compact = useIsCompactViewport();
+  const stops = !held && box.canStopStart && unreachableWhy(box) === null;
   const quickActions = [
     ...openableNow(openActions(box, { screen: openScreen, terminal: openTerminal })).map((action) => <IconButton key={action.key} label={action.words} icon={action.glyph()} onClick={action.open} />),
-    ...(!held && box.canStopStart && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
-    ...(!held && box.canStopStart && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
+    ...(stops && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
+    ...(stops && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
   ];
 
   return (
     <div
       data-resource-row
-      className={cn("group grid min-w-0 cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", box.state === "releasing" && "opacity-60")}
+      className={cn("group grid min-w-0 cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", box.state === "releasing" && !releaseUnfinished(box) && "opacity-60")}
       onClick={(event) => {
         if (!onControl(event)) onToggle();
       }}
@@ -189,7 +193,7 @@ export function BoxRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
-        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method) => void run(method) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} />
+        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method) => void run(method) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
       </span>
     </div>
   );

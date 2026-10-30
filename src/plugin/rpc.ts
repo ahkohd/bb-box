@@ -10,7 +10,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
-import { contract, type BoxResult, type ResizeResult, type ThreadOnBox } from "./contract.ts";
+import { contract, type BoxPageState, type BoxResult, type DeviceBoot, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
 import { sizeView } from "./views.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
@@ -19,7 +19,7 @@ import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
-import { monitorRpcHandlers } from "./monitor.ts";
+import { MONITOR_OFF_WORDS, monitorRpcHandlers, unreadableWords } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
@@ -56,8 +56,26 @@ async function heapSnapshot(bb: BbPluginApi): Promise<string> {
   return `kept at ${file}, written in ${Math.round(performance.now() - began)} ms`;
 }
 
+const NOT_HERE: BoxPageState = { box: null, threadId: null, owner: null, thread: null, threads: [], monitor: { machineId: null, why: null }, deviceFailed: null, ended: null };
+
+function listed(box: BoxRecord): boolean {
+  return ownedByThread(box.threadId) || box.threadId === OPERATOR;
+}
+
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
+
+  const monitorReach = async (box: BoxRecord): Promise<MonitorReach> => {
+    if (!app.monitor.config().enabled) return { machineId: null, why: MONITOR_OFF_WORDS };
+    if (box.state !== "ready") return { machineId: null, why: `${box.name} is not running.` };
+    const machine = (await app.monitor.machines().catch(() => [])).find((each) => each.boxId === box.id);
+    return machine ? { machineId: machine.id, why: null } : { machineId: null, why: unreadableWords(box.name) };
+  };
+
+  const deviceFailed = (box: BoxRecord): DeviceBoot | null => {
+    const view = app.devices.view(box.id);
+    return view.is === "connected" && view.state.power.is === "failed" ? { model: view.state.model, words: view.state.power.error.words } : null;
+  };
   const change = async (action: string, task: () => Promise<BoxRecord | null>): Promise<BoxResult> => {
     try {
       const box = await task();
@@ -67,12 +85,18 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     }
   };
 
+  const workingOn = async (box: BoxRecord): Promise<ThreadOnBox[]> => {
+    const [holder, onMachine] = await Promise.all([app.holderOf(box), app.threadsOn(box)]);
+    const working = onMachine.filter((thread) => thread.running && thread.id !== holder?.id);
+    return holder?.running ? [holder, ...working] : working;
+  };
+
   /** Leaves a box a thread runs on alone unless forced, and names the threads, so the panel can ask. */
   const guarded = async (threadId: string, ref: string, force: boolean | undefined, task: () => Promise<BoxResult>): Promise<BoxResult> => {
     if (!force) {
       try {
         const box = await boxes.get(threadId, ref);
-        const threads = (await app.threadsOn(box)).filter((thread) => thread.running);
+        const threads = await workingOn(box);
         if (threads.length) return { box: app.view(box), error: null, threads };
       } catch (error) {
         return { box: null, error: describeError(error, "Checking the box") };
@@ -232,12 +256,19 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async allBoxes() {
       const all = await boxes.all();
       return all
-        .filter((box) => box.state !== "releasing" && (ownedByThread(box.threadId) || box.threadId === OPERATOR))
+        .filter((box) => listed(box))
         .sort((a, b) => a.createdAt - b.createdAt)
         .map((box) => ({ threadId: box.threadId, box: app.view(box), owner: box.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) }));
     },
+    async boxPage({ box: boxId }): Promise<BoxPageState> {
+      const found = await boxes.find(boxId);
+      if (!found || !listed(found)) return { ...NOT_HERE, ended: app.boxLog.ended(boxId) };
+      const yours = found.threadId === OPERATOR;
+      const [thread, threads, monitor] = await Promise.all([app.holderOf(found), app.threadsOn(found).catch(() => []), monitorReach(found)]);
+      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null };
+    },
     async "machines.list"() {
-      const records = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);
+      const records = (await boxes.list(OPERATOR)).sort((a, b) => a.createdAt - b.createdAt);
       const [machines, kinds, desktopOnDemand, access] = await Promise.all([
         Promise.all(records.map(async (box) => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
         app.kinds(),

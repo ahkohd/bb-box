@@ -3,7 +3,8 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { BoxEntry, Contract, Machine } from "../../plugin/contract.ts";
 import { useLive } from "../common.tsx";
 import { openActions, type OpenAction } from "../box-opens.tsx";
-import { DESKTOP_PAGE, MACHINES_TAB, opensOnBoxesPage, THREADS_TAB } from "../desktop.tsx";
+import { opensFrom, useBoxesNav } from "../box-nav.tsx";
+import { boxPage } from "../box-route.ts";
 
 export interface BoxScreens {
   readonly boxId: string;
@@ -21,14 +22,14 @@ export type ScreensOf = (machine: Machine | undefined) => BoxScreens | null;
 export function useScreensOf(): ScreensOf {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
+  const nav = useBoxesNav();
   const { value: entries } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
   const entryOf = useMemo(() => new Map((entries ?? []).map((entry) => [entry.box.id, entry])), [entries]);
   return useCallback(
     (machine) => {
       const entry = machine?.boxId ? entryOf.get(machine.boxId) : undefined;
       if (!entry) return null;
-      const actions = openActions(entry.box, opensOnBoxesPage(navigate, entry.threadId));
-      if (!actions.length) return null;
+      const actions = openActions(entry.box, opensFrom(nav, []));
       const kept = entry.owner === "yours";
       return {
         boxId: entry.box.id,
@@ -38,10 +39,10 @@ export function useScreensOf(): ScreensOf {
         holderThreadId: kept ? null : entry.threadId,
         hostId: entry.box.enrol.hostId,
         openThread: (threadId) => navigate.toThread(threadId),
-        openOnBoxesPage: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: kept ? MACHINES_TAB : THREADS_TAB }),
+        openOnBoxesPage: () => nav.go(boxPage(entry.box.id)),
       };
     },
-    [entryOf, navigate],
+    [entryOf, navigate, nav],
   );
 }
 

@@ -406,3 +406,253 @@ second; box history does not exist until unit 3.
   released or forgotten box's points go with its log, 24 hours after.
 - A desktop viewer that cannot open its route does not yet report to the
   reach check; commands, terminals and the Monitor's readings do.
+
+## Unit 1c: the box's page
+
+Built on 30 October 2026, on main `e2d05767`. Every box, and every
+machine of your own, has a page of its own on the Boxes page, without
+Activity, which unit 2 adds. Rows still unfold: unit 1d makes a row's click
+open the page.
+
+### What it adds
+
+- **Paths.** The Boxes page reads its path with `routeOf` in
+  `src/app/box-route.ts`:
+
+  | Path under `/plugins/bb-box/desktop/` | Shows |
+  | --- | --- |
+  | (none), `threads`, `machines` | The list, as before |
+  | `box/<boxId>` | The box's page |
+  | `box/<boxId>/desktop`, `/device`, `/terminal` | A view of the box |
+  | The same, ending in `from-list`, `from-box` or `from-settings`, innermost first, at most two | Where it was opened from |
+  | `<threadId>/<boxId>[/device\|/terminal][/from-settings]` | As before |
+
+  A path that is none of these opens the list.
+- **Where each entry was opened from.** BB's plugin SDK 0.6.15 gives
+  `toPluginPanel(path, { subPath, replace })` and no state, as 069 said,
+  so the origin is in the path (G8). The list's quick icons and menu items
+  open views with `from-list`; the page's view buttons add `from-box`
+  before the page's own origin; the Monitor's views and Page, the Box
+  panel's item and a link carry none.
+- **The way back.** `useBoxesNav` in `src/app/box-nav.tsx` keeps, in
+  memory, the last move the panel made. When the way back leads to the
+  entry that move came from, it goes back in history; otherwise it
+  replaces the entry with the origin the path names. With no origin, a
+  view goes back to the box's page and the page to the list.
+  `from-settings` goes back to BB Box settings. A view's back arrow says
+  where: "Back to boxes", "Back to happy-beacon" or "Back to BB Box
+  settings". The box's name in a view's bar is a link to its page.
+- **`boxPage`**, a new RPC: one box by ID, for any owner, with its view,
+  its thread and whether it works (`holderOf`, new in `setup.ts`), the
+  threads on its BB machine, its Monitor machine or why the Monitor cannot
+  read it, a device that did not boot, and, for a box released or
+  forgotten in the last 24 hours, `app.boxLog.ended`. The `changed`
+  signal for its thread, or `operator`, refreshes it.
+- **The page**, `src/app/box-page.tsx`, with its words in
+  `src/app/box-words.ts`, in 069's order: the trail; the header, with the
+  name focused on opening, the state in words, the ID and Copy link, which
+  copy with a click, and the thread with whether it works now, or "One of
+  your machines…"; the views as links, so Ctrl-click or Command-click opens
+  a new tab; Start or Stop; the menu; the notices; Starting while it starts;
+  the eight facts; the other threads on it; and how it started, with the
+  last start from the box log. Nothing slides or fades.
+- **Every state and notice of section 7 but busy**: ready, starting the
+  first time and again, stopping, stopped with when and by whom, stopped
+  without being asked, a stop, start or resize that failed with what
+  bb-box then observed, a release that did not finish, a backend not in
+  settings, a box that does not answer with when bb-box checks again, a
+  device that did not boot, a failed join, failed, releasing, gone,
+  released, forgotten, and a link to a box that is not here. Words leave
+  out a time or an actor the box log does not have.
+- **The menu on the page** (`BoxMenu`'s `place="page"`): Copy address, New
+  thread on this box…, Resize…, Check now, then Release…, Release again…,
+  Remove… or Forget…. A machine of yours gets Check now there.
+- **A box whose release did not finish** is listed again, by `allBoxes`
+  and `machines.list`, with "Release did not finish" on its row and
+  Release again… in its menu, never a spinner. A box being released is
+  listed too, dimmed, until its release ends.
+- **G20.** With its backend not in settings or the box not answering,
+  Stop, Start, Resize… and New thread on this box are disabled with the
+  reason, on the page and in the rows' menus, and a row has no quick Stop
+  or Start.
+- **G3.** The panel's `stop` and `release` RPCs ask first when the box's
+  own thread is working, as well as when a thread works on its BB machine,
+  its own thread first. The question names them: "Fix the sign-in flow is
+  working on calm-otter." The agent's tools and `bb box` are unchanged. A
+  machine of your own keeps today's guard.
+- **Entries.** "Page" is the first item of the Monitor's Open menu, which
+  now shows for a box with no view too; "N more on the Boxes page" opens
+  the box's page; the Box panel's menu has "Open on the Boxes page".
+- `MachineRow`'s settings mode is gone (the lead's answer: settings names
+  no machine since 067, and gets no new entry).
+- The guide's Box panel and Boxes page chapter has a section on the page.
+  `docs/bb-requests.md` has request 37 (below).
+
+Files: new `src/app/box-route.ts`, `box-nav.tsx`, `box-words.ts` and
+`box-page.tsx`; changed `box-menu.tsx`, `box-actions.tsx`, `box-row.tsx`,
+`settings-machines.tsx`, `desktop.tsx`, `terminal.tsx`, `panel.tsx`,
+`status.ts`, `monitor/box-screens.tsx`, `monitor/status.tsx`, and
+`src/plugin/contract.ts`, `rpc.ts`, `setup.ts` and `monitor.ts`.
+
+### Checked
+
+On a Linux box, 8 cores, on the commit delivered: `tsc` clean; the node
+suite 2,874 tests, 2,586 passed, 288 skipped, 0 failed, the docs and site
+tests among them; vitest 332 tests passed in 4 files;
+`scripts/reference.ts --check` passes. New tests:
+
+- `test/box-route.test.ts`: every path of section 1 and the old ones read
+  and written back, a wrong path opens the list, the way back for each
+  origin, and the words of section 7 and 11 with a set clock.
+- `test/plugin.test.ts`: G3 through the panel's RPCs, with the box's own
+  thread working, then also a thread on its BB machine, then forced, then
+  idle; `boxPage` for a box, a box whose release failed (listed by
+  `allBoxes`), a released box, an unknown ID and a machine.
+- `test/app.test.tsx`: the page's header, links, menu, facts, threads and
+  how it started; the way back going back in history only after the
+  panel's own move; G3 from the page; G20 on the page and a row's menu,
+  with Forget…; a release that did not finish on the page and its row; a
+  link to a box that is not here; a machine's page; the Starting card; a
+  device that did not boot, a failed join, a gone box and a failed one.
+  `test/monitor-app.test.tsx`: Page first, the views' new paths, and "N
+  more" opening the box's page.
+
+### Live check on a separate BB
+
+A Linux box with Docker 29.1.3, 8 cores, 16 GiB, ran a fresh `npx bb-app`
+0.48.0 with no account, its own data folder and ports, started with
+`env -i`, `HOME` and `PATH` only. bb-box was installed from this branch
+with `bb plugin install path:`, and Docker on the box set up with
+`bb box setup docker`; its Linux image built in 4 minutes. So that boxes
+join BB without an account, BB listened on all addresses, closed to the
+network outside the box by its firewall, with Machine access set to
+Manual at the box's own address: every box joined BB. A shim first on BB's
+`PATH`, [`docker-shim.sh`](069-boxes-page/unit-1c/docker-shim.sh), logs
+every Docker call and on a flag fails one start, one stop or one removal.
+The agent is unit 1b's custom ACP agent, which calls BB's box tools as a
+prompt names them. The boxes, made through bb-box:
+
+- for the thread, by the agent's `box_acquire`: happy-beacon (the page's
+  box), calm-cedar (cut off), and in each run two more, one released from
+  its page and one whose start fails and which is then forgotten;
+- a machine of your own, by `bb box machines add`: workbench.
+
+[`live-check.mjs`](069-boxes-page/unit-1c/live-check.mjs), with
+[`live-lib.mjs`](069-boxes-page/unit-1c/live-lib.mjs) and
+[`runs.sh`](069-boxes-page/unit-1c/runs.sh), drives headless Chromium at
+1440 by 1000 and checks each result through the page and bb-box's own
+state. Three runs in a row on the commit delivered each passed 31 of 31
+checks: [run 1](069-boxes-page/unit-1c/run-1.md),
+[run 2](069-boxes-page/unit-1c/run-2.md),
+[run 3](069-boxes-page/unit-1c/run-3.md).
+
+| Check | Result, each run |
+| --- | --- |
+| A link | the page, with focus on its name |
+| The Box panel's Open on the Boxes page | the page; its menu: Open terminal, Open on the Boxes page, Copy address, New thread on this box…, Stop, Resize…, Check now, Release… |
+| The Monitor's Open menu | Page, Open terminal, then the thread; Page opens the page |
+| The box's name in a view's bar | the page, keeping the view's origin: `box/<id>/from-list` |
+| An old path, `<thread>/<box>/terminal` | its back arrow, "Back to happy-beacon", replaces it with the page |
+| An old path with `from-settings` | its back arrow is a link to BB Box settings |
+| Reload | the page again, its name focused |
+| Page, Terminal, browser Back, Forward, then the view's back arrow | Back, Forward and the arrow agree, and nothing is pushed twice: the history's length stays |
+| A reload on the view, then its back arrow | replaced with the page; Back then goes to the entry before the view |
+| Ctrl-click on Terminal | a new tab at `box/<id>/terminal/from-box`, whose back arrow replaces it with the page |
+| Keyboard only | Tab from the name: Box ID, Copy link, the thread, Terminal, Stop, the menu, then the facts; Shift-Tab reaches the trail; Enter on Terminal opens it; in the terminal, 12 presses of Shift-Tab stay in the shell (an open question below); the browser's Back returns to the page with focus on its name |
+| Stop, Start and Release from the page | stopped "just now, today at 12:41 AM, by you", started, "Last started … by you: ready in 0.3 s"; released, "Released just now, … by you", also after a reload and after `bb plugin reload bb-box` |
+| A start that fails | "Start failed just now", Docker's words, "It is stopped (checked 12:41 AM)."; Start again starts it |
+| A host cut off, by `docker pause` | "Not answering", "calm-cedar does not answer … bb-box checks again in 59 s"; Check now after `docker unpause`: Ready |
+| A backend removed from settings, with bb-box off, from its stored configuration | "Not checked · last seen ready", the notice with Open BB Box settings and Forget…; Forget…: "… was forgotten: bb-box removed its record. Its box was not deleted and may still run on keen-oriole", its container still running; the same after a reload and after `bb plugin reload bb-box`; the configuration then put back |
+
+| Gate | Result | What each run did |
+| --- | --- | --- |
+| G3 | 3 of 3 | With the agent in `box_run` on happy-beacon, Stop from its row, its row's menu, its page and a failed stop's Stop again each asked "Stop happy-beacon anyway?", "CALL box_list is working on happy-beacon.", with the thread's chip; Cancel left it ready; Stop anyway stopped it. With the thread idle, Stop stopped it at once. workbench, with no thread on it, stopped at once |
+| G6, words | 3 of 3 | A stop Docker refused: "Stop failed just now", Docker's words, "It is still running (checked 12:41 AM)."; a start Docker refused: "It is stopped (checked …)."; never "still stopped" without an observation |
+| G8 | 3 of 3 | A row's quick Terminal and back: the list, by going back in history; after visiting another box's page, a quick icon and back: the list; settings, workbench's page with `from-settings`, Terminal and back: the page, then settings, also after a reload on the view; a page opened by URL, then Boxes, then browser Back: not the page; a row's quick Terminal, a reload, then back: the list |
+| G20 | 3 of 3 | calm-cedar, not answering: Stop disabled with "calm-cedar does not answer", and in the page's menu New thread on this box… and Resize…, in its row's menu Stop and Resize…, each disabled with that reason, and no quick Stop. A box whose backend was removed: Stop disabled with "Its backend is not in settings", New thread on this box…, Resize… and the row's Stop disabled with it, Runs on saying "Backend not in settings", and Forget… last |
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark, from the live BB: the
+[ready page](069-boxes-page/unit-1c/ready-1440-light.png)
+([dark](069-boxes-page/unit-1c/ready-1440-dark.png),
+[760](069-boxes-page/unit-1c/ready-760-light.png),
+[760 dark](069-boxes-page/unit-1c/ready-760-dark.png),
+[390](069-boxes-page/unit-1c/ready-390-light.png),
+[390 dark](069-boxes-page/unit-1c/ready-390-dark.png)),
+[stopped](069-boxes-page/unit-1c/stopped-1440-light.png)
+([390 dark](069-boxes-page/unit-1c/stopped-390-dark.png)), [a stop that
+failed](069-boxes-page/unit-1c/stop-failed-1440-dark.png), [the G3
+question](069-boxes-page/unit-1c/in-use-1440-light.png), [a start that
+failed](069-boxes-page/unit-1c/start-failed-760-light.png), [a release that
+did not finish](069-boxes-page/unit-1c/release-unfinished-760-dark.png),
+[released](069-boxes-page/unit-1c/released-1440-light.png) ([390
+dark](069-boxes-page/unit-1c/released-390-dark.png)), [not
+answering](069-boxes-page/unit-1c/not-answering-1440-dark.png), [a backend
+not in settings](069-boxes-page/unit-1c/not-in-settings-1440-light.png)
+([390 dark](069-boxes-page/unit-1c/not-in-settings-390-dark.png)),
+[forgotten](069-boxes-page/unit-1c/forgotten-760-light.png), [a machine
+from settings](069-boxes-page/unit-1c/machine-1440-dark.png), and [a view's
+bar](069-boxes-page/unit-1c/view-bar-1440-light.png) ([390
+dark](069-boxes-page/unit-1c/view-bar-390-dark.png)). A fourth run took
+them, with its screenshots on (its two G3 checks failed there, as resizing
+the window for a screenshot closes the open dialog);
+[`shots-stopped.mjs`](069-boxes-page/unit-1c/shots-stopped.mjs) took the
+stopped page's.
+
+### Not checked live, and why
+
+- A device box's page and views, and a device that did not boot: they need
+  a Mac or a Linux host with KVM. The page's tests cover them, and its
+  Simulator link.
+- The Starting card: a Docker box starts in under a second. Its test
+  covers the first start and a start again.
+- A failed join, and a gone box: here every box joined, and none was
+  deleted outside bb-box. Their tests cover them.
+- Focus back on the row after a view's way back, which is unit 1d's G9:
+  here it goes back to the list, where 1d keeps the row.
+
+### Deviations from 069
+
+- No settings entry: settings names no machine since 067, and the lead
+  chose to add none. `from-settings` works on every path, new and old,
+  and G8's settings case ran from such a link opened from the settings
+  page. `MachineRow`'s settings mode went.
+- The way back to settings is a link, so it pushes BB Box settings rather
+  than replacing the entry: BB offers no replace for its own app paths.
+- "Its host does not answer" names the box, as "calm-cedar does not
+  answer", with its host in the words, as the reach check tests the box
+  itself and cannot tell a host that does not answer from a box that does
+  not.
+- Every box being released is listed, dimmed, not only one whose release
+  failed.
+- A view by box ID waits for `boxPage` to learn the box's thread.
+- The Terminal button shows, disabled, whenever a box is not ready, as a
+  stopped box's view does not say whether it has a terminal.
+- A shared slot's Size is "A share of mac-1", without the Mac's cores and
+  memory, which the box's view does not have. The Address's tailnet name
+  waits for unit 2's readings.
+- Open in browser still opens the old path, which keeps working.
+- The page's links stop a click with Ctrl, Command, Shift or Alt held, or
+  another button, going further: BB 0.48.0 routes every link to an app
+  path in its panel in the same tab, so the browser could not open the
+  new tab (request 37 in `docs/bb-requests.md`).
+
+### Open questions
+
+- From a terminal view, Tab and Shift-Tab go to the shell, as xterm keeps
+  them, so the back arrow cannot be reached from the keyboard there; the
+  browser's Back works. This predates the page (035). Should a terminal
+  give a key to leave it, for keyboard-only use?
+- A failed stop, start or resize stays on the page until that operation
+  next succeeds, however old. Should it go after a time, or after any
+  later start or stop?
+
+### Follow-ups
+
+- Unit 1d: a row's click, name and chevron open the page, with
+  `from-list`, and focus returns to the row.
+- Unit 2: Activity can read `boxPage`'s `monitor`; an offline BB machine
+  gets the words "is not a BB machine" there now.
+- A view whose box's backend is not in settings, or which does not answer,
+  still tries to connect; it could say why first, as the page does.
