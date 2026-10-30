@@ -404,7 +404,7 @@ IDs and calls across threads.
 | Box | Owner of its snapshots | Take | See | Restore | Fork | Delete | Keep |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | A thread's box that the thread does not run on | the thread | its agent; the person | its agent; the person | its agent, without asking, with an undo; the person | its agent, into its thread; the person | its agent, only what an agent of its thread took and nobody kept; the person | the person |
-| The box a thread runs on: its own new box (033), another thread's box, or one of the person's machines (036) | the box's thread, or the person | that thread's agent | that agent, only what it took there | the person, on the box's page; or through a form the agent opens, on a yes given in the thread (section 5) | the person | that agent, only what it took there and nobody kept; the person | the person |
+| The box a thread runs on: its own new box (033), another thread's box, or one of the person's machines (036) | the box's thread, or the person | that thread's agent | that agent, only what it took there | the person, from the box's page; or its agent through a form in the thread, on a yes given in the thread; always with an undo; both off until G17 passes (section 5) | the person | that agent, only what it took there and nobody kept; the person | the person |
 | A kept snapshot | the person, from the moment it is kept | | the person; the thread's agent while its box lives, without its picture | the person | the person, as a machine of theirs | the person | the person |
 
 - No thread sees another thread's snapshots in anything an agent can
@@ -425,7 +425,7 @@ IDs and calls across threads.
 | --- | --- | --- | --- |
 | `box_snapshot` | `box`, `name`, `note`, `memory` (default false) | takes one; on a Tart macOS box, where every snapshot holds memory, refuses `memory` false and says to pass true | its name and ID, what it holds and leaves out, its size where known, how long it took, its price if any, and "3 of 5 for this box" |
 | `box_snapshots` | `box` (optional), `pictures` (default false) | lists a box's, or every box's of the thread, that the thread may see | per box, what its snapshots hold or that it has none; per snapshot: name, ID, when, by, holds, size, price, kept, which guest; pictures as images only when asked |
-| `box_restore` | `box`, `snapshot`, `replace` (must be true), `request` (an ID the agent makes, so a repeat is the same restore) | restores the box, as section 5 says. An undo is always taken: there is no way for an agent to restore without one | what it replaced, the undo's name, whether processes ended, size changes, and the box's state. On the box its thread runs on: the waiting notice of the form |
+| `box_restore` | `box`, `snapshot`, `replace` (must be true), `request` (an ID the agent makes, so a repeat is the same restore) | restores the box, as section 5 says. An undo is always taken: there is no way for an agent to restore without one | what it replaced, the undo's name, whether processes ended, size changes, and the box's state. On a box threads run on: the waiting notice of the form |
 | `box_fork` | `snapshot` or `box` (the box now), `name` | a new box of the thread from a snapshot, or from the box now, for which it takes a snapshot first, named "for a fork" | the new box, as `box_acquire` answers, and "forked from amber-fox at 10:42" |
 | `box_snapshot_delete` | `box`, `snapshot` | deletes one the thread may delete | what it freed, where known |
 
@@ -438,9 +438,10 @@ The skill tells the agent: take one before a change it cannot undo, such
 as a migration, an upgrade, a deletion or a change to the system; take one
 when the person asks; never on a schedule of its own; restore when an
 attempt went wrong rather than undoing by hand; delete its own when they
-are no longer needed; on the box it runs on, ask through the form and end
-its turn; and never answer one of bb-box's forms, with `bb thread
-interactions` or any other way.
+are no longer needed; on a box threads run on, the box it runs on or one
+of the person's machines, ask through the form and end its turn; and
+never answer one of bb-box's forms, with `bb thread interactions` or any
+other way.
 
 #### The CLI
 
@@ -507,25 +508,33 @@ repair.
   taken; if it cannot be, the restore is refused. When Settings turns
   "Agents may restore their own boxes" off, the agent asks through the
   form below instead.
-- **The box a thread runs on, by any agent**: never by the agent itself.
-  Its own worktree and session are on that disk. The tool opens a form in
-  the thread with `bb.ui.requestInput` and answers at once: "I asked you to
-  restore dev-desk to 'before the upgrade'. End your turn now: nothing you
-  do on dev-desk after this survives the restore." This is also the only
-  way an agent asks for a restore of one of the person's machines: as the
-  owner asked, never without a yes in the thread. Such a box is an
-  execution machine, so this ships off with them (below), until G17
-  passes.
+- **A box threads run on, an execution machine** (the box an agent's
+  thread runs on, another thread's box it runs on, or one of the person's
+  machines), as the owner decided on 30 October 2026, two ways:
+  - **the person, from the box's page**;
+  - **an agent, through the form**: never by itself, as its own worktree
+    and session are on that disk. `box_restore` opens a form in the thread
+    with `bb.ui.requestInput` and answers at once: "I asked you to restore
+    dev-desk to 'before the upgrade'. End your turn now: nothing you do on
+    dev-desk after this survives the restore." The restore runs on a yes
+    given in the thread, and is recorded as that.
+
+  Either way **an undo is always taken**: the dialog's undo cannot be
+  unticked, and if no undo can be taken the restore is refused. Both ship
+  off until G17 passes (below).
 - **The person**, from a box's page or the Snapshots tab, through the
   restore dialog.
 
-**What the form is, and is not.** The form is answered in BB's app, and
-also by BB's command line, which the asking agent can run. bb-box cannot
-tell which (request 38). So the form, its result and the box log say "a
-yes given in the thread", never "your yes"; the skill tells agents never
-to answer bb-box's forms; and G11 runs `bb thread interactions respond
---self` from the asking agent and records what bb-box logs. Whether that is
-enough for the person's machines is open question 4.
+**The form, and what it is not.** The form serves two cases: an agent's
+restore of an execution machine, and of a box of its own when Settings
+turns "Agents may restore their own boxes" off. It is answered in BB's
+app, and also by BB's command line, which the asking agent can run;
+bb-box cannot tell which (request 38). So the form, its result and the box
+log say "a yes given in the thread", never "your yes"; the skill tells
+agents never to answer bb-box's forms; and G11 runs `bb thread
+interactions respond --self` from the asking agent and records what bb-box
+logs. When request 38 is met, the record names who answered: the person in
+the app, or the command line and its thread.
 
 **What a yes in the form does.** The approval is bound to the plan it
 showed: the box, the snapshot, the box's guest generation and the list of
@@ -534,15 +543,16 @@ under the tool call, whose signal a stop of the thread aborts. If the plan
 has changed by the time it runs (another thread, a terminal, a new
 snapshot target), it restores nothing and opens the form again with the
 new list. The tool's result reaches the asking thread as a message, which
-starts a turn on the restored box, whose session files went back too: the
-form says so. A timeout, a stop of the thread or a restart of BB's server
-cancels the form and nothing happens.
+on an execution machine starts a turn on the restored box, whose session
+files went back too: the form says so. A timeout, a stop of the thread or
+a restart of BB's server cancels the form and nothing happens.
 
 **Holding turns on the box (admission).** A restore of a box threads run
 on, an execution machine, is a restore of their working disk, so no turn
-may start on it while it runs. From the yes until the box is ready again,
+may start on it while it runs. So
 bb-box holds every turn for a thread on the box with the SDK's
-`message.dispatch` hook. Two things can let a turn through:
+`message.dispatch` hook, from the person's confirmation, in the dialog or
+the form, until the box is ready again. Two things can let a turn through:
 
 - BB's "Send now" bypasses the hook. bb-box checks for a running turn
   before each step that changes the box, the stop first, and stops the
@@ -589,14 +599,17 @@ affected.
 4. **Admits the undo**: its space and, on a paid provider, its price are
    reserved against the room rule and the ceiling (section 8) before
    anything stops. If either refuses, an agent's restore is refused; the
-   person is told why and can untick the undo, or raise the ceiling.
+   person is told which, with its own fix (for room, the snapshots on that
+   storage that deleting would free it; for price, the ceiling in
+   Settings), and can untick the undo instead, except on an execution
+   machine, which is never restored without one.
 5. **Captures the undo**, in the order the backend's capture needs (table
    below), so it holds exactly what the restore replaces. It is named
    "before the restore at 11:02", with " (2)" if that name is taken. Until
    it is `ready`, nothing else changes. If it cannot be taken, bb-box
    brings the box back as it was, and the restore stops and says why. Only
    the person can restore without an undo, by unticking it, which turns the
-   button red.
+   button red, and never on an execution machine.
 6. **Logs** `restore-asked`, then **restores**: Proxmox rolls back; a
    new-guest restore or an undo by held copy makes the new guest with the
    box's identity (`adoptCopy`), while the old guest stays stopped, then
@@ -738,8 +751,9 @@ resize is a `ResizeRecord`:
 - **After a restart.** At start, the sweep's `#snapshotsCutShort` reads
   every operation not `done` or `failed`, asks the provider's task where it
   has one, observes the guests, and finishes it from the step it reached
-  or marks it `failed` with what it found: an unfinished held copy is
-  disarmed and made a template first; a swap cut short keeps the guest the
+  or marks it `failed` with what it found: a held copy that is not yet a
+  template is deleted and made again from its source, which is still
+  pinned, and never finished or adopted (section 2); a swap cut short keeps the guest the
   record names and stops the other; neither guest is released as a
   leftover until the operation is settled. What cannot be confirmed stays
   `unknown`, and the box's page says "bb-box could not confirm the restore
@@ -828,14 +842,20 @@ costs on that backend before the person confirms:
   snapshots on that storage that nobody kept, oldest first, never one of
   the kinds above, and logs "by bb-box: pve-1's storage was 93% full".
 - **Cost: the ceiling bounds the monthly rate of what is held.** Where a
-  provider charges, every row says the price, and Settings has a ceiling a
-  month per provider, in its currency, and its account. It is an admission
-  limit on the rate, not a cap on the bill:
+  provider charges, every row says the price. The ceiling is a setting the
+  person sets, one per provider and account, in its currency, with a
+  default of $5 a month, as the owner decided on 30 October 2026. It sits
+  in Settings, BB Box, Snapshots, under "Paid snapshots", one row per
+  provider that charges ("boat.dev, this install's account"), with the
+  rate held and this month's spend beside it. It is an admission limit on
+  the rate, not a cap on the bill:
   - the rate is every paid snapshot held, kept or not, undos and held
     copies included, times its daily price, times 30;
   - a take, an undo, a Keep, a renewal and a held copy are refused when
-    the rate would be past the ceiling after it, with the rate and the
-    ceiling;
+    the rate would be past the ceiling after it. The refusal says: "It
+    would bring snapshots held on boat.dev to about $5.04 a month, past
+    your ceiling of $5.00. Delete one, or raise the ceiling in Settings,
+    Snapshots, Paid snapshots." An agent's tool answers the same words;
   - when the rate passes the ceiling without a take (a lower ceiling, a
     price or a plan that changed), bb-box refuses new paid snapshots, Keep
     and renewals, and warns on the tab and in Settings; it never deletes
@@ -973,8 +993,10 @@ So:
    organisation's shared snapshots are not used.
 7. Pictures are as secret as their snapshot, and can be turned off.
 8. Labels on the provider carry IDs and dates only.
-9. A yes given in the form is recorded as that, not as proof of who gave
-   it, until BB can say (request 38).
+9. No agent restores a machine threads run on by itself: only through the
+   form, with an undo always taken. Its yes is recorded as given in the
+   thread, not as proof of who gave it, until BB can say (request 38); then
+   the record names who answered.
 
 ### 12. The pages
 
@@ -1108,7 +1130,7 @@ switches save at once, as 067's do.
 | Agents | Agents may restore their own boxes | on | off: `box_restore` asks through the form |
 | Agents | Agents may restore memory snapshots | on | off: only the person restores a memory snapshot |
 | Pictures | Keep a picture of the screen with each snapshot | on | |
-| Paid snapshots | A ceiling a month, per provider and account | $5 | beside it, the rate held and this month's spend |
+| Paid snapshots | A ceiling a month, per provider and account, one row each | $5, the owner's default | beside it, the rate held and this month's spend; past it, new paid snapshots, undos, Keep and renewals are refused with the words of section 8 |
 | What each backend offers | one row per backend and storage, read only, from its plan | | "Disk; restores any; forks by full copy; keeps by held copy · no charge"; ZFS says "restores off until checked"; a row with a problem says it, with the fix |
 
 - Each backend's own page gains a Snapshots line among its facts.
@@ -1186,7 +1208,7 @@ ship off until a live check on a real paid plan (unit 11).
 | 2 | **The identity reset**: the marker and its boot unit in every Linux template and image, written after a box is first ready, the backend's interfaces only; its version read at each take as `forkSafe`. No fork or held copy yet | M | Gate G14's first part |
 | 3 | Restore on Proxmox: plans by storage, the capture order, undo admission, held copies (inert, remade if not yet a template) for ZFS's undo, swaps with `adoptCopy` and earlier guests, the guard of section 5, operations and restart recovery, locks, size read back, access over SSH first, outside restores from task records; `bb box snapshot restore`. Execution machines refused | M | Gates G4, G5, G6, G7, G8, G13, G16; ZFS only where a ZFS node is free, and off otherwise |
 | 4 | Settings' Snapshots page: limits, undos apart, room and the sweep's thresholds, keep length, the agents' switches, pictures, the paid ceiling as a rate, what each backend offers; through 067's drafts and Save | M | Each setting seen to bite; gate G10 |
-| 5 | The agent's tools, the form through `bb.ui.requestInput`, the `message.dispatch` hold, the skill's words and the reference. Execution-machine restores stay off unless G17 passes | M | Gates G11, G12, G17 |
+| 5 | The agent's tools; the form through `bb.ui.requestInput`, for execution machines and for an agent's own box when its restores are off; the undo always taken on execution machines; the `message.dispatch` hold; execution-machine restores, by page or form, stay off unless G17 passes; the skill's words and the reference | M | Gates G11, G12, G17 |
 | 6 | The box page's Snapshots card, Take snapshot, the restore dialog, its notice and Undo, Delete, Rename and Note, and the pictures | M | Take, restore and undo from the page; a guarded restore names every thread, the control and a terminal; keyboard only; 390 px with the header's actions on their own row |
 | 7 | Forks on Proxmox Linux: `forkSnapshot` by full clone, re-armed, the check before ready, `box_fork`, Fork on the pages | M | Gate G14's second part |
 | 8 | Keep: held copies at release on Proxmox, the release that waits for them, keep dates in labels, Keep's recovery check; the Snapshots tab with Keep…, expiry and Select | L | Gates G15, G16 |
@@ -1215,31 +1237,29 @@ Tokens are never printed.
 | G8 access-first | 3 | The access file is bb-box's first command after a restore, and the size is read back (section 5) | A sentinel value changed after a take is the new one after a restore before any other command bb-box runs, on LXC and QEMU; a restore across a memory resize shows the old memory, as the dialog said |
 | G9 serialised-and-eligible | 1a, 3, 8 | All operations on a box run one at a time; `eligible` is checked at the moment of each change, for every path; room and money are reserved at once for all boxes (section 6) | Two takes at once, take and release, take and restore, delete and restore, expiry and fork, and a repeated `request`, each end in one consistent state. Restore twice then restore the oldest undo: the target stays. Restore twice, keep the oldest undo, restore again: the kept undo stays. Start a restore, then bulk-delete, bulk-keep and rename its target: each is refused for it and named. Let the room sweep pick its candidates, then start a restore to one and keep another before it deletes: both stay |
 | G10 ceiling-rate | 4 | The ceiling bounds the rate held, checked on take, undo, Keep, renewal and held copy; never deletes to get under (section 8) | On a fake priced backend: a ceiling lowered below the rate refuses the next take, Keep and renewal, single and bulk, and warns, and deletes nothing; at a rate one snapshot below the ceiling, a restore's undo is refused before the box stops, and the person can restore without it; deleting keeps the month's spend |
-| G11 form | 5 | A restore asked through the form is bound to its plan and run as bb-box's own operation; its words claim a yes given in the thread, nothing more (section 5) | With execution-machine restores turned on for the test, on a machine of the person's, `box_restore` opens the form; Cancel, timeout, a stop of the thread and a BB restart do nothing; Restore from the app restores with the undo taken then, and logs "on a yes given in the thread"; a changed loss list asks again. Then the asking agent runs `bb thread interactions respond --self` on its own form: what BB does and what bb-box logs are recorded in the unit's results and in request 38 |
+| G11 form | 5 | An agent restores an execution machine only through the form, always with an undo; a form is bound to its plan and run as bb-box's own operation; its words claim a yes given in the thread, nothing more (section 5) | With execution-machine restores turned on for the test, on a machine of the person's, `box_restore` opens the form; Cancel, timeout, a stop of the thread and a BB restart do nothing; Restore from the app restores with the undo taken then, and logs "on a yes given in the thread"; a changed loss list asks again; with no room for an undo, it restores nothing. The same with "Agents may restore their own boxes" off, on the agent's own box. Then the asking agent runs `bb thread interactions respond --self` on its own form: what BB does and what bb-box logs are recorded in the unit's results and in request 38 |
 | G12 permissions | 5 | `mayAct` for every operation, picture and bulk action (section 3) | A thread guessing another thread's snapshot ID can list, see, restore, fork, delete and fetch the picture of none of them |
 | G13 outside-restore | 3 | Outside restores only from a provider task, by its status (section 4) | An outside take, delete, two restores to one parent, a rollback task that fails, one still running at a sweep, and several changes between sweeps each log as section 4 says |
 | G14 fork-identity | 2, 7 | The unit runs before the network and identity services, fails closed, compares the backend's interfaces' MAC addresses with the marker, and only snapshots with `forkSafe` fork; a fork is re-armed (section 9) | Unit 2: on each Linux template, `systemd-analyze` shows the order; a plain Proxmox clone of a box, made with the production token, resets, and its BB host ID, tailnet node, SSH host keys, machine ID and access file are new; a `linux-docker` box with containers running and a box on the tailnet each restart three times without a reset; a spare claimed and renamed, then restarted, does not reset and keeps its host ID. Unit 7: a fork, also one given its source's name, resets, starts with `onboot` set and links up, and the source's host ID never shows a second connection; a snapshot from an image without the unit refuses to fork |
 | G15 keep-lasts | 8 | Keep lasts the release through a held copy, and is offered only where a fork can use it (section 7) | Keep, release, restart BB, then fork from the kept snapshot and read a file written before the take; with too little room, the release stops and deletes nothing; Keep is refused, with why, on a Windows box and on a snapshot taken before the identity reset |
-| G16 held-copy-inert | 3, 8 | A held copy and an earlier guest cannot start by themselves; a copy not yet a template is remade from its source, never trusted (section 2) | `pct config` and `qm config` show each held copy a template, and each earlier guest with `onboot` 0, links down and MAC addresses that are not the box's; after the node reboots, none is running and none connects to BB or the tailnet; bb-box killed after a clone and before it is a template, and the node rebooted at that moment: the copy is deleted and made again, and the remade copy's files, read through a fork of it, match the source's, credentials included; an earlier guest started by hand resets before its network |
+| G16 held-copy-inert | 3, 8 | A held copy and an earlier guest cannot start by themselves; a copy not yet a template is remade from its source, never trusted (section 2) | `pct config` and `qm config` show each held copy a template, and each earlier guest with `onboot` 0, links down and MAC addresses that are not the box's; after the node reboots, none is running and none connects to BB or the tailnet; bb-box killed after a clone and before it is a template, and the node rebooted at that moment: the copy is deleted and made again. The remade copy is then checked for what it saved, before any reset can run: adopted for the same box with `adoptCopy`, which keeps the box's MAC addresses so no reset runs, its files, BB machine credentials, host ID and access file are the source's, and the box comes back as the same BB machine. Its reset is checked apart: a fork of it resets as G14 says, with new credentials, access and host ID. An earlier guest started by hand resets before its network |
 | G17 turns-held | 5 | No turn starts on an execution machine while it is restored, or the restore stops before the next change; execution-machine restores stay off until this passes (section 5) | A message queued to a thread on the box during its restore waits until the box is ready; "Send now" while waiting, after the final check and before the stop, and while the restored box reconnects to BB: each either waits, or stops the restore with nothing more changed and says so; a bb-box restart mid-restore, with BB's orphan sweep releasing the held turns, holds them again and checks before the next step. If any case lets a turn run on a box being changed, the path stays off |
 
-## Open questions for the owner
+## The owner's answers
 
-Each has a default the build follows unless the owner says otherwise.
+The owner answered the two questions this note left him on 30 October
+2026, and the note is written to them:
 
-1. **The paid ceiling.** Default: $5 a month per provider, on the rate of
-   everything held, undos included; it refuses new paid snapshots, never
-   deletes kept ones. Or $0 until set.
-2. **The form's yes.** The asking agent can answer the form itself with
-   BB's command line, until BB can say who answered (request 38). Default:
-   once execution-machine restores pass G17, keep the form for the
-   person's machines, recorded as "a yes given in the thread", with the
-   skill forbidding agents to answer it. Or: no agent-asked restores of
-   the person's machines until request 38 is met; the person restores from
-   the page.
+1. **The paid ceiling** is a setting the person sets, per provider, with a
+   default of $5 a month (section 8 and Settings).
+2. **Restores of a machine that threads run on** are allowed both ways:
+   the person from the box's page, and an agent through the form, recorded
+   as "a yes given in the thread". An undo is always taken for them, with
+   no way to untick it. They turn on only after G17 passes. When BB's
+   request 38 lands, the record names who answered (section 5).
 
-The research's other questions are settled by the owner's answers and the
-reviews: an agent never restores the box its thread runs on by itself, and
+The research's other questions are settled by the owner's earlier answers
+and the reviews: an agent never restores the box its thread runs on, and
 each box holds 5 snapshots with undos apart, which Settings can change.
 
 ## Alternatives considered
@@ -1302,8 +1322,9 @@ Worth trying:
 3. On brisk-lake, its oldest snapshot was taken before the identity reset:
    Fork and Keep are disabled, with why.
 4. "An agent asks to restore work-pc": the thread stand-in shows the form,
-   worded as a yes given in the thread; answer it, and see work-pc's notice
-   and log follow the restore.
+   worded as a yes given in the thread, with its undo always taken; answer
+   it, and see work-pc's notice and log follow the restore. On work-pc's
+   page, its own restore dialog will not let the undo be unticked.
 5. "bb-box restarts mid-restore", then Check now on amber-fox.
 6. Start a restore, go to the Snapshots tab, Select its target and delete:
    it is skipped and named.
@@ -1368,8 +1389,9 @@ What it does not do, where the build follows this note:
 
 - The tools and the CLI; a real form in BB's composer, and an agent
   answering it (a stand-in thread shows the form); the turn hold. It shows
-  restores of boxes threads run on, such as work-pc, as they will work
-  once G17 passes; they ship off.
+  restores of a box threads run on, work-pc, as they will work once G17
+  passes; they ship off. Only work-pc and dev-desk are marked as boxes
+  threads run on, though the others list threads' workspaces.
 - Keep's expiry by the sweep, the reconcile, `unavailable`, `lost` and
   found orphans, held copies' templates and node reboots.
 - Real room on a host: each storage's fullness is a fixed number until the
@@ -1400,9 +1422,9 @@ writes `prototype.html` beside the folder. `npx tsc -p tsconfig.json
   templates that cannot start, first, and can stop for want of room.
 - ZFS restores stay off until G4 passes on a ZFS node, and restores of
   boxes threads run on until G17 passes.
-- Agents gain five tools; an agent's restore of the box it runs on, or of a
-  machine of the person's, goes through a form in the thread, whose yes
-  bb-box records as given in the thread, not as proof of who gave it.
+- Agents gain five tools. An agent restores a machine threads run on only
+  through a form in the thread, always with an undo, recorded as a yes
+  given in the thread until BB can say who answered.
 - The box log records snapshots, restores and forks, and restores made
   outside bb-box on Proxmox when a task shows them.
 - BB is asked to say who answered a plugin's form (request 38).
@@ -1492,3 +1514,17 @@ marked.
 | Mixed bulk Keep costs; Android's dialog promised and denied the host's disk; Fork's focus at 390 px | Astra R6 | Bulk Keep says each snapshot's own cost (a held copy's size, a daily price); a device restore names only what the device loses; every row dialog returns focus to its opener, or to the row's menu button when opened from the menu | Section 5; section 12; prototype |
 | Open questions | Lead | Two left that are the owner's: the ceiling, and the form's yes; the others settled | Open questions |
 
+### After the fourth checks
+
+Both reviewers' fourth checks said build. A last patch, with the owner's
+answers, and no new review round:
+
+| Finding | From | Change | Where shown |
+| --- | --- | --- | --- |
+| Section 6 still said an unfinished held copy is disarmed and made a template | Lead | It now gives section 2's rule: deleted and made again from its pinned source, never finished or adopted | Section 6, "After a restart" |
+| G16 read a held copy's files through a fork, whose reset removes BB's identity and access by design | Lead | The remade copy is checked through `adoptCopy` for the same box, which keeps the box's MAC addresses so no reset runs: its files, credentials, host ID and access file are the source's; the fork's reset is checked apart | G16 |
+| At 390 px, cancelling Fork or Keep opened from a row's menu left focus on the page | Lead | Dialogs opened from the menu return focus to the menu's button; the menu returns focus itself when it opens no dialog | Prototype |
+| An undo refused for lack of room said to raise the ceiling | Lead | Each refusal names its own fix: for room, the snapshots on that storage whose deletion would free it; for price, the ceiling | Section 5, step 4; prototype |
+| The paid ceiling | Owner | A setting the person sets per provider, $5 a month by default, in Settings, Snapshots, Paid snapshots; the refusal's words written in | Section 8; section 12, Settings; The owner's answers |
+| Restores of machines threads run on | Owner | Both ways: the person from the box's page, and an agent through the form, recorded as "a yes given in the thread"; an undo always taken, with no way to untick it; off until G17 passes; once request 38 lands, the record names who answered; G11 checks the undo too | Sections 3, 4, 5, 11; G11; The owner's answers; [screenshot](070-snapshots/new/34-person-form.png) |
+| The prototype's box log said a form's restore was "by you" | Found while patching | A form's restore, its undo and its notice say "on a yes given in (thread)", never "by you" | Prototype; [screenshot](070-snapshots/new/35-form-restored.png) |

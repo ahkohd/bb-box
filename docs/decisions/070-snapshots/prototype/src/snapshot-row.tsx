@@ -80,6 +80,18 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
   const { now } = store;
   const [asking, setAsking] = useState<Asking>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const dialogFromMenu = useRef(false);
+  const [fromMenu, setFromMenu] = useState(false);
+  const askFromMenu = (next: Asking) => {
+    dialogFromMenu.current = true;
+    setFromMenu(true);
+    setAsking(next);
+  };
+  const askFromButton = (next: Asking) => {
+    setFromMenu(false);
+    setAsking(next);
+  };
+  const returnTo = fromMenu ? menuButton : undefined;
   const released = box.state === "released";
   const settled = snap.state === "ready";
   const busy = box.state === "restoring" || box.state === "starting" || box.state === "unconfirmed";
@@ -132,9 +144,9 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
         {snap.note ? <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-subtle-foreground">{snap.note}</p> : null}
       </div>
       <span className="flex shrink-0 items-center gap-0.5 self-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-[[data-state=open]]:opacity-100 pointer-coarse:opacity-100">
-        {!released ? <IconButton label={restoreOk ? `Restore ${box.name} to ${snap.name}` : `Restore: ${busyWhy ?? (snap.onEarlierGuest ? "on the earlier guest, fork only" : "not ready")}`} icon="ArrowTurnBackward" disabled={!restoreOk} onClick={() => setAsking("restore")} /> : null}
+        {!released ? <IconButton label={restoreOk ? `Restore ${box.name} to ${snap.name}` : `Restore: ${busyWhy ?? (snap.onEarlierGuest ? "on the earlier guest, fork only" : "not ready")}`} icon="ArrowTurnBackward" disabled={!restoreOk} onClick={() => askFromButton("restore")} /> : null}
         <span className="max-sm:hidden">
-          <IconButton label={forkOk ? `Fork ${snap.name} into a new box` : `Fork: ${busyWhy ?? forkWhy}`} icon="GitFork" disabled={!forkOk} onClick={() => setAsking("fork")} />
+          <IconButton label={forkOk ? `Fork ${snap.name} into a new box` : `Fork: ${busyWhy ?? forkWhy}`} icon="GitFork" disabled={!forkOk} onClick={() => askFromButton("fork")} />
         </span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -142,21 +154,25 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
               <Icon name="MoreHorizontal" className="size-4" aria-hidden />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-max min-w-48 max-w-72">
-            <DropdownMenuItem className="sm:hidden" disabled={!forkOk} onSelect={() => setAsking("fork")}>
+          <DropdownMenuContent align="end" className="w-max min-w-48 max-w-72" onCloseAutoFocus={(event) => {
+              if (!dialogFromMenu.current) return;
+              dialogFromMenu.current = false;
+              event.preventDefault();
+            }}>
+            <DropdownMenuItem className="sm:hidden" disabled={!forkOk} onSelect={() => askFromMenu("fork")}>
               <Icon name="GitFork" aria-hidden />
               Fork…
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={snap.state === "failed" || !!store.eligible(snap.id, "rename")} onSelect={() => setAsking("rename")}>
+            <DropdownMenuItem disabled={snap.state === "failed" || !!store.eligible(snap.id, "rename")} onSelect={() => askFromMenu("rename")}>
               <Icon name="Pencil" aria-hidden />
               Rename…
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={snap.state === "failed"} onSelect={() => setAsking("note")}>
+            <DropdownMenuItem disabled={snap.state === "failed"} onSelect={() => askFromMenu("note")}>
               <Icon name="Pencil" aria-hidden />
               {snap.note ? "Edit note…" : "Add a note…"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={!keepOk} onSelect={() => setAsking("keep")}>
+            <DropdownMenuItem disabled={!keepOk} onSelect={() => askFromMenu("keep")}>
               <Icon name="Calendar" aria-hidden />
               <span className="min-w-0">
                 {kept ? "Keep longer…" : "Keep…"}
@@ -174,7 +190,7 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
               <Icon name="Copy" aria-hidden />
               Copy ID
             </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" disabled={!!deleteWhy || busy} onSelect={() => setAsking("delete")}>
+            <DropdownMenuItem variant="destructive" disabled={!!deleteWhy || busy} onSelect={() => askFromMenu("delete")}>
               <Icon name="Trash2" aria-hidden />
               <span className="min-w-0">
                 Delete…
@@ -184,12 +200,12 @@ export function SnapshotRow({ snap, box, byThread, selecting, selected, onSelect
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
-      {asking === "restore" ? <RestoreDialog box={box} snap={snap} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
-      {asking === "fork" ? <ForkDialog box={box} snap={snap} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
-      {asking === "delete" ? <DeleteDialog boxes={[box]} snaps={[snap]} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
-      {asking === "rename" ? <TextDialog title={`Rename "${snap.name}"`} label="Name" value={snap.name} returnTo={menuButton} onSave={(value) => store.rename(snap.id, value)} onClose={() => setAsking(null)} /> : null}
-      {asking === "note" ? <TextDialog title={`A note on "${snap.name}"`} label="Note" value={snap.note ?? ""} long returnTo={menuButton} onSave={(value) => store.annotate(snap.id, value)} onClose={() => setAsking(null)} /> : null}
-      {asking === "keep" ? <KeepDialog box={box} snaps={[snap]} returnTo={menuButton} onClose={() => setAsking(null)} /> : null}
+      {asking === "restore" ? <RestoreDialog box={box} snap={snap} returnTo={returnTo} onClose={() => setAsking(null)} /> : null}
+      {asking === "fork" ? <ForkDialog box={box} snap={snap} returnTo={returnTo} onClose={() => setAsking(null)} /> : null}
+      {asking === "delete" ? <DeleteDialog boxes={[box]} snaps={[snap]} returnTo={returnTo} onClose={() => setAsking(null)} /> : null}
+      {asking === "rename" ? <TextDialog title={`Rename "${snap.name}"`} label="Name" value={snap.name} returnTo={returnTo} onSave={(value) => store.rename(snap.id, value)} onClose={() => setAsking(null)} /> : null}
+      {asking === "note" ? <TextDialog title={`A note on "${snap.name}"`} label="Note" value={snap.note ?? ""} long returnTo={returnTo} onSave={(value) => store.annotate(snap.id, value)} onClose={() => setAsking(null)} /> : null}
+      {asking === "keep" ? <KeepDialog box={box} snaps={[snap]} returnTo={returnTo} onClose={() => setAsking(null)} /> : null}
     </div>
   );
 }
@@ -201,7 +217,8 @@ export function Shell({ title, children, footer, onClose, returnTo }: { title: s
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          (opener.current?.isConnected ? opener.current : returnTo?.current)?.focus();
+          const target = returnTo?.current ?? (opener.current?.isConnected ? opener.current : null);
+          window.setTimeout(() => target?.focus(), 0);
         }}
       >
         <AlertDialogHeader>
@@ -220,7 +237,7 @@ export function RestoreDialog({ box, snap, onClose, returnTo }: { box: FakeBox; 
   const plan = store.plan(box.id, snap.id);
   const losses = store.losses(box.id, BY_PERSON);
   const undoBlocked = store.whyNotUndo(box.id);
-  const [undo, setUndo] = useState(!undoBlocked);
+  const [undo, setUndo] = useState(!undoBlocked || box.execution);
   const [refused, setRefused] = useState<string | null>(null);
   const noteId = useId();
   const counted = store.counted(box.id).length;
@@ -251,8 +268,8 @@ export function RestoreDialog({ box, snap, onClose, returnTo }: { box: FakeBox; 
       footer={
         <>
           <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
-          <Button type="button" variant={undo ? "default" : "destructive"} onClick={go}>
-            {!undo ? "Restore without undo" : losses.length ? `Restore ${box.name} anyway` : `Restore ${box.name}`}
+          <Button type="button" variant={undo || box.execution ? "default" : "destructive"} disabled={box.execution && !!undoBlocked} onClick={go}>
+            {!undo && !box.execution ? "Restore without undo" : losses.length ? `Restore ${box.name} anyway` : `Restore ${box.name}`}
           </Button>
         </>
       }
@@ -286,8 +303,9 @@ export function RestoreDialog({ box, snap, onClose, returnTo }: { box: FakeBox; 
         </div>
       </AlertDialogDescription>
       <div className="space-y-1">
-        <Checkbox checked={undo} disabled={!!undoBlocked} onChange={setUndo} describedBy={noteId} label={undoWords(plan.undoWay, box, plan.undoAboutMs)} />
-        {undoBlocked ? <p className="pl-5.5 text-xs text-warning-text">No undo can be taken: {undoBlocked}. Raise the ceiling in Settings to restore with one.</p> : null}
+        <Checkbox checked={undo || box.execution} disabled={!!undoBlocked || box.execution} onChange={setUndo} describedBy={noteId} label={undoWords(plan.undoWay, box, plan.undoAboutMs)} />
+        {undoBlocked ? <p className="pl-5.5 text-xs text-warning-text">No undo can be taken: {undoBlocked.why}. {undoBlocked.fix}</p> : null}
+        {box.execution ? <p className="pl-5.5 text-xs text-subtle-foreground">Threads run on {box.name}, so its restore always takes an undo.</p> : null}
         <p id={noteId} className="pl-5.5 text-xs text-subtle-foreground">
           {`Named "before the restore at ${clockOf(now)}". Undos do not count against the ${store.settings.perBox} for ${box.name} (${counted} used); it keeps the last ${UNDOS_A_BOX}, now ${undos}.`}
           {memory && plan.undoWay !== "suspend-copy" ? " Undo brings back its files, not its running apps." : ""}

@@ -49,7 +49,7 @@ function FormCard({ formId }: { formId: string }) {
         <p className="text-xs text-subtle-foreground">
           On Restore, bb-box holds new turns on {box.name}, waits up to 2 minutes for every thread there to finish its turn, stops the box, takes an undo, then restores. If what goes has changed by then, it asks again. Clean up the disk's next turn starts on the restored {box.name}, whose session files go back too.
         </p>
-        <p className="text-xs text-subtle-foreground">bb-box records an answer here as a yes given in the thread. BB cannot yet say whether you or an agent gave it, so an agent must never answer this form.</p>
+        <p className="text-xs text-subtle-foreground">An undo is always taken for a machine threads run on. bb-box records an answer here as a yes given in the thread: BB cannot yet say whether you or an agent gave it, so an agent must never answer this form. Once BB can say, the record names who answered.</p>
         {form.words ? (
           <p role="status" className="flex items-center gap-1.5 text-xs text-foreground">
             {form.state === "waiting-idle" || form.state === "restoring" ? <Icon name="Loading" className="size-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}

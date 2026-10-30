@@ -83,6 +83,8 @@ export function byWords(by: Actor, threads: readonly FakeThread[], withThread: b
       return "by a bb box command";
     case "bb-box":
       return `by bb-box: ${by.why}`;
+    case "form":
+      return `on a yes given in ${threadTitle(threads, by.threadId)}`;
   }
 }
 

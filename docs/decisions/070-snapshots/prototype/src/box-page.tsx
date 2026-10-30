@@ -218,7 +218,7 @@ function Notices({ box }: { box: FakeBox }) {
     );
   }
   const undo = notice.undoId ? store.snaps.find((snap) => snap.id === notice.undoId) : null;
-  const who = notice.consentIn ? `on a yes given in ${notice.consentIn}` : byWords(notice.by, store.threads, true);
+  const who = byWords(notice.by, store.threads, true);
   const words = notice.kind === "finished-after-restart" ? `bb-box finished the restore of ${box.name} to "${notice.to}" after its restart, from its record and Proxmox's task.` : `Restored at ${clockOf(notice.at)} to "${notice.to}", taken ${whenInSentence(notice.toAt, store.now)}, ${who}.`;
   return (
     <div role="status" className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-border bg-surface-raised px-4 py-3">

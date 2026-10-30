@@ -142,7 +142,7 @@ export function SnapshotSettingsPage() {
       <Group title="Agents and pictures">
         <Card>
           <Rows>
-            <SettingRow label="Agents may restore their own boxes" htmlFor="agents-restore" description="With an undo taken first, never while another thread, your desktop control or a terminal is on the box. Never the box an agent runs on, or one of your machines: for those it asks you with a form in its thread. Off, it asks you for every restore.">
+            <SettingRow label="Agents may restore their own boxes" htmlFor="agents-restore" description="With an undo taken first, never while another thread, your desktop control or a terminal is on the box. Never a box threads run on, or one of your machines, by itself: for those it asks with a form in its thread, and an undo is always taken. Off, it asks with the form for every restore.">
               <SavedTick show={savedKey === "agentsRestore"} />
               <Switch id="agents-restore" checked={settings.agentsRestore} onCheckedChange={(on) => flip("agentsRestore", on)} />
             </SettingRow>
@@ -157,7 +157,7 @@ export function SnapshotSettingsPage() {
           </Rows>
         </Card>
       </Group>
-      <Group title="Paid snapshots" description="A ceiling on the monthly rate of what is held, per provider and account: every paid snapshot held, times its daily price, times 30. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and bb-box never deletes kept snapshots to get under it.">
+      <Group title="Paid snapshots" description="A ceiling you set on the monthly rate of what is held, per provider and account, $5 a month by default: every paid snapshot held, times its daily price, times 30. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and bb-box never deletes kept snapshots to get under it.">
         <Card>
           <SettingRow
             label="boat.dev, this install's account"

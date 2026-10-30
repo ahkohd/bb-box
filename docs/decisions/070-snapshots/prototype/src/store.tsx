@@ -44,6 +44,11 @@ export interface RestorePlan {
   readonly leavesOnEarlierGuest: number;
 }
 
+export interface UndoRefusal {
+  readonly why: string;
+  readonly fix: string;
+}
+
 export type Change = "delete" | "evict" | "sweep" | "undo-replace" | "keep" | "unkeep" | "rename";
 
 export interface Skipped {
@@ -85,7 +90,7 @@ interface Store {
   whyNotFork(snapId: string): string | null;
   whyNotDelete(snapId: string): string | null;
   eligible(snapId: string, change: Change): string | null;
-  whyNotUndo(boxId: string): string | null;
+  whyNotUndo(boxId: string): UndoRefusal | null;
   take(boxId: string, ask: TakeAsk, by: Actor): Outcome;
   whyNotTake(boxId: string, by: Actor, memory: boolean): string | null;
   restore(boxId: string, snapId: string, options: { readonly undo: boolean; readonly anyway: boolean; readonly consentIn?: string; readonly formId?: string }, by: Actor): Outcome;
@@ -293,11 +298,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return null;
   }, [whyNotFork, rate, eligible]);
 
-  const whyNotUndo = useCallback((boxId: string): string | null => {
+  const whyNotUndo = useCallback((boxId: string): UndoRefusal | null => {
     const box = boxesRef.current.find((each) => each.id === boxId);
     const price = box?.snapshotting?.price;
-    if (box && price && rate() + price.amount * 30 > settingsRef.current.ceiling) return `the undo would bring snapshots held on ${box.backend} to about ${money(rate() + price.amount * 30)} a month, past your ceiling of ${money(settingsRef.current.ceiling)}`;
-    if (box?.storage && box.storage.full >= settingsRef.current.roomPercent) return `${box.host}'s storage is ${box.storage.full}% full`;
+    if (box && price && rate() + price.amount * 30 > settingsRef.current.ceiling) return { why: `the undo would bring snapshots held on ${box.backend} to about ${money(rate() + price.amount * 30)} a month, past your ceiling of ${money(settingsRef.current.ceiling)}`, fix: "Raise the ceiling in Settings to restore with one." };
+    if (box?.storage && box.storage.full >= settingsRef.current.roomPercent) {
+      const onHost = new Set(boxesRef.current.filter((each) => each.host === box.host).map((each) => each.id));
+      const largest = snapsRef.current.filter((snap) => onHost.has(snap.boxId) && alive(snap) && snap.sizeGB !== null).sort((a, b) => (b.sizeGB ?? 0) - (a.sizeGB ?? 0)).slice(0, 2);
+      const names = largest.map((snap) => `"${snap.name}" (${snap.sizeGB} GB)`).join(" or ");
+      return { why: `${box.host}'s ${box.storage.name} is ${box.storage.full}% full, past the ${settingsRef.current.roomPercent}% set in Settings`, fix: names ? `Deleting snapshots on ${box.host}, such as ${names}, frees room for one.` : `Deleting snapshots on ${box.host} frees room for one.` };
+    }
     return null;
   }, [rate]);
 
@@ -414,9 +424,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (snapsRef.current.some((snap) => snap.boxId === boxId && snap.state === "taking")) return { ok: false, why: `A snapshot of ${box.name} is being taken. Try again when it is done.` };
     const planned = plan(boxId, snapId);
     if (planned.refused) return { ok: false, why: planned.refused };
-    const undo = by.is === "agent" ? true : options.undo;
+    const undo = by.is === "agent" || box.execution ? true : options.undo;
     const undoBlocked = undo ? whyNotUndo(boxId) : null;
-    if (undoBlocked) return { ok: false, why: by.is === "agent" ? `Refused before anything changed: ${undoBlocked}, and an agent never restores without an undo.` : `No undo can be taken: ${undoBlocked}. Untick the undo to restore without one, or raise the ceiling in Settings.` };
+    if (undoBlocked) return { ok: false, why: by.is === "agent" ? `Refused before anything changed: ${undoBlocked.why}, and an agent never restores without an undo.` : `No undo can be taken: ${undoBlocked.why}. ${undoBlocked.fix}${box.execution ? " A machine threads run on is never restored without one." : " Or untick the undo to restore without one."}` };
     if (by.is === "agent") {
       if (!settingsRef.current.agentsRestore) return { ok: false, why: "Agents may not restore boxes by themselves: Settings turned it off. Ask through the form." };
       if (target.holds === "disk-and-memory" && box.snapshotting?.scope === "box" && !settingsRef.current.agentsMemory) return { ok: false, why: "Agents may not restore memory snapshots: Settings turned it off." };
@@ -434,7 +444,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         updateBox(boxId, { state: "restoring", step: words });
         then?.();
       });
-    log(box.id, `Restore to "${target.name}" asked${undo ? "" : ", no undo"}${options.consentIn ? `, on a yes given in ${options.consentIn}` : ""}`, by);
+    log(box.id, `Restore to "${target.name}" asked${undo ? "" : ", no undo"}`, by);
     const device = box.snapshotting?.scope === "device";
     const tart = box.snapshotting?.whileRunning === "suspends";
     updateBox(boxId, { state: "restoring", step: device ? "Pausing the device" : tart ? "Suspending" : box.snapshotting?.restore === "new-guest" ? "Taking the undo while it runs" : "Stopping" });
@@ -601,7 +611,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     later(2_000, () => {
       setThreads((current) => current.map((thread) => (thread.id === form.threadId ? { ...thread, running: false } : thread)));
       threadsRef.current = threadsRef.current.map((thread) => (thread.id === form.threadId ? { ...thread, running: false } : thread));
-      const outcome = restore(form.boxId, form.snapId, { undo: true, anyway: true, consentIn: title, formId: id }, BY_PERSON);
+      const outcome = restore(form.boxId, form.snapId, { undo: true, anyway: true, consentIn: title, formId: id }, { is: "form", threadId: form.threadId });
       if (!outcome.ok) return updateForm(id, { state: "refused", words: outcome.why });
       updateForm(id, { state: "restoring", words: "Restoring as bb-box's own operation; the undo is taken once the box has stopped" });
     });

@@ -37,7 +37,7 @@ export interface Storage {
   readonly full: number;
 }
 
-export type Actor = { readonly is: "person" } | { readonly is: "agent"; readonly threadId: string } | { readonly is: "command" } | { readonly is: "bb-box"; readonly why: string };
+export type Actor = { readonly is: "person" } | { readonly is: "agent"; readonly threadId: string } | { readonly is: "command" } | { readonly is: "bb-box"; readonly why: string } | { readonly is: "form"; readonly threadId: string };
 
 export const BY_PERSON: Actor = { is: "person" };
 
@@ -81,6 +81,7 @@ export interface FakeBox {
   readonly noSnapshotsWhy: string | null;
   readonly cannotTakeWhy: string | null;
   readonly locked: string | null;
+  readonly execution: boolean;
   readonly forkReset: boolean;
   readonly forkedFrom: { readonly box: string; readonly snapshot: string; readonly takenAt: number } | null;
 }
@@ -236,6 +237,7 @@ function box(base: Partial<FakeBox> & Pick<FakeBox, "id" | "name" | "kindLabel" 
     noSnapshotsWhy: null,
     cannotTakeWhy: null,
     locked: null,
+    execution: false,
     forkReset: true,
     forkedFrom: null,
     ...base,
@@ -251,8 +253,8 @@ export function boxesAt(now: number): FakeBox[] {
     box({ id: "bxrosyreef4k1", name: "rosy-reef", kindLabel: "Android", os: "Android", badges: ["Pixel 9", "Emulator"], backend: "Proxmox QEMU", backendLabel: "Proxmox QEMU on pve-1", host: "pve-1", threadId: "thr_android", createdAt: now - 26 * HOUR, snapshotting: ANDROID_DEVICE, screen: "phone", diskGiB: 48 }),
     box({ id: "bxquickwren7d", name: "quick-wren", kindLabel: "Linux", badges: ["VM"], backend: "boat.dev", backendLabel: "boat.dev", host: "boat", storage: null, threadId: "thr_docs", createdAt: now - 3 * DAY, snapshotting: BOAT, cores: 2, memoryGiB: 4, diskGiB: 51 }),
     box({ id: "bxcalmharbor4w", name: "calm-harbor", kindLabel: "iOS", os: "iOS", badges: ["iPhone 17 Pro", "Shared"], backend: "Tart", backendLabel: "a shared iOS host on mac-1", host: "mac-1", storage: null, threadId: "thr_checkout", createdAt: now - 2 * HOUR, snapshotting: null, noSnapshotsWhy: "iOS boxes on a shared host have no snapshots: a Simulator device saves no running state, and a slot is a user on a shared Mac.", screen: "phone" }),
-    box({ id: "bxworkpc5n2hq", name: "work-pc", kindLabel: "Linux desktop", badges: ["Desktop", "LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-1", host: "pve-1", threadId: null, workspaces: ["thr_cleanup"], createdAt: now - 60 * DAY, screen: "linux", usedGB: 28 }),
-    box({ id: "bxdevdesk9x1p", name: "dev-desk", kindLabel: "Linux desktop", badges: ["Desktop", "LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-2", host: "pve-2", storage: LVM_THIN_2, threadId: null, createdAt: now - 40 * DAY, cannotTakeWhy: "pve-2's token cannot take snapshots: it lacks VM.Snapshot and VM.Snapshot.Rollback.", screen: "linux" }),
+    box({ id: "bxworkpc5n2hq", name: "work-pc", kindLabel: "Linux desktop", badges: ["Desktop", "LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-1", host: "pve-1", threadId: null, workspaces: ["thr_cleanup"], execution: true, createdAt: now - 60 * DAY, screen: "linux", usedGB: 28 }),
+    box({ id: "bxdevdesk9x1p", name: "dev-desk", kindLabel: "Linux desktop", badges: ["Desktop", "LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-2", host: "pve-2", storage: LVM_THIN_2, threadId: null, execution: true, createdAt: now - 40 * DAY, cannotTakeWhy: "pve-2's token cannot take snapshots: it lacks VM.Snapshot and VM.Snapshot.Rollback.", screen: "linux" }),
     box({ id: "bxbuildpool2s", name: "build-pool", kindLabel: "Linux", badges: ["Physical"], backend: "SSH host pool", backendLabel: "the SSH host pool", host: "pool", storage: null, threadId: "thr_docs", createdAt: now - 5 * HOUR, snapshotting: null, noSnapshotsWhy: "Boxes on the SSH host pool have no snapshots: bb-box has no root on the machine." }),
     box({ id: "bxgreyridge5t", name: "grey-ridge", kindLabel: "Linux", badges: ["LXC"], backend: "Proxmox LXC", backendLabel: "Proxmox LXC on pve-1", host: "pve-1", threadId: null, workspaces: [], createdAt: now - 30 * DAY, releasedAt: now - 18 * DAY, state: "released" }),
   ];
