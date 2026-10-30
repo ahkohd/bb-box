@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
@@ -15,7 +15,46 @@ export const TEMPLATE_REBUILT_AFTER_MS = 7 * 24 * 3_600_000;
 export const RETIRED_TEMPLATE_KEPT_MS = 60 * 60_000;
 export const LEFT_BUILD_GRACE_MS = 10 * 60_000;
 export const BUILD_TTL_SECONDS = 2 * 3600;
-export const TEMPLATE_INPUTS = ["proxmox-lxc/template", "proxmox-lxc/host/common.sh", "android", "boat"] as const;
+export const TEMPLATE_FILES = [
+  "android/bb-box-device-firewall",
+  "android/bb-box-emulator",
+  "android/bb-box-h264/main.c",
+  "android/bb-box-h264/openh264.c",
+  "android/bb-box-h264/simulator.m",
+  "android/bb-box-h264/x264.c",
+  "android/build-h264.sh",
+  "android/check-android.sh",
+  "android/clear-device-state.sh",
+  "android/customize-android.sh",
+  "android/device-firewall.nft",
+  "android/pins.json",
+  "android/prepare-avds.sh",
+  "boat/customize-sandbox.sh",
+  "boat/template.sh",
+  "proxmox-lxc/host/common.sh",
+  "proxmox-lxc/template/apt-snapshot",
+  "proxmox-lxc/template/baseline-packages.txt",
+  "proxmox-lxc/template/desktop-pins.tsv",
+  "proxmox-lxc/template/fetch-artifacts.sh",
+  "proxmox-lxc/template/guest/baseline.sh",
+  "proxmox-lxc/template/guest/bb-box-feature.sh",
+  "proxmox-lxc/template/guest/check-desktop.sh",
+  "proxmox-lxc/template/guest/check-headless.sh",
+  "proxmox-lxc/template/guest/customize-base.sh",
+  "proxmox-lxc/template/guest/customize-desktop.sh",
+  "proxmox-lxc/template/guest/files/bb-box-nofbc.c",
+  "proxmox-lxc/template/guest/files/chrome-gpu.mjs",
+  "proxmox-lxc/template/guest/files/cua-probe.mjs",
+  "proxmox-lxc/template/guest/files/display",
+  "proxmox-lxc/template/guest/files/selkies",
+  "proxmox-lxc/template/guest/files/selkies-probe.mjs",
+  "proxmox-lxc/template/guest/files/vnc-password",
+  "proxmox-lxc/template/guest/finalize.sh",
+  "proxmox-lxc/template/guest/image-record.sh",
+  "proxmox-lxc/template/guest/install-bb-app.sh",
+  "proxmox-lxc/template/guest/install-tools.sh",
+  "proxmox-lxc/template/pins.json",
+] as const;
 const BUILD_DIR = "/var/tmp/bb-box-build";
 export const OUT_OF_BOATS_HOME = "cd /";
 const DESKTOP_UP = 'pgrep -x xfwm4 >/dev/null && test -S "$HOME/.cache/cua-driver/cua-driver.sock"';
@@ -98,22 +137,17 @@ export interface TemplateDeps {
 }
 
 export function templateFingerprint(setup = setupDir()): string {
-  const walk = (path: string): string[] => {
-    if (!existsSync(path)) return [];
-    if (!statSync(path).isDirectory()) return [path];
-    return readdirSync(path)
-      .sort()
-      .flatMap((name) => walk(join(path, name)));
-  };
   const hash = createHash("sha256");
-  for (const path of TEMPLATE_INPUTS.flatMap((input) => walk(join(setup, input))).filter((path) => !path.endsWith(".md") && !path.includes("/artifacts/")))
-    hash.update(relative(setup, path)).update("\0").update(readFileSync(path)).update("\0");
+  for (const file of TEMPLATE_FILES) {
+    const path = join(setup, file);
+    hash.update(file).update("\0").update(existsSync(path) ? readFileSync(path) : "").update("\0");
+  }
   return hash.digest("hex").slice(0, 12);
 }
 
 export function templateArchive(setup = setupDir()): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("tar", ["-czf", "-", "--exclude=artifacts", "-C", setup.replace(/\/+$/, ""), ...TEMPLATE_INPUTS], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("tar", ["-czf", "-", "-C", setup.replace(/\/+$/, ""), ...TEMPLATE_FILES], { stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));

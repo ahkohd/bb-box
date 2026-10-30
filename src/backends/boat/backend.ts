@@ -13,6 +13,7 @@ import {
   BackendError,
   DEVICE_DISPLAY,
   desktopDisplays,
+  deviceDisplayOf,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -170,6 +171,11 @@ function leftOutWords(left: readonly string[], largest: SizeShape): string {
     return least ? `the ${model} needs ${least.cores} cores and ${least.memoryGiB} GiB` : `the ${model}`;
   });
   return `${needs.join("; ")}, more than the plan's largest size, ${largest.cores} cores and ${largest.memoryGB} GB (boat's ${largest.size}), so boat.dev does not offer ${left.length === 1 ? "it" : "them"}`;
+}
+
+function startsOnRestoredFiles(kind: BoatKind): boolean {
+  const { capabilities } = KINDS[kind];
+  return capabilities.computerUse !== null || deviceDisplayOf(capabilities.displays) !== null;
 }
 
 function androidKind(device: DeviceOffer): BoxKind {
@@ -427,10 +433,8 @@ export class BoatBackend implements Backend {
         const mode = await step("display", () => this.#display(sandbox.id, signal));
         if (mode) facts.push({ label: "Display", value: mode });
       }
-      if (KINDS[kind].capabilities.computerUse) {
-        await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
-        await step("computer use", () => this.#computerUse(sandbox.id, signal));
-      }
+      if (startsOnRestoredFiles(kind)) await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
+      if (KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
       const guest = this.#guest(box.boxId, sandbox, shape, facts);
       await hooks.claim(guest);
       return guest;
@@ -492,10 +496,8 @@ export class BoatBackend implements Backend {
     await step("settle", () => this.#settled(sandbox.id, this.#now() + this.#readyMs(), signal));
     const kind = (this.#offered() as readonly string[]).includes(sandbox.labels[LABELS.kind] ?? "") ? (sandbox.labels[LABELS.kind] as BoatKind) : null;
     if (kind && desktopDisplays(KINDS[kind].capabilities.displays).length) await step("display", () => this.#display(sandbox.id, signal));
-    if (kind && KINDS[kind].capabilities.computerUse) {
-      await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
-      await step("computer use", () => this.#computerUse(sandbox.id, signal));
-    }
+    if (kind && startsOnRestoredFiles(kind)) await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
+    if (kind && KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
     const tailnet = this.#context.tailnet?.() ?? null;
     if (tailnet) await step("tailnet", () => this.#join(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, tailnet, signal));
   }
@@ -888,7 +890,7 @@ export class BoatBackend implements Backend {
       await this.#api.waitFor(sandbox, (each) => each.hydrated, deadline, signal);
     } catch (error) {
       if (!(error instanceof BoatError && error.kind === "busy")) throw error;
-      this.#context.log?.(`boat: sandbox ${sandbox} was still restoring its template ${Math.round(RESTORE_WAIT_MS / 1000)} s on, so bb-box starts Cua Driver before boat has finished.`);
+      this.#context.log?.(`boat: sandbox ${sandbox} was still restoring its template ${Math.round(RESTORE_WAIT_MS / 1000)} s on, so bb-box goes on before boat has finished, and Cua Driver or the device server may not answer until they start again.`);
     }
   }
 
