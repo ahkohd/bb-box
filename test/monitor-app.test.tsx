@@ -318,12 +318,12 @@ function header(): HTMLElement {
   return document.querySelector<HTMLElement>("[data-bb-box-monitor-header]")!;
 }
 
-async function openButton(): Promise<HTMLElement> {
-  return await waitFor(() => within(header()).getByRole("button", { name: "Open" }));
+async function openButton(name = "Open"): Promise<HTMLElement> {
+  return await waitFor(() => within(header()).getByRole("button", { name }));
 }
 
-async function openViews(): Promise<HTMLElement> {
-  fireEvent.keyDown(await openButton(), { key: "Enter" });
+async function openViews(name = "Open"): Promise<HTMLElement> {
+  fireEvent.keyDown(await openButton(name), { key: "Enter" });
   return await screen.findByRole("menu");
 }
 
@@ -377,15 +377,15 @@ test("a stopped box's views are in the menu, disabled, each with the reason, and
   expect(monitor.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
 });
 
-test("BB's server and a BB machine that is not a box get no Open button, and the header keeps its own", async () => {
-  openMonitor(null);
+test("BB's server and a BB machine that is not a box, with no threads on them, get no Open button, and the header keeps its own", async () => {
+  openMonitor(null, [sidebarThread("thr_on_box", "Runs on a box", { hostId: "host_lxc", status: "active" })]);
   await screen.findByText("load 0.50");
   await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("bb"));
   expect(within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
   cleanup();
-  openMonitor("host_build");
+  openMonitor("host_build", [sidebarThread("thr_archived", "Archived", { hostId: "host_build", archived: true })]);
   await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("build-server"));
-  expect(within(header()).queryByRole("button", { name: "Open" })).toBeNull();
+  expect(within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
 });
 
 test("a box's icon says what it is: a phone for a device box, a monitor for a desktop box, the box icon otherwise, in the picker and the header", async () => {
@@ -455,7 +455,13 @@ test("the header has no settings gear: the Monitor's settings are on BB Box's se
   expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
 });
 
-function sidebarThread(id: string, title: string, patch: { hostId?: string; status?: string; pending?: boolean; updatedAt?: number; archived?: boolean } = {}): PluginSidebarThread {
+const HOUR_MS = 60 * 60 * 1000;
+
+function hoursAgo(hours: number): number {
+  return Date.now() - hours * HOUR_MS;
+}
+
+function sidebarThread(id: string, title: string, patch: { hostId?: string; status?: string; pending?: boolean; updatedAt?: number; archived?: boolean; hidden?: boolean } = {}): PluginSidebarThread {
   return {
     id,
     projectId: "proj_one",
@@ -465,7 +471,7 @@ function sidebarThread(id: string, title: string, patch: { hostId?: string; stat
     status: patch.status ?? "idle",
     hasPendingInteraction: patch.pending ?? false,
     isArchived: patch.archived ?? false,
-    isHidden: false,
+    isHidden: patch.hidden ?? false,
     host: patch.hostId ? { id: patch.hostId, name: patch.hostId } : null,
     href: `/projects/proj_one/threads/${id}`,
     createdAt: 0,
@@ -568,7 +574,7 @@ function withoutLiveThreads(replacement: (() => never) | undefined, run: () => P
 }
 
 for (const [why, replacement] of [["missing", undefined], ["throws", () => { throw new Error("no sidebar here"); }]] as const) {
-  test(`when BB's live thread list is ${why}, a kept machine lists its Boxes row's chips, and a thread's box lists none`, async () => {
+  test(`when BB's live thread list is ${why}, a kept machine lists its Boxes row's chips, and a thread's box and a machine that is not a box list none`, async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     await withoutLiveThreads(replacement, async () => {
       openMonitor("box:bx_desk");
@@ -579,7 +585,110 @@ for (const [why, replacement] of [["missing", undefined], ["throws", () => { thr
       const held = await openViews();
       expect(items(held)).toEqual(["Page", "Open terminal"]);
       expect(within(held).queryByRole("separator")).toBeNull();
+      cleanup();
+      openMonitor("host_build");
+      await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("build-server"));
+      expect(within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
     });
     vi.mocked(console.error).mockRestore();
   });
 }
+
+const ON_BUILD_SERVER = [
+  sidebarThread("thr_build_idle", "Finished the build", { hostId: "host_build", updatedAt: hoursAgo(1) }),
+  sidebarThread("thr_build_busy", "Runs the benchmarks", { hostId: "host_build", status: "active", updatedAt: hoursAgo(2) }),
+  sidebarThread("thr_build_old", "Cleaned the cache", { hostId: "host_build", updatedAt: hoursAgo(20) }),
+  sidebarThread("thr_build_soak", "Runs the soak test", { hostId: "host_build", status: "active", updatedAt: hoursAgo(48) }),
+  sidebarThread("thr_build_stale", "Finished last week", { hostId: "host_build", updatedAt: hoursAgo(30) }),
+  sidebarThread("thr_build_hidden", "A plugin's helper", { hostId: "host_build", hidden: true, updatedAt: hoursAgo(1) }),
+  sidebarThread("thr_build_gone", "Archived on build-server", { hostId: "host_build", archived: true, updatedAt: hoursAgo(1) }),
+  ON_GLAD_CORAL,
+];
+
+test("a BB machine that is not a box lists its threads alone, working or active in the past 24 hours, working first, then the most recent, with no views, no Page and no divider; hidden and archived threads are not listed", async () => {
+  openMonitor("host_build", ON_BUILD_SERVER);
+  const menu = await openViews("Threads on build-server");
+  expect(items(menu)).toEqual(["Runs the benchmarks", "Runs the soak test", "Finished the build", "Cleaned the cache"]);
+  expect(threadLabels(menu)).toEqual(["Runs the benchmarks, working", "Runs the soak test, working", "Finished the build, idle", "Cleaned the cache, idle"]);
+  expect(within(menu).queryByRole("separator")).toBeNull();
+  expect(within(menu).getByText("Threads")).toBeTruthy();
+  expect(within(within(menu).getByRole("menuitem", { name: "Runs the benchmarks, working" })).getByLabelText("Working")).toBeTruthy();
+  expect(within(within(menu).getByRole("menuitem", { name: "Finished the build, idle" })).queryByLabelText("Working")).toBeNull();
+});
+
+test("the button of a machine that is not a box is named, and its tooltip says, threads on the machine", async () => {
+  openMonitor("host_build", ON_BUILD_SERVER);
+  const button = await openButton("Threads on build-server");
+  expect(within(header()).queryByRole("button", { name: "Open" })).toBeNull();
+  fireEvent.pointerMove(button);
+  await waitFor(() => expect(screen.queryAllByRole("tooltip", { hidden: true }).some((tooltip) => tooltip.textContent === "Threads on build-server")).toBe(true));
+});
+
+test("BB's server lists the threads on it", async () => {
+  openMonitor(null, [
+    sidebarThread("thr_server_busy", "Answers a question", { hostId: SERVER_HOST, pending: true, updatedAt: hoursAgo(3) }),
+    sidebarThread("thr_server_idle", "Wrote the release notes", { hostId: SERVER_HOST, updatedAt: hoursAgo(1) }),
+    sidebarThread("thr_server_stale", "Wrote last month's notes", { hostId: SERVER_HOST, updatedAt: hoursAgo(25) }),
+    ON_GLAD_CORAL,
+  ]);
+  const menu = await openViews("Threads on bb");
+  expect(threadLabels(menu)).toEqual(["Answers a question, working", "Wrote the release notes, idle"]);
+});
+
+test("more than 5 threads on a machine that is not a box: the first 5, then how many more are in BB's sidebar, counting only those working or active in the past 24 hours, which is not an item", async () => {
+  const seven = Array.from({ length: 7 }, (_, index) => sidebarThread(`thr_${index}`, `Thread ${index}`, { hostId: "host_build", updatedAt: hoursAgo(index + 1) }));
+  const stale = Array.from({ length: 3 }, (_, index) => sidebarThread(`thr_stale_${index}`, `Stale ${index}`, { hostId: "host_build", updatedAt: hoursAgo(25 + index) }));
+  const monitor = openMonitor("host_build", [...seven, ...stale]);
+  const menu = await openViews("Threads on build-server");
+  expect(threadLabels(menu)).toEqual(["Thread 0, idle", "Thread 1, idle", "Thread 2, idle", "Thread 3, idle", "Thread 4, idle"]);
+  expect(within(menu).getByText("2 more in BB's sidebar")).toBeTruthy();
+  expect(within(menu).queryByRole("menuitem", { name: /more/ })).toBeNull();
+  fireEvent.click(within(menu).getByText("2 more in BB's sidebar"));
+  expect(monitor.inspection.navigateCalls).toEqual([]);
+});
+
+test("a thread item of a machine that is not a box opens that thread", async () => {
+  const monitor = openMonitor("host_build", ON_BUILD_SERVER);
+  await openViews("Threads on build-server");
+  fireEvent.click(screen.getByRole("menuitem", { name: "Finished the build, idle" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_build_idle" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
+
+test("the keyboard reaches the threads button after the name; Enter opens it on the first thread, arrows move through the threads, and Escape returns focus to the button", async () => {
+  openMonitor("host_build", ON_BUILD_SERVER);
+  const button = await openButton("Threads on build-server");
+  expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Threads on build-server", "Reload machine status", "Hide machine status"]);
+  button.focus();
+  fireEvent.keyDown(button, { key: "Enter" });
+  const menu = await screen.findByRole("menu");
+  const focused = () => document.activeElement?.getAttribute("aria-label");
+  await waitFor(() => expect(focused()).toBe("Runs the benchmarks, working"));
+  for (const next of ["Runs the soak test, working", "Finished the build, idle", "Cleaned the cache, idle"]) {
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    await waitFor(() => expect(focused()).toBe(next));
+  }
+  fireEvent.keyDown(menu, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(button));
+});
+
+test("a machine that is not a box, whose threads are all idle for more than 24 hours, hidden or archived, has no button", async () => {
+  openMonitor("host_build", [
+    sidebarThread("thr_stale", "Finished yesterday", { hostId: "host_build", updatedAt: hoursAgo(25) }),
+    sidebarThread("thr_hidden", "A plugin's helper", { hostId: "host_build", hidden: true, status: "active", updatedAt: hoursAgo(1) }),
+    sidebarThread("thr_gone", "Archived", { hostId: "host_build", archived: true, updatedAt: hoursAgo(1) }),
+  ]);
+  await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("build-server"));
+  expect(within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
+});
+
+test("a box lists none of its hidden threads, its holder included, and keeps the rest however long ago they were active", async () => {
+  openMonitor("host_lxc", [
+    sidebarThread("thr_lxc", "Builds the release", { hidden: true, updatedAt: 9 }),
+    sidebarThread("thr_helper", "A plugin's helper", { hostId: "host_lxc", hidden: true, status: "active" }),
+    sidebarThread("thr_last_year", "Finished last year", { hostId: "host_lxc", updatedAt: 1 }),
+  ]);
+  const menu = await openViews();
+  expect(threadLabels(menu)).toEqual(["Finished last year, idle"]);
+});

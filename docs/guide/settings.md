@@ -122,6 +122,8 @@ The client's ID and secret are kept secret: the page shows only whether each is 
 
 The Monitor's machine status in BB's sidebar, how often it refreshes, background monitoring and pressure notifications. Machine status also has its switch on the overview's row. When you turn it on or off, the sidebar changes when BB next loads: select **Reload BB now**.
 
+In machine status, the arrow beside a machine's name opens a menu: a box's page, views and threads, or, for BB's server and your other BB machines, the threads working there or active in the past 24 hours.
+
 ### Configuration
 
 The configuration's revision, and the `bb box config` commands that show and change it from a terminal.

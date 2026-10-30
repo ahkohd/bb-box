@@ -4,29 +4,37 @@ import type { Contract, MachinesState, ThreadOnBox } from "../../plugin/contract
 import { threadOnBox } from "../../plugin/thread-on-box.ts";
 import { forThread, OPERATOR, useLive } from "../common.tsx";
 import { byActivity, threadTitle, WorkingMark } from "../thread-chips.tsx";
-import type { BoxScreens } from "./box-screens.tsx";
+import type { BoxScreens, MachineOpens } from "./box-screens.tsx";
 import { MenuGroup, MenuItem, MenuLabel, MenuSeparator } from "./menu.tsx";
 
 export const SHOWN_THREADS = 5;
 
-export function threadsOnBox(box: Pick<BoxScreens, "holderThreadId" | "hostId">, sidebar: readonly PluginSidebarThread[]): ThreadOnBox[] {
-  const unarchived = sidebar.filter((thread) => !thread.isArchived);
-  const holder = unarchived.find((thread) => thread.id === box.holderThreadId);
-  const runningOnBox = box.hostId === null ? [] : unarchived.filter((thread) => thread.host?.id === box.hostId && thread.id !== box.holderThreadId);
-  return [...(holder ? [threadOnBox(holder)] : []), ...byActivity(runningOnBox.map(threadOnBox))];
+const RECENT_MS = 24 * 60 * 60 * 1000;
+
+function workingOrRecent(thread: ThreadOnBox, now: number): boolean {
+  return thread.running || (thread.activeAt !== undefined && now - thread.activeAt <= RECENT_MS);
+}
+
+export function threadsOnMachine(machine: Pick<MachineOpens, "hostId" | "box">, sidebar: readonly PluginSidebarThread[], now = Date.now()): ThreadOnBox[] {
+  const holderThreadId = machine.box?.holderThreadId ?? null;
+  const inBbSidebar = sidebar.filter((thread) => !thread.isArchived && !thread.isHidden);
+  const holder = inBbSidebar.find((thread) => thread.id === holderThreadId);
+  const runningOnMachine = machine.hostId === null ? [] : inBbSidebar.filter((thread) => thread.host?.id === machine.hostId && thread.id !== holderThreadId).map(threadOnBox);
+  const listed = machine.box ? runningOnMachine : runningOnMachine.filter((thread) => workingOrRecent(thread, now));
+  return [...(holder ? [threadOnBox(holder)] : []), ...byActivity(listed)];
 }
 
 interface WithThreads {
-  readonly box: BoxScreens;
+  readonly machine: MachineOpens;
   readonly children: (threads: readonly ThreadOnBox[]) => ReactNode;
 }
 
-function FromBbSidebar({ box, children }: WithThreads) {
+function FromBbSidebar({ machine, children }: WithThreads) {
   const { threads } = experimental_useSidebarThreads();
-  return children(threadsOnBox(box, threads));
+  return children(threadsOnMachine(machine, threads));
 }
 
-function FromKeptMachineChips({ box, children }: WithThreads) {
+function FromKeptMachineChips({ box, children }: { box: BoxScreens; children: WithThreads["children"] }) {
   const rpc = useRpc<Contract>();
   const { value } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const machine = value?.machines.find((entry) => entry.box.id === box.boxId);
@@ -45,11 +53,11 @@ class ShowInsteadOnError extends Component<{ instead: ReactNode; children: React
   }
 }
 
-export function ThreadsOnBox({ box, children }: WithThreads) {
-  const fromChipsSource = box.kept ? <FromKeptMachineChips box={box}>{children}</FromKeptMachineChips> : children([]);
+export function ThreadsOnMachine({ machine, children }: WithThreads) {
+  const fromChipsSource = machine.box?.kept ? <FromKeptMachineChips box={machine.box}>{children}</FromKeptMachineChips> : children([]);
   return (
     <ShowInsteadOnError instead={fromChipsSource}>
-      <FromBbSidebar box={box}>{children}</FromBbSidebar>
+      <FromBbSidebar machine={machine}>{children}</FromBbSidebar>
     </ShowInsteadOnError>
   );
 }
@@ -68,25 +76,33 @@ function ThreadItem({ thread, onOpen }: { thread: ThreadOnBox; onOpen: (threadId
   );
 }
 
-export function ThreadItems({ box, threads }: { box: BoxScreens; threads: readonly ThreadOnBox[] }) {
+function MoreOnBoxesPage({ more, box }: { more: number; box: BoxScreens }) {
+  return (
+    <MenuItem onSelect={box.openOnBoxesPage} className="text-muted-foreground">
+      <span className="h-4 w-3.5 shrink-0" />
+      <span className="min-w-0">{more} more on the Boxes page</span>
+    </MenuItem>
+  );
+}
+
+function MoreInBbSidebar({ more }: { more: number }) {
+  return <MenuLabel className="py-1.5">{more} more in BB's sidebar</MenuLabel>;
+}
+
+export function ThreadItems({ machine, threads }: { machine: MachineOpens; threads: readonly ThreadOnBox[] }) {
   const labelId = useId();
   if (!threads.length) return null;
   const shown = threads.slice(0, SHOWN_THREADS);
   const more = threads.length - shown.length;
   return (
     <>
-      <MenuSeparator />
+      {machine.box ? <MenuSeparator /> : null}
       <MenuGroup aria-labelledby={labelId}>
         <MenuLabel id={labelId}>Threads</MenuLabel>
         {shown.map((thread) => (
-          <ThreadItem key={thread.id} thread={thread} onOpen={box.openThread} />
+          <ThreadItem key={thread.id} thread={thread} onOpen={machine.openThread} />
         ))}
-        {more > 0 ? (
-          <MenuItem onSelect={box.openOnBoxesPage} className="text-muted-foreground">
-            <span className="h-4 w-3.5 shrink-0" />
-            <span className="min-w-0">{more} more on the Boxes page</span>
-          </MenuItem>
-        ) : null}
+        {more > 0 ? (machine.box ? <MoreOnBoxesPage more={more} box={machine.box} /> : <MoreInBbSidebar more={more} />) : null}
       </MenuGroup>
     </>
   );
