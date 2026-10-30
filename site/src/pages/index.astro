@@ -81,7 +81,17 @@ const ways = [
   }
 
   :global([data-has-hero] header.header) {
+    position: absolute;
     border-bottom-color: transparent;
+    background-color: transparent;
+  }
+
+  :global([data-has-hero] .main-frame) {
+    padding-top: 0;
+  }
+
+  :global([data-has-hero] header .right-group) {
+    display: flex;
   }
 
   :global([data-has-hero] .hero) {
