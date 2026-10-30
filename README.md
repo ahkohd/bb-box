@@ -7,13 +7,13 @@ Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and An
 ## Why bb-box
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
-- **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or cloud machines from Hetzner Cloud, Namespace and boat.dev, made when boxes need them.
-- **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or a Pixel phone, foldable or tablet in the Android emulator. See [device boxes](docs/guide/devices.md).
+- **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or Hetzner Cloud, Namespace and boat.dev.
+- **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or an Android device in its emulator. See [device boxes](docs/guide/devices.md).
 - **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 - **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
-- **Every machine at a glance.** The Monitor, in BB's sidebar, shows CPU, memory, disk, network and processes for BB's server, your machines and every box. It can warn you when BB's server is under pressure. See [the Monitor](docs/guide/monitor.md).
+- **Every machine at a glance.** CPU, memory, disk and processes of every box and machine, in BB's sidebar. See [the Monitor](docs/guide/monitor.md).
 
 *bb-box assumes one trusted user. It is not a sandbox for code you do not trust.*
 
