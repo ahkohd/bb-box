@@ -1,3 +1,5 @@
+import type { Snapshotting } from "../backends/types.ts";
+
 export const LIVE_CHECKS_VARIABLE = "BB_BOX_LIVE_CHECKS";
 export const DROPPED_REPLY_MESSAGE = "BB Box saved this and dropped its reply, as a live check asked.";
 
@@ -45,5 +47,19 @@ export class SnapshotHolds {
       if (signal.aborted) return reject(signal.reason);
       signal.addEventListener("abort", () => reject(signal.reason), { once: true });
     });
+  }
+}
+
+export class FakeSnapshotPrices {
+  readonly #daily = new Map<string, number>();
+
+  set(backend: string, daily: number | null): void {
+    if (daily === null) this.#daily.delete(backend);
+    else this.#daily.set(backend, daily);
+  }
+
+  priced(backend: { readonly id: string }, offer: Snapshotting): Snapshotting {
+    const daily = this.#daily.get(backend.id);
+    return daily === undefined ? offer : { ...offer, price: { amount: daily, currency: "USD", per: "day", known: true } };
   }
 }

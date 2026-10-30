@@ -1,6 +1,6 @@
 import { PluginCliError } from "@get-bb/plugin-sdk";
 import type { FieldValue } from "../backends/types.ts";
-import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, MONITOR_REFRESH_SECONDS, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
+import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, MONITOR_REFRESH_SECONDS, SNAPSHOT_DEFAULTS, SNAPSHOT_LIMITS, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
 import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange } from "../core/sizes.ts";
 import { DEFAULT_TAILNET_TAGS } from "../core/tailnet.ts";
 import type { FieldView } from "./configuration.ts";
@@ -430,6 +430,8 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "general.tailnet.tags", type: { kind: "tags" }, default: DEFAULT_TAILNET_TAGS.join(","), help: "The tags machines join the tailnet with, comma-separated." },
   { name: "general.tailnet.clientId", type: { kind: "secret" }, default: null, help: "The Tailscale OAuth client's ID. A secret: give it with --secret." },
   { name: "general.tailnet.clientSecret", type: { kind: "secret" }, default: null, help: "The Tailscale OAuth client's secret. A secret: give it with --secret." },
+  { name: "general.snapshots.perBox", type: { kind: "whole", ...SNAPSHOT_LIMITS.perBox }, default: SNAPSHOT_DEFAULTS.perBox, help: "The most snapshots a box holds; kept ones count, undos are counted apart." },
+  { name: "general.snapshots.roomPercent", type: { kind: "whole", ...SNAPSHOT_LIMITS.roomPercent }, default: SNAPSHOT_DEFAULTS.roomPercent, help: "How full a host's storage may be, in percent, for bb-box to take a snapshot there; 7 points above it, bb-box deletes agents' snapshots nobody kept." },
   { name: "monitor.enabled", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.enabled, help: "Whether the Monitor runs: machine status in BB's sidebar, its sampling, background monitoring and its notifications. The sidebar changes when BB next loads." },
   { name: "monitor.refreshIntervalSeconds", type: { kind: "whole", least: MONITOR_REFRESH_SECONDS.least, most: MONITOR_REFRESH_SECONDS.most }, default: MONITOR_DEFAULTS.refreshIntervalSeconds, help: "Seconds between readings while machine status is open." },
   { name: "monitor.backgroundMonitoring", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.backgroundMonitoring, help: "Whether bb-box checks BB's server's CPU and memory every 30 s while nobody looks." },
@@ -462,6 +464,7 @@ function partsOf(document: ConfigDocument) {
     general: { ...document.general } as Record<string, unknown>,
     monitor: { ...document.monitor } as Record<string, unknown>,
     tailnet: { ...(document.general.tailnet ?? { mode: "off" }) } as Record<string, unknown>,
+    snapshots: { ...document.general.snapshots } as Record<string, unknown>,
   };
 }
 
@@ -469,6 +472,7 @@ export function optionCurrent(document: ConfigDocument, option: OptionInfo): unk
   const [part, key, sub] = option.name.split(".") as [string, string, string | undefined];
   if (part === "monitor") return (document.monitor as Record<string, unknown> | undefined)?.[key];
   if (key === "tailnet") return (document.general.tailnet as Record<string, unknown> | undefined)?.[sub!];
+  if (key === "snapshots") return (document.general.snapshots as Record<string, unknown> | undefined)?.[sub!];
   return (document.general as Record<string, unknown>)[key];
 }
 
@@ -480,6 +484,8 @@ function optionShown(value: unknown): string {
 function rebuilt(document: ConfigDocument, parts: ReturnType<typeof partsOf>, tailnetTouched: boolean): ConfigDocument {
   const general = { ...parts.general };
   if (tailnetTouched) general.tailnet = parts.tailnet;
+  if (Object.keys(parts.snapshots).length) general.snapshots = parts.snapshots;
+  else delete general.snapshots;
   const monitor = Object.keys(parts.monitor).length ? parts.monitor : undefined;
   const { monitor: _old, ...rest } = document;
   return { ...rest, general: general as ConfigDocument["general"], ...(monitor ? { monitor: monitor as ConfigDocument["monitor"] } : {}) };
@@ -491,8 +497,8 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
   let tailnetTouched = false;
   const put = (option: OptionInfo, value: unknown) => {
     const [part, key, sub] = option.name.split(".") as [string, string, string | undefined];
-    const target = part === "monitor" ? parts.monitor : key === "tailnet" ? parts.tailnet : parts.general;
-    const field = key === "tailnet" ? sub! : key;
+    const target = part === "monitor" ? parts.monitor : key === "tailnet" ? parts.tailnet : key === "snapshots" ? parts.snapshots : parts.general;
+    const field = key === "tailnet" || key === "snapshots" ? sub! : key;
     if (key === "tailnet") tailnetTouched = true;
     const before = target[field];
     if (JSON.stringify(before) === JSON.stringify(value)) return;

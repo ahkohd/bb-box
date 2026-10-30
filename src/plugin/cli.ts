@@ -247,7 +247,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Checking the box", async () => {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
               if (options.json) return json(app.view(box));
-              const snapshots = snapshotStatusLine(box, app.backends.get(box.backend)?.snapshotting?.(box.kind) ?? null, app.snapshots.seen({ is: "command" }, { box: { id: box.id, threadId: box.threadId }, runsOn: false }));
+              const snapshots = snapshotStatusLine(box, app.snapshots.offerFor(app.backends.get(box.backend), box.kind), app.snapshots.seen({ is: "command" }, { box: { id: box.id, threadId: box.threadId }, runsOn: false }), app.snapshots.settings.perBox);
               return out(`${boxDetail(box, app.control(box))}${snapshots ? `\n${snapshots}` : ""}`);
             }),
         }),

@@ -152,6 +152,109 @@ export interface GeneralSettings {
    * general secrets.
    */
   readonly tailnet?: TailnetSetting;
+  /** Snapshots of boxes (070): how many a box holds, how full a host's storage may get, and what paid ones may cost. */
+  readonly snapshots?: SnapshotSettings;
+}
+
+/** Snapshots of boxes (070). A value left out takes its default. */
+export interface SnapshotSettings {
+  /** The most snapshots a box holds, 1 to 50; kept ones count, and undos are counted apart, 2 a box. 5 unless set. */
+  readonly perBox?: number;
+  /**
+   * How full a host's storage may be, in percent, 50 to 90, for bb-box to take a snapshot on it: a take is refused past
+   * it, and past 5 points below it of a thin pool's metadata. 7 points above it, bb-box deletes agents' snapshots on
+   * that storage that nobody kept, oldest first. 85 unless set.
+   */
+  readonly roomPercent?: number;
+  /** Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. */
+  readonly keepDays?: number;
+  /** Whether an agent may restore its own boxes without asking, with an undo first. On unless set off. Not used yet: agents' restores come with 070's unit 5. */
+  readonly agentsRestore?: boolean;
+  /** Whether an agent may restore a snapshot that holds a box's memory. On unless set off. Not used yet: agents' restores come with 070's unit 5. */
+  readonly agentsMemory?: boolean;
+  /** Whether bb-box keeps a small picture of a box's screen with each snapshot. On unless set off. Not used yet: pictures come with 070's unit 6. */
+  readonly pictures?: boolean;
+  /**
+   * The ceiling on paid snapshots, by backend ID: the most a month, in the provider's currency, that the paid snapshots
+   * held on it may cost at their prices, 0 to 1000. A take, an undo, a Keep, a renewal or a held copy that would pass it
+   * is refused. 5 for a backend not set.
+   */
+  readonly ceilings?: Readonly<Record<string, number>>;
+}
+
+export const SNAPSHOT_DEFAULTS = { perBox: 5, roomPercent: 85, keepDays: 30, agentsRestore: true, agentsMemory: true, pictures: true, ceiling: 5 } as const;
+export const SNAPSHOT_LIMITS = { perBox: { least: 1, most: 50 }, roomPercent: { least: 50, most: 90 }, keepDays: { least: 1, most: 365 }, ceiling: { least: 0, most: 1000 } } as const;
+
+/** The snapshot settings with defaults filled in. */
+export interface SnapshotConfig {
+  readonly perBox: number;
+  readonly roomPercent: number;
+  readonly keepDays: number;
+  readonly agentsRestore: boolean;
+  readonly agentsMemory: boolean;
+  readonly pictures: boolean;
+  readonly ceilings: Readonly<Record<string, number>>;
+}
+
+export function snapshotConfig(document: Pick<ConfigDocument, "general">): SnapshotConfig {
+  const snapshots = document.general.snapshots ?? {};
+  return {
+    perBox: snapshots.perBox ?? SNAPSHOT_DEFAULTS.perBox,
+    roomPercent: snapshots.roomPercent ?? SNAPSHOT_DEFAULTS.roomPercent,
+    keepDays: snapshots.keepDays ?? SNAPSHOT_DEFAULTS.keepDays,
+    agentsRestore: snapshots.agentsRestore ?? SNAPSHOT_DEFAULTS.agentsRestore,
+    agentsMemory: snapshots.agentsMemory ?? SNAPSHOT_DEFAULTS.agentsMemory,
+    pictures: snapshots.pictures ?? SNAPSHOT_DEFAULTS.pictures,
+    ceilings: snapshots.ceilings ?? {},
+  };
+}
+
+export function ceilingOf(config: Pick<SnapshotConfig, "ceilings">, backendId: string): number {
+  return config.ceilings[backendId] ?? SNAPSHOT_DEFAULTS.ceiling;
+}
+
+export function isCents(value: unknown, least: number, most: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= least && value <= most && Math.abs(Math.round(value * 100) - value * 100) < 1e-6;
+}
+
+type ProblemAt = (path: string, message: string) => void;
+
+const SNAPSHOT_SETTING_NAMES = "perBox, roomPercent, keepDays, agentsRestore, agentsMemory, pictures and ceilings";
+
+function readSnapshots(value: unknown, problem: ProblemAt): SnapshotSettings | null {
+  if (!isRecord(value)) {
+    problem("general.snapshots", `snapshots is an object with ${SNAPSHOT_SETTING_NAMES}.`);
+    return null;
+  }
+  const snapshots: Record<string, unknown> = {};
+  const whole = (key: "perBox" | "roomPercent" | "keepDays", entry: unknown, words: string) => {
+    const { least, most } = SNAPSHOT_LIMITS[key];
+    if (isWhole(entry, least, most)) snapshots[key] = entry;
+    else problem(`general.snapshots.${key}`, `Use a whole number ${words} from ${least} to ${most}.`);
+  };
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined || entry === null) continue;
+    if (key === "perBox") whole(key, entry, "of snapshots a box");
+    else if (key === "roomPercent") whole(key, entry, "of percent");
+    else if (key === "keepDays") whole(key, entry, "of days");
+    else if (key === "agentsRestore" || key === "agentsMemory" || key === "pictures") {
+      if (typeof entry === "boolean") snapshots[key] = entry;
+      else problem(`general.snapshots.${key}`, `${key} is true or false.`);
+    } else if (key === "ceilings") {
+      if (!isRecord(entry)) {
+        problem("general.snapshots.ceilings", "ceilings is an object with a ceiling a month for each backend, by its ID.");
+        continue;
+      }
+      const ceilings: Record<string, number> = {};
+      const { least, most } = SNAPSHOT_LIMITS.ceiling;
+      for (const [backend, ceiling] of Object.entries(entry)) {
+        if (isCents(ceiling, least, most)) ceilings[backend] = ceiling;
+        else problem(`general.snapshots.ceilings.${backend}`, `Use an amount a month from ${least} to ${most}, in whole cents, such as 5 or 7.50.`);
+      }
+      if (Object.keys(ceilings).length) snapshots[key] = ceilings;
+    } else problem(`general.snapshots.${key}`, `There is no snapshots setting "${key}". There are ${SNAPSHOT_SETTING_NAMES}.`);
+  }
+  return Object.keys(snapshots).length ? (snapshots as SnapshotSettings) : null;
 }
 
 export interface MonitorSettings {
@@ -361,7 +464,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder and tailnet.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -397,7 +500,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
           const tailnet = readTailnet(value, problem, changes);
           if (tailnet) general[key] = tailnet;
           if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = { ...secrets[GENERAL_SECRETS], ...changes };
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder and tailnet.`);
+        } else if (key === "snapshots") {
+          const snapshots = readSnapshots(value, problem);
+          if (snapshots) general[key] = snapshots;
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.`);
       }
     }
   }

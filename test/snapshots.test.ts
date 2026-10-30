@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import Database from "better-sqlite3";
 import { scopedStorage } from "../src/backends/index.ts";
-import type { Backend } from "../src/backends/types.ts";
+import type { Backend, Price } from "../src/backends/types.ts";
 import { BY_COMMAND, type BoxEventKind } from "../src/core/box-log.ts";
 import { BoxError, Boxes, type BoxRecord } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { checkDocument, emptyDocument } from "../src/core/document.ts";
+import { checkDocument, emptyDocument, snapshotConfig, type SnapshotSettings } from "../src/core/document.ts";
 import { LOST_AFTER_MISSING_MS, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
 import { Snapshots, type HoldStep } from "../src/core/snapshots.ts";
 import { writeFileSync } from "node:fs";
@@ -42,6 +42,8 @@ function world() {
     holds,
     active: true,
     threadState: "live" as "live" | "ended",
+    settings: {} as SnapshotSettings,
+    price: null as Price | null,
     backend: new FakeBackend({ root, storage: backendStorage }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
@@ -114,6 +116,8 @@ function world() {
         holds.step = null;
         await new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
       },
+      settings: () => snapshotConfig({ general: { snapshots: state.settings } }),
+      priced: (_backend, offer) => (state.price ? { ...offer, price: state.price } : offer),
       now,
       timeZone: "UTC",
     });
@@ -184,7 +188,7 @@ test("a sixth snapshot is refused, naming the five to delete from; undos do not 
   }
   const refused = await rejection(state.snapshots.take(COMMAND, box, standing(box)));
   assert.equal(refused.code, "limit_reached");
-  assert.equal(refused.message, `Box ${box.name} holds 5 snapshots, the most a box may. Delete one first: "n1", "n2", "n3", "n4", "n5".`);
+  assert.equal(refused.message, `Box ${box.name} holds 5 snapshots, and your settings allow 5 a box. Delete one first: "n1", "n2", "n3", "n4", "n5".`);
   state.store.updateRecord(state.store.records()[0]!.id, { undoOf: "oprestore" });
   assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.state, "ready", "an undo is apart from the five");
   const agent: Caller = { is: "agent", threadId: THREAD };
@@ -196,13 +200,13 @@ test("room: a take is refused past 85% full, or when it would pass 85%, or past 
   const state = world();
   const box = await readyBox(state);
   state.provider.percentFull = 86;
-  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /storage fast is 86% full, and bb-box takes no snapshot past 85%/);
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /storage fast is 86% full, and your settings take no snapshot past 85%/);
   state.provider.percentFull = 84.5;
   const memory = await rejection(state.snapshots.take(COMMAND, box, standing(box), { memory: true }));
   assert.match(memory.message, /would be \d+% full with its memory/);
   state.provider.percentFull = 30;
   state.provider.metadataPercentFull = 81;
-  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /metadata is 81% full, and bb-box takes no snapshot past 80%/);
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /metadata is 81% full, and bb-box takes no snapshot past 80%, 5 points below your settings' 85%/);
   state.provider.metadataPercentFull = 10;
   state.provider.percentFull = 84;
   const reserved: SnapshotOperation = {
@@ -229,6 +233,88 @@ test("room: a take is refused past 85% full, or when it would pass 85%, or past 
   state.store.insertOperation(reserved);
   assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /would be 86% full/, "another take's room is still reserved");
   assert.equal(state.store.records().length, 0, "nothing was recorded for a refused take");
+});
+
+test("Settings' snapshots per box: a lower limit refuses a take sooner, a higher one allows more, and kept ones still count", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.settings = { perBox: 2 };
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  state.tick(60_000);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "two" });
+  const refused = await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "three" }));
+  assert.equal(refused.code, "limit_reached");
+  assert.equal(refused.message, `Box ${box.name} holds 2 snapshots, and your settings allow 2 a box. Delete one first: "one", "two".`);
+  state.settings = { perBox: 3 };
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box), { name: "three" })).snapshot?.state, "ready");
+  state.store.updateRecord(state.store.records()[0]!.id, { keptUntil: state.now + DAY });
+  assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).code, "limit_reached", "a kept one counts");
+});
+
+test("Settings' room: a take is refused past it, and past 5 points below it of thin metadata; the sweep deletes agents' unkept snapshots only 7 points above it", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.settings = { roomPercent: 60 };
+  state.provider.percentFull = 61;
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /storage fast is 61% full, and your settings take no snapshot past 60%.*raise the limit in Settings, Snapshots\.$/);
+  state.provider.percentFull = 40;
+  state.provider.metadataPercentFull = 56;
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /metadata is 56% full, and bb-box takes no snapshot past 55%, 5 points below your settings' 60%/);
+  state.provider.metadataPercentFull = 10;
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const taken = await state.snapshots.take(agent, box, standing(box), { name: "the agent's" });
+  assert.equal(taken.snapshot?.state, "ready");
+  state.provider.percentFull = 66;
+  await state.snapshots.tidy();
+  assert.equal(state.store.records().length, 1, "66% is under the sweep's 67%");
+  state.provider.percentFull = 68;
+  await state.snapshots.tidy();
+  assert.equal(state.store.records().length, 0, "past 67%, the sweep deleted the agent's snapshot nobody kept");
+  assert.match(state.log.events(box.id).at(-1)!.words ?? "", /the agent's/);
+});
+
+test("G10: the paid ceiling bounds the monthly rate held: a take that would pass it is refused before anything is recorded, a lowered ceiling warns and deletes nothing, and a delete keeps the month's spend", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.price = { amount: 0.056, currency: "USD", per: "day", known: true };
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "two" });
+  const paid = state.snapshots.paidOn(state.backend.id);
+  assert.equal(paid.held.count, 2);
+  assert.equal(paid.held.monthly.toFixed(2), "3.36");
+  assert.equal(paid.ceiling, 5);
+  assert.equal(paid.past, false);
+  const refused = await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "three" }));
+  assert.equal(refused.code, "limit_reached");
+  assert.equal(refused.message, "It would bring snapshots held on Fake host to about $5.04 a month, past your ceiling of $5.00. Delete one, or raise the ceiling in Settings, Snapshots, Paid snapshots.");
+  assert.equal(state.store.records().length, 2, "nothing was recorded for the refused take");
+  assert.equal(state.store.unsettled().length, 0);
+  state.settings = { ceilings: { [state.backend.id]: 3 } };
+  assert.equal(state.snapshots.paidOn(state.backend.id).past, true, "a ceiling lowered below the rate is past");
+  await state.snapshots.sweep();
+  assert.equal(state.store.records().length, 2, "bb-box never deletes to get under the ceiling");
+  assert.match((await rejection(state.snapshots.take(COMMAND, box, standing(box)))).message, /to about \$5\.04 a month, past your ceiling of \$3\.00/);
+  state.settings = { ceilings: { [state.backend.id]: 5.04 } };
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box), { name: "three" })).snapshot?.state, "ready", "a rate equal to the ceiling is within it");
+  state.tick(12 * HOUR);
+  const one = state.store.records().find((record) => record.name === "one")!;
+  await state.snapshots.delete(COMMAND, standing(box), one.id);
+  state.tick(6 * HOUR);
+  const spent = state.snapshots.paidOn(state.backend.id).spent;
+  assert.equal(spent.toFixed(4), (0.056 * 0.5 + 0.056 * 0.75 * 2).toFixed(4), "the deleted one's half day is still spent");
+  await state.restart();
+  assert.equal(state.snapshots.paidOn(state.backend.id).spent.toFixed(4), spent.toFixed(4), "the month's spend outlives a restart");
+});
+
+test("a price bb-box does not know is admitted for the person, and refused for an agent", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.price = { amount: 0, currency: "USD", per: "day", known: false };
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  assert.equal((await rejection(state.snapshots.take(agent, box, standing(box)))).message, "bb-box does not know what a snapshot on Fake host costs, so only you can take one there.");
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.state, "ready");
+  const paid = state.snapshots.paidOn(state.backend.id);
+  assert.deepEqual([paid.held.count, paid.held.unknown, paid.held.monthly], [1, 1, 0]);
 });
 
 test("a locked guest and a plan that cannot take are refused with their words, before anything is recorded", async () => {

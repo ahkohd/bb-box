@@ -88,7 +88,7 @@ export function DraftRow({
   );
 }
 
-export function DraftNumberRow({ draft, path, label, description, unit, unitWord, disabled }: { draft: Draft; path: Path; label: string; description: ReactNode; unit?: string; unitWord?: string; disabled?: boolean }) {
+export function DraftNumberRow({ draft, path, label, description, unit, unitWord, disabled, decimal = false }: { draft: Draft; path: Path; label: string; description: ReactNode; unit?: string; unitWord?: string; disabled?: boolean; decimal?: boolean }) {
   const id = useId();
   const problem = draft.problem(path);
   const conflict = draft.conflict(path);
@@ -102,7 +102,7 @@ export function DraftNumberRow({ draft, path, label, description, unit, unitWord
         aria-describedby={describedBy(`${id}-help`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
         className={cn("h-8 w-20 text-right text-xs tabular-nums", changed && "border-warning/60")}
-        inputMode="numeric"
+        inputMode={decimal ? "decimal" : "numeric"}
         autoComplete="off"
         disabled={disabled}
         value={draft.text(path)}

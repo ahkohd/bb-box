@@ -456,3 +456,150 @@ After the reviews, on the second separate BB, a Linux VM of 2 cores and 4
 GiB: a take with `--memory` was ready in 1.8 s, 2.2 s for the command, "it
 holds its disk and memory"; a disk take in 0.7 s; both listed with what they hold, "2 of 5 for
 this box", and deleted.
+
+## Unit 4: Settings' Snapshots page
+
+Built on 30 October 2026, on main `7bd9f833` (units 0, 1a and 1b
+included), and rebased onto `7652147b`. The lead's answers to this unit's questions are in 070's
+[Decided during unit 4](070-snapshots.md#decided-during-unit-4).
+
+### What changed
+
+- **The settings**, under `general.snapshots` in the configuration
+  document, read and checked by 067's engine: `perBox` (1 to 50, 5),
+  `roomPercent` (50 to 90, 85), `keepDays` (1 to 365, 30), `agentsRestore`
+  and `agentsMemory` (on), `pictures` (on), and `ceilings`, a ceiling a
+  month for each backend ID (0 to 1,000, in whole cents, 5 unless set).
+  `src/core/document.ts`; the configuration reference is regenerated.
+- **What bites now, and what waits.** Snapshots per box, the room and the
+  ceilings are used, shown and found. Keep's length (unit 8), the agents'
+  two switches (unit 5) and pictures (unit 6) are in the schema and in
+  `snapshotConfig`, tested, and say "Not used yet" in the reference; they
+  are not on the page or in Find. Each comes onto the page with its unit.
+- **The constants units 1a and 1b used are gone where a setting replaces
+  them.** The take counts against `perBox`. The room refuses a take past
+  `roomPercent`, a thin pool's metadata 5 points below it, and the sweep
+  deletes 7 points above it (`roomThresholds`), so the defaults are as
+  before: 85, 80 and 92. The housekeeping times stay fixed: 24 hours for a
+  failed record, 7 days for a lost or found one, 10 minutes before a
+  missing one is lost. `bb box status`, `box_status`, `bb box snapshot take`
+  and `list` say "of N" with the setting.
+- **The ceiling.** One rule, `ceilingVerdict` in
+  `src/core/snapshot-cost.ts`, admits a take, an undo, a Keep, a renewal
+  and a held copy. A take, an undo and a held copy are refused when the
+  rate after them would be past the ceiling; a Keep and a renewal add no
+  snapshot, so they are refused while the rate is past it. The rate is
+  every paid snapshot the provider holds, being taken included, times its
+  daily price, times 30; cents are compared, so the words never say "$5.00
+  past $5.00". A price bb-box does not know is admitted for the person and
+  refused for an agent. Unit 4 wires the take, in the same transaction as
+  the limit and the room, so takes at once cannot pass it together. The
+  refusal: "It would bring snapshots held on boat.dev to about $5.04 a
+  month, past your ceiling of $5.00. Delete one, or raise the ceiling in
+  Settings, Snapshots, Paid snapshots." Nothing deletes to get under it.
+- **This month's spend.** `snapshots.db` gains `snapshot_charges`: a
+  charge starts when a priced snapshot is ready, from the moment it holds,
+  and ends when it is lost or its record goes, so a deleted snapshot's
+  days still count. The month is the calendar month in UTC. Ended charges
+  go after 400 days. `src/plugin/snapshot-store.ts`.
+- **The page**, Options, Snapshots, between Images and Devices, through
+  067's drafts and Save: "Each box" (Snapshots per box; Refuse new
+  snapshots when a host's storage is past, whose words follow the typed
+  value: "or past 80% of a thin pool's metadata. Past 92%, ..."), "Paid
+  snapshots" (a row per backend that charges, with its price, the rate
+  held and this month's spend, and in amber words when the rate is past
+  the ceiling; otherwise "None of your backends charges for snapshots"),
+  and "What each backend offers" (a row per backend, opening its page:
+  what its kinds' snapshots hold and cost, and its doctor's last
+  Snapshots check, with the fix in amber). No switches. The overview's row
+  reads "5 per box · none taken past 85% full", with "paid up to $5.00 a
+  month", or "past a paid ceiling" in amber.
+- **Find** finds Snapshots per box, the room, each backend's ceiling (or
+  "Paid snapshots" when none charges) and What each backend offers.
+- **Import** and the receipts name each snapshot setting; a refused value
+  lands on its field (`general.snapshots.ceilings.<id>` on that backend's
+  ceiling).
+- **The CLI**: `bb box option set general.snapshots.perBox=<n>` and
+  `general.snapshots.roomPercent=<n>`. Ceilings are set on the page or in
+  the configuration file.
+- **For live checks only**, with `BB_BOX_LIVE_CHECKS=1`: `bb box snapshot
+  fake-price <backend> <dollars a day | off>` gives snapshots taken from
+  then on a made-up price, until bb-box restarts, so the ceiling can be
+  checked where no backend charges.
+- **Docs**: the guide's [Snapshots](../guide/snapshots.md) page has a
+  Settings section.
+
+### Tests
+
+On a Linux box, on main `7652147b`: `npx tsc` passes; the node suite ran
+3,010 tests, 2,721 passed, 1 failed, 288 skipped; vitest ran 383, all
+passed; `node scripts/reference.ts --check` passes. The one failure, the
+iOS driver restarting a fake `idb_companion`, is in a file this unit does
+not touch, and passed 3 times in 3 when its file ran alone. An earlier full
+run had one other such failure, a project's variables in an enrolled box
+(`boxes.test.ts`), which also passed 3 times in 3 alone.
+
+- `test/snapshot-cost.test.ts`, 5: the ceiling for each of the five
+  changes, at and past it, free and unknown prices, per-GB prices, the
+  rate held (taking counted; failed, lost and free not), this month's
+  spend across a month's start, and the settings' defaults, thresholds and
+  checks.
+- `test/snapshots.test.ts`, 4 new: a lower and a higher limit, kept ones
+  counted; the room at 60% refusing at 61%, metadata at 56% of 55%, and the
+  sweep keeping at 66% and deleting the agent's unkept snapshot at 68%; G10
+  on a fake price (below); an unknown price.
+- `test/config-cli.test.ts`, 1 new: the two options, their range, unset.
+- `test/app.test.tsx`, 3 new: the page's fields, words and Save, sending
+  `{ perBox: 3, roomPercent: 60, ceilings: { fake: 7.5 } }`; no switches and
+  none of the waiting settings; the empty Paid snapshots, the amber words
+  past the ceiling and the overview's three values; Find and problem paths.
+
+### G10 ceiling-rate
+
+Passed for the take, on a fake priced backend in the tests and a made-up
+price live: a ceiling lowered below the rate refuses the next take and
+warns on the page and the overview, a sweep deletes nothing, and deleting
+keeps the month's spend. The undo (unit 3), Keep, renewal, held copy and
+bulk Keep (unit 8) do not exist yet: their admission is the same rule,
+tested for each in `snapshot-cost.test.ts`, and their units prove it live.
+
+### On a separate BB
+
+A fresh `npx bb-app` (latest) with no account, its own data folder and
+ports, started with `env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1`
+only, in a Proxmox LXC box. bb-box installed from this branch with `bb
+plugin install path:`. First start: "Opened snapshots.db, attached to
+bb-box's database: ran 8 migrations." The lead gave it a Proxmox LXC
+backend with its own VMIDs and addresses and a Linux template on LVM-thin.
+Each setting was changed on the page in headless Chromium, with Save; the
+takes are `bb box snapshot` on a machine of the person's. The node's name
+is written pve-1 below.
+
+| Check | Result |
+| --- | --- |
+| Snapshots per box set to 2 on the page | stored `{"perBox":2}`; two takes ready in 0.4 and 0.3 s; the third refused: "Box snapcheck holds 2 snapshots, and your settings allow 2 a box. Delete one first: "one", "two"." |
+| Room set to 50% | "pve-1's storage local-lvm is 54% full, and your settings take no snapshot past 50%: a full thin pool stops every box there. Delete snapshots or release boxes on it first, or raise the limit in Settings, Snapshots." |
+| Room back to 85% | stored nothing (the default); the same take ready, "3 of 5" |
+| A made-up price of $0.056 a day, the ceiling at its default | two paid takes ready; the third refused: "It would bring snapshots held on Proxmox LXC on pve-1 to about $5.04 a month, past your ceiling of $5.00. ..." The page: "$0.056 a day for each snapshot. Held now: 2 snapshots, about $3.36 a month." |
+| Ceiling lowered to 3 on the page | the row adds, in amber, "The rate held is past this ceiling: bb-box refuses new paid snapshots, undos, Keep and renewals there until you raise it or delete some. It deletes none by itself."; the overview's row is amber; the next take refused at "$5.04 a month, past your ceiling of $3.00"; after `bb box sweep` both snapshots are still listed |
+| Find | "snapshot limit": Snapshots per box first; "storage full": the room; "snapshot ceiling": "Paid snapshots on Proxmox LXC (...)", "$3.00 a month" |
+| The month's spend, at a made-up $30 a day, ceiling 1,000 | the charge ran 182.0 s from the snapshot's capture to its delete; after the delete the page said "Held now: 0 snapshots ... Spent this month so far, deleted ones included: $0.06" |
+| Clean-up | every snapshot deleted, the machines removed, the price and settings back to their defaults |
+
+Screenshots at 1,440, 760 and 390 px, light and dark, of the page with a
+ceiling passed and with one held within it, the overview, a draft and
+Find, are in the unit's thread storage, not in the repository: they show
+the test node's name.
+
+### Known limits
+
+- **The spend on an open page** is as of the page's last read of the
+  settings. Any change refreshes it; a page left open while a paid
+  snapshot is held shows the spend of when it last read. A reload reads it
+  afresh.
+- **What each backend offers** is one row per backend, with each storage
+  in the doctor's words, not one row per backend and storage from a plan
+  as 070's table says: a plan needs a guest, and the doctor reads the
+  templates' storage without one.
+- **No backend charges yet**, so the ceiling bites only on the made-up
+  price until unit 11.

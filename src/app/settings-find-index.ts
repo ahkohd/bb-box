@@ -1,12 +1,14 @@
-import type { BackendConfig } from "../core/document.ts";
+import { snapshotConfig, type BackendConfig } from "../core/document.ts";
+import { moneyWords } from "../core/snapshot-cost.ts";
 import type { ConfigState, DriverView, FieldView } from "../plugin/configuration.ts";
 import { effectiveKind, formValue, gib, groupFields, inheritedValues, inheritSource, isSecretField, isSecretState, PRESET_NAMES, sourceName } from "./config.ts";
 import { COPY_BUTTON, EXPORT_BUTTON, OPEN_IMPORT } from "./settings-configuration.tsx";
 import { ADD_FILE } from "./settings-files.tsx";
 import { BAKE_WORDS, type StandardImage } from "./settings-images.tsx";
 import { runsOn } from "./settings-kinds.tsx";
-import { backendEnabledPath, backendFieldPath, backendLabelPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, standardImagePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
+import { backendEnabledPath, backendFieldPath, backendLabelPath, ceilingPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, snapshotPath, standardImagePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
 import type { SettingsView } from "./settings-route.ts";
+import { paidBackends } from "./settings-snapshots.tsx";
 import { backendLabel, hostChip, isMachineDocker, kindName, plural } from "./settings-status.ts";
 
 export const FIND_SHOWN = 40;
@@ -236,6 +238,7 @@ function optionEntries(state: ConfigState): FindEntry[] {
     ...Object.keys(images)
       .sort((a, b) => a.localeCompare(b))
       .map((name) => option("images", "Images", `image ${name}`, `When ${name} is built ahead`, imageBakePath(name), BAKE_WORDS[images[name]!.bake ?? "auto"], `projects' images project image ${name} bake script`)),
+    ...snapshotEntries(state),
     option("devices", "Devices", "page", "Devices", null, null, "options page ios android"),
     option("devices", "Devices", "encoder", "iOS video encoding", "general/iosEncoder", ENCODER_WORDS[general.iosEncoder] ?? general.iosEncoder, "encoder hardware software h264 iphone stream"),
     option("devices", "Devices", "ledger", "Share each Mac's encoder fairly", "general/encoderLedger", onOff(general.encoderLedger), "encoder ledger stream ios", true),
@@ -253,6 +256,22 @@ function optionEntries(state: ConfigState): FindEntry[] {
     entry({ key: "machines", label: "Your machines", where: "Options", value: "On the Boxes page", opens: { machinesTab: true }, words: "machines boxes page add machine" }),
   ];
   return entries;
+}
+
+function snapshotEntries(state: ConfigState): FindEntry[] {
+  const snapshots = snapshotConfig(state.document);
+  const paid = paidBackends(state);
+  return [
+    option("snapshots", "Snapshots", "page", "Snapshots", null, null, "options page snapshot checkpoint backup restore"),
+    option("snapshots", "Snapshots", "per-box", "Snapshots per box", snapshotPath("perBox"), String(snapshots.perBox), "snapshot limit most each box undos kept count"),
+    option("snapshots", "Snapshots", "room", "Refuse new snapshots when a host's storage is past", snapshotPath("roomPercent"), `${snapshots.roomPercent}% full`, "snapshot room storage disk full percent thin pool metadata sweep"),
+    ...(paid.length
+      ? paid.map(({ config, live }) =>
+          option("snapshots", "Snapshots", `ceiling ${config.id}`, `Paid snapshots on ${backendLabel(state, config)}`, ceilingPath(config.id), `${moneyWords(live.snapshots!.paid!.ceiling, live.snapshots!.paid!.currency)} a month`, "snapshot ceiling paid cost price money spend month budget"),
+        )
+      : [option("snapshots", "Snapshots", "ceiling", "Paid snapshots", null, "None of your backends charges", "snapshot ceiling paid cost price money spend month budget")]),
+    option("snapshots", "Snapshots", "offers", "What each backend offers", null, null, "snapshot backend storage memory disk holds"),
+  ];
 }
 
 function configurationEntries(state: ConfigState): FindEntry[] {

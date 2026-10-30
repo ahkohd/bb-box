@@ -31,7 +31,8 @@ import { INSTALL_ID_KEY, loadInstallId, requireInstallId, storeInstallId } from 
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
-import { Configuration, boundedDoctor, type ApplyResult } from "./configuration.ts";
+import { Configuration, boundedDoctor, type ApplyResult, type BackendSnapshotsView } from "./configuration.ts";
+import { backendSnapshotsView } from "./snapshot-words.ts";
 import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
@@ -71,14 +72,14 @@ import { DeviceServers, type DeviceServersDeps } from "./devices.ts";
 import { connectScript, deviceServerFiles } from "../core/device-delivery.ts";
 import { startMonitor, type Monitor, type MonitoredBox } from "./monitor.ts";
 import { inSlot, placementOf, slotHostName } from "../core/device-host.ts";
-import { monitorConfig } from "../core/document.ts";
+import { monitorConfig, snapshotConfig } from "../core/document.ts";
 import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
 import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-files.ts";
 import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
 import { Snapshots } from "../core/snapshots.ts";
-import { SnapshotHolds } from "./live-checks.ts";
+import { FakeSnapshotPrices, SnapshotHolds } from "./live-checks.ts";
 import { ReachCheck } from "../core/reach.ts";
 import type { Actor } from "../core/box-log.ts";
 
@@ -208,6 +209,7 @@ export interface BbBox {
   readonly snapshots: Snapshots;
   readonly snapshotStore: SnapshotStore;
   readonly snapshotHolds: SnapshotHolds | null;
+  readonly snapshotPrices: FakeSnapshotPrices | null;
   readonly reach: ReachCheck;
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
@@ -447,6 +449,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   const snapshotStore = new SnapshotStore({ file: storedFiles.snapshots, logError });
   const snapshotHolds = (options.liveChecks ?? liveChecksOn()) ? new SnapshotHolds() : null;
+  const snapshotPrices = snapshotHolds ? new FakeSnapshotPrices() : null;
 
   // bb-box's host entry on BB machines (src/host/entry.ts).
   const host = bb.hosts.experimental_client({ contract: hostContract });
@@ -603,6 +606,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;
   let snapshotsHeld = (): ReadonlyMap<string, { readonly count: number; readonly words: string }> => new Map();
+  let snapshotsOf = (_backendId: string): BackendSnapshotsView | null => null;
   let monitorChanged = () => {};
   let settleChangedImages = () => {};
   const configuration = await Configuration.load({
@@ -613,6 +617,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     boxes: () => boxes.all(),
     spareCounts: () => boxes.spareCounts(),
     snapshotsHeld: () => snapshotsHeld(),
+    snapshotsOf: (backendId) => snapshotsOf(backendId),
     changed: () => {
       notify(null);
       needsConfiguration();
@@ -848,6 +853,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     notify,
     logError,
     log: (message) => bb.log.info(message),
+    settings: () => snapshotConfig(configuration.document),
+    ...(snapshotPrices ? { priced: (backend, offer) => snapshotPrices.priced(backend, offer) } : {}),
     ...(snapshotHolds ? { hold: (operation, step, signal) => snapshotHolds.hold(operation, step, signal, (message) => bb.log.info(message)) } : {}),
   });
   snapshotsHeld = () => {
@@ -861,6 +868,17 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       logError("read the snapshots each backend holds", error);
     }
     return held;
+  };
+  snapshotsOf = (backendId) => {
+    const backend = backends.get(backendId);
+    if (!backend) return null;
+    try {
+      const kinds = [...new Set(backends.kinds().filter((offer) => offer.backend.id === backendId).map((offer) => offer.kind.id))];
+      return backendSnapshotsView(backend, kinds, snapshots);
+    } catch (error) {
+      logError(`read what ${backendId}'s snapshots offer and cost`, error);
+      return null;
+    }
   };
   probeEncoder = (mac, signal) => boxes.probeEncoder(mac, signal);
   kindsChanged = () => {
@@ -1379,6 +1397,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     snapshots,
     snapshotStore,
     snapshotHolds,
+    snapshotPrices,
     reach,
     backendInSettings,
     async forget(threadId, ref, who) {

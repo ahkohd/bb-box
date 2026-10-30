@@ -26,6 +26,7 @@ import { backendFieldPath } from "./settings-paths.ts";
 import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { NetworkOptions } from "./settings-tailnet.tsx";
 import { FindSettings } from "./settings-find.tsx";
+import { SnapshotsOptions } from "./settings-snapshots.tsx";
 
 function AtOnceSwitch({ label, description, settingKey, path, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; path: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const { instant } = useSettings();
@@ -250,11 +251,12 @@ function MonitorOptions() {
   );
 }
 
-const OPTION_TITLES: Readonly<Record<string, string>> = { boxes: "Boxes", images: "Images", devices: "Devices", network: "Network", monitor: "Monitor", configuration: "Configuration" };
+const OPTION_TITLES: Readonly<Record<string, string>> = { boxes: "Boxes", images: "Images", snapshots: "Snapshots", devices: "Devices", network: "Network", monitor: "Monitor", configuration: "Configuration" };
 
 const OPTION_DESCRIPTIONS: Readonly<Record<string, string>> = {
   boxes: "What a thread gets, how many, and what every box has.",
   images: "What new boxes start from: BB Box's standard images, and your projects' own.",
+  snapshots: "How many snapshots a box holds, how full a host's storage may get, and what paid snapshots may cost.",
   devices: "iOS and Android devices in boxes.",
   network: "How machines BB Box makes reach BB.",
   monitor: "Machine status in BB's sidebar.",
@@ -269,9 +271,10 @@ export function OptionPage({ id }: { id: string }) {
   if (!isOptionPage(id)) return <NotHere what="page" />;
   return (
     <div className="space-y-6">
-      <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "network" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
+      <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "snapshots" || id === "network" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
       {id === "boxes" ? <BoxesOptions /> : null}
       {id === "images" ? <ImagesOptions /> : null}
+      {id === "snapshots" ? <SnapshotsOptions /> : null}
       {id === "devices" ? <DevicesOptions /> : null}
       {id === "network" ? <NetworkOptions /> : null}
       {id === "monitor" ? <MonitorOptions /> : null}

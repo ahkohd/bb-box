@@ -1,5 +1,6 @@
 import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
 import type { Actor } from "./box-log.ts";
+import type { Charge } from "./snapshot-cost.ts";
 
 export const SNAPSHOT_STATES = ["taking", "ready", "failed", "incomplete", "deleting", "unavailable", "lost"] as const;
 export type SnapshotState = (typeof SNAPSHOT_STATES)[number];
@@ -16,18 +17,26 @@ export type BoxGoneHow = (typeof BOX_GONE_HOW)[number];
 export const PICTURE_STATES = ["taken", "none", "off", "failed"] as const;
 export type PictureState = (typeof PICTURE_STATES)[number];
 
-export const SNAPSHOTS_PER_BOX = 5;
 export const UNDOS_PER_BOX = 2;
 export const NAME_CHARACTERS = 60;
 export const NOTE_BYTES = 1024;
-export const TAKES_REFUSED_PAST_PERCENT = 85;
-export const TAKES_REFUSED_PAST_METADATA_PERCENT = 80;
-export const ROOM_SWEEP_PAST_PERCENT = 92;
+export const METADATA_POINTS_BELOW_ROOM = 5;
+export const SWEEP_POINTS_ABOVE_ROOM = 7;
 export const LOST_AFTER_MISSING_MS = 10 * 60_000;
 export const FAILED_KEPT_MS = 24 * 60 * 60_000;
 export const LOST_KEPT_MS = 7 * 24 * 60 * 60_000;
 export const FOUND_KEPT_MS = 7 * 24 * 60 * 60_000;
 export const OPERATIONS_KEPT_MS = 30 * 24 * 60 * 60_000;
+
+export interface RoomThresholds {
+  readonly takes: number;
+  readonly metadata: number;
+  readonly sweep: number;
+}
+
+export function roomThresholds(roomPercent: number): RoomThresholds {
+  return { takes: roomPercent, metadata: roomPercent - METADATA_POINTS_BELOW_ROOM, sweep: roomPercent + SWEEP_POINTS_ABOVE_ROOM };
+}
 
 export interface SnapshotBox {
   readonly id: string;
@@ -117,6 +126,7 @@ export interface SnapshotLedger {
   removeRecord(id: string): void;
   insertOperation(operation: SnapshotOperation): void;
   updateOperation(id: string, change: Partial<SnapshotOperation>): SnapshotOperation | null;
+  charges(backend?: string): Charge[];
   prune(now: number): number;
 }
 

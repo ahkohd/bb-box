@@ -1276,6 +1276,31 @@ On 30 October 2026, during unit 1a:
   The lead decided this reading of section 1's "every operation that would
   change a box".
 
+## Decided during unit 4
+
+On 30 October 2026, during unit 4, the lead decided:
+
+- **The room's other thresholds follow the setting.** A thin pool's
+  metadata refuses a take 5 points below "Refuse new snapshots when a
+  host's storage is past", and the room sweep deletes 7 points above it, so
+  85 gives 80 and 92, as before.
+- **Housekeeping times stay fixed.** A failed record goes after 24 hours, a
+  lost or found one after 7 days, and a missing one is lost after a second
+  listing 10 minutes later. None is a setting.
+- **Settings show only what bites.** The Snapshots page, the overview's
+  row and Find show the snapshots per box, the room and the paid ceilings.
+  Keep's length, the agents' two switches and pictures are in the
+  configuration's schema and in core, tested, and come onto the page with
+  the units that use them: 8, 5 and 6.
+- **The ceiling's rule covers all five changes now; only the take uses it
+  yet.** One rule admits a take, an undo, a Keep, a renewal and a held
+  copy. Unit 4 wires the take; units 3 and 8 wire the rest, and prove G10's
+  undo, Keep, renewal and bulk parts live.
+- **A ceiling is per backend ID**, in the provider's currency, 5 unless
+  set. Where no backend charges, the page says "None of your backends
+  charges for snapshots". A made-up price, only with `BB_BOX_LIVE_CHECKS=1`,
+  checks the ceiling where none charges.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

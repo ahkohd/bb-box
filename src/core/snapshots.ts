@@ -1,15 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
-import { SnapshotFailed, SnapshotIncomplete, type Backend, type Guest, type HeldSnapshot, type SnapshotHooks, type SnapshotStorage, type TaskOutcome } from "../backends/types.ts";
+import { SnapshotFailed, SnapshotIncomplete, type Backend, type Guest, type HeldSnapshot, type SnapshotHooks, type Snapshotting, type SnapshotStorage, type TaskOutcome } from "../backends/types.ts";
 import { BoxError, type BoxRecord, OPERATOR } from "./boxes.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
+import { ceilingOf, snapshotConfig, type SnapshotConfig } from "./document.ts";
+import { ceilingVerdict, heldRate, pastCeiling, spentThisMonth, type HeldRate } from "./snapshot-cost.ts";
 import {
   FAILED_KEPT_MS,
   LOST_AFTER_MISSING_MS,
   LOST_KEPT_MS,
-  ROOM_SWEEP_PAST_PERCENT,
-  SNAPSHOTS_PER_BOX,
-  TAKES_REFUSED_PAST_METADATA_PERCENT,
-  TAKES_REFUSED_PAST_PERCENT,
   countsAgainstLimit,
   eligible,
   gbWords,
@@ -22,6 +20,7 @@ import {
   noteProblem,
   priceWords,
   roomCandidates,
+  roomThresholds,
   storageGroup,
   timeName,
   uniqueName,
@@ -53,10 +52,21 @@ export interface SnapshotsDeps {
   logError(operation: string, error: unknown): void;
   log?(message: string): void;
   hold?(operation: SnapshotOperation, step: HoldStep, signal: AbortSignal): Promise<void>;
+  settings?(): SnapshotConfig;
+  priced?(backend: Backend, offer: Snapshotting): Snapshotting;
   now?(): number;
   random?(bytes: number): Uint8Array;
   readonly timeZone?: string;
 }
+
+export interface PaidOnBackend {
+  readonly held: HeldRate;
+  readonly spent: number;
+  readonly ceiling: number;
+  readonly past: boolean;
+}
+
+const DEFAULT_SETTINGS = snapshotConfig({ general: {} });
 
 export interface TakeInput {
   readonly name?: string;
@@ -153,6 +163,22 @@ export class Snapshots {
     return this.#deps.ledger;
   }
 
+  get settings(): SnapshotConfig {
+    return this.#deps.settings?.() ?? DEFAULT_SETTINGS;
+  }
+
+  offerFor(backend: Backend | null | undefined, kind: string): Snapshotting | null {
+    const offer = backend?.snapshotting?.(kind) ?? null;
+    return offer && backend && this.#deps.priced ? this.#deps.priced(backend, offer) : offer;
+  }
+
+  paidOn(backendId: string): PaidOnBackend {
+    const ledger = this.#deps.ledger;
+    const held = heldRate(ledger.records({ backend: backendId }), backendId);
+    const ceiling = ceilingOf(this.settings, backendId);
+    return { held, spent: spentThisMonth(ledger.charges(backendId), this.#now()), ceiling, past: pastCeiling(held, ceiling) };
+  }
+
   #event(record: SnapshotRecord, kind: BoxEventKind, by: Actor, words: string): void {
     try {
       this.#deps.events?.record({ box: record.box.id, thread: record.box.thread, name: record.box.name, at: this.#now(), kind, by, words, backend: record.backend.label });
@@ -237,7 +263,7 @@ export class Snapshots {
     }
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it takes no snapshot of it.`);
-    const offer = backend.snapshotting?.(box.kind) ?? null;
+    const offer = this.offerFor(backend, box.kind);
     if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
     const memory = input.memory === true;
     if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
@@ -252,6 +278,7 @@ export class Snapshots {
     if (memory && plan.take.memory) spends.push({ storage: plan.take.memory.storage, adds: plan.take.memory.addsBytes });
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
     const now = this.#now();
+    const settings = this.settings;
     const id = newSnapshotId(this.#random);
     const operationId = newOperationId(this.#random);
     const admitted = ledger.transaction((): { refused: BoxError } | { repeat: SnapshotOperation } | { record: SnapshotRecord; operation: SnapshotOperation; counted: number } => {
@@ -261,20 +288,30 @@ export class Snapshots {
       }
       const ofBox = ledger.records({ box: box.id });
       const counted = ofBox.filter(countsAgainstLimit);
-      if (counted.length >= SNAPSHOTS_PER_BOX) {
+      if (counted.length >= settings.perBox) {
         const seen = counted.filter((record) => mayAct(caller, "see", standing, record).ok);
         return {
           refused: new BoxError(
             "limit_reached",
-            `Box ${box.name} holds ${counted.length} snapshots, the most a box may. Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
+            `Box ${box.name} holds ${counted.length} snapshots, and your settings allow ${settings.perBox} a box. Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
           ),
         };
       }
       for (const spend of spends) {
         const adds = spends.filter((other) => other.storage.key === spend.storage.key).reduce((sum, other) => sum + other.adds, 0);
-        const room = this.#roomProblem(box, spend.storage, ledger.reservedBytes(spend.storage.key) + adds, memory);
+        const room = this.#roomProblem(box, spend.storage, ledger.reservedBytes(spend.storage.key) + adds, memory, settings.roomPercent);
         if (room) return { refused: new BoxError("no_capacity", room) };
       }
+      const paid = ceilingVerdict({
+        change: "take",
+        backend: backend.label,
+        held: heldRate(ledger.records({ backend: backend.id }), backend.id),
+        price: offer.price,
+        bytes: memory && plan.take.memory ? plan.take.memory.addsBytes : (plan.take.addsBytes ?? null),
+        ceiling: ceilingOf(settings, backend.id),
+        byPerson: caller.is !== "agent",
+      });
+      if (!paid.ok) return { refused: new BoxError("limit_reached", paid.why) };
       const name = uniqueName(input.name?.trim() || timeName(now, this.#deps.timeZone), new Set(ofBox.map((record) => record.name)));
       const record: SnapshotRecord = {
         id,
@@ -341,15 +378,16 @@ export class Snapshots {
     return this.#runTake(admitted.record, admitted.operation, box, backend, admitted.counted);
   }
 
-  #roomProblem(box: BoxRecord, storage: SnapshotStorage, adds: number, memory: boolean): string | null {
+  #roomProblem(box: BoxRecord, storage: SnapshotStorage, adds: number, memory: boolean, roomPercent: number): string | null {
     const on = `${box.guest?.host ? `${box.guest.host}'s ` : ""}storage ${storage.name}`;
+    const past = roomThresholds(roomPercent);
     const percent = storage.totalBytes && storage.usedBytes !== null ? ((storage.usedBytes + adds) / storage.totalBytes) * 100 : storage.percentFull;
-    if (percent > TAKES_REFUSED_PAST_PERCENT) {
-      const now = storage.percentFull > TAKES_REFUSED_PAST_PERCENT ? `is ${Math.round(storage.percentFull)}% full` : `would be ${Math.round(percent)}% full with ${memory ? "its memory" : "it"}`;
-      return `${on} ${now}, and bb-box takes no snapshot past ${TAKES_REFUSED_PAST_PERCENT}%: a full thin pool stops every box there. Delete snapshots or release boxes on it first.`;
+    if (percent > past.takes) {
+      const now = storage.percentFull > past.takes ? `is ${Math.round(storage.percentFull)}% full` : `would be ${Math.round(percent)}% full with ${memory ? "its memory" : "it"}`;
+      return `${on} ${now}, and your settings take no snapshot past ${past.takes}%: a full thin pool stops every box there. Delete snapshots or release boxes on it first, or raise the limit in Settings, Snapshots.`;
     }
-    if (storage.metadataPercentFull !== null && storage.metadataPercentFull > TAKES_REFUSED_PAST_METADATA_PERCENT) {
-      return `${on}'s metadata is ${Math.round(storage.metadataPercentFull)}% full, and bb-box takes no snapshot past ${TAKES_REFUSED_PAST_METADATA_PERCENT}%. Delete snapshots on it first.`;
+    if (storage.metadataPercentFull !== null && storage.metadataPercentFull > past.metadata) {
+      return `${on}'s metadata is ${Math.round(storage.metadataPercentFull)}% full, and bb-box takes no snapshot past ${past.metadata}%, 5 points below your settings' ${past.takes}%. Delete snapshots on it first.`;
     }
     return null;
   }
@@ -981,7 +1019,7 @@ export class Snapshots {
         const box = await this.#deps.boxes.find(first.box.id);
         if (!backend?.planSnapshots || !box?.guest) break;
         const plan = await backend.planSnapshots(box.guest, box.kind, null, signal).catch(() => null);
-        if (!plan || plan.storage.percentFull <= ROOM_SWEEP_PAST_PERCENT) break;
+        if (!plan || plan.storage.percentFull <= roomThresholds(this.settings.roomPercent).sweep) break;
         candidates.shift();
         const why = `${first.host ? `${first.host}'s ` : ""}storage ${plan.storage.name} was ${Math.round(plan.storage.percentFull)}% full`;
         if (await this.#deleteAutomatically(first, "evict-room", byBbBox(why))) deleted++;

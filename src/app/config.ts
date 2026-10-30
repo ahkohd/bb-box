@@ -2,7 +2,7 @@
 // server gives, and building the drafts the page sends back (029).
 
 import type { BoxSize, FieldValue, WarmShortfall } from "../backends/types.ts";
-import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState } from "../core/document.ts";
+import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState, SnapshotSettings } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
 
@@ -144,6 +144,19 @@ export function withGeneral(document: ConfigDocument, patch: Partial<ConfigDocum
   const general: Record<string, unknown> = { ...document.general, ...patch };
   for (const key of Object.keys(general)) if (general[key] === undefined) delete general[key];
   return { ...document, general };
+}
+
+export function withSnapshots(document: ConfigDocument, patch: Partial<SnapshotSettings>): ConfigDocument {
+  const snapshots: Record<string, unknown> = { ...document.general.snapshots, ...patch };
+  for (const key of Object.keys(snapshots)) if (snapshots[key] === undefined) delete snapshots[key];
+  return withGeneral(document, { snapshots: Object.keys(snapshots).length ? (snapshots as SnapshotSettings) : undefined });
+}
+
+export function withCeiling(document: ConfigDocument, backendId: string, ceiling: number | undefined): ConfigDocument {
+  const ceilings: Record<string, number> = { ...document.general.snapshots?.ceilings };
+  if (ceiling === undefined) delete ceilings[backendId];
+  else ceilings[backendId] = ceiling;
+  return withSnapshots(document, { ceilings: Object.keys(ceilings).length ? ceilings : undefined });
 }
 
 export function withMonitor(document: ConfigDocument, patch: Partial<NonNullable<ConfigDocument["monitor"]>>): ConfigDocument {

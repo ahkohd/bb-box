@@ -12,6 +12,7 @@ import {
   type SnapshotOperation,
   type SnapshotRecord,
 } from "../core/snapshot.ts";
+import { chargeOf, type Charge } from "../core/snapshot-cost.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
@@ -89,7 +90,35 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `CREATE INDEX ${SCHEMA}.snapshot_operations_by_state ON snapshot_operations(state)`,
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN request_digest TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN snapshots_gone_at INTEGER`,
+  `CREATE TABLE ${SCHEMA}.snapshot_charges (
+    snapshot TEXT PRIMARY KEY,
+    backend TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK(currency IN ('USD', 'EUR')),
+    daily REAL NOT NULL CHECK(daily >= 0),
+    held_from INTEGER NOT NULL,
+    held_until INTEGER
+  )`,
+  `CREATE INDEX ${SCHEMA}.snapshot_charges_by_backend ON snapshot_charges(backend, held_until)`,
 ];
+
+const CHARGES_KEPT_MS = 400 * 24 * 60 * 60_000;
+
+interface ChargeRow {
+  snapshot: string;
+  backend: string;
+  currency: Charge["currency"];
+  daily: number;
+  held_from: number;
+  held_until: number | null;
+}
+
+function chargeFromRow(row: ChargeRow): Charge {
+  return { snapshot: row.snapshot, backend: row.backend, currency: row.currency, daily: row.daily, from: row.held_from, until: row.held_until };
+}
+
+function charging(record: SnapshotRecord): boolean {
+  return record.state === "ready" || record.state === "incomplete" || record.state === "unavailable" || record.state === "deleting";
+}
 
 interface SnapshotRow {
   id: string;
@@ -359,7 +388,7 @@ export class SnapshotStore implements SnapshotLedger {
     return null;
   }
 
-  #table(name: "snapshots" | "snapshot_operations"): string {
+  #table(name: "snapshots" | "snapshot_operations" | "snapshot_charges"): string {
     return this.#file.table(name);
   }
 
@@ -457,7 +486,29 @@ export class SnapshotStore implements SnapshotLedger {
         .db()
         .prepare(`INSERT INTO ${this.#table("snapshots")} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
         .run(...columns.map((column) => row[column as keyof SnapshotRow]));
+      this.#charge(record);
     });
+  }
+
+  #charge(record: SnapshotRecord): void {
+    const table = this.#table("snapshot_charges");
+    const db = this.#file.db();
+    if (!charging(record)) {
+      db.prepare(`UPDATE ${table} SET held_until = ? WHERE snapshot = ? AND held_until IS NULL`).run(record.stateAt, record.id);
+      return;
+    }
+    const charge = chargeOf(record, record.capturedAt ?? record.takenAt);
+    if (!charge) return;
+    db.prepare(
+      `INSERT INTO ${table} (snapshot, backend, currency, daily, held_from, held_until) VALUES (?, ?, ?, ?, ?, NULL) ON CONFLICT(snapshot) DO UPDATE SET daily = excluded.daily, held_until = NULL`,
+    ).run(charge.snapshot, charge.backend, charge.currency, charge.daily, charge.from);
+  }
+
+  charges(backend?: string): Charge[] {
+    if (this.#file.problem) return [];
+    const table = this.#table("snapshot_charges");
+    const rows = (backend === undefined ? this.#file.db().prepare(`SELECT * FROM ${table} ORDER BY held_from, snapshot`).all() : this.#file.db().prepare(`SELECT * FROM ${table} WHERE backend = ? ORDER BY held_from, snapshot`).all(backend)) as ChargeRow[];
+    return rows.map(chargeFromRow);
   }
 
   updateRecord(id: string, change: Partial<SnapshotRecord>): SnapshotRecord | null {
@@ -471,6 +522,7 @@ export class SnapshotStore implements SnapshotLedger {
         .db()
         .prepare(`UPDATE ${this.#table("snapshots")} SET ${columns.map((column) => `${column} = ?`).join(", ")} WHERE id = ?`)
         .run(...columns.map((column) => row[column as keyof SnapshotRow]), id);
+      if (charging(current) !== charging(next) || current.size?.bytes !== next.size?.bytes || JSON.stringify(current.price) !== JSON.stringify(next.price)) this.#charge(next);
       return next;
     });
   }
@@ -481,6 +533,7 @@ export class SnapshotStore implements SnapshotLedger {
     this.#write(() => {
       const db = this.#file.db();
       db.prepare(`DELETE FROM ${snapshots} WHERE id = ?`).run(id);
+      db.prepare(`UPDATE ${this.#table("snapshot_charges")} SET held_until = ? WHERE snapshot = ? AND held_until IS NULL`).run(this.#now(), id);
       db.prepare(
         `UPDATE ${operations} SET snapshots_gone_at = ? WHERE snapshots_gone_at IS NULL AND EXISTS (SELECT 1 FROM json_each(snapshots) AS used WHERE used.value = ?) AND NOT EXISTS (SELECT 1 FROM json_each(snapshots) AS used JOIN ${snapshots} AS kept ON kept.id = used.value)`,
       ).run(this.#now(), id);
@@ -517,15 +570,15 @@ export class SnapshotStore implements SnapshotLedger {
     try {
       const operations = this.#table("snapshot_operations");
       const snapshots = this.#table("snapshots");
-      return this.#write(
-        () =>
-          this.#file
-            .db()
-            .prepare(
-              `DELETE FROM ${operations} WHERE state IN ('done', 'failed') AND ended_at < ? AND COALESCE(snapshots_gone_at, ended_at) < ? AND NOT EXISTS (SELECT 1 FROM json_each(snapshots) AS used JOIN ${snapshots} AS kept ON kept.id = used.value)`,
-            )
-            .run(now - OPERATIONS_KEPT_MS, now - OPERATIONS_KEPT_MS).changes,
-      );
+      return this.#write(() => {
+        const db = this.#file.db();
+        db.prepare(`DELETE FROM ${this.#table("snapshot_charges")} WHERE held_until < ?`).run(now - CHARGES_KEPT_MS);
+        return db
+          .prepare(
+            `DELETE FROM ${operations} WHERE state IN ('done', 'failed') AND ended_at < ? AND COALESCE(snapshots_gone_at, ended_at) < ? AND NOT EXISTS (SELECT 1 FROM json_each(snapshots) AS used JOIN ${snapshots} AS kept ON kept.id = used.value)`,
+          )
+          .run(now - OPERATIONS_KEPT_MS, now - OPERATIONS_KEPT_MS).changes;
+      });
     } catch (error) {
       this.#logError("prune the snapshots' operations", error);
       return 0;
