@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, list, delete and restore snapshots from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
 
 ## What each backend offers
 
@@ -13,6 +13,21 @@ You take, list, delete and restore snapshots from the command line, and a thread
 | Every other backend | no snapshots yet | | |
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
+
+## On a box's page
+
+A box's page has a Snapshots card, after its activity and before its facts. Its heading says how many snapshots the box holds of how many it may, its undos apart, what they hold and on which host. Each row has the snapshot's name, a badge for Memory, Kept or Undo, when it was taken and by whom, its size, its note, and a small picture of the box's screen when the box has one. On a desktop, a row's Restore button and its menu show when the pointer is over the row or focus is in it; on a narrow or touch screen they always show.
+
+- **Take snapshot**, in the card or in the menu of the page's heading beside Resize…, asks for a name (the time if you leave it empty), a note, and on a VM that can, "With its memory". It says what the snapshot holds and leaves out, how long it takes, the count after it, whether a picture is kept, and what it costs. When the box's backend would refuse a take now, the card says why, with the fix, and Take snapshot is off.
+- **Restore** opens a dialog that reads what the restore would do and end, live. It says when the box goes back to and what goes, and names each thread on the box, a person holding its desktop and each BB terminal open on it. A box with a thread on it is not restored, as on the command line: the dialog names the threads and says why. A person's control of the desktop or a terminal is named under "Also goes", and the button says "Restore (box) anyway". The undo is ticked: untick it and the button turns red and says "Restore without undo". When no undo can be taken, for room or the ceiling, the dialog says why and leaves it unticked. The restore goes on only past what the dialog showed: if a thread, a terminal or the person's control has come since, or the plan changed, BB Box restores nothing and the dialog reads it all again. If BB Box cannot flush the box's writes before stopping it (below), nothing changes and the dialog asks whether to restore anyway with an undo that may miss the last seconds' writes.
+- **While it restores**, a notice at the top of the page says so and follows each part: the stop, the undo, the rollback and the start. After it, a notice says when the box was restored, to what, and by whom, for 24 hours. Its **Undo…** opens the same dialog for the restore's undo. A restore BB Box could not confirm after a restart has its own notice, with **Check now**, which settles it as the sweep does.
+- **Rename…**, **Note…**, **Copy ID** and **Delete…** are in each row's menu. A name is at most 60 characters and unique on the box; a note at most 1 KB. Delete says what it frees, whether you kept it, and whether it is a restore's undo. A snapshot a restore uses cannot be renamed, noted or deleted until the restore ends.
+
+Every dialog starts on its safe choice, Cancel for Restore and Delete, the name for Take snapshot and Rename, and gives focus back to the button that opened it, or to the menu's button.
+
+### Pictures
+
+With each snapshot of a box that has a screen, a desktop or a device, BB Box keeps a picture of the screen as it was taken: a JPEG at most 320 px on its longest side. A desktop's picture comes from its computer-use driver, also while you hold the desktop; a device's from its device server. It waits at most 2 s, and a picture that fails or is late never fails or slows the snapshot. A restore's undo has a picture from before the box stops. Pictures are kept in `snapshots.db`, never on the provider or in the box, and go with their snapshot; past 48 MB, the oldest pictures of snapshots nobody kept go first. Only you see them on the page. Settings, Snapshots, "Keep a picture of the screen with each snapshot" turns them off.
 
 ## Taking a snapshot
 
@@ -150,7 +165,7 @@ BB's "Send now" passes that hold, and a check is not at the same instant as the 
 ## Restoring a box
 
 ```
-bb box snapshot restore <box> <snapshot> --replace [--no-undo] [--force]
+bb box snapshot restore <box> <snapshot> --replace [--no-undo] [--force] [--unflushed]
 ```
 
 A restore puts the box's disk back as it was when the snapshot was taken. Everything on its disk since then goes: files, installed apps and settings. The box restarts, so every process in it ends, unless the snapshot holds its memory, when it comes back running as it was then, with the credentials its apps held then. What the box did to the world since, such as a push or an upload, stays done. The command asks for `--replace` so that none of this happens by a slip.
@@ -160,11 +175,12 @@ In order, BB Box:
 1. Checks the snapshot and the box: the snapshot must be ready and on the box's current guest, and Proxmox must not have the guest locked.
 2. Checks what the box would lose. A restore of a box that a thread runs on, working or idle, is refused: it would take the thread's worktree, its uncommitted files and its session with it, and such restores stay off until BB Box can hold every turn on the box while it restores. Move the threads off it, or archive them, first. A person holding the box's desktop, or a BB terminal open on it, refuses the restore too, unless you give `--force`.
 3. Checks that its undo fits: the room on the host's storage, and on a paid provider the ceiling, before anything stops.
-4. Reads again what the box would lose, and refuses if a thread now runs on it, or if more would go than `--force` covered. Then it stops the box at once, without a clean shutdown.
-5. Takes the undo: a snapshot of the stopped box, named "before the restore at 01:56", so nothing written before the stop is lost. Without `--no-undo` a restore always takes one, and if it cannot, BB Box starts the box again as it was and restores nothing.
-6. Reads what the box would lose once more, then rolls the box back, and starts it.
-7. Reads the box's size back. A snapshot holds the box's cores, memory and disk as they were then, so a box resized since goes back to its size then, and the answer says so.
-8. Writes the box's access file from the thread's access now, as the first command once the box answers, before any other command of BB Box's and before BB's daemon starts again: the restored disk holds the file as it was then. Then it writes the box's labels on Proxmox again, and starts its BB machine again, as a start does.
+4. With an undo to take, flushes the box's writes to its disk, with `sync` in the box (Write-VolumeCache on Windows), for at most 15 s, getting into the box included: a VM's hard stop drops what it has not written yet. If that fails, BB Box restores nothing and says why, unless you give `--unflushed`, when it goes on and the undo, the box log and the answer say the undo may miss the last seconds' writes. An agent cannot give it.
+5. Reads again what the box would lose, after the flush, and refuses if a thread now runs on it, or if more would go than `--force` covered. Then it stops the box at once, without a clean shutdown.
+6. Takes the undo: a snapshot of the stopped box, named "before the restore at 01:56", so nothing written before the stop is lost. Without `--no-undo` a restore always takes one, and if it cannot, BB Box starts the box again as it was and restores nothing.
+7. Reads what the box would lose once more, then rolls the box back, and starts it.
+8. Reads the box's size back. A snapshot holds the box's cores, memory and disk as they were then, so a box resized since goes back to its size then, and the answer says so.
+9. Writes the box's access file from the thread's access now, as the first command once the box answers, before any other command of BB Box's and before BB's daemon starts again: the restored disk holds the file as it was then. Then it writes the box's labels on Proxmox again, and starts its BB machine again, as a start does.
 
 Undos are counted apart from the snapshots per box: a box keeps 2. Once a restore is done, its undo replaces the oldest one that is not kept and not the restore's own target. To undo a restore, restore its undo.
 
@@ -196,7 +212,7 @@ BB Box also compares its records with each backend's snapshots every few minutes
 
 ## Settings
 
-BB Box's settings have a Snapshots page, under Options. Its fields wait for Save, as other fields do.
+BB Box's settings have a Snapshots page, under Options. Its fields wait for Save, as other fields do; its switch saves at once.
 
 | Setting | Default | Range | What it does |
 | --- | --- | --- | --- |
@@ -205,6 +221,7 @@ BB Box's settings have a Snapshots page, under Options. Its fields wait for Save
 | A ceiling on paid snapshots, one per backend that charges | 5 a month, in the provider's currency | 0 to 1,000 | A take that would bring the monthly rate held on that backend past it is refused. |
 | Agents may restore their own boxes | on | | Off, an agent asks for a yes in its thread through the form before it restores any box. A box threads run on always needs that yes. A switch, saved at once. |
 | Agents may restore memory snapshots | on | | Off, only you restore a snapshot that holds a box's memory. A switch, saved at once. |
+| Keep a picture of the screen with each snapshot | on | | A switch, saved at once. Off, a snapshot has no picture. |
 
 The page also says what each backend's snapshots hold and cost, and what its last check found of its storage.
 

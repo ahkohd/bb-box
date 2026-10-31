@@ -272,6 +272,7 @@ function snapshotEntries(state: ConfigState): FindEntry[] {
           option("snapshots", "Snapshots", `ceiling ${config.id}`, `Paid snapshots on ${backendLabel(state, config)}`, ceilingPath(config.id), `${moneyWords(live.snapshots!.paid!.ceiling, live.snapshots!.paid!.currency)} a month`, "snapshot ceiling paid cost price money spend month budget"),
         )
       : [option("snapshots", "Snapshots", "ceiling", "Paid snapshots", null, "None of your backends charges", "snapshot ceiling paid cost price money spend month budget")]),
+    option("snapshots", "Snapshots", "pictures", "Keep a picture of the screen with each snapshot", snapshotPath("pictures"), onOff(snapshots.pictures), "snapshot picture screen screenshot thumbnail image", true),
     option("snapshots", "Snapshots", "offers", "What each backend offers", null, null, "snapshot backend storage memory disk holds"),
   ];
 }

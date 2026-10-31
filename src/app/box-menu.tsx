@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +19,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { hasViewer, OPERATOR } from "./common.tsx";
 import { hostOf, notInSettings, releaseUnfinished, silentWhy, unreachableWhy } from "./box-words.ts";
 import { pageUrl } from "./desktop.tsx";
-import { TerminalGlyph } from "./glyphs.tsx";
+import { CameraGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
 import { canResize, ResizeDialog } from "./resize.tsx";
 import { screensOf, type Screen } from "./screens.ts";
@@ -94,6 +94,8 @@ export function BoxMenu({
   onBoxesPage,
   asking,
   onAsking,
+  takeSnapshot,
+  triggerRef,
 }: {
   box: BoxView;
   of: ThreadsBox | YourMachine;
@@ -104,6 +106,8 @@ export function BoxMenu({
   onBoxesPage?: () => void;
   asking?: MenuAsk;
   onAsking?: (ask: MenuAsk) => void;
+  takeSnapshot?: { readonly why: string | null; readonly take: () => void } | null;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -164,7 +168,7 @@ export function BoxMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant={onPage ? "outline" : "ghost"} size="icon" className={cn("p-0 text-muted-foreground hover:text-foreground", onPage ? "size-8" : "size-7")} aria-label={`${box.name} actions`}>
+          <Button ref={triggerRef} type="button" variant={onPage ? "outline" : "ghost"} size="icon" className={cn("p-0 text-muted-foreground hover:text-foreground", onPage ? "size-8" : "size-7")} aria-label={`${box.name} actions`}>
             <Icon name="MoreHorizontal" className="size-4" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -210,6 +214,7 @@ export function BoxMenu({
           {managed && stops && ready ? <GatedItem why={unreachable} icon={<Icon name="Square" aria-hidden />} words="Stop" onSelect={stop} /> : null}
           {managed && stops && box.state === "stopped" ? <GatedItem why={unreachable} icon={<Icon name="Play" aria-hidden />} words="Start" onSelect={start} /> : null}
           {managed && resizes ? <GatedItem why={unreachable} icon={<Icon name="Maximize2" aria-hidden />} words="Resize…" onSelect={() => onResizing(true)} /> : null}
+          {takeSnapshot ? <GatedItem why={takeSnapshot.why} icon={<CameraGlyph />} words="Take snapshot…" onSelect={takeSnapshot.take} /> : null}
           {check ? (
             <DropdownMenuItem disabled={isSettling(box)} onSelect={check}>
               <Icon name="ArrowReloadHorizontal" aria-hidden />

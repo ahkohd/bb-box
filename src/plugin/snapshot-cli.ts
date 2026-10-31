@@ -139,6 +139,7 @@ export function snapshotCommands(app: BbBox) {
         replace: { type: "boolean", description: "Replace the box's disk with the snapshot's." },
         "no-undo": { type: "boolean", description: "Take no undo first, so this cannot be undone." },
         force: { type: "boolean", description: "Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them." },
+        unflushed: { type: "boolean", description: "Restore anyway when bb-box cannot flush the box's writes to its disk before stopping it, so its undo may miss the last seconds' writes." },
         check: { type: "boolean", description: "Say what the restore would do, and refuse what it would refuse, changing nothing." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same restore." },
       },
@@ -155,11 +156,17 @@ export function snapshotCommands(app: BbBox) {
               stderr: `A restore replaces box ${box.name}'s disk with the snapshot's: everything on it since goes, and every process in it ends. Run it again with --replace to restore.\n`,
             };
           }
-          const answer = await snapshots.restore(COMMAND, box, standingOf(box), positionals.snapshot, {
-            ...(options["no-undo"] ? { undo: false } : {}),
-            ...(options.force ? { force: true } : {}),
-            ...(options.request !== undefined ? { request: String(options.request) } : {}),
-          });
+          const answer = await snapshots
+            .restore(COMMAND, box, standingOf(box), positionals.snapshot, {
+              ...(options["no-undo"] ? { undo: false } : {}),
+              ...(options.force ? { force: true } : {}),
+              ...(options.unflushed ? { unflushed: "go-on" as const } : {}),
+              ...(options.request !== undefined ? { request: String(options.request) } : {}),
+            })
+            .catch((error: unknown) => {
+              if (error instanceof BoxError && error.code === "unflushed") throw new BoxError("unflushed", `${error.message} Run it again with --unflushed to restore anyway.`);
+              throw error;
+            });
           return options.json ? json(answer) : out(restoredText(answer, box.name));
         }),
     }),

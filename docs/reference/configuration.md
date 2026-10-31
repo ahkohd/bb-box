@@ -63,7 +63,7 @@ Snapshots of boxes (070). A ceiling for a backend that is not set is 5.
 | `keepDays` | `number` | `30` | Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. |
 | `agentsRestore` | `boolean` | `true` | Whether an agent restores its thread's own boxes without asking, always with an undo first. Off, it asks for a yes in its thread through a form. A box threads run on always needs that yes. On unless set off. |
 | `agentsMemory` | `boolean` | `true` | Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one. On unless set off. |
-| `pictures` | `boolean` | `true` | Whether bb-box keeps a small picture of a box's screen with each snapshot. On unless set off. Not used yet: pictures come with 070's unit 6. |
+| `pictures` | `boolean` | `true` | Whether bb-box keeps a small picture of a box's screen with each snapshot: a JPEG 320 px wide, taken as the snapshot is, kept with it in snapshots.db and shown to the person on the box's page. On unless set off. |
 | `ceilings` | `Readonly<Record<string, number>>` |  | The ceiling on paid snapshots, by backend ID: the most a month, in the provider's currency, that the paid snapshots held on it may cost at their prices, 0 to 1000. A take, an undo, a Keep, a renewal or a held copy that would pass it is refused. 5 for a backend not set. |
 
 ## kinds

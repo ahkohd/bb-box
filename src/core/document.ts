@@ -177,7 +177,7 @@ export interface SnapshotSettings {
   readonly agentsRestore?: boolean;
   /** Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one. On unless set off. */
   readonly agentsMemory?: boolean;
-  /** Whether bb-box keeps a small picture of a box's screen with each snapshot. On unless set off. Not used yet: pictures come with 070's unit 6. */
+  /** Whether bb-box keeps a small picture of a box's screen with each snapshot: a JPEG 320 px wide, taken as the snapshot is, kept with it in snapshots.db and shown to the person on the box's page. On unless set off. */
   readonly pictures?: boolean;
   /**
    * The ceiling on paid snapshots, by backend ID: the most a month, in the provider's currency, that the paid snapshots

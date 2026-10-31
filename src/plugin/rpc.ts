@@ -21,6 +21,7 @@ import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, offlineMachineWords, readableState, unreadableWords } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
+import { answered, boxSnapshotsView, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -62,8 +63,37 @@ function listed(box: BoxRecord): boolean {
   return ownedByThread(box.threadId) || box.threadId === OPERATOR;
 }
 
+const SNAPSHOT_ANSWER_WAIT_MS = 3_000;
+const RESTORE_ANSWER_WAIT_MS = 60_000;
+
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
-  const { boxes } = app;
+  const { boxes, snapshots } = app;
+  const takeChecks = new TakeChecks(snapshots);
+
+  const snapshotsOf = async (box: BoxRecord): Promise<BoxSnapshotsView | null> => {
+    try {
+      return boxSnapshotsView(snapshots, box, await takeChecks.why(box));
+    } catch (error) {
+      bb.log.warn(`Could not read box ${box.name}'s snapshots for its page: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
+
+  const pageBox = async (boxId: string): Promise<BoxRecord> => {
+    const found = await boxes.find(boxId);
+    if (!found || !listed(found)) throw new BoxError("not_found", "That box is gone.");
+    return found;
+  };
+
+  const snapshotChange = async (boxId: string, action: string, work: (box: BoxRecord) => Promise<unknown>): Promise<SnapshotChange> => {
+    try {
+      const box = await pageBox(boxId);
+      takeChecks.forget(box.id);
+      return await answered(work(box), SNAPSHOT_ANSWER_WAIT_MS);
+    } catch (error) {
+      return { error: describeError(error, action), pending: false };
+    }
+  };
 
   const monitorReach = async (box: BoxRecord): Promise<MonitorReach> => {
     if (!app.monitor.config().enabled) return { is: "off", machineId: null, why: MONITOR_OFF_WORDS };
@@ -265,9 +295,52 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const found = await boxes.find(boxId);
       if (!found || !listed(found)) return { ...NOT_HERE, ended: app.boxLog.ended(boxId) };
       const yours = found.threadId === OPERATOR;
-      const [thread, threads, monitor] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found)]);
-      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null };
+      const [thread, threads, monitor, snapshotsView] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found), snapshotsOf(found)]);
+      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null, snapshots: snapshotsView };
     },
+    async "snapshot.takeCheck"({ box: boxId, memory }) {
+      try {
+        const box = await pageBox(boxId);
+        return { check: await snapshots.checkTake(PERSON, box, personStanding(box), { memory: memory === true }), refusal: null };
+      } catch (error) {
+        return { check: null, refusal: describeError(error, "Planning the snapshot") };
+      }
+    },
+    "snapshot.take": ({ box, name, note, memory, request }) =>
+      snapshotChange(box, "Taking the snapshot", (found) =>
+        snapshots.take(PERSON, found, personStanding(found), { ...(name?.trim() ? { name } : {}), ...(note?.trim() ? { note } : {}), memory: memory === true, request }),
+      ),
+    async "snapshot.restoreCheck"({ box: boxId, snapshot }) {
+      try {
+        return await restorePreview(snapshots, await pageBox(boxId), snapshot);
+      } catch (error) {
+        return { refusal: describeError(error, "Planning the restore"), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null };
+      }
+    },
+    async "snapshot.restore"({ box: boxId, snapshot, undo, accept, token, unflushed, request }) {
+      try {
+        const box = await pageBox(boxId);
+        takeChecks.forget(box.id);
+        const fresh = await restorePreview(snapshots, box, snapshot);
+        if (fresh.token !== token) {
+          return { error: "What the restore would do or end changed since this dialog read it. Read it again below before you restore.", pending: false, preview: fresh };
+        }
+        const { stopped, whenStopped } = restoreStopped();
+        const work = snapshots.restore(PERSON, box, personStanding(box), snapshot, { undo, force: accept.length > 0, accept, unflushed: unflushed ? "go-on" : "stop", request, whenStopped });
+        return await answered(work, RESTORE_ANSWER_WAIT_MS, stopped);
+      } catch (error) {
+        return { error: describeError(error, "Restoring the box"), pending: false };
+      }
+    },
+    "snapshot.delete": ({ box, snapshot, request }) => snapshotChange(box, "Deleting the snapshot", (found) => snapshots.delete(PERSON, personStanding(found), snapshot, { request })),
+    "snapshot.rename": ({ box, snapshot, name }) => snapshotChange(box, "Renaming the snapshot", (found) => snapshots.rename(PERSON, personStanding(found), snapshot, name)),
+    "snapshot.note": ({ box, snapshot, note }) => snapshotChange(box, "Saving the note", (found) => snapshots.annotate(PERSON, personStanding(found), snapshot, note)),
+    async "snapshot.picture"({ box: boxId, snapshot }) {
+      const box = await pageBox(boxId);
+      const picture = snapshots.picture(PERSON, personStanding(box), snapshot);
+      return picture ? { jpeg: Buffer.from(picture.jpeg).toString("base64"), width: picture.width, height: picture.height } : null;
+    },
+    "snapshot.settle": ({ box }) => snapshotChange(box, "Checking the restore", () => snapshots.recover()),
     async "machines.list"() {
       const records = (await boxes.list(OPERATOR)).sort((a, b) => a.createdAt - b.createdAt);
       const [machines, kinds, desktopOnDemand, access] = await Promise.all([

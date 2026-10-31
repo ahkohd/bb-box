@@ -1938,3 +1938,256 @@ At the end bb-box on the separate BB listed no box and no snapshot.
   with request 38, when BB can say who answered.
 - **BB's recheck** did not send a held message that BB had re-tried
   seconds earlier; bb-box relies on `sendAt` 15 s ahead.
+
+## Unit 6: the box page's Snapshots card
+
+Built on 31 October 2026 on main `e55c35f4` (units 0 to 4 included), and rebased onto `9ac74968` (unit 5).
+
+### What changed
+
+- **The card**, `src/app/snapshots-card.tsx`, a component of its own, after
+  Activity and before the facts on a box's page. Its heading says "2 of 5,
+  and 1 undo · disk · on pve-1"; each row has the picture, the name with
+  Memory, Kept and Undo badges, then what needs attention first (a failure,
+  incomplete, unavailable, lost, an earlier guest), when, by whom, the size
+  and any price, the undo's restore, and the note. Restore and the row's
+  menu show on hover or focus on a desktop and always on a narrow or touch
+  screen. The footer says what snapshots hold and that they go with the
+  box. A box whose backend has none says so, with no Take snapshot.
+- **Its data comes with the page.** `boxPage` gains `snapshots`, built in
+  `src/plugin/snapshot-card.ts` from bb-box's records, so the card is laid
+  out in the page's first frame and nothing in it moves when data comes.
+  What a take would refuse now (the lock with the host's command, the
+  token's rights, the limit, the room, the ceiling) is read from the
+  backend's plan by `checkTake`, kept 30 s and read again when the box's
+  snapshots or state change, at most 2 s per read; the card then says why,
+  and Take snapshot is off in the card and in the header's menu.
+- **Take snapshot…**, in the card and in the header's menu after Resize….
+  Its dialog asks for a name (the time if empty) and a note, and "With its
+  memory" where the backend gives the choice. It reads the plan when it
+  opens and says what the snapshot holds and leaves out, the time, the
+  space a memory snapshot takes, the count after it, whether a picture is
+  kept, and the price or "no charge".
+- **The restore dialog** reads `snapshot.restoreCheck` when it opens: the
+  restore's check, as `--check` gives it, and the guard as data. It names
+  every thread on the box, working or idle, a person holding its desktop,
+  and each terminal. A box threads run on is refused, saying why, with
+  every thread, the control and the terminals named and no Restore button:
+  restores of execution machines stay off (G17). Control and terminals are
+  listed under "Also goes", and the button says "Restore (box) anyway". The
+  undo is ticked; unticked, the button is red, "Restore without undo".
+  When room or the ceiling refuses the undo, the dialog says why and leaves
+  it unticked, so the person can restore without it, as `--no-undo` does.
+  It says the size the box goes back to, and on a swap what stays on the
+  earlier guest.
+- **Notices**, with 069's: while a restore runs, which part it is at
+  (bb-box now signals the page at each part); after it, for 24 hours,
+  "Restored at 04:15 to "one", taken today at 04:01, by you. Undo restores
+  "before the restore at 04:15"", with Undo… and Dismiss (remembered in
+  the browser); and a restore bb-box could not confirm, with Check now,
+  which settles snapshot operations as the sweep does. A polite live region
+  says the restore's progress and result.
+- **Rename…, Note…, Copy ID and Delete…** in each row's menu.
+  `Snapshots.rename` and `annotate` check `mayAct` and `eligible` before
+  queueing and again on the box's queue, so a restore's target is refused
+  at once and named, not renamed after the restore. A name is unique per
+  box. Delete says what it frees ("Frees what it no longer shares with
+  snap-lxc." on LVM-thin), whether it was kept, and whose undo it is.
+- **Pictures.** At each take, and for a restore's undo before the box
+  stops, bb-box keeps a picture of the screen of a box that has one: a
+  JPEG at most 320 px on its longest side, quality 70, encoded by bb-box
+  (`src/core/jpeg.ts`, baseline with halved colour; no new dependency).
+  A desktop's comes from its computer-use driver (`Computer.screenPicture`,
+  read-only, which works while a person holds the desktop), a device's from
+  its device server. It waits at most 2 s, beside a live disk take or
+  before a pausing or memory one, and a picture that fails or is late is
+  recorded as `failed` and never fails or slows the snapshot. Pictures are
+  in `snapshots.db`'s `snapshot_pictures`, capped at 48 MB, the oldest of
+  snapshots nobody kept going first, and deleted with their snapshot. They
+  reach the page through `snapshot.picture`, after `mayAct`'s
+  `see-picture`, never by URL. A tile is 64 by 40 px (48 by 30 at 390 px);
+  it opens the picture at its full size in a popover.
+- **The pictures setting** comes onto Settings, Snapshots, in a Pictures
+  group, as a switch that saves at once, and into Find. The configuration
+  reference no longer says "Not used yet" for it.
+- **The guard counts bb-box's own terminals.** A terminal opened from a
+  box's page is bb-box's, not BB's, and a restore ends it too; the guard
+  counted only BB's. It now counts both, so the dialog, the CLI and the
+  box log name it.
+- **RPC**: `snapshot.takeCheck`, `take`, `restoreCheck`, `restore`,
+  `delete`, `rename`, `note`, `picture` and `settle`, each as the person.
+  A change answers once done, or after 3 s with `pending` while it goes on
+  as bb-box's own operation; the page follows it through the box's changed
+  signal.
+- **Keyboard and focus.** Each dialog starts on its safe choice: Cancel in
+  Restore and Delete, Close when refused, the name in Take snapshot and
+  Rename, the note in Note. Each gives focus back to the button that
+  opened it, or for one opened from a menu, to the menu's button.
+- **Docs**: the guide's [Snapshots](../guide/snapshots.md#on-a-boxs-page),
+  its settings table, and the reference.
+
+In the same commit, at the lead's request, outside unit 6's own scope (a commit of its own until unit 5's restore changes wove it into the card's):
+
+- **The restore flushes the box's writes before its hard stop.** On
+  Proxmox QEMU the hard stop dropped what the guest had not written to its
+  disk yet, so a restore's undo could miss the last seconds before it.
+  Before the stop, bb-box now runs `sync` in the box over its command
+  transport (Write-VolumeCache on Windows), for at most 15 s. If that
+  fails, the restore stops before the box does unless the person accepts
+  an undo that may miss the last writes (see After the review, 3). The
+  QEMU guest agent's freeze and thaw are not used: no bb-box path reaches
+  the guest agent yet, and `sync` alone was enough live (below).
+
+### Tests
+
+On a Linux box, 8 cores, 16 GiB, Node 24.21, in a fresh copy of this
+branch on main `e55c35f4`, with the next commit: `npx tsc` passes and the
+reference is current; the node suite ran 3,108 tests, 2,819 passed, 1
+failed, 288 skipped (the live and conformance ones); vitest ran 392, all
+passed. The node suite includes the docs, site and reference checks. The
+one failure, a Tart image test timing out at 31 s, is in a file this unit
+does not touch, and passed 3 times in 3 when its file ran alone.
+
+- `test/snapshot-page.test.ts`, 9: the JPEG's markers and sizes, wide,
+  tall and not a multiple of 16; a take's picture, seen by the person and
+  the box's agent and not by another thread's; pictures off and a headless
+  box; a failing and a late picture (aborted at 2 s) with the take still
+  ready; the undo's picture taken before the stop; the 48 MB cap sparing
+  kept ones; rename and note, unique names, limits, the agent refused, a
+  restore's target refused and named at once; the take check refusing as
+  a take would and changing nothing, and its cache; the page's view
+  (newest first, counts with undos apart, the notice for 24 hours with its
+  undo, restoring, and an unconfirmed restore after a restart); the
+  restore preview naming threads, control and terminals, and a refused
+  undo leaving the restore to the person without the CLI's flag in its
+  words.
+- `test/restore.test.ts`, 1 new: the flush runs before the power-off and
+  the undo; a failed flush leaves the restore going and says so on the
+  undo.
+- `test/app.test.tsx`, 8 new: the card's place, words, badges and the
+  header's menu item beside Resize…; Take snapshot's words, focus and the
+  take sent; a refused take and a backend with none; the guarded restore
+  naming every thread, the control and a terminal, with no Restore button;
+  Restore anyway and without undo; the restored, restoring and unconfirmed
+  notices, Undo… and Check now; Delete, Rename and Note with focus; the
+  pictures switch and Find. Unit 4's tests now expect the pictures switch.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1`
+only, in a Proxmox LXC box, with BB's machine access direct so boxes
+enrol. bb-box installed from this branch with `bb plugin install path:`.
+The lead gave it a Proxmox LXC and a Proxmox QEMU backend on LVM-thin with
+the CPU desktop templates. Two machines of the person's: `snap-lxc` (LXC,
+2 cores, 4 GiB) and `snap-vm` (QEMU, the same). The page was driven in
+headless Chromium with the keyboard only, by the scripts in
+[070-snapshots/unit-6](070-snapshots/unit-6/); the node is written pve-1.
+
+| Check | Result |
+| --- | --- |
+| The page does not move when the card's data arrives | the card is in the frame where the heading first appears (334 ms after navigation), 129 px high, and its height never changed in 8 s. The one later move is Activity (069) growing from 143 to 775 px at 678 ms when its readings come, which moves everything below it (CLS 0.134); 069 unit 3 lays that out from the first frame, and this is to be measured again on it |
+| Take from the card, LXC, keyboard only | Take snapshot reached in 11 Tab presses; focus started in Name; "It holds the disk: files, installed apps and settings. About 1.0 s; snap-lxc keeps running. 1 of 5 for snap-lxc after this. A picture of its screen around now is kept with it. No charge: it is on the host's own storage."; ready 0.8 s after Enter; picture taken; focus back on Take snapshot |
+| Take from the header's menu, LXC | the menu's button reached in 35 Tab presses, Take snapshot… by the arrow keys; ready 1.1 s after Enter; focus back on the menu's button |
+| The picture | 320 by 180, 2.2 KB for an empty desktop; opened from the keyboard at its full size; with a terminal and an editor open, the tile and the popover show both windows |
+| Restore and undo, LXC, keyboard only | Restore reached in 4 Tab presses, focus on Cancel; restored to "one" in 48 s to the notice (stop 1.2 s, undo 0.4 s, rollback 0.9 s, Proxmox's start 45 s, as unit 3 measured for a snapshot taken running); `~/state.txt` said "one"; the live region said "snap-lxc was restored to "one"."; Undo… reached in 30 Tab presses, Escape closed its dialog back to Undo…; the undo took 5.0 s and the file said "three" |
+| Take with memory, QEMU | "With its memory" ticked by Space; "Up to 8.5 GiB more on pve-1's local-lvm. About 5.0 s"; ready in 3.0 and 2.8 s, Memory badge |
+| Restore of a memory snapshot, QEMU | 32 s to the notice; the file said "one"; "snap-vm comes back running, as it was then, with the credentials its apps held then" |
+| The undo after a restore, QEMU, before the flush | a file written just before the restore, without `sync`, was missing after its undo; with `sync` first it was there |
+| The same, after the flush | `echo nosync > ~/f1`, a restore at once, then its undo: `f1` said "nosync", on QEMU and on LXC; the undo had no note |
+| A guarded restore, LXC: two threads on its BB machine (a no-model ACP agent, one holding its turn, one idle), a person holding its desktop in another tab, and a terminal open from its page | the dialog refused with focus on Close and no Restore button, naming "Fix the sign-in flow is working on snap-lxc: ...", "Write the API guide is idle on snap-lxc: ...", "A person has control of its desktop." and "A terminal is open on it." |
+| The same with the threads archived | "Also goes:" the control and the terminal; "Restore snap-lxc anyway" restored in 53 s; `restore-asked`: "... restored anyway, though a person holds control of its desktop, and a BB terminal is open on it."; the desktop's control went back to the agent |
+| 390 px | the header's actions on a row of their own under the name; row actions always shown; tiles 48 by 30 |
+
+Before the guard counted bb-box's own terminals, the first guarded run
+named the threads and the control but not the page's terminal, and the
+restore ended it: that run found the gap fixed above.
+
+Screenshots at 1,440, 760 and 390 px in light and dark, of the page, the
+card, Take snapshot, the restore dialog, the guarded dialog, restoring and
+the picture, are in the unit's thread storage, not in the repository.
+
+### Choices and deviations
+
+- **Fork and Keep are not on the card** (units 7 and 8), so the footer
+  does not say "unless kept" yet, and rows have no Fork button or Keep…
+  item: no dead controls.
+- **The viewer's last frame is not used for pictures.** 070 asks for it
+  when a viewer was open within 10 s; bb-box's server has no decoded frame
+  (the browser decodes them), so every desktop picture comes from the
+  computer-use driver, which reads the screen while a person holds it.
+- **No toast when the person is not on the box's page.** The page's
+  restores answer on the page; an agent's restores come with unit 5.
+- **Row lines on the box's page** follow 070's box-page sketch (when, by
+  whom, size, price, life when kept), not the Snapshots tab's, which also
+  says what each holds: the card's heading says it once.
+- **A restore's notice can be dismissed**, as the prototype has it; the
+  choice is kept in the browser.
+- **Resizing the window across BB's narrow layout** remounts BB's panel,
+  which closes an open dialog and focuses the page's heading. That is BB's
+  layout, not the card's; it showed in the screenshots, which open each
+  dialog after resizing.
+
+### After the review
+
+A review found nine things; each is fixed, with a test. After the fixes
+and the rebase onto unit 5 (`9ac74968`), on a Linux box in a fresh copy of
+the branch: `npx tsc` passes and the reference is current; the node suite
+ran 3,135 tests, 2,847 passed, 0 failed, 288 skipped; vitest ran 397, all
+passed. The PNG checks live in `snapshot-picture.ts`, not `png.ts`, which
+is one of the device server's files and would need a new device server
+version.
+
+1. **A restore goes on only past what the dialog showed.** The dialog
+   sends the losses it listed and a token of all it showed (the threads,
+   the control, the terminals, the losses, the undo and whether it was
+   refused, the size back, a swap, the guest). The server reads the
+   preview again: if the token differs, it restores nothing and sends the
+   new preview, which the dialog shows with "What the restore would do or
+   end changed since this dialog read it". The core refuses, with what
+   came since, a loss beyond those accepted ("Since you looked, more would
+   go with box ...: 2 BB terminals are open on it."), so a terminal opened
+   between the server's check and the restore's own is refused too.
+2. **The guard is read again after the flush**, right before the stop. A
+   thread that came during the flush stops the restore before the box
+   stops, and nothing changes.
+3. **A failed flush stops the restore unless the person accepts it.**
+   The flush, getting into the box included, has 15 s. When it fails, the
+   restore stops before the box does, says why, and changes nothing. The
+   dialog then asks: "Restore anyway, its undo may miss the last writes";
+   the CLI takes `--unflushed`; an agent cannot. When the person goes on,
+   the answer, the box log, the undo's note, the restored notice and the
+   undo's own restore dialog each say the undo may miss the last writes.
+   The page's restore answers once the box has stopped, or after 60 s, so
+   that every refusal before the stop reaches the dialog.
+4. **A screen's PNG is bounded before it is inflated**: at most 8 MiB and
+   2,048 px a side, inflated to no more than its size needs, its rows
+   checked for length and filter. A 100 by 100 PNG that inflates to 64 MiB,
+   one 40,000 px a side, one with missing rows and one with a bad filter
+   are each refused, and the take goes on without a picture. With these
+   bounds the decode is small enough to stay on the server's thread.
+5. **A restore that fails after the RPC has answered is not lost.** The
+   page shows a failed restore for 24 hours, with its reason, in a notice
+   that the live region also says, until a later restore or Dismiss.
+6. **The 48 MB of pictures is a hard cap.** Before a picture is written,
+   the oldest pictures of snapshots nobody kept go until it fits; if
+   kept ones alone leave no room, the new picture is refused and its
+   snapshot's picture is `failed`, with a log line.
+7. **A restore's start keeps the page as it is.** The box is "starting"
+   during a restore's start; the page no longer takes that for a box
+   starting, so the card, the restoring notice and its live region stay
+   mounted and in place.
+8. **After a delete, focus goes to the next row's menu button**, or the
+   one before it, or Take snapshot, or the card's heading.
+9. **Settings' group headings are at weight 400**, the Pictures heading
+   among them. Other weights of 500 still in Settings, not changed here:
+   the page heading (`settings-parts.tsx`), the backend fields' and
+   setup's section headings (`settings-fields.tsx`, `settings-setup.tsx`,
+   `settings-backend-fields.tsx`), the first-run headings
+   (`settings-first-run.tsx`), the project images' heading
+   (`settings-images.tsx`), the overview's "things need you" and machine
+   names (`settings-overview.tsx`, `settings-machines.tsx`,
+   `settings-docker-hosts.tsx`), a backend check's name and state
+   (`settings-backend-page.tsx`), the box files' heading
+   (`settings-files.tsx`) and the configuration's group labels
+   (`settings-configuration.tsx`).

@@ -11,6 +11,7 @@ import {
   type SnapshotLedger,
   type SnapshotOperation,
   type SnapshotRecord,
+  type StoredPicture,
 } from "../core/snapshot.ts";
 import { chargeOf, type Charge } from "../core/snapshot-cost.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
@@ -100,7 +101,24 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   )`,
   `CREATE INDEX ${SCHEMA}.snapshot_charges_by_backend ON snapshot_charges(backend, held_until)`,
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN step_at INTEGER`,
+  `CREATE TABLE ${SCHEMA}.snapshot_pictures (
+    snapshot TEXT PRIMARY KEY,
+    jpeg BLOB NOT NULL,
+    width INTEGER NOT NULL CHECK(width > 0),
+    height INTEGER NOT NULL CHECK(height > 0),
+    taken_at INTEGER NOT NULL
+  )`,
 ];
+
+export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
+
+interface PictureRow {
+  snapshot: string;
+  jpeg: Buffer;
+  width: number;
+  height: number;
+  taken_at: number;
+}
 
 const CHARGES_KEPT_MS = 400 * 24 * 60 * 60_000;
 
@@ -392,7 +410,7 @@ export class SnapshotStore implements SnapshotLedger {
     return null;
   }
 
-  #table(name: "snapshots" | "snapshot_operations" | "snapshot_charges"): string {
+  #table(name: "snapshots" | "snapshot_operations" | "snapshot_charges" | "snapshot_pictures"): string {
     return this.#file.table(name);
   }
 
@@ -438,6 +456,12 @@ export class SnapshotStore implements SnapshotLedger {
     if (this.#file.problem) return null;
     const row = this.#file.db().prepare(`SELECT * FROM ${this.#table("snapshot_operations")} WHERE id = ?`).get(id) as OperationRow | undefined;
     return row ? operationOf(row) : null;
+  }
+
+  operations(filter: { readonly box: string; readonly kind: SnapshotOperation["kind"] }): SnapshotOperation[] {
+    if (this.#file.problem) return [];
+    const rows = this.#file.db().prepare(`SELECT * FROM ${this.#table("snapshot_operations")} WHERE box = ? AND kind = ? ORDER BY started_at, id`).all(filter.box, filter.kind) as OperationRow[];
+    return rows.map(operationOf);
   }
 
   byRequest(request: string): SnapshotOperation | null {
@@ -537,6 +561,7 @@ export class SnapshotStore implements SnapshotLedger {
     this.#write(() => {
       const db = this.#file.db();
       db.prepare(`DELETE FROM ${snapshots} WHERE id = ?`).run(id);
+      db.prepare(`DELETE FROM ${this.#table("snapshot_pictures")} WHERE snapshot = ?`).run(id);
       db.prepare(`UPDATE ${this.#table("snapshot_charges")} SET held_until = ? WHERE snapshot = ? AND held_until IS NULL`).run(this.#now(), id);
       db.prepare(
         `UPDATE ${operations} SET snapshots_gone_at = ? WHERE snapshots_gone_at IS NULL AND EXISTS (SELECT 1 FROM json_each(snapshots) AS used WHERE used.value = ?) AND NOT EXISTS (SELECT 1 FROM json_each(snapshots) AS used JOIN ${snapshots} AS kept ON kept.id = used.value)`,
@@ -568,6 +593,44 @@ export class SnapshotStore implements SnapshotLedger {
         .run(...columns.map((column) => row[column as keyof OperationRow]), id);
       return next;
     });
+  }
+
+  putPicture(picture: StoredPicture): boolean {
+    const pictures = this.#table("snapshot_pictures");
+    const snapshots = this.#table("snapshots");
+    return this.#write(() =>
+      this.#file.db().transaction(() => {
+        const db = this.#file.db();
+        if (picture.jpeg.byteLength > PICTURES_HELD_BYTES) return false;
+        let held = (db.prepare(`SELECT COALESCE(SUM(length(jpeg)), 0) AS bytes FROM ${pictures} WHERE snapshot != ?`).get(picture.snapshot) as { bytes: number }).bytes;
+        if (held + picture.jpeg.byteLength > PICTURES_HELD_BYTES) {
+          const oldestUnkept = db
+            .prepare(`SELECT picture.snapshot AS snapshot, length(picture.jpeg) AS bytes FROM ${pictures} AS picture LEFT JOIN ${snapshots} AS record ON record.id = picture.snapshot WHERE record.kept_until IS NULL AND picture.snapshot != ? ORDER BY picture.taken_at, picture.snapshot`)
+            .all(picture.snapshot) as { snapshot: string; bytes: number }[];
+          for (const old of oldestUnkept) {
+            if (held + picture.jpeg.byteLength <= PICTURES_HELD_BYTES) break;
+            db.prepare(`DELETE FROM ${pictures} WHERE snapshot = ?`).run(old.snapshot);
+            db.prepare(`UPDATE ${snapshots} SET picture = NULL WHERE id = ?`).run(old.snapshot);
+            held -= old.bytes;
+          }
+        }
+        if (held + picture.jpeg.byteLength > PICTURES_HELD_BYTES) return false;
+        db.prepare(`INSERT INTO ${pictures} (snapshot, jpeg, width, height, taken_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(snapshot) DO UPDATE SET jpeg = excluded.jpeg, width = excluded.width, height = excluded.height, taken_at = excluded.taken_at`).run(
+          picture.snapshot,
+          Buffer.from(picture.jpeg),
+          picture.width,
+          picture.height,
+          picture.at,
+        );
+        return true;
+      })(),
+    );
+  }
+
+  picture(snapshot: string): StoredPicture | null {
+    if (this.#file.problem) return null;
+    const row = this.#file.db().prepare(`SELECT * FROM ${this.#table("snapshot_pictures")} WHERE snapshot = ?`).get(snapshot) as PictureRow | undefined;
+    return row ? { snapshot: row.snapshot, jpeg: new Uint8Array(row.jpeg), width: row.width, height: row.height, at: row.taken_at } : null;
   }
 
   prune(now: number): number {

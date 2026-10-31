@@ -50,6 +50,7 @@ export function world(options: { readonly identityTool?: string; readonly marker
     undoByCopy: false,
     machineRestores: false,
     marksChanged: 0,
+    screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
     backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
@@ -125,6 +126,7 @@ export function world(options: { readonly identityTool?: string; readonly marker
       settings: () => snapshotConfig({ general: { snapshots: state.settings } }),
       priced: (_backend, offer) => (state.price ? { ...offer, price: state.price } : offer),
       guard: async () => state.guard,
+      screen: (box, signal) => (state.screen ? state.screen(box, signal) : Promise.resolve(null)),
       undoByCopy: () => state.undoByCopy,
       machineRestores: () => state.machineRestores,
       marksChanged: () => {

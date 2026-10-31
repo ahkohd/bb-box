@@ -119,7 +119,7 @@ function OfferRow({ state, config }: { state: ConfigState; config: BackendConfig
   );
 }
 
-export function SnapshotsOptions({ agents }: { agents: ReactNode }) {
+export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pictures: ReactNode }) {
   const { state } = useSettings();
   const draft = useDraft(SNAPSHOTS_PART, "the snapshot settings");
   const stored = snapshotConfig(state.document);
@@ -147,6 +147,11 @@ export function SnapshotsOptions({ agents }: { agents: ReactNode }) {
       <Group title="Agents" description="Switches save at once. However they are set, an agent's restore always takes an undo first.">
         <Card>
           <Rows>{agents}</Rows>
+        </Card>
+      </Group>
+      <Group title="Pictures">
+        <Card>
+          <Rows>{pictures}</Rows>
         </Card>
       </Group>
       <Group

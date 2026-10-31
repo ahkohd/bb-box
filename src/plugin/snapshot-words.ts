@@ -42,6 +42,7 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
   if (typeof answer.earlier === "number") lines.push(`It runs on a new guest made from that held copy, with the box's own identity. ${answer.earlier === 1 ? "1 snapshot stays" : `${answer.earlier} snapshots stay`} on its earlier guest, which bb-box never starts: fork only.`);
   lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id})${answer.undo.guest === "held-copy" ? `, a held copy of the stopped box, guest ${answer.undo.livesOn.ref}` : ""}: restore that to undo this.` : "No undo was taken.");
   if (answer.anyway.length) lines.push(`Restored anyway, though ${answer.anyway.join(", and ")}.`);
+  if (answer.unflushed) lines.push(`bb-box could not flush the box's writes before stopping it (${answer.unflushed.replace(/\.$/, "")}), so its undo may miss what was written in the last seconds before the restore.`);
   if (answer.from && answer.to && describeSize(answer.from) !== describeSize(answer.to)) lines.push(`Its size went back from ${describeSize(answer.from)} to ${describeSize(answer.to)}, as it was then.`);
   if (answer.replaced.length) lines.push(`A box keeps two undos, so bb-box deleted the oldest: ${answer.replaced.map((name) => `"${name}"`).join(", ")}.`);
   if (operation.error) lines.push(operation.error.charAt(0).toUpperCase() + operation.error.slice(1).replace(/([^.])$/, "$1."));

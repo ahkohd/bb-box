@@ -484,3 +484,99 @@ test("a check says what a restore would do, refuses what it would refuse, and ch
   assert.equal(state.store.unsettled().length, 0);
   assert.equal(state.store.records({ box: box.id }).length, 1);
 });
+
+function flushing(state: World, flush: () => Promise<{ exitCode: number; stdout: string; stderr: string }>): void {
+  const transports = state.backend.transports.bind(state.backend);
+  state.backend.transports = async (guest, kind) => {
+    const found = await transports(guest, kind);
+    const command = found.command!;
+    return {
+      ...found,
+      command: Object.assign(Object.create(Object.getPrototypeOf(command)), command, {
+        run: async (script: string, options?: Parameters<typeof command.run>[1]) => {
+          if (script !== "sync") return command.run(script, options);
+          state.provider.order.push("flush");
+          return flush();
+        },
+      }),
+    };
+  };
+}
+
+test("the box's writes are flushed to its disk before the restore's hard stop, so its undo holds them", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  flushing(state, async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+  state.provider.order.length = 0;
+  const answer = await state.snapshots.restore(COMMAND, box, standing(box), "one");
+  assert.deepEqual(state.provider.order.slice(0, 3), ["flush", "power-off", `take ${answer.undo!.id}`]);
+  assert.equal(state.store.record(answer.undo!.id)?.note, null);
+  assert.equal(answer.unflushed, null);
+  state.provider.order.length = 0;
+  await state.snapshots.restore(COMMAND, box, standing(box), "one", { undo: false });
+  assert.equal(state.provider.order.includes("flush"), false, "a restore without an undo has nothing to flush for");
+});
+
+test("a failed flush stops the restore before the stop unless the person accepts an undo that may miss the last writes; the result and the box log say so", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: "sync: Input/output error" }));
+  state.provider.order.length = 0;
+  const stopped = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
+  assert.equal(stopped.code, "unflushed");
+  assert.match(stopped.message, /could not flush box \S+'s writes to its disk before stopping it \(sync: Input\/output error\), so its undo could miss what was written in the last seconds before the restore\. bb-box changed nothing\.$/);
+  assert.deepEqual(state.provider.order, ["flush"], "nothing stopped");
+  assert.equal((await current(state, box)).state, "ready");
+  assert.equal(state.store.records({ box: box.id }).length, 1, "no undo was left");
+  assert.equal((await rejection(state.snapshots.restore(AGENT, box, standing(box), "one", { unflushed: "go-on" }))).code, "not_owner");
+
+  const went = await state.snapshots.restore(COMMAND, box, standing(box), "one", { unflushed: "go-on" });
+  assert.equal(went.unflushed, "sync: Input/output error");
+  assert.match(state.store.record(went.undo!.id)?.note ?? "", /may miss what was written in the last seconds before the restore\.$/);
+  assert.match(state.log.events(box.id).find((event) => event.kind === "restored")!.words!, /bb-box could not flush its writes before the stop \(sync: Input\/output error\), so its undo may miss the last of them/);
+});
+
+test("the flush waits 15 s at most, getting into the box included", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  const transports = state.backend.transports.bind(state.backend);
+  let asked = 0;
+  state.backend.transports = (guest, kind) => (++asked > 1 ? new Promise(() => undefined) : transports(guest, kind));
+  const began = Date.now();
+  const stopped = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
+  assert.equal(stopped.code, "unflushed");
+  assert.match(stopped.message, /did not answer within 15 s/);
+  assert.ok(Date.now() - began < 20_000);
+});
+
+test("the guard is read again after the flush, right before the stop: a thread that came meanwhile stops the restore with nothing changed", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  flushing(state, async () => {
+    state.guard = { threads: [{ id: "thr_new", title: "Arrived during the flush", running: true }], threadsUnread: null, control: false, terminals: 0 };
+    return { exitCode: 0, stdout: "", stderr: "" };
+  });
+  state.provider.order.length = 0;
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
+  assert.equal(refused.code, "in_use");
+  assert.match(refused.message, /Arrived during the flush/);
+  assert.deepEqual(state.provider.order, ["flush"], "the box was never stopped");
+  assert.equal((await current(state, box)).state, "ready");
+});
+
+test("the person's restore goes on only past what they were shown: a loss that came since is refused and named", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  state.guard = { threads: [], threadsUnread: null, control: true, terminals: 2 };
+  state.provider.order.length = 0;
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one", { force: true, accept: ["a person holds control of its desktop"] }));
+  assert.match(refused.message, /^Since you looked, more would go with box \S+: 2 BB terminals are open on it\./);
+  assert.deepEqual(state.provider.order, []);
+  const answer = await state.snapshots.restore(COMMAND, box, standing(box), "one", { force: true, accept: ["a person holds control of its desktop", "2 BB terminals are open on it"] });
+  assert.equal(answer.snapshot?.name, "one");
+});

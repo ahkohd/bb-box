@@ -21,6 +21,7 @@ import {
 import { BoxError, type BoxRecord, OPERATOR, identity, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
 import { readForkSafe } from "./identity.ts";
+import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
 import { ceilingOf, snapshotConfig, type SnapshotConfig } from "./document.ts";
 import { ceilingVerdict, heldRate, pastCeiling, spentThisMonth, type HeldRate } from "./snapshot-cost.ts";
@@ -58,8 +59,10 @@ import {
   type Change,
   type SnapshotLedger,
   type SnapshotOperation,
+  type PictureState,
   type SnapshotRecord,
   type Standing,
+  type StoredPicture,
 } from "./snapshot.ts";
 
 const MiB = 1024 * 1024;
@@ -103,6 +106,9 @@ export interface RestoreInput {
   readonly force?: boolean;
   readonly request?: string;
   readonly yes?: YesInTheThread;
+  readonly accept?: readonly string[];
+  readonly unflushed?: "stop" | "go-on";
+  readonly whenStopped?: () => void;
 }
 
 export interface RestoreAnswer {
@@ -115,6 +121,7 @@ export interface RestoreAnswer {
   readonly anyway: readonly string[];
   readonly replaced: readonly string[];
   readonly earlier?: number | null;
+  readonly unflushed?: string | null;
   readonly repeated: boolean;
 }
 
@@ -130,6 +137,7 @@ export interface SnapshotsDeps {
   guard?(box: BoxRecord): Promise<RestoreGuard>;
   machineRestores?(): boolean;
   marksChanged?(): void;
+  screen?(box: BoxRecord, signal: AbortSignal): Promise<Uint8Array | null>;
   undoByCopy?(backendId: string): boolean;
   settings?(): SnapshotConfig;
   priced?(backend: Backend, offer: Snapshotting): Snapshotting;
@@ -255,6 +263,10 @@ function stepAt(step: string): number {
   return index < 0 ? 0 : index;
 }
 
+export function restoreStepWords(step: string): string | null {
+  return RESTORE_STEPS.includes(step as RestoreStep) ? RESTORE_STEP_WORDS[step as RestoreStep] : null;
+}
+
 const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
   planned: "before it began",
   stopping: "the stop",
@@ -285,6 +297,15 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
   done: "the end",
 };
 
+const FLUSH_WAIT_MS = 15_000;
+const UNIX_FLUSH = "sync";
+const WINDOWS_FLUSH = "Get-Volume | Where-Object DriveLetter | ForEach-Object { Write-VolumeCache -DriveLetter $_.DriveLetter }";
+
+function unflushedNote(why: string): string {
+  const reason = why.replace(/\.$/, "").slice(0, 300);
+  return `bb-box could not flush the box's writes to its disk before stopping it (${reason}), so this undo may miss what was written in the last seconds before the restore.`;
+}
+
 const BEGINS_A_TASK: ReadonlySet<string> = new Set(["undo-submitting", "copy-claimed", "rollback-submitting", "adopt-claimed"]);
 
 const TIMED_PARTS: Partial<Readonly<Record<RestoreStep, string>>> = {
@@ -310,8 +331,18 @@ function texts(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
 }
 
-function consentOf(operation: SnapshotOperation): { readonly force: boolean; readonly anyway: readonly string[]; readonly agreed: readonly string[]; readonly yes: YesInTheThread | null; readonly evicts: string | null } {
-  const consent = operation.consent as { force?: unknown; anyway?: unknown; agreed?: unknown; yes?: YesInTheThread; evicts?: unknown } | null;
+interface Consent {
+  readonly force: boolean;
+  readonly anyway: readonly string[];
+  readonly agreed: readonly string[];
+  readonly yes: YesInTheThread | null;
+  readonly evicts: string | null;
+  readonly unflushed: "stop" | "go-on";
+  readonly unflushedWhy: string | null;
+}
+
+function consentOf(operation: Pick<SnapshotOperation, "consent">): Consent {
+  const consent = operation.consent as { force?: unknown; anyway?: unknown; agreed?: unknown; yes?: YesInTheThread; evicts?: unknown; unflushed?: unknown; unflushedWhy?: unknown } | null;
   const anyway = texts(consent?.anyway);
   return {
     force: consent?.force === true,
@@ -319,7 +350,13 @@ function consentOf(operation: SnapshotOperation): { readonly force: boolean; rea
     agreed: Array.isArray(consent?.agreed) ? texts(consent.agreed) : anyway,
     yes: consent?.yes && typeof consent.yes.thread === "string" ? consent.yes : null,
     evicts: typeof consent?.evicts === "string" ? consent.evicts : null,
+    unflushed: consent?.unflushed === "go-on" ? "go-on" : "stop",
+    unflushedWhy: typeof consent?.unflushedWhy === "string" ? consent.unflushedWhy : null,
   };
+}
+
+export function unflushedOf(operation: Pick<SnapshotOperation, "consent">): string | null {
+  return consentOf(operation).unflushedWhy;
 }
 
 interface Loss {
@@ -368,6 +405,34 @@ function sizeChangeWords(from: BoxSize | null, to: BoxSize | null): string {
   return `; its size went from ${describeSize(from)} to ${describeSize(to)}, as it was then`;
 }
 
+interface TakeContext {
+  readonly box: BoxRecord & { readonly guest: Guest };
+  readonly backend: Backend;
+  readonly offer: Snapshotting;
+  readonly plan: SnapshotPlan;
+  readonly memory: boolean;
+}
+
+interface TakeSpend {
+  readonly storage: SnapshotStorage;
+  readonly adds: number;
+}
+
+function takeSpends(plan: SnapshotPlan, memory: boolean): TakeSpend[] {
+  const spends: TakeSpend[] = [{ storage: plan.storage, adds: plan.take.addsBytes ?? 0 }];
+  if (memory && plan.take.memory) spends.push({ storage: plan.take.memory.storage, adds: plan.take.memory.addsBytes });
+  return spends;
+}
+
+export interface TakeCheck {
+  readonly aboutMs: number;
+  readonly addsBytes: number | null;
+  readonly storage: string;
+  readonly host: string | null;
+  readonly memory: { readonly aboutMs: number | null; readonly addsBytes: number; readonly storage: string } | null;
+  readonly memoryWhy: string | null;
+}
+
 interface Prepared {
   readonly box: BoxRecord & { readonly guest: Guest };
   readonly target: SnapshotRecord;
@@ -403,6 +468,7 @@ export interface RestoreCheck {
   readonly leavesOnEarlierGuest: number;
   readonly replaces: string | null;
   readonly storage: string;
+  readonly undoRefused: string | null;
 }
 
 interface Restoring {
@@ -414,6 +480,7 @@ interface Restoring {
   readonly anyway: readonly string[];
   readonly from: BoxSize | null;
   readonly after: string;
+  readonly whenStopped?: () => void;
 }
 
 type TaskSeen = TaskOutcome | { readonly state: "unreadable"; readonly words: string } | null;
@@ -445,6 +512,10 @@ export class Snapshots {
 
   get settings(): SnapshotConfig {
     return this.#deps.settings?.() ?? DEFAULT_SETTINGS;
+  }
+
+  backendOf(id: string): Backend | null {
+    return this.#deps.backends.get(id);
   }
 
   offerFor(backend: Backend | null | undefined, kind: string): Snapshotting | null {
@@ -536,33 +607,11 @@ export class Snapshots {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#repeat(earlier);
     }
-    const box = await this.#deps.boxes.find(boxId);
-    if (!box) throw new BoxError("released", "That box was released, so it takes no snapshot.");
-    const restoring = this.#restoreHolding(box);
-    if (restoring) throw restoring;
-    if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) {
-      throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box takes a snapshot of a box that is running or stopped.`);
-    }
-    const backend = this.#deps.backends.get(box.backend);
-    if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it takes no snapshot of it.`);
-    const offer = this.offerFor(backend, box.kind);
-    if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
-    const memory = input.memory === true;
-    if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
-    if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too. Ask for its memory.`);
-    if (memory && box.state !== "ready") throw new BoxError("not_ready", `A snapshot with its memory needs box ${box.name} running, and it is stopped.`);
-    this.#requireStore("takes");
-    const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
-    if (plan.locked) throw new BoxError("locked", `${backend.label} left box ${box.name} locked (${plan.locked.lock}), so it takes no snapshot. ${plan.locked.fix}`);
-    if (plan.busy) throw new BoxError("try_again", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.busy}`);
-    if (!plan.take.ok) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.take.why ?? `${backend.label} refused it.`}`);
-    if (memory && !plan.take.memory) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} with its memory: ${plan.take.memoryWhy ?? "its backend did not say where the memory would go."}`);
+    const { box, backend, offer, plan, memory } = await this.#takeContext(boxId, input.memory === true);
     const forkSafe = await this.#forkSafe(box, backend);
-    const spends: { readonly storage: SnapshotStorage; readonly adds: number }[] = [{ storage: plan.storage, adds: plan.take.addsBytes ?? 0 }];
-    if (memory && plan.take.memory) spends.push({ storage: plan.take.memory.storage, adds: plan.take.memory.addsBytes });
+    const spends = takeSpends(plan, memory);
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
     const now = this.#now();
-    const settings = this.settings;
     const id = newSnapshotId(this.#random);
     const operationId = newOperationId(this.#random);
     const admitted = ledger.transaction((): { refused: BoxError } | { repeat: SnapshotOperation } | { record: SnapshotRecord; operation: SnapshotOperation; counted: number; evicts: SnapshotRecord | null } => {
@@ -572,32 +621,9 @@ export class Snapshots {
       }
       const ofBox = ledger.records({ box: box.id });
       const counted = ofBox.filter(countsAgainstLimit);
-      const evicts = counted.length >= settings.perBox && caller.is === "agent" ? limitVictim(ofBox, caller.threadId, ledger.pins(), now) : null;
-      if (counted.length >= settings.perBox && !evicts) {
-        const seen = counted.filter((record) => mayAct(caller, "see", standing, record).ok);
-        const none = caller.is === "agent" ? " None of them is one an agent of this thread took and nobody kept, which bb-box would delete for a new one." : "";
-        return {
-          refused: new BoxError(
-            "limit_reached",
-            `Box ${box.name} holds ${counted.length} snapshots, and your settings allow ${settings.perBox} a box.${none} Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
-          ),
-        };
-      }
-      for (const spend of spends) {
-        const adds = spends.filter((other) => other.storage.key === spend.storage.key).reduce((sum, other) => sum + other.adds, 0);
-        const room = this.#roomProblem(box, spend.storage, ledger.reservedBytes(spend.storage.key) + adds, memory, settings.roomPercent);
-        if (room) return { refused: new BoxError("try_again", room) };
-      }
-      const paid = ceilingVerdict({
-        change: "take",
-        backend: backend.label,
-        held: heldRate(ledger.records({ backend: backend.id }), backend.id),
-        price: offer.price,
-        bytes: memory && plan.take.memory ? plan.take.memory.addsBytes : (plan.take.addsBytes ?? null),
-        ceiling: ceilingOf(settings, backend.id),
-        byPerson: caller.is !== "agent",
-      });
-      if (!paid.ok) return { refused: new BoxError("limit_reached", paid.why) };
+      const admission = this.#admit(caller, standing, { box, backend, offer, plan, memory }, spends, now);
+      if ("refused" in admission) return { refused: admission.refused };
+      const evicts = admission.evicts;
       const name = uniqueName(input.name?.trim() || timeName(now, this.#deps.timeZone), new Set(ofBox.map((record) => record.name)));
       const record: SnapshotRecord = {
         id,
@@ -663,7 +689,7 @@ export class Snapshots {
     this.#notify(box.threadId);
     const taken = await this.#runTake(admitted.record, admitted.operation, box, backend, admitted.counted);
     if (!admitted.evicts) return taken;
-    const evicted = await this.#finishEviction(admitted.operation.id, taken.snapshot ?? admitted.record, settings.perBox);
+    const evicted = await this.#finishEviction(admitted.operation.id, taken.snapshot ?? admitted.record, this.settings.perBox);
     const counted = ledger.records({ box: box.id }).filter(countsAgainstLimit).length;
     return { ...taken, counted, ...evicted, operation: ledger.operation(admitted.operation.id) ?? taken.operation };
   }
@@ -687,6 +713,187 @@ export class Snapshots {
     }
     ledger.updateOperation(operationId, { state: "done", step: "done", endedAt: this.#now(), error: null });
     return answer;
+  }
+
+  async #takeContext(boxId: string, memory: boolean): Promise<TakeContext> {
+    const box = await this.#deps.boxes.find(boxId);
+    if (!box) throw new BoxError("released", "That box was released, so it takes no snapshot.");
+    const restoring = this.#restoreHolding(box);
+    if (restoring) throw restoring;
+    if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) {
+      throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box takes a snapshot of a box that is running or stopped.`);
+    }
+    const backend = this.#deps.backends.get(box.backend);
+    if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it takes no snapshot of it.`);
+    const offer = this.offerFor(backend, box.kind);
+    if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
+    if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
+    if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too. Ask for its memory.`);
+    if (memory && box.state !== "ready") throw new BoxError("not_ready", `A snapshot with its memory needs box ${box.name} running, and it is stopped.`);
+    this.#requireStore("takes");
+    const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
+    if (plan.locked) throw new BoxError("locked", `${backend.label} left box ${box.name} locked (${plan.locked.lock}), so it takes no snapshot. ${plan.locked.fix}`);
+    if (plan.busy) throw new BoxError("try_again", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.busy}`);
+    if (!plan.take.ok) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.take.why ?? `${backend.label} refused it.`}`);
+    if (memory && !plan.take.memory) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} with its memory: ${plan.take.memoryWhy ?? "its backend did not say where the memory would go."}`);
+    return { box: { ...box, guest: box.guest }, backend, offer, plan, memory };
+  }
+
+  #admit(caller: Caller, standing: Standing, context: TakeContext, spends: readonly TakeSpend[], now: number): { readonly refused: BoxError } | { readonly evicts: SnapshotRecord | null } {
+    const { box, backend, offer, plan, memory } = context;
+    const ledger = this.#deps.ledger;
+    const settings = this.settings;
+    const ofBox = ledger.records({ box: box.id });
+    const counted = ofBox.filter(countsAgainstLimit);
+    const evicts = counted.length >= settings.perBox && caller.is === "agent" ? limitVictim(ofBox, caller.threadId, ledger.pins(), now) : null;
+    if (counted.length >= settings.perBox && !evicts) {
+      const seen = counted.filter((record) => mayAct(caller, "see", standing, record).ok);
+      const none = caller.is === "agent" ? " None of them is one an agent of this thread took and nobody kept, which bb-box would delete for a new one." : "";
+      return {
+        refused: new BoxError(
+          "limit_reached",
+          `Box ${box.name} holds ${counted.length} snapshots, and your settings allow ${settings.perBox} a box.${none} Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
+        ),
+      };
+    }
+    for (const spend of spends) {
+      const adds = spends.filter((other) => other.storage.key === spend.storage.key).reduce((sum, other) => sum + other.adds, 0);
+      const room = this.#roomProblem(box, spend.storage, ledger.reservedBytes(spend.storage.key) + adds, memory, settings.roomPercent);
+      if (room) return { refused: new BoxError("try_again", room) };
+    }
+    const paid = ceilingVerdict({
+      change: "take",
+      backend: backend.label,
+      held: heldRate(ledger.records({ backend: backend.id }), backend.id),
+      price: offer.price,
+      bytes: memory && plan.take.memory ? plan.take.memory.addsBytes : (plan.take.addsBytes ?? null),
+      ceiling: ceilingOf(settings, backend.id),
+      byPerson: caller.is !== "agent",
+    });
+    return paid.ok ? { evicts } : { refused: new BoxError("limit_reached", paid.why) };
+  }
+
+  async checkTake(caller: Caller, box: BoxRecord, standing: Standing, input: { readonly memory?: boolean } = {}): Promise<TakeCheck> {
+    const allowed = mayAct(caller, "take", standing);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    const memory = input.memory === true;
+    const context = await this.#takeContext(box.id, memory);
+    const admission = this.#admit(caller, standing, context, takeSpends(context.plan, memory), this.#now());
+    if ("refused" in admission) throw admission.refused;
+    const { plan } = context;
+    return {
+      aboutMs: memory ? (plan.take.memoryAboutMs ?? plan.take.aboutMs) : plan.take.aboutMs,
+      addsBytes: memory && plan.take.memory ? plan.take.memory.addsBytes : plan.take.addsBytes,
+      storage: memory && plan.take.memory ? plan.take.memory.storage.name : plan.storage.name,
+      host: context.box.guest.host,
+      memory: plan.take.memory ? { aboutMs: plan.take.memoryAboutMs, addsBytes: plan.take.memory.addsBytes, storage: plan.take.memory.storage.name } : null,
+      memoryWhy: plan.take.memory ? null : plan.take.memoryWhy,
+    };
+  }
+
+  async #screenPicture(box: BoxRecord): Promise<{ readonly state: PictureState; readonly picture: ScreenPicture | null } | null> {
+    const screen = this.#deps.screen;
+    if (!screen) return null;
+    if (!box.capabilities.displays.length && !box.device) return { state: "none", picture: null };
+    if (!this.settings.pictures) return { state: "off", picture: null };
+    try {
+      const png = await withinWait((signal) => screen(box, signal));
+      return png ? { state: "taken", picture: pictureOfScreen(png) } : { state: "none", picture: null };
+    } catch (error) {
+      this.#deps.log?.(`Took no picture of box ${box.name}'s screen for its snapshot: ${message(error)}`);
+      return { state: "failed", picture: null };
+    }
+  }
+
+  async #keepPicture(snapshotId: string, box: BoxRecord): Promise<void> {
+    const outcome = await this.#screenPicture(box);
+    if (!outcome) return;
+    try {
+      const kept = outcome.picture ? this.#deps.ledger.putPicture({ snapshot: snapshotId, jpeg: outcome.picture.jpeg, width: outcome.picture.width, height: outcome.picture.height, at: this.#now() }) : true;
+      if (!kept) this.#deps.log?.(`Kept no picture of box ${box.name}'s screen: pictures of kept snapshots fill the 48 MB bb-box holds for them.`);
+      this.#deps.ledger.updateRecord(snapshotId, { picture: kept ? outcome.state : "failed" });
+    } catch (error) {
+      this.#deps.logError("keep a snapshot's picture", error);
+    }
+  }
+
+  picture(caller: Caller, standing: Standing, ref: string): StoredPicture | null {
+    const target = this.find(caller, standing, ref);
+    const allowed = mayAct(caller, "see-picture", standing, target);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    return target.picture === "taken" ? this.#deps.ledger.picture(target.id) : null;
+  }
+
+  async rename(caller: Caller, standing: Standing, ref: string, name: string): Promise<SnapshotRecord> {
+    const problem = nameProblem(name);
+    if (problem) throw new BoxError("invalid_name", problem);
+    const wanted = name.trim();
+    return this.#relabel(caller, standing, ref, "rename", (current, ofBox) => {
+      const taken = ofBox.find((other) => other.id !== current.id && other.name === wanted);
+      if (taken) return new BoxError("invalid_name", `Box ${current.box.name} has a snapshot named ${quoted(taken)} already. Give this one another name.`);
+      return { name: wanted };
+    });
+  }
+
+  async annotate(caller: Caller, standing: Standing, ref: string, note: string): Promise<SnapshotRecord> {
+    const problem = noteProblem(note);
+    if (problem) throw new BoxError("invalid_name", problem);
+    return this.#relabel(caller, standing, ref, "note", () => ({ note: note.trim() || null }));
+  }
+
+  async #relabel(
+    caller: Caller,
+    standing: Standing,
+    ref: string,
+    change: "rename" | "note",
+    next: (current: SnapshotRecord, ofBox: readonly SnapshotRecord[]) => Partial<SnapshotRecord> | BoxError,
+  ): Promise<SnapshotRecord> {
+    const target = this.find(caller, standing, ref);
+    const allowed = mayAct(caller, change, standing, target);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    this.#requireStore(change === "rename" ? "renames" : "notes");
+    const ledger = this.#deps.ledger;
+    const now = eligible(target, change, { pin: ledger.pins().get(target.id) ?? null, now: this.#now() });
+    if (!now.ok) throw new BoxError("in_use", now.why);
+    const outcome = await this.#deps.boxes.inTurn(target.box.id, async () =>
+      ledger.transaction((): SnapshotRecord | BoxError => {
+        const current = ledger.record(target.id);
+        if (!current) return new BoxError("not_found", `bb-box has no snapshot ${target.id}: it was deleted.`);
+        const verdict = eligible(current, change, { pin: ledger.pins().get(current.id) ?? null, now: this.#now() });
+        if (!verdict.ok) return new BoxError("in_use", verdict.why);
+        const changes = next(current, ledger.records({ box: current.box.id }));
+        if (changes instanceof BoxError) return changes;
+        return ledger.updateRecord(current.id, changes) ?? current;
+      }),
+    );
+    if (outcome instanceof BoxError) throw outcome;
+    this.#notify(outcome.box.thread);
+    return outcome;
+  }
+
+  lastRestore(boxId: string): { readonly operation: SnapshotOperation; readonly running: boolean } | null {
+    const operation = this.#deps.ledger.operations({ box: boxId, kind: "restore" }).at(-1);
+    return operation ? { operation, running: this.#running.has(operation.id) } : null;
+  }
+
+  async guardOf(box: BoxRecord): Promise<RestoreGuard> {
+    return this.#deps.guard ? this.#deps.guard(box) : { threads: [], threadsUnread: null, control: false, terminals: 0 };
+  }
+
+  async #flushWrites(box: BoxRecord, backend: Backend, guest: Guest, signal: AbortSignal): Promise<string | null> {
+    if (box.state !== "ready") return null;
+    try {
+      return await withinWait(async (late) => {
+        const both = AbortSignal.any([signal, late]);
+        const command = (await backend.transports(guest, box.kind)).command;
+        if (!command) return "bb-box has no way to run a command in it";
+        const ran = await command.run(box.capabilities.os === "windows" ? WINDOWS_FLUSH : UNIX_FLUSH, { timeoutMs: FLUSH_WAIT_MS, signal: both, maxOutputBytes: 4096 });
+        return ran.exitCode === 0 ? null : `${ran.stderr.trim() || `it ended with exit code ${ran.exitCode}`}`;
+      }, FLUSH_WAIT_MS);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return message(error);
+    }
   }
 
   async #forkSafe(box: BoxRecord, backend: Backend): Promise<number | null> {
@@ -732,6 +939,9 @@ export class Snapshots {
     this.#running.add(operation.id);
     try {
       await this.#deps.hold?.(operation, "planned", this.#stopping.signal);
+      const stillWhileTaken = record.holds === "disk" && this.offerFor(backend, box.kind)?.whileRunning === "live";
+      const picturing = this.#keepPicture(record.id, box);
+      if (!stillWhileTaken) await picturing;
       const began = this.#now();
       let taken;
       try {
@@ -739,6 +949,8 @@ export class Snapshots {
       } catch (error) {
         if (this.#stopping.signal.aborted) throw error;
         throw this.#takeFailed(record, operation, error);
+      } finally {
+        await picturing;
       }
       const now = this.#now();
       const evicting = consentOf(operation).evicts !== null;
@@ -1018,6 +1230,7 @@ export class Snapshots {
     if (caller.is === "agent" && input.undo === false) throw new BoxError("not_owner", `An agent's restore always takes an undo first. ${NOT_THE_AGENTS}`);
     if (caller.is === "agent" && input.force) throw new BoxError("not_owner", `Restoring past what a box would lose is the person's to do. ${NOT_THE_AGENTS}`);
     if (caller.is !== "agent" && input.yes) throw new BoxError("not_owner", "A yes given in a thread answers an agent's restore only.");
+    if (caller.is === "agent" && input.unflushed === "go-on") throw new BoxError("not_owner", `Restoring with an undo that may miss the box's last writes is the person's to do. ${NOT_THE_AGENTS}`);
     this.#requireStore("restores");
     const digest = input.request ? requestDigest("restore", box.id, { snapshot: target.id, undo: input.undo !== false, force: input.force === true }) : null;
     if (input.request) {
@@ -1127,7 +1340,7 @@ export class Snapshots {
         guest: box.guest!.ref,
         snapshots: undo ? [target.id, undo.id] : [target.id],
         by,
-        consent: { force: input.force === true, anyway, agreed: prepared.losses.filter((loss) => anyway.includes(loss.words)).map((loss) => loss.key), ...(input.yes ? { yes: input.yes } : {}) },
+        consent: { force: input.force === true, anyway, agreed: prepared.losses.filter((loss) => anyway.includes(loss.words)).map((loss) => loss.key), ...(input.yes ? { yes: input.yes } : {}), unflushed: input.unflushed ?? "stop" },
         undo: undo?.id ?? null,
         guests: null,
         step: "planned",
@@ -1152,7 +1365,8 @@ export class Snapshots {
     const mark: RestoringMark = { operation: operation.id, snapshot: target.id, name: target.name, at: now, ran: box.state === "ready" };
     await this.#deps.boxes.update(box, (current) => (current.state === "releasing" ? {} : { restoring: mark }));
     this.#marksChanged();
-    return this.#runRestore({ swap, operation, target, undo, backend, anyway, from: box.guest!.size, after: "" }, "planned");
+    if (undo) await this.#keepPicture(undo.id, box);
+    return this.#runRestore({ swap, operation, target, undo, backend, anyway, from: box.guest!.size, after: "", ...(input.whenStopped ? { whenStopped: input.whenStopped } : {}) }, "planned");
   }
 
   #rules() {
@@ -1229,24 +1443,24 @@ export class Snapshots {
     return paid.ok ? null : new BoxError("limit_reached", `bb-box would take an undo of box ${box.name} before restoring it. ${paid.why}${instead}`);
   }
 
-  async checkRestore(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: RestoreInput = {}): Promise<RestoreCheck> {
+  async checkRestore(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: RestoreInput = {}, answer: { readonly undoRefusal?: boolean } = {}): Promise<RestoreCheck> {
     const target = this.find(caller, standing, ref);
     const allowed = mayAct(caller, "restore", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
-    return this.#checkOf(caller, await this.#prepare(caller, standing, box.id, target.id, input), input);
+    return this.#checkOf(caller, await this.#prepare(caller, standing, box.id, target.id, input), input, answer);
   }
 
-  #checkOf(caller: Caller, prepared: Prepared, input: RestoreInput): RestoreCheck {
+  #checkOf(caller: Caller, prepared: Prepared, input: RestoreInput, answer: { readonly undoRefusal?: boolean } = {}): RestoreCheck {
     const undoBytes = this.#undoBytes(prepared.box, prepared.plan, prepared.byCopy);
     const refused = input.undo === false ? null : this.#undoRefused(caller, prepared.box, prepared.backend, prepared.offer, prepared.plan, undoBytes);
-    if (refused) throw refused;
+    if (refused && !answer.undoRefusal) throw refused;
     const restore = prepared.plan.restore;
     const ofBox = this.#deps.ledger.records({ box: prepared.box.id });
     const onGuest = prepared.swap ? ofBox.filter((record) => record.guest === "current" && record.livesOn.ref === prepared.box.guest?.ref).length : 0;
     const undos = ofBox.filter((record) => record.undoOf !== null && record.keptUntil === null && heldByProvider(record));
     const replaces = input.undo !== false && undos.length + 1 > UNDOS_PER_BOX ? (undoToReplace(ofBox.filter((record) => record.id !== prepared.target.id), this.#deps.ledger.pins(), this.#now())?.name ?? null) : null;
     const undo: RestoreCheck["undo"] =
-      input.undo === false
+      input.undo === false || refused
         ? null
         : prepared.byCopy
           ? { kind: "held-copy", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.copyAboutMs ?? restore.undoAboutMs, bytes: undoBytes || null }
@@ -1258,6 +1472,7 @@ export class Snapshots {
       plan: planDigest(prepared.box, prepared.target, undo?.kind ?? null, prepared.losses.map((loss) => loss.key), ofBox.map((record) => record.id)),
       swap: prepared.swap,
       undo,
+      undoRefused: refused?.message ?? null,
       from: prepared.box.guest?.size ?? null,
       to: prepared.swap ? null : restore.sizeBack,
       anyway: prepared.losses.map((loss) => loss.words),
@@ -1333,7 +1548,14 @@ export class Snapshots {
   #consented(caller: Caller, through: "restore" | "form", onAMachine: boolean, box: BoxRecord, target: SnapshotRecord, losses: readonly Loss[], input: RestoreInput): string[] {
     if (!losses.length) return [];
     if (caller.is === "agent" && through === "form" && onAMachine) return losses.map((loss) => loss.words);
-    if (caller.is !== "agent" && input.force) return losses.map((loss) => loss.words);
+    if (caller.is !== "agent" && input.force) {
+      const accept = input.accept;
+      const unseen = accept ? losses.filter((loss) => !accept.includes(loss.words)) : [];
+      if (unseen.length) {
+        throw new BoxError("in_use", `Since you looked, more would go with box ${box.name}: ${unseen.map((loss) => loss.words).join("; ")}. Look at what the restore would end again before restoring. bb-box changed nothing.`);
+      }
+      return losses.map((loss) => loss.words);
+    }
     const fix = caller.is === "agent" ? "Ask the person to end it first, or to restore the box themselves." : "Restore anyway with --force.";
     throw new BoxError("in_use", `Restoring box ${box.name} to ${quoted(target)} would end what is on it now: ${losses.map((loss) => loss.words).join("; ")}. ${fix} bb-box changed nothing.`);
   }
@@ -1386,12 +1608,14 @@ export class Snapshots {
     let timed: string | null = null;
     const at = (step: RestoreStep, also: Partial<SnapshotOperation> = {}) => {
       const part = TIMED_PARTS[step];
-      if (part !== undefined && part !== timed) {
+      const begins = part !== undefined && part !== timed;
+      if (begins) {
         if (timed) took.push([timed, this.#now() - stepBegan]);
         timed = part;
         stepBegan = this.#now();
       }
       ledger.updateOperation(operation.id, { step, stepAt: this.#now(), ...(BEGINS_A_TASK.has(step) ? { task: null } : {}), ...also });
+      if (begins) this.#notify(target.box.thread);
     };
     const admitted = async (box: BoxRecord, step: RestoreStep): Promise<void> => {
       const late = await this.#stillAdmitted(context, box);
@@ -1410,6 +1634,18 @@ export class Snapshots {
       if (ahead("stopping")) {
         if (from === "planned") await this.#deps.hold?.(operation, "planned", signal);
         await admitted(box, "planned");
+        const unflushed = undo ? await this.#flushWrites(box, backend, guest, signal) : null;
+        if (unflushed) {
+          const consent = consentOf(operation);
+          if (consent.unflushed !== "go-on") {
+            const words = `bb-box could not flush box ${box.name}'s writes to its disk before stopping it (${unflushed.replace(/\.$/, "")}), so its undo could miss what was written in the last seconds before the restore.`;
+            await this.#neverBegan(context, box, words);
+            throw new BoxError("unflushed", `${words} bb-box changed nothing.`);
+          }
+          ledger.updateOperation(operation.id, { consent: { ...(operation.consent as object), unflushedWhy: unflushed } });
+          undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed) }) ?? undo;
+        }
+        await admitted(box, "planned");
         await this.#deps.hold?.(operation, "checked", signal);
         at("stopping");
         box = await this.#moved(box, box.state === "ready" ? { state: "stopping", error: null } : { error: null });
@@ -1421,6 +1657,7 @@ export class Snapshots {
         }
         box = await this.#moved(box, { state: "stopped", stoppedAt: this.#now() });
         at("stopped");
+        context.whenStopped?.();
         await this.#deps.hold?.(operation, "stopped", signal);
         await admitted(box, "stopped");
       }
@@ -1638,10 +1875,12 @@ export class Snapshots {
           : `; a new guest made from its held copy runs the box now, and ${left === 1 ? "1 snapshot stays" : `${left} snapshots stay`} on its earlier guest: fork only`
         : "";
       const yes = consentOf(operation).yes;
-      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${swapped}${sized}${yes ? `; ${yesWords(yes)}` : ""}.`);
+      const unflushed = unflushedOf(ledger.operation(operation.id) ?? operation);
+      const unflushedWords = unflushed && undo ? `; bb-box could not flush its writes before the stop (${unflushed.replace(/\.$/, "")}), so its undo may miss the last of them` : "";
+      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${unflushedWords}${swapped}${sized}${yes ? `; ${yesWords(yes)}` : ""}.`);
       replaced.push(...(await this.#replaceUndos(box.id, target.id)));
       this.#notify(box.threadId);
-      return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, earlier: context.swap ? left : null, repeated: false };
+      return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, earlier: context.swap ? left : null, unflushed: undo ? unflushed : null, repeated: false };
     } finally {
       this.#running.delete(operation.id);
     }

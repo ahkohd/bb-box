@@ -1460,13 +1460,9 @@ export class Computer {
 
   /** Runs one tool call: after the box's earlier ones, and only while the agent has control. */
   async #run(box: BoxRecord, signal: AbortSignal | undefined, work: (use: Use) => Promise<ComputerResult>): Promise<ComputerResult> {
-    this.#drivable(box);
-    const state = this.#state(box.id);
-    state.inFlight++;
-    this.#stopIdle(state);
-    const task = async () => {
-      const use: Use = { state, box, signal };
+    return this.#queued(box, signal, async (use) => {
       this.#gate(use);
+      const { state } = use;
       const notice = state.notice;
       state.notice = null;
       try {
@@ -1476,7 +1472,25 @@ export class Computer {
         if (notice) state.notice ??= notice;
         throw error;
       }
-    };
+    });
+  }
+
+  async screenPicture(box: BoxRecord, longestEdge: number, signal?: AbortSignal): Promise<{ readonly data: string; readonly mimeType: string }> {
+    return this.#queued(box, signal, async (use) => {
+      const { result } = await this.#call(use, "get_desktop_state", { max_image_dimension: longestEdge }, { readOnly: true, whileAPersonHasControl: true });
+      if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
+      const image = imageOf(result);
+      if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
+      return { data: image.data, mimeType: image.mimeType };
+    });
+  }
+
+  async #queued<T>(box: BoxRecord, signal: AbortSignal | undefined, work: (use: Use) => Promise<T>): Promise<T> {
+    this.#drivable(box);
+    const state = this.#state(box.id);
+    state.inFlight++;
+    this.#stopIdle(state);
+    const task = () => work({ state, box, signal });
     try {
       const run = state.queue.then(task, task);
       state.queue = run.catch(() => undefined);
@@ -1606,11 +1620,12 @@ export class Computer {
    * Calls one of Cua's tools. A read whose session ended by itself is tried
    * once more on a new session; an action is not, since it may have been done.
    */
-  async #call(use: Use, name: string, args: Json, options: { readOnly: boolean }): Promise<{ result: McpResult; live: Live }> {
+  async #call(use: Use, name: string, args: Json, options: { readOnly: boolean; whileAPersonHasControl?: boolean }): Promise<{ result: McpResult; live: Live }> {
+    const gate = () => (options.whileAPersonHasControl ? undefined : this.#gate(use));
     for (let attempt = 0; ; attempt++) {
-      this.#gate(use);
+      gate();
       const live = await this.#live(use);
-      this.#gate(use);
+      gate();
       const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
       let result: McpResult;
       try {

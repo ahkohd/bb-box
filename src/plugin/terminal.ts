@@ -248,6 +248,10 @@ export class TerminalSessions {
     return this.#sessions.size;
   }
 
+  openOn(boxId: string): number {
+    return [...this.#sessions.values()].filter((session) => session.boxId === boxId).length;
+  }
+
   async dispose(): Promise<void> {
     await Promise.all([...this.#sessions.values()].map((session) => session.end("bb-box stopped.")));
   }
@@ -258,6 +262,7 @@ export interface Terminals {
   readonly path: string;
   /** Sessions open now. */
   readonly live: number;
+  openOn(boxId: string): number;
   /** Ends every session on a box, telling its tab why. */
   end(boxId: string, reason: string): Promise<void>;
   dispose(): Promise<void>;
@@ -355,6 +360,7 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
     get live() {
       return sessions.size;
     },
+    openOn: (boxId) => sessions.openOn(boxId),
     end: (boxId, reason) => sessions.end(boxId, reason),
     dispose: () => sessions.dispose(),
   };
