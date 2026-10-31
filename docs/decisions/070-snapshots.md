@@ -1421,6 +1421,22 @@ On 31 October 2026, during unit 7:
   (`unflushed`, a new column), its answer, the list, the page's row and
   every fork of it say it may miss the last writes. Keep (unit 8) is to
   say so too.
+- **A fork's first start waits up to 180 s for SSH** on Proxmox LXC as on
+  QEMU (the lead's request), so an LXC fork whose card comes late is
+  waited for until its reset, not failed at the container's usual 30 s.
+  Other starts keep their own wait.
+- **A fork never keeps its source's address.** Live, an LXC fork started
+  without its card kept its source's network file, as Proxmox writes one
+  only for the cards a container starts with; when the card was
+  hot-plugged, systemd-networkd brought up the source's address before
+  Proxmox wrote the fork's own, and the source lost its connection to BB
+  for 40 s. Two fixes: the check before ready refuses a fork that holds
+  its source's address; and version 6 of the identity program, on Proxmox
+  LXC, sets the `eth` cards' network files aside while a boot cannot tell
+  whether it is a copy, so a card added later gets only Proxmox's settings.
+  The reset is too late for that: networkd applies a file the moment the
+  card appears. The fix needs the LXC templates rebuilt with version 6;
+  until then the check before ready refuses such a fork.
 
 ## Alternatives considered
 

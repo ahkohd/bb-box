@@ -13,13 +13,15 @@ install.<BBBOX_INSTALL>, as bb-box's boxes and forks do.
       or name, network lines and SMBIOS UUID (gate G14: a fork starts with
       onboot set and its links up)
   card-late <vmid>
-      for a QEMU fork bb-box holds before its first start (bb box snapshot
-      hold-next --at forked): waits up to 10 minutes for the guest to exist,
-      re-armed and stopped, saves its net0 in /root/unit7-<vmid>-net0, removes
-      it, waits for bb-box to start the VM, waits 75 s more, so its first
-      boot cannot tell whether it is a copy, then puts the same net0 back
-      while it runs (gate G14: a fork whose first boot says unknown is not
-      handed over as ready)
+      for a fork, a container or a VM, that bb-box holds before its first
+      start (bb box snapshot hold-next --at forked): waits up to 10 minutes
+      for the guest to exist, stopped, re-armed with onboot set, with no
+      lock (a clone copies its source's onboot while still locked) and its
+      net0 the same across 5 s, so bb-box's own re-arm is done; saves it in
+      /root/unit7-<vmid>-net0, removes it, waits for bb-box to start it,
+      waits 75 s more, so its first boot cannot tell whether it is a copy,
+      then puts the same net0 back while it runs (gate G14: a fork whose
+      first boot says unknown is not handed over as ready)
   leftovers
       read only: lists every guest in BBBOX_VMIDS that carries the install's
       tag, with its status and tags, for the clean-up
@@ -44,6 +46,19 @@ ours() {
   tags=$($tool config "$vmid" | sed -n 's/^tags: //p')
   [[ ";$tags;" == *";install.$BBBOX_INSTALL;"* ]]
 }
+rearmed() {
+  local config
+  config=$($1 config "$2") || return 1
+  grep -q '^onboot: 1' <<<"$config" && ! grep -q '^lock:' <<<"$config" && $1 status "$2" | grep -q stopped || return 1
+  sed -n 's/^net0: //p' <<<"$config"
+}
+settled() {
+  local first second
+  first=$(rearmed "$1" "$2") || return 1
+  sleep 5
+  second=$(rearmed "$1" "$2") || return 1
+  [ -n "$first" ] && [ "$first" = "$second" ]
+}
 must_be_ours() {
   local tool
   tool=$(kind_of "$1")
@@ -63,21 +78,22 @@ case $command in
     [ $# -eq 2 ] || usage
     listed "$2"
     vmid=$2
-    for _ in $(seq 1 300); do
+    tool=none
+    for _ in $(seq 1 60); do
       tool=$(kind_of "$vmid")
-      if [ "$tool" = qm ] && ours qm "$vmid" && qm config "$vmid" | grep -q '^onboot: 1' && qm status "$vmid" | grep -q stopped; then break; fi
-      sleep 2
+      if [ "$tool" != none ] && ours "$tool" "$vmid" && settled "$tool" "$vmid"; then break; fi
+      sleep 5
     done
-    [ "$(kind_of "$vmid")" = qm ] && ours qm "$vmid" || { echo "no re-armed QEMU guest $vmid of the install appeared" >&2; exit 1; }
-    net0=$(qm config "$vmid" | sed -n 's/^net0: //p')
+    [ "$tool" != none ] && ours "$tool" "$vmid" || { echo "no re-armed guest $vmid of the install appeared" >&2; exit 1; }
+    net0=$($tool config "$vmid" | sed -n 's/^net0: //p')
     [ -n "$net0" ] || { echo "guest $vmid has no net0" >&2; exit 1; }
     printf '%s\n' "$net0" > "/root/unit7-$vmid-net0"
-    qm set "$vmid" --delete net0 >/dev/null
+    $tool set "$vmid" --delete net0 >/dev/null
     echo "$(date -u +%T) removed net0 of $vmid ($net0)"
-    for _ in $(seq 1 300); do qm status "$vmid" | grep -q running && break; sleep 1; done
+    for _ in $(seq 1 300); do $tool status "$vmid" | grep -q running && break; sleep 1; done
     echo "$(date -u +%T) $vmid is running, without a card"
     sleep 75
-    qm set "$vmid" --net0 "$(cat "/root/unit7-$vmid-net0")" >/dev/null
+    $tool set "$vmid" --net0 "$(cat "/root/unit7-$vmid-net0")" >/dev/null
     echo "$(date -u +%T) put net0 back on $vmid while it runs"
     rm -f "/root/unit7-$vmid-net0"
     ;;

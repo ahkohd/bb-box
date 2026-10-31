@@ -120,7 +120,7 @@ export interface IdentityResetFound {
 export interface ForkOrigin {
   readonly operation: string;
   readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly ref: string; readonly livesOn: Guest; readonly identity: HeldIdentity | null };
-  readonly source: { readonly id: string; readonly name: string; readonly threadId: string; readonly macs: readonly string[] };
+  readonly source: { readonly id: string; readonly name: string; readonly threadId: string; readonly macs: readonly string[]; readonly address?: string | null };
 }
 
 export interface MachineToCheck {
@@ -702,6 +702,7 @@ const ENROL_WAIT_MS = 20_000;
 /** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const FORK_WAIT_MS = 60_000;
+const FORK_START_WAIT_MS = 180_000;
 const FORK_LOOKS = 30;
 
 export interface ForkRequest {
@@ -2217,7 +2218,7 @@ export class Boxes {
       await this.#deps.forkHold?.(box, signal);
       await hooks.starting();
       const booting = this.#now();
-      await backend.start(made, signal, hooks.timing);
+      await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
       timings.start = this.#now() - booting;
       await this.#checkFork(box, made, backend, timings, signal);
       return made;
@@ -2237,6 +2238,7 @@ export class Boxes {
       sourceMacs: fork.source.macs,
       sourceBox: fork.source.id,
       sourceName: fork.source.name,
+      sourceAddress: fork.source.address ?? null,
       held: fork.snapshot.identity,
     };
     const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;

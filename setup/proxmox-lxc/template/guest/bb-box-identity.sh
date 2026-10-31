@@ -2,7 +2,7 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=5
+readonly VERSION=6
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
@@ -20,6 +20,8 @@ user_units=$root/etc/systemd/user
 run=$root/run/bb-box-identity
 boot_result=$run/boot
 boot_value=$run/value
+held_network=$run/held-network
+network_dir=$root/etc/systemd/network
 net=$root/sys/class/net
 nic_wait_seconds=${BBBOX_IDENTITY_NIC_WAIT_SECONDS:-30}
 settle_seconds=${BBBOX_IDENTITY_SETTLE_SECONDS:-2}
@@ -197,6 +199,36 @@ grow_anchors() {
   if write_atomically "$marker" "$text" 0644; then say "added this boot's interfaces ($added ) to the marker, as the box proved itself"; else say "could not add this boot's interfaces to the marker"; fi
 }
 
+hold_copied_network() {
+  local file held=
+  [ "$marker_source" = eth ] || return 0
+  for file in "$network_dir"/eth[0-9]*.network; do
+    [ -f "$file" ] || continue
+    make_folder "$held_network" 0700 || return 1
+    mv -f "$file" "$held_network/" || return 1
+    held="$held ${file##*/}"
+  done
+  [ -z "$held" ] || say "held its network settings ($held ) aside while it cannot tell whether it is a copy, so a card added later gets its own from its backend, never a copy's"
+}
+
+settle_held_network() {
+  local decided=$1 file name restored=
+  [ -d "$held_network" ] || return 0
+  for file in "$held_network"/*.network; do
+    [ -f "$file" ] || continue
+    name=${file##*/}
+    if [ "$decided" = kept ] && [ ! -e "$network_dir/$name" ]; then
+      mv -f "$file" "$network_dir/$name" && restored="$restored $name"
+    else
+      rm -f "$file"
+    fi
+  done
+  rmdir "$held_network" 2>/dev/null || :
+  [ -n "$restored" ] || return 0
+  say "put back its network settings ($restored ), as it is the box itself"
+  [ -n "$root" ] || timeout 15 networkctl reload >/dev/null 2>&1 || :
+}
+
 bb_folders() {
   local folder
   for folder in "$root"/home/*/.bb-machines/* "$root"/home/*/.bb-machines/.set-aside/* "$root"/root/.bb-machines/* "$root"/root/.bb-machines/.set-aside/*; do
@@ -342,6 +374,7 @@ boot() {
     if [ "$outcome" -eq 2 ]; then
       note_boot unknown
       say "not knowing yet whether this box is a copy: $reason. It removes nothing; SSH, Tailscale and BB's daemon wait while it looks again"
+      hold_copied_network || say "could not hold its network settings aside, so a card added later may come up with them"
       return 0
     fi
     say "this box is a copy, so it resets its identity: $reason"
@@ -371,10 +404,12 @@ settle() {
       if [ "$outcome" -eq 0 ]; then
         note_boot kept
         say "kept, now that its cards are here: the identity marker of box ${marker_box:-none} matches"
+        settle_held_network kept
         return 0
       fi
       if [ "$outcome" -eq 1 ]; then
         say "this box is a copy, as its cards show now that they are here, so it resets its identity: $reason"
+        settle_held_network reset
         if reset_identity "$reason" "$(now)"; then
           note_boot reset
           return 0

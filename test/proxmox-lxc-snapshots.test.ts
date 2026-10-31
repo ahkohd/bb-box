@@ -506,3 +506,26 @@ test("070 unit 7: a fork cut short is not left behind: a failed copy is deleted,
 function vmidOf(guest: Guest): number {
   return Number(guest.ref);
 }
+
+test("070 unit 7: an LXC fork's first start waits up to 180 s for SSH, as a VM's does, so a card that comes late is waited for; any other start waits 30 s", async (t) => {
+  fakeSsh();
+  tempDir("lxc-fork-start");
+  const proxmox = new FakeProxmox();
+  proxmox.addTemplate(9000);
+  const config = lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009 });
+  let clock = Date.now();
+  let open = true;
+  t.mock.method(Date, "now", () => clock);
+  const options: LxcBackendOptions = { fetch: proxmox.fetch, sleep: async (ms) => void (clock += Math.max(ms, 1)), sshBinary: FAKE_SSH_BINARY, portCheck: async () => open };
+  const backend = new ProxmoxLxcBackend(config, testContext(new MemoryStorage(), "test", { id: "proxmox-lxc" }), options);
+  made.push(backend);
+  const guest = await backend.acquire(identity(), null, quiet, new AbortController().signal);
+  open = false;
+  for (const [within, said] of [[undefined, "30 s"], [180_000, "180 s"]] as const) {
+    await backend.stop(guest);
+    const began = clock;
+    const failed = await backend.start(guest, undefined, undefined, undefined, within).catch((caught: unknown) => caught);
+    assert.match(String(failed), new RegExp(`Nothing answered on port 22 of \\S+ within ${said}\\.`));
+    assert.ok(clock - began >= (within ?? 30_000), "it waited that long");
+  }
+});

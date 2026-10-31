@@ -1532,7 +1532,7 @@ export class Snapshots {
           origin: {
             operation: operation.id,
             snapshot: { id: target.id, name: target.name, takenAt: target.takenAt, ref: target.ref ?? "", livesOn: target.livesOn, identity: target.identity ?? null },
-            source: { id: source.id, name: source.name, threadId: source.threadId, macs: sourceMacs },
+            source: { id: source.id, name: source.name, threadId: source.threadId, macs: sourceMacs, address: source.guest?.address ?? target.livesOn.address ?? null },
           },
           who: by,
         });

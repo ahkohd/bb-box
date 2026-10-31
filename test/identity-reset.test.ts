@@ -191,7 +191,7 @@ test("a box made before the change, with the reset in its image but no marker, k
     assert.match(ran.out, /kept: bb-box has written no identity marker here/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "5", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
+  assert.deepEqual(status(root), { version: "6", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
 });
 
 test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
@@ -220,7 +220,7 @@ test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Do
     assert.match(ran.out, /kept: the identity marker of box bxsource1 matches/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "5", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
+  assert.deepEqual(status(root), { version: "6", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
@@ -268,7 +268,7 @@ test("a copy with new MAC addresses, as any Proxmox clone gets, resets every ite
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:5e:77:01\nreset \d{4}-\d\d-\d\dT[\d:]+Z\n$/);
   assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
-  assert.deepEqual(status(root), { version: "5", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
+  assert.deepEqual(status(root), { version: "6", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
   const once = identityOf(root);
   assert.match(boot(root).out, /kept: the identity marker of box none matches/);
   assert.deepEqual(identityOf(root), once, "the next boot does not reset again");
@@ -801,4 +801,74 @@ test("wait lets BB's daemon start once the identity is known, unless its machine
   assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"))).code, 1, "the copied machine");
   assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_new.service"))).code, 0, "the machine bb-box enrols it as next");
   assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_sour.service"))).code, 0, "another machine whose ID begins the same");
+});
+
+const SOURCE_NETWORK = "[Match]\nName = eth0\n\n[Network]\nAddress = 192.0.2.180/24\nGateway = 192.0.2.1\n";
+const OWN_NETWORK = "[Match]\nName = eth0\n\n[Network]\nAddress = 192.0.2.182/24\nGateway = 192.0.2.1\n";
+const NETWORK_FILE = "etc/systemd/network/eth0.network";
+
+function networkFile(root: string, text: string): void {
+  mkdirSync(join(root, "etc/systemd/network/eth0.network.d"), { recursive: true });
+  writeFileSync(join(root, NETWORK_FILE), text);
+}
+
+test("version 6: an LXC copy started without its card holds its copied network settings aside, so the card added later never comes up with its source's address; once it resets, the copied settings are gone and the backend's own stay", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  networkFile(root, SOURCE_NETWORK);
+  setNics(root, [LOOP]);
+  const unknown = boot(root);
+  assert.match(unknown.out, /held its network settings \( eth0\.network \) aside while it cannot tell whether it is a copy/);
+  assert.equal(read(root, NETWORK_FILE), null, "networkd, which starts after this, finds no settings for a card that comes later");
+  assert.ok(existsSync(join(root, "etc/systemd/network/eth0.network.d")), "a drop-in folder alone matches nothing, and stays");
+  const settled = ended(settle(root));
+  setTimeout(() => {
+    networkFile(root, OWN_NETWORK);
+    setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  }, 300);
+  const done = await settled;
+  assert.equal(done.code, 0);
+  assert.match(done.out, /resets its identity/);
+  assert.equal(read(root, NETWORK_FILE), OWN_NETWORK, "its backend's settings for its own card stay");
+  assert.equal(existsSync(join(root, "run/bb-box-identity/held-network")), false, "the copied settings are gone");
+});
+
+test("version 6: the box itself, its LXC card late, gets its held settings back if its backend wrote none, and keeps the backend's if it did; a VM and a box whose card is there hold nothing", async () => {
+  for (const backendWrites of [false, true]) {
+    const root = guest([LOOP, LXC_ETH0]);
+    boot(root);
+    written(root, "bxsource1", "eth");
+    networkFile(root, SOURCE_NETWORK);
+    setNics(root, [LOOP]);
+    boot(root);
+    assert.equal(read(root, NETWORK_FILE), null);
+    const settled = ended(settle(root));
+    setTimeout(() => {
+      if (backendWrites) networkFile(root, OWN_NETWORK);
+      setNics(root, [LOOP, LXC_ETH0]);
+    }, 300);
+    const done = await settled;
+    assert.match(done.out, /kept, now that its cards are here/);
+    if (backendWrites) assert.equal(read(root, NETWORK_FILE), OWN_NETWORK, "the backend's fresh settings win");
+    else {
+      assert.match(done.out, /put back its network settings \( eth0\.network \), as it is the box itself/);
+      assert.equal(read(root, NETWORK_FILE), SOURCE_NETWORK, "its own settings, back");
+    }
+    assert.equal(existsSync(join(root, "run/bb-box-identity/held-network")), false);
+  }
+  const vm = guest([LOOP, ENS18]);
+  boot(vm);
+  written(vm, "bxsource1", "device");
+  networkFile(vm, SOURCE_NETWORK);
+  setNics(vm, [LOOP]);
+  assert.match(boot(vm).out, /not knowing yet/);
+  assert.equal(read(vm, NETWORK_FILE), SOURCE_NETWORK, "a VM's address comes from its backend at each boot, so nothing is held");
+  const present = guest([LOOP, LXC_ETH0]);
+  boot(present);
+  written(present, "bxsource1", "eth");
+  networkFile(present, OWN_NETWORK);
+  setNics(present, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
+  assert.match(boot(present).out, /resets its identity/);
+  assert.equal(read(present, NETWORK_FILE), OWN_NETWORK, "a copy whose card was there at its start has its backend's settings, untouched");
 });

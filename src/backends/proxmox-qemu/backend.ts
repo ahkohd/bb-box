@@ -1124,7 +1124,7 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1134,7 +1134,7 @@ export class ProxmoxQemuBackend implements Backend {
     const resumed = status.status !== "running" && status.lock === "suspended";
     if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
-    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
+    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS, signal, step, os);
     await answered?.();
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));

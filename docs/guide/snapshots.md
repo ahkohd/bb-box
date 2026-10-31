@@ -84,7 +84,7 @@ At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's 
 
 - if any of the marker's MAC addresses is on any of its cards, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
 - if its cards are all known, and it has a new card but none of the marker's, it is a copy, and it resets
-- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above
+- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above. On Proxmox LXC it also sets its network settings for `eth` cards aside meanwhile, so a card added later gets its settings from Proxmox, never the ones a copy brought from its source; once it decides, a copy drops them, and the box itself gets them back unless Proxmox wrote new ones
 
 A card is one the backend gave the box, as the kernel reports it. On Proxmox LXC it is a veth whose other end is outside the box, on no bridge, named `eth` and a number; on a VM, one with a device. Interfaces the box makes itself, such as Docker's and Tailscale's, bridges and tunnels, are never cards, whatever their names. An LXC card renamed from `eth` is no card either, so the box waits, as above, until it has its name again. Cards join the marker only as the box starts, before its own software makes interfaces again.
 
@@ -131,7 +131,7 @@ A fork is a new box made from a snapshot's disk: of the same kind, at the size t
 
 It never acts as its source. BB Box gives the copy new MAC addresses, so at its first boot its [identity reset](#a-copy-of-a-box-gives-up-its-identity) runs before its network, SSH, Tailscale and BB's daemon start, and removes its source's BB machine credentials and host ID, the thread's access file and the tailnet node, and makes new SSH host keys and a new machine ID. Then BB Box:
 
-1. checks, before it hands the fork over, that the reset ran: its boot says it reset, its identity marker names its own MAC addresses and no box, BB's credentials and the access file are gone, its Tailscale state holds no node, and its machine ID and SSH host keys are not those the snapshot held, as BB Box read them at the take. A fork whose first boot could not tell yet whether it is a copy is waited for, up to a minute, and never counted as reset. A fork that fails the check is released, and says why
+1. checks, before it hands the fork over, that the reset ran: its boot says it reset, its identity marker names its own MAC addresses and no box, BB's credentials and the access file are gone, its Tailscale state holds no node, its machine ID and SSH host keys are not those the snapshot held, as BB Box read them at the take, and it does not hold its source's address. A fork whose first boot cannot tell yet whether it is a copy, as when its network card comes late, keeps SSH and BB's daemon off until it can; BB Box waits up to 3 minutes for its first start, on Proxmox LXC as on QEMU, and up to a minute more for the check, and never counts such a boot as a reset. A fork that fails the check is released, and says why
 2. writes the fork's own identity marker
 3. enrols it as a new BB machine, and gives it its thread's access, or yours
 

@@ -74,6 +74,7 @@ const FORK_FACTS = [
   `for f in "$r"/home/*/.config/bb-box/env "$r"/root/.config/bb-box/env; do [ -e "$f" ] && printf 'access_file=%s\\n' "\${f#"$r"}"; done`,
   `if [ -r "$r/var/lib/tailscale/tailscaled.state" ] && grep -q -e '"_current-profile"' -e '"profile-' "$r/var/lib/tailscale/tailscaled.state"; then echo tailnet_node=yes; else echo tailnet_node=no; fi`,
   `if [ -r "$r/etc/bb-box/identity" ]; then sed -n 's/^mac /marker_mac=/p' "$r/etc/bb-box/identity"; fi`,
+  `ip -o -4 addr show scope global 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), part, "/"); print "address=" part[1] } }'`,
   ":",
 ];
 
@@ -118,6 +119,7 @@ export interface ForkSeen {
   readonly bbFiles: readonly string[];
   readonly accessFiles: readonly string[];
   readonly tailnetNode: boolean;
+  readonly addresses: readonly string[];
   readonly identity: HeldIdentity;
 }
 
@@ -126,6 +128,7 @@ export interface ForkExpected {
   readonly sourceMacs: readonly string[];
   readonly sourceBox: string;
   readonly sourceName: string;
+  readonly sourceAddress: string | null;
   readonly held: HeldIdentity | null;
 }
 
@@ -143,6 +146,7 @@ export function parseForkSeen(stdout: string, exitCode: number | null): ForkSeen
     bbFiles: values(stdout, "bb_file"),
     accessFiles: values(stdout, "access_file"),
     tailnetNode: values(stdout, "tailnet_node")[0] === "yes",
+    addresses: values(stdout, "address"),
     identity: heldIdentityOf(stdout),
   };
 }
@@ -170,6 +174,9 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   const sourceMacs = new Set(expected.sourceMacs.map((mac) => mac.toLowerCase()));
   const shared = [...forkMacs].filter((mac) => sourceMacs.has(mac));
   if (shared.length) return refused(`it has ${expected.sourceName}'s MAC address ${listWords(shared)}, so its identity reset cannot tell it is a copy`);
+  if (expected.sourceAddress && seen.addresses.includes(expected.sourceAddress)) {
+    return refused(`it holds ${expected.sourceName}'s address ${expected.sourceAddress}, so it would take what is sent to ${expected.sourceName}`);
+  }
   if (!seen.markerMacs.length || seen.markerMacs.some((mac) => !forkMacs.has(mac))) {
     return refused(`its identity marker names ${seen.markerMacs.length ? listWords(seen.markerMacs) : "no MAC address"}, not its own ${listWords([...forkMacs])}, so no reset of its own wrote it`);
   }

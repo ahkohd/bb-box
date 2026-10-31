@@ -2342,7 +2342,7 @@ lent VMIDs.
 
 | Gate | Result |
 | --- | --- |
-| G14 fork-identity, unit 7's part | **Passed** on Proxmox LXC and QEMU: each fork reset at its first boot before its network, SSH and BB's daemon, also one given its source's name; each started with `onboot` set and its links up; the source's host ID never had a second connection; a snapshot from an image without the unit refused to fork; a fork whose first boot said unknown was not handed over until it reset. A logged-in tailnet node was not part of these checks: unit 2 proved the reset removes one, and the check refuses a fork whose Tailscale state still holds a node |
+| G14 fork-identity, unit 7's part | **Passed** on Proxmox LXC and QEMU: each fork reset at its first boot before its network, SSH and BB's daemon, also one given its source's name; each started with `onboot` set and its links up; the source's host ID never had a second connection from a fork; a snapshot from an image without the unit refused to fork; a fork whose first boot said unknown was not handed over until it reset, on QEMU and, after the changes above, on LXC. One LXC late-card run before those changes took its source's address, which cut the source off BB for 40 s and made it open a session of its own again; a fork that holds its source's address is now refused, and version 6 keeps a late card from taking it. A logged-in tailnet node was not part of these checks: unit 2 proved the reset removes one, and the check refuses a fork whose Tailscale state still holds a node |
 
 ### Choices and deviations
 
@@ -2402,13 +2402,68 @@ reset at 09:59:49 removed `host_q83i4g7zfe`, the source's machine, so its
 credentials were on the snapshot's disk; the file was there too, and no
 process of the source ran in it.
 
-### Known limits
+### A late card on Proxmox LXC, and the source's address
 
-- **An LXC fork whose card is late fails rather than waits**: the
-  container's start waits 30 s for SSH, and the reset's own wait for a card
-  is 30 s, so it is released, not handed over. A VM waits 180 s.
+An LXC fork whose card came late was released at the container start's
+30 s wait for SSH, before its reset could run; a VM waits 180 s. At the
+lead's request, a fork's first start now waits up to 180 s for SSH on
+Proxmox LXC as on QEMU (`start` takes how long to wait; only a fork's first
+start asks for more). Then the live check of it found a fork that took its
+source's address, and two more changes answer that.
+
+**Live, on the second separate BB** (src-lxc a Proxmox LXC machine of the
+person's, armed, at .180; the lead ran
+[`proxmox-root.sh`](070-snapshots/unit-7/proxmox-root.sh) `card-late`,
+which takes a held fork's card off before its first start and puts it back
+75 s after):
+
+| Run | Result |
+| --- | --- |
+| First try, 3171 | the script acted on the clone while Proxmox still held `lock: create`, as a full clone copies its source's `onboot: 1` at once, and `pct set` failed on the lock; nothing changed, and that fork started with its card. The script now waits for no lock and for net0 to stay the same for 5 s, which is bb-box's re-arm done |
+| The wait, 3172 | started at 10:51:33 with no card; its check said "not knowing yet" after 30 s; the card came back at 10:52:50; `settle` reset it at 10:52:51.34, removing `host_w8h3gy9iwv`, src-lxc's copied machine, and refusing that machine's daemon; ssh at .37; bb-box's start waited 76.8 s for the network and handed it over, ready, joined as its own machine. **But** it held .180, src-lxc's address, beside its own .182: with no card at its start, Proxmox wrote no network file, so the copy kept its source's; when the card was hot-plugged, systemd-networkd brought up .180 before Proxmox wrote the fork's own file, at 10:52:50.877. src-lxc's daemon logged "Server heartbeat acknowledgements stopped; reconnecting" at 10:53:25 and was connected again at 10:53:37, a session of its own: BB's server shows that session from src-lxc, and the fork's copied daemon never started. src-lxc was back on .180 once the fork was released |
+| The guard, 3173 | the check before ready now reads the fork's global IPv4 addresses and refuses a fork that holds its source's address (the source's address is kept on the fork's origin). The same run: refused at 11:04:48, 3 s after the card came back, "bb-box did not hand fork lxc-late3 over: it holds src-lxc's address .180, so it would take what is sent to src-lxc. bb-box released it"; src-lxc kept its session, and its daemon logged nothing then |
+| Version 6, 3174 | `bb-box-identity` version 6 installed by hand in src-lxc, then a snapshot (`forkSafe` 6). At 11:14:28 the fork's boot said "not knowing yet" and "held its network settings ( eth0.network ) aside while it cannot tell whether it is a copy"; the card came back at 11:15:12; the reset at 11:15:13 removed src-lxc's machine; the fork held only .184 (the lead read lo and eth0 .184 alone 20 s later, and bb-box's check found no .180), and was handed over, ready, waiting 76.8 s for its network. src-lxc kept the session it had since 10:53:37, and its daemon logged no disconnect |
+
+**Version 6 of the identity program** (`bb-box-identity.sh`). On Proxmox
+LXC, when a boot cannot tell yet whether the box is a copy, the program
+moves the `eth` cards' network files (`/etc/systemd/network/ethN.network`)
+aside, to `/run/bb-box-identity/held-network`, before systemd-networkd
+starts. A card added later then gets its settings only from Proxmox's
+hot-plug, which writes them. Once `settle` decides, a copy drops the held
+files, and the box itself gets them back if Proxmox wrote none. The reset
+alone would be too late: networkd applies a file the moment the card
+appears, before `settle` looks again. A VM's address comes from its SMBIOS
+at each boot, so nothing is held there. Templates 9800 and 9806 carry
+version 5, so the LXC template needs a rebuild before production has this;
+until then bb-box's check refuses such a fork. A take now records
+`forkSafe` 6 on a box with the new program.
+
+Tests: `test/identity-reset.test.ts`, 2: an LXC copy started without its
+card holds its copied file aside, so none is there when networkd starts,
+and once it resets the backend's own file stays and the copied one is
+gone; the box itself, its card late, gets its file back if the backend
+wrote none and keeps the backend's if it did; a VM, and a copy whose card
+was there at its start, hold nothing. `test/forks.test.ts`: a fork holding
+its source's address is refused and released, and a fork's start asks for
+180 s. `test/proxmox-lxc-snapshots.test.ts`, 1: an LXC start waits 30 s,
+and a fork's first start 180 s, before it says nothing answered.
+
+After these changes, on the same kind of box, in a fresh copy over main
+`aa192bdf`: `npx tsc` passes and the reference is current; the node suite
+ran 3,191 tests, 2,903 passed, 0 failed, 288 skipped; vitest ran 414, all
+passed. The docs, site and reference checks ran again on the last docs.
+Rebased onto main `812f78dc` (069 unit 4), in a fresh copy: `npx tsc`
+passes and the reference is current; the node suite ran 3,196 tests, 2,908
+passed, 0 failed, 288 skipped; vitest ran 423, all passed.
+The second separate BB's boxes, forks and snapshots were removed, and the
+lead's `leftovers` found no guest of its install.
 
 ### Conditions and open questions
+
+- **Rebuild the LXC template with version 6** of the identity program
+  before arming Proxmox LXC, so a late card cannot bring up a source's
+  address at all; bb-box's check refuses such a fork meanwhile. The QEMU
+  template needs it only to report version 6.
 
 - **Arming production** (`general.identityResetBackends`) is the owner's
   call; until then no production snapshot is fork-safe, and every fork

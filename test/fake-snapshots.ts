@@ -104,8 +104,8 @@ export class FakeSnapshots {
     const savedOf = (id: string) => (root ? join(root, "saved", id) : null);
     const start = backend.start?.bind(backend);
     if (start) {
-      target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => {
-        this.order.push("start");
+      target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number) => {
+        this.order.push(readyWithinMs === undefined ? "start" : `start within ${readyWithinMs / 1000} s`);
         return start(guest, signal, timing, answered);
       };
     }

@@ -18,19 +18,25 @@ const SOURCE_MAC = "bc:24:11:aa:f1:b6";
 const SOURCE_MACHINE_ID = "0123456789abcdef0123456789abcdef";
 const SOURCE_HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsourcekey source";
 
-type FirstBoot = "reset" | "same-mac" | "off" | "no-card" | "late-card";
+type FirstBoot = "reset" | "same-mac" | "off" | "no-card" | "late-card" | "source-address";
+const SOURCE_ADDRESS = "10.0.0.5";
 
 function links(mac: string | null): string {
   return JSON.stringify(mac ? [{ ifindex: 2, link_index: 900, ifname: "eth0", link_type: "ether", address: mac, link_netnsid: 0, linkinfo: { info_kind: "veth" } }] : []);
 }
 
-function toolFor(root: string): string {
+function toolFor(root: string): { readonly tool: string; readonly bin: string } {
   const dir = tempDir("fork-tool");
-  mkdirSync(join(dir, "bin"));
-  writeFileSync(join(dir, "bin/ip"), `#!/bin/sh\nexec cat ${quote(join(root, "ip-link.json"))}\n`, { mode: 0o755 });
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ip"), `#!/bin/sh\nif [ "$1" = -o ]; then cat ${quote(join(root, "ip-addr.txt"))} 2>/dev/null; exit 0; fi\nexec cat ${quote(join(root, "ip-link.json"))}\n`, { mode: 0o755 });
   const tool = join(dir, "bb-box-identity");
-  writeFileSync(tool, `#!/bin/sh\nPATH=${quote(join(dir, "bin"))}:$PATH BBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 BBBOX_IDENTITY_SETTLE_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
-  return tool;
+  writeFileSync(tool, `#!/bin/sh\nPATH=${quote(bin)}:$PATH BBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 BBBOX_IDENTITY_SETTLE_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
+  return { tool, bin };
+}
+
+function addressLine(address: string): string {
+  return `2: eth0    inet ${address}/24 brd 10.0.0.255 scope global eth0\\       valid_lft forever preferred_lft forever\n`;
 }
 
 function withIdentity(root: string): void {
@@ -73,7 +79,8 @@ function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?:
     writeFileSync(join(root, "ip-link.json"), links(forks.firstBoot === "no-card" || forks.firstBoot === "late-card" ? null : mac));
     macs.set(made.ref, mac.toUpperCase());
     roots.set(made.ref, root);
-    const tool = toolFor(root);
+    writeFileSync(join(root, "ip-addr.txt"), `${addressLine(`10.0.0.${10 + count}`)}${forks.firstBoot === "source-address" ? addressLine(SOURCE_ADDRESS) : ""}`);
+    const { tool, bin } = toolFor(root);
     if (forks.firstBoot === "off") assert.equal(spawnSync(tool, ["disable"]).status, 0);
     assert.equal(spawnSync(tool, ["boot"]).status, 0, "the fork's first boot");
     if (forks.firstBoot === "late-card") {
@@ -82,7 +89,7 @@ function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?:
         spawnSync(tool, ["settle"]);
       }, 30);
     }
-    state.backend.identities.set(made.ref, { tool, root });
+    state.backend.identities.set(made.ref, { tool, root, bin });
   };
   return forks;
 }
@@ -104,7 +111,7 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   const box = await readyBox(state);
   writeIn(state, box, "work/state.txt", "set up");
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" })).snapshot!;
-  assert.equal(taken.forkSafe, 5);
+  assert.equal(taken.forkSafe, 6);
   assert.deepEqual(taken.identity, { machineId: createHash("sha256").update(`${SOURCE_MACHINE_ID}\n`).digest("hex"), hostKeys: [createHash("sha256").update("AAAAC3NzaC1lZDI1NTE5AAAAIsourcekey\n").digest("hex")] });
   assert.deepEqual(state.store.record(taken.id)?.identity, taken.identity, "kept on the record");
   writeIn(state, box, "work/state.txt", "changed after the take");
@@ -128,7 +135,7 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   assert.equal(readIn(state, fork, "work/state.txt"), "set up", "the fork has the snapshot's files");
   assert.equal(typeof fork.timings.check, "number");
   assert.equal(typeof fork.timings.identity, "number");
-  assert.deepEqual(fork.fork?.source, { id: box.id, name: box.name, threadId: THREAD, macs: [SOURCE_MAC.toUpperCase()] });
+  assert.deepEqual(fork.fork?.source, { id: box.id, name: box.name, threadId: THREAD, macs: [SOURCE_MAC.toUpperCase()], address: null });
   const root = forks.roots.get(fork.guest!.ref)!;
   assert.match(fileOf(root, "etc/bb-box/identity") ?? "", new RegExp(`^bb-box identity 1\\nbox ${fork.id}\\nsource eth\\nmac bc:24:11:0f:01:2c\\n$`), "its own marker, written once the check passed");
   assert.equal(fileOf(root, "home/box/.bb-machines/bb.example/host-id"), null);
@@ -147,20 +154,22 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   assert.deepEqual(state.provider.order.filter((step) => step.startsWith("fork")), [`fork ${taken.id}`]);
 });
 
-test("070 unit 7, G14: a fork whose first boot did not reset is never handed over: its source's MAC address, its image's reset off, or a boot that could not tell; each is released and the fork fails", async () => {
+test("070 unit 7, G14: a fork is never handed over when its first boot did not reset (its source's MAC address, its image's reset off, a boot that could not tell) or when it holds its source's address; each is released and the fork fails", async () => {
   const cases: { readonly firstBoot: FirstBoot; readonly why: RegExp }[] = [
     { firstBoot: "same-mac", why: /it has .+'s MAC address bc:24:11:aa:f1:b6, so its identity reset cannot tell it is a copy/ },
     { firstBoot: "off", why: /its boot's identity check says "off", not that it reset/ },
     { firstBoot: "no-card", why: /after 0 s: its first boot could not tell yet whether it is a copy, so no reset has run/ },
+    { firstBoot: "source-address", why: /it holds \S+'s address 10\.0\.0\.5, so it would take what is sent to \S+/ },
   ];
   for (const each of cases) {
     const forks = forkWorld();
     forks.firstBoot = each.firstBoot;
     const { state } = forks;
-    const box = await readyBox(state);
-    await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
-    const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+    const box = await state.boxes.update(await readyBox(state), (current) => ({ guest: { ...current.guest!, address: SOURCE_ADDRESS } }));
+    await state.snapshots.take(COMMAND, box!, standing(box!), { name: "set up" });
+    const answer = await state.snapshots.fork(COMMAND, box!, standing(box!), "set up");
     const fork = await forked(state, answer.box);
+    assert.equal(fork.fork?.source.address, SOURCE_ADDRESS);
     assert.equal(fork.state, "failed", each.firstBoot);
     assert.match(fork.error ?? "", each.why, each.firstBoot);
     assert.match(fork.error ?? "", /bb-box released it, so nothing of it acts as /);
@@ -169,7 +178,7 @@ test("070 unit 7, G14: a fork whose first boot did not reset is never handed ove
     const [ref] = [...state.backend.identities.keys()];
     assert.equal(await state.backend.power({ ref: ref!, host: null, address: null, size: null, data: { box: fork.id } }), null, `${each.firstBoot}: the fork's guest is gone`);
     assert.equal(state.store.operation(answer.operation.id)?.state, "failed");
-    assert.deepEqual(state.kinds(box.id).filter((kind) => kind.startsWith("fork")), ["fork-asked", "fork-failed"]);
+    assert.deepEqual(state.kinds(box!.id).filter((kind) => kind.startsWith("fork")), ["fork-asked", "fork-failed"]);
     assert.equal(fileOf(forks.source.root, "home/box/.bb-machines/bb.example/host-id"), "host_source\n");
   }
 });
@@ -266,19 +275,21 @@ test("070 unit 7: after a restart a fork's operation is settled by its box: done
   assert.match(state.store.operation(answer.operation.id)?.error ?? "", /its box is gone|released/);
 });
 
-test("070 unit 7: a fork of a snapshot taken without a flush says it may lack the last writes too", async () => {
+test("070 unit 7: a fork starts with up to 180 s for its first boot, and a fork of a snapshot taken without a flush says it may lack the last writes too", async () => {
   const forks = forkWorld();
   const { state } = forks;
   const box = await readyBox(state);
   flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: "sync: Input/output error" }));
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "unflushed" })).snapshot!;
-  assert.equal(taken.forkSafe, 5);
+  assert.equal(taken.forkSafe, 6);
   assert.equal(taken.unflushed, "sync: Input/output error");
   const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "unflushed");
   assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: bb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
+  state.provider.order.length = 0;
   const answer = await state.snapshots.fork(COMMAND, box, standing(box), "unflushed");
   const fork = await forked(state, answer.box);
   assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.ok(state.provider.order.includes("start within 180 s"), state.provider.order.join(", "));
   assert.match(forkedText(answer, fork), /so the fork may lack them too\.$/);
   assert.match(state.log.events(box.id).find((event) => event.kind === "fork-asked")?.words ?? "", /The snapshot may miss the box's last writes before it\.$/);
 });
