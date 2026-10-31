@@ -954,6 +954,12 @@ describe("the emulator's service", () => {
     assert.match(unit, /^Restart=no$/m);
   });
 
+  test("the emulator has 180 s to save its snapshot as it stops, and systemd waits 210 s for it, as the emulator's launcher kills it 20 s after asking it to shut down unless told otherwise, and a busy machine took up to 97 s", () => {
+    const unit = emulatorUnit("/opt/android-sdk", "/usr/local/bin/bb-box-device-firewall");
+    assert.match(unit, /^Environment=ANDROID_HOME=\/opt\/android-sdk ANDROID_SDK_ROOT=\/opt\/android-sdk ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=180$/m);
+    assert.match(unit, /^TimeoutStopSec=210$/m);
+  });
+
   test("reads discovery files: a live process's AVD, port and token; a dead one's file is removed", async () => {
     const home = tempDir("android-home");
     const running = join(home, ".android", "avd", "running");

@@ -12,7 +12,8 @@ export const EMULATOR_SERIAL = "emulator-5554";
 export const CONSOLE_PORT = 5554;
 export const GRPC_PORT = 8554;
 export const EMULATOR_UNIT = "bb-box-emulator@.service";
-export const STOP_WAIT_MS = 60_000;
+export const SAVE_GRACE_SECONDS = 180;
+export const STOP_WAIT_MS = (SAVE_GRACE_SECONDS + 30) * 1000;
 export const UNSAVED_PREFIX = "emulator-unsaved-";
 export const KEPT_DISCOVERY = "emulator-discovery.ini";
 const COMMAND_MS = 30_000;
@@ -73,7 +74,7 @@ Description=bb-box: the Android emulator, AVD %i
 
 [Service]
 Type=simple
-Environment=ANDROID_HOME=${sdk} ANDROID_SDK_ROOT=${sdk}
+Environment=ANDROID_HOME=${sdk} ANDROID_SDK_ROOT=${sdk} ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=${SAVE_GRACE_SECONDS}
 EnvironmentFile=-%h/.bb-box/device/emulator-boot.env
 ExecStartPre=${firewall} check
 ExecStart=${sdk}/emulator/emulator ${emulatorFlags("%i", false).join(" ")} $BB_BOX_EMULATOR_BOOT
@@ -315,7 +316,7 @@ export class Emulator {
     const child = spawn(join(this.#sdk, "emulator", "emulator"), [...emulatorFlags(avd, cold)], {
       detached: true,
       stdio: ["ignore", log.fd, log.fd],
-      env: { ...process.env, ANDROID_HOME: this.#sdk, ANDROID_SDK_ROOT: this.#sdk },
+      env: { ...process.env, ANDROID_HOME: this.#sdk, ANDROID_SDK_ROOT: this.#sdk, ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL: String(SAVE_GRACE_SECONDS) },
     });
     child.unref();
     await log.close();
