@@ -495,7 +495,7 @@ test("off, nothing of the Monitor runs: no readings, no machines, no background 
   assert.equal((await harness.behavior.runCli(["monitor", "snapshot"])).exitCode, 1);
   assert.equal((await harness.behavior.runCli(["monitor", "health"])).exitCode, 1);
   const handlers = monitorRpcHandlers(monitor);
-  assert.deepEqual(await handlers["monitor.state"](), { enabled: false, backgroundMonitoring: true, pressureNotifications: true });
+  assert.deepEqual(await handlers["monitor.state"](), { enabled: false, backgroundMonitoring: true, pressureNotifications: true, boxHistory: true, historyFull: null });
   setConfig({ enabled: true });
   await flush();
   assert.equal(reads.length, 1, "turning it on starts background monitoring, which was asked for");
@@ -505,12 +505,12 @@ test("off, nothing of the Monitor runs: no readings, no machines, no background 
 });
 
 test("the Monitor's settings live in the configuration document, with Beacon's defaults and bounds", () => {
-  assert.deepEqual(monitorConfig({}), { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true });
-  assert.deepEqual(MONITOR_DEFAULTS, { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true });
-  const ok = readDraft({ monitor: { enabled: false, refreshIntervalSeconds: 2, backgroundMonitoring: true, pressureNotifications: false } }, DRIVERS);
+  assert.deepEqual(monitorConfig({}), { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true });
+  assert.deepEqual(MONITOR_DEFAULTS, { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true });
+  const ok = readDraft({ monitor: { enabled: false, refreshIntervalSeconds: 2, backgroundMonitoring: true, pressureNotifications: false, boxHistory: false } }, DRIVERS);
   assert.deepEqual(ok.problems, []);
-  assert.deepEqual(ok.document.monitor, { enabled: false, refreshIntervalSeconds: 2, backgroundMonitoring: true, pressureNotifications: false });
-  for (const [monitor, path] of [[{ refreshIntervalSeconds: 1 }, "monitor.refreshIntervalSeconds"], [{ refreshIntervalSeconds: 61 }, "monitor.refreshIntervalSeconds"], [{ refreshIntervalSeconds: 2.5 }, "monitor.refreshIntervalSeconds"], [{ enabled: "yes" }, "monitor.enabled"], [{ colour: true }, "monitor.colour"], ["on", "monitor"]] as const) {
+  assert.deepEqual(ok.document.monitor, { enabled: false, refreshIntervalSeconds: 2, backgroundMonitoring: true, pressureNotifications: false, boxHistory: false });
+  for (const [monitor, path] of [[{ refreshIntervalSeconds: 1 }, "monitor.refreshIntervalSeconds"], [{ refreshIntervalSeconds: 61 }, "monitor.refreshIntervalSeconds"], [{ refreshIntervalSeconds: 2.5 }, "monitor.refreshIntervalSeconds"], [{ enabled: "yes" }, "monitor.enabled"], [{ boxHistory: "on" }, "monitor.boxHistory"], [{ colour: true }, "monitor.colour"], ["on", "monitor"]] as const) {
     assert.deepEqual(readDraft({ monitor }, DRIVERS).problems.map((problem) => problem.path), [path]);
   }
   assert.equal(readDraft({}, DRIVERS).document.monitor, undefined);
@@ -518,7 +518,7 @@ test("the Monitor's settings live in the configuration document, with Beacon's d
 
 test("the doctor shows the Monitor's settings, and warns when background monitoring has stopped writing", () => {
   const now = 10_000_000;
-  assert.match(monitorChecks({ ...MONITOR_DEFAULTS }, [], now)[0]!.detail, /^On\. Machine status reads every 5 s while it is open\. Background monitoring is off\.$/);
+  assert.match(monitorChecks({ ...MONITOR_DEFAULTS }, [], now)[0]!.detail, /^On\. Machine status reads every 5 s while it is open\. Background monitoring is off\. Box history is on\.$/);
   assert.match(monitorChecks({ ...MONITOR_DEFAULTS, enabled: false }, [], now)[0]!.detail, /^Off: /);
   const on = { ...MONITOR_DEFAULTS, backgroundMonitoring: true };
   assert.equal(monitorChecks(on, [{ type: "summary", timestamp: now - 60_000 }], now)[1]?.status, "ok");

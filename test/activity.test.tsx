@@ -2,9 +2,11 @@ import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/re
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { BoxPageState, Contract, MetricPoint, MonitorReach, MonitorSnapshot } from "../src/plugin/contract.ts";
+import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep, MetricPoint, MonitorReach, MonitorSnapshot } from "../src/plugin/contract.ts";
+import { HISTORY_RANGES } from "../src/monitor/history-view.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
+import { forgetActivity } from "../src/app/activity.tsx";
 import { upWords } from "../src/app/monitor/status.tsx";
 import { sidebarTitle } from "../src/app/desktop.tsx";
 
@@ -88,11 +90,33 @@ function read(): MonitorReach {
   return { is: "read", machineId: `host_calm_${machines}`, why: null };
 }
 
-function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot }): PluginRpcTestHandlers<Contract> {
+function historyView(range: HistoryRange, patch: Partial<BoxHistoryView> = {}, make: (index: number) => Partial<HistoryStep> = () => ({})): BoxHistoryView {
+  const { stepMs, steps } = HISTORY_RANGES[range];
+  const to = Math.ceil(READ_AT / stepMs) * stepMs;
+  const from = to - steps * stepMs;
+  return {
+    range,
+    stepMs,
+    from,
+    to,
+    steps: Array.from({ length: steps }, (_, index) => ({ at: from + index * stepMs, covered: stepMs / 1000, cpuCovered: stepMs / 1000, memoryCovered: stepMs / 1000, netCovered: stepMs / 1000, cpu: 30, cpuBusiest: range === "1h" ? null : 33, memory: 50, memoryHighest: 55, disk: 20, down: 1024, up: 512, host: null, high: 0, partial: false, ...make(index) })),
+    gaps: [],
+    kept: true,
+    monitor: true,
+    full: null,
+    slot: null,
+    newest: READ_AT,
+    now: READ_AT,
+    ...patch,
+  };
+}
+
+function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot; history?: (range: HistoryRange) => BoxHistoryView | null }): PluginRpcTestHandlers<Contract> {
   return {
     boxPage: () => state.page(),
+    "monitor.history": ({ range }: { range: HistoryRange }) => (state.history ?? ((asked: HistoryRange) => historyView(asked)))(range),
     "monitor.machine": () => state.reading(),
-    "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true }),
+    "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     "monitor.machines": () => ({ machines: [] }),
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
   } as unknown as PluginRpcTestHandlers<Contract>;
@@ -143,6 +167,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   forgetLive();
+  forgetActivity();
 });
 
 function open(rpc: PluginRpcTestHandlers<Contract>) {
@@ -152,6 +177,12 @@ function open(rpc: PluginRpcTestHandlers<Contract>) {
 
 async function activity(): Promise<HTMLElement> {
   return (await screen.findByRole("region", { name: "Activity" })) as HTMLElement;
+}
+
+async function readActivity(): Promise<HTMLElement> {
+  const card = await activity();
+  await within(card).findByText(/^Read at /);
+  return card;
 }
 
 test("Live: the Monitor's numbers now, in tiles with their pills, and the time of the last reading (069 section 4)", async () => {
@@ -181,7 +212,7 @@ test("the chart is one image named for what it shows, described by its numbers; 
 test("the read-out: arrow keys, Home, End, Page Up and Page Down move it, none scrolls the page, Escape clears it, and a polite live region says each point", async () => {
   open(handlers({ page: () => page(boxView()), reading: () => snapshot({ history: points(72, (index) => ({ cpuPercent: index })) }) }));
   const card = await activity();
-  const usage = await within(card).findByRole("application", { name: /^CPU and memory/ });
+  const usage = await within(card).findByRole("application", { name: /^CPU and memory, the last 6 min/ });
   const said = usage.querySelector("[data-read-out]")!;
   expect(said.getAttribute("aria-live")).toBe("polite");
   expect(said.textContent).toBe("");
@@ -201,20 +232,29 @@ test("the read-out: arrow keys, Home, End, Page Up and Page Down move it, none s
   expect(fireEvent.keyDown(usage, { key: "Tab" })).toBe(true);
 });
 
-test("a hidden line leaves the chart, and its legend chip says it is off", async () => {
-  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+test("a hidden line leaves the chart, and its legend chip says it is off, also when chosen before the first reading", async () => {
+  let release: () => void = () => {};
+  const first = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView()), reading: async () => (await first, snapshot()) } as never));
   const card = await activity();
-  const memory = await within(card).findByRole("button", { name: "Memory" });
-  fireEvent.click(memory);
-  expect(memory.getAttribute("aria-pressed")).toBe("false");
-  const usage = within(card).getByRole("application", { name: /^CPU and memory/ });
+  await within(card).findByRole("application", { name: "CPU and memory, Live" });
+  fireEvent.click(within(card).getByRole("button", { name: "Memory" }));
+  expect(within(card).getByRole("button", { name: "Memory" }).getAttribute("aria-pressed")).toBe("false");
+  release();
+  const usage = await within(card).findByRole("application", { name: /^CPU and memory, the last 6 min/ });
+  expect(within(card).getByRole("button", { name: "Memory" }).getAttribute("aria-pressed")).toBe("false");
   usage.focus();
   fireEvent.keyDown(usage, { key: "End" });
   expect(usage.querySelector("[data-read-out]")!.textContent).not.toContain("Memory");
+  fireEvent.click(within(card).getByRole("button", { name: "Memory" }));
+  expect(within(card).getByRole("button", { name: "Memory" }).getAttribute("aria-pressed")).toBe("true");
 });
 
 test("top processes: name, PID, CPU and memory, a CPU of 100% or more in amber, and the note that CPU is per core (069 section 5)", async () => {
   open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  await readActivity();
   const table = await screen.findByRole("region", { name: "Top processes" });
   const rows = within(table).getAllByRole("row");
   expect(rows[0]!.textContent).toBe("ProcessPIDCPUMemory");
@@ -233,7 +273,7 @@ test("G1: a shared slot's tiles are its own against its share, then the Mac's fo
     history: points(72, () => ({ cpuPercent: 90, ownCpuCores: 2, ownMemoryBytes: 1.5 * 1024 ** 3 })),
   });
   open(handlers({ page: () => page(boxView({ shared: true, os: "macos", device: { platform: "ios", model: "iPhone 17", simulatorHost: false } } as Partial<BoxView>)), reading: () => slot }));
-  const card = await activity();
+  const card = await readActivity();
   const own = await within(card).findByRole("region", { name: "This slot's CPU" });
   expect(own.textContent).toContain("50% of its share");
   expect(own.textContent).toContain("2.0 of its 4 cores, of mac-1's 12");
@@ -254,7 +294,8 @@ test("the Monitor off: nothing read, and the way to turn it on in Monitor settin
   const card = await activity();
   expect(card.textContent).toContain("The Monitor is off, so bb-box reads nothing now.");
   expect(within(card).getByRole("link", { name: "Turn it on in Monitor settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box#option/monitor");
-  expect(screen.queryByRole("region", { name: "Top processes" })).toBeNull();
+  const processes = screen.getByRole("region", { name: "Top processes" });
+  expect(processes.querySelector("[data-processes-quiet]")!.textContent).toBe("The Monitor is off, so bb-box lists no processes.");
 });
 
 test("G16: Live keeps reading while the box stops; once the stop is confirmed the card says it is stopped and not read, and when", async () => {
@@ -268,11 +309,19 @@ test("G16: Live keeps reading while the box stops; once the stop is confirmed th
   await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so bb-box is not reading it\. It stopped 1 min ago, today at /));
 });
 
-test("a box bb-box cannot read says the Monitor's words instead of a chart", async () => {
-  open(handlers({ page: () => page(boxView({ os: "windows" }), { is: "unreadable", machineId: null, why: "bb-box cannot read box calm-otter now: its BB machine is not answering BB, and it runs no shell bb-box can read without it." }), reading: () => snapshot() }));
+test("a box bb-box cannot read says the Monitor's words in Activity's frame, which keeps its size with empty charts; one it read before keeps its history", async () => {
+  const unreadable: MonitorReach = { is: "unreadable", machineId: null, why: "bb-box cannot read box calm-otter now: its BB machine is not answering BB, and it runs no shell bb-box can read without it." };
+  open(handlers({ page: () => page(boxView({ os: "windows" }), unreadable), reading: () => snapshot(), history: (range) => historyView(range, { newest: null }, () => ({ cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, covered: 0 })) }));
   const card = await activity();
-  expect(card.textContent).toContain("its BB machine is not answering BB");
-  expect(within(card).queryByRole("application")).toBeNull();
+  expect(card.querySelector("[data-activity-quiet]")!.textContent).toContain("its BB machine is not answering BB");
+  const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
+  await waitFor(() => expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^No readings over the last 24 hours/));
+  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("bb-box cannot list calm-otter's processes.");
+  cleanup();
+  forgetLive();
+  open(handlers({ page: () => page(boxView({ os: "windows" }), unreadable), reading: () => snapshot() }));
+  const kept = await within(await activity()).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  await waitFor(() => expect(document.getElementById(kept.getAttribute("aria-describedby")!)!.textContent).toMatch(/CPU averaged 30%/));
 });
 
 test("a reading that fails after one worked keeps the last numbers under the Monitor's notice", async () => {
@@ -296,7 +345,7 @@ test("a chart holds still while it has focus, so a screen reader does not hear i
   let reading = 0;
   open(handlers({ page: () => page(boxView()), reading: () => snapshot({ timestamp: new Date(READ_AT + ++reading * 5000).toISOString(), history: points(72, (index) => ({ cpuPercent: (index + reading) % 50 })) }) }));
   const card = await activity();
-  const usage = await within(card).findByRole("application", { name: /^CPU and memory/ });
+  const usage = await within(card).findByRole("application", { name: /^CPU and memory, the last 6 min/ });
   expect(usage.getAttribute("aria-roledescription")).toBe("chart");
   const summary = () => document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent;
   fireEvent.focus(usage);
@@ -332,7 +381,7 @@ test("a slot far over its share says so in its words: the tile, the summary and 
     history: points(72, () => ({ cpuPercent: 100, ownCpuCores: 10.49, ownMemoryBytes: 2.5 * 1024 ** 3 })),
   });
   open(handlers({ page: () => page(boxView({ shared: true, os: "macos" } as Partial<BoxView>)), reading: () => over }));
-  const card = await activity();
+  const card = await readActivity();
   expect((await within(card).findByRole("region", { name: "This slot's CPU" })).textContent).toContain("787% of its share");
   const usage = within(card).getByRole("application", { name: /^This slot's CPU and memory/ });
   expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/This slot's CPU averaged 787%, highest 787% at .*; This slot's memory last 125%/);
@@ -346,7 +395,270 @@ test("a slot far over its share says so in its words: the tile, the summary and 
 test("a slot whose own reading failed says its CPU is not read, not the Mac's", async () => {
   const unread = snapshot({ own: null, slot: { host: "mac-1", encoder: null, share: { slots: 3, cores: 4, memoryBytes: 12 * 1024 ** 3 } } });
   open(handlers({ page: () => page(boxView({ shared: true, os: "macos" } as Partial<BoxView>)), reading: () => unread }));
-  const card = await activity();
+  const card = await readActivity();
   expect((await within(card).findByRole("region", { name: "This slot's CPU" })).textContent).toMatch(/–not read/);
   expect(within(card).getByRole("region", { name: "This slot's memory" }).textContent).toContain("not read");
+});
+
+test("the range is a radio group of Live, 1 h, 24 h and 7 d, on Live for a box being read; the arrow keys choose another (069 section 4)", async () => {
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  const card = await activity();
+  const group = await within(card).findByRole("radiogroup", { name: "Time range" });
+  const radios = within(group).getAllByRole("radio");
+  expect(radios.map((radio) => radio.textContent)).toEqual(["Live", "1 h", "24 h", "7 d"]);
+  expect(radios[0]!.getAttribute("aria-checked")).toBe("true");
+  expect(radios.map((radio) => radio.tabIndex)).toEqual([0, -1, -1, -1]);
+  radios[0]!.focus();
+  expect(fireEvent.keyDown(radios[0]!, { key: "ArrowRight" })).toBe(false);
+  expect(within(group).getByRole("radio", { name: "1 h" }).getAttribute("aria-checked")).toBe("true");
+  expect(document.activeElement?.textContent).toBe("1 h");
+  expect(await within(card).findByRole("application", { name: "CPU and memory, the last hour, by the minute" })).toBeTruthy();
+  expect(within(card).getByRole("region", { name: "CPU" }), "the tiles still say how it is now").toBeTruthy();
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  expect(await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" })).toBeTruthy();
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+  expect(within(group).getByRole("radio", { name: "Live" }).getAttribute("aria-checked")).toBe("true");
+  expect(await within(card).findByRole("application", { name: "CPU and memory, the last 6 min, every 5 s" })).toBeTruthy();
+  expect(await screen.findByRole("region", { name: "Top processes" })).toBeTruthy();
+});
+
+test("a stopped box opens on 24 h with its stops shown, and Live says why it cannot be chosen (069 sections 4 and 7)", async () => {
+  const stoppedAt = READ_AT - 3 * 3_600_000;
+  const view = historyView("24h", { gaps: [{ from: Math.floor(stoppedAt / 600_000) * 600_000, to: Math.ceil(READ_AT / 600_000) * 600_000, kind: "stopped" }] }, (index) => (index >= 144 - 19 ? { cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, covered: 0 } : {}));
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: "calm-otter is not running." }), reading: () => snapshot(), history: () => view }));
+  const card = await activity();
+  const group = await within(card).findByRole("radiogroup", { name: "Time range" });
+  expect(within(group).getByRole("radio", { name: "24 h" }).getAttribute("aria-checked")).toBe("true");
+  const live = within(group).getByRole("radio", { name: "Live" });
+  expect(live.getAttribute("aria-disabled")).toBe("true");
+  expect(live.getAttribute("aria-description")).toBe("calm-otter is not running");
+  fireEvent.click(live);
+  expect(live.getAttribute("aria-checked")).toBe("false");
+  const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Over the last 24 hours, by 10 minutes: CPU averaged 30%, busiest minute 33% between .* and .*; memory last 50%\. Stopped from (today|yesterday) at .*\.$/);
+  expect(usage.querySelector('[data-band="Stopped"]')).toBeTruthy();
+  expect(usage.textContent).toContain("Stopped");
+  usage.focus();
+  fireEvent.keyDown(usage, { key: "End" });
+  expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/: Stopped$/);
+  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("bb-box lists calm-otter's processes while it runs.");
+});
+
+test("over 24 h the light band is each step's busiest minute, said where it is 5 points or more above the mean, and a partly read step says so", async () => {
+  const view = historyView("24h", {}, (index) => (index === 143 ? { cpuBusiest: 78 } : index === 142 ? { partial: true, covered: 120 } : {}));
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: () => view }));
+  const card = await activity();
+  const usage = await within(card).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  expect(usage.querySelectorAll("[data-busiest]").length).toBeGreaterThan(0);
+  expect(card.textContent).toContain("the light band is each step's busiest minute");
+  usage.focus();
+  fireEvent.keyDown(usage, { key: "End" });
+  const said = usage.querySelector("[data-read-out]")!;
+  expect(said.textContent).toMatch(/: CPU 30%, busiest minute 78%, Memory 50%$/);
+  fireEvent.keyDown(usage, { key: "ArrowLeft" });
+  expect(said.textContent).toMatch(/: CPU 30%, Memory 50%; partly read, 2 min of 10 minutes$/);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/busiest minute 78% between (today|yesterday) at .* and /);
+});
+
+test("a refresh that fails keeps the charts, and says so and when they were read, in the words line, the charts' descriptions and aloud, also on a page opened again", async () => {
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
+  const first = await activity();
+  await waitFor(() => expect(first.querySelector("[data-history-ready]")).toBeTruthy());
+  expect(first.querySelector("[data-history-stale]")).toBeNull();
+  expect(first.querySelector("[data-history-announce]")!.textContent).toBe("");
+  cleanup();
+  forgetLive();
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: () => {
+    throw new Error("BB did not answer.");
+  } }));
+  const card = await activity();
+  await waitFor(() => expect(card.querySelector("[data-history-stale]")).toBeTruthy());
+  const stale = card.querySelector("[data-history-stale]")!;
+  expect(stale.textContent).toMatch(/^Could not refresh: as read at /);
+  expect(stale.getAttribute("title")).toContain("BB did not answer.");
+  const announced = card.querySelector('[role="status"][data-history-announce]')!;
+  expect(announced.textContent).toMatch(/^bb-box could not read calm-otter's history again \(.*BB did not answer\.\), so this is as read at .*\.$/);
+  const usage = within(card).getByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again .* Over the last 24 hours/);
+  const network = within(card).getByRole("application", { name: /^Download and upload, the last 24 hours/ });
+  expect(document.getElementById(network.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again/);
+});
+
+test("7 d is by the hour, with each midnight marked; a missing hour says why in the read-out", async () => {
+  const view = historyView("7d", {}, (index) => (index === 167 ? { cpu: null, memory: null, disk: null, down: null, up: null, covered: 0 } : {}));
+  const gaps = [{ from: view.steps[167]!.at, to: view.to, kind: "not-read" as const }];
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: () => ({ ...view, gaps }) }));
+  const card = await activity();
+  fireEvent.click(await within(card).findByRole("radio", { name: "7 d" }));
+  const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 7 days, by the hour" });
+  usage.focus();
+  fireEvent.keyDown(usage, { key: "End" });
+  expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/: Not read$/);
+  const ticks = usage.parentElement!.querySelectorAll("[data-ticks] span");
+  expect(ticks.length).toBeGreaterThanOrEqual(6);
+});
+
+test("with box history off, 1 h, 24 h and 7 d keep what was read before under the words that say so; a full history file says so too", async () => {
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot(), history: (range) => historyView(range, { kept: false }) }));
+  const card = await activity();
+  fireEvent.click(await within(card).findByRole("radio", { name: "24 h" }));
+  await waitFor(() => expect(card.querySelector("[data-history-off]")).toBeTruthy());
+  expect(card.querySelector("[data-history-off]")!.textContent).toContain("Box history is off: what it kept stays.");
+  expect(within(card).getByRole("link", { name: "Monitor settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box#option/monitor");
+  expect(within(card).getByRole("application", { name: /^CPU and memory, the last 24 hours/ })).toBeTruthy();
+  cleanup();
+  forgetLive();
+  forgetActivity();
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot(), history: (range) => historyView(range, { full: "Box history's file is full, so bb-box stopped keeping box history." }) }));
+  const full = await activity();
+  fireEvent.click(await within(full).findByRole("radio", { name: "24 h" }));
+  await waitFor(() => expect(full.querySelector("[data-history-full]")).toBeTruthy());
+  expect(full.querySelector("[data-history-full]")!.textContent).toContain("file is full");
+  expect(full.querySelector("[data-history-full]")!.getAttribute("title")).toContain("stopped keeping box history");
+});
+
+test("with the Monitor off, Live cannot be chosen and what was read before stays on show", async () => {
+  open(handlers({ page: () => page(boxView(), { is: "off", machineId: null, why: "The Monitor is off." }), reading: () => snapshot(), history: (range) => historyView(range, { monitor: false }) }));
+  const card = await activity();
+  expect(card.textContent).toContain("The Monitor is off, so bb-box reads nothing now. What it read before stays.");
+  expect(within(card).getByRole("radio", { name: "Live" }).getAttribute("aria-description")).toBe("The Monitor is off");
+  expect(await within(card).findByRole("application", { name: /^CPU and memory, the last 24 hours/ })).toBeTruthy();
+  expect(card.querySelector("[data-history-off]")).toBeNull();
+});
+
+test("a slot's history is its own CPU and memory against its share, with the Mac's CPU for all slots as a third line hidden at first, and no network of the Mac's", async () => {
+  open(handlers({ page: () => page(boxView({ shared: true, os: "macos", state: "stopped" } as Partial<BoxView>), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: (range) => historyView(range, { slot: { host: "mac-1" } }, () => ({ host: 70, disk: null })) }));
+  const card = await activity();
+  const usage = await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 24 hours/ });
+  expect(within(card).getByRole("button", { name: "mac-1's CPU, all slots" }).getAttribute("aria-pressed")).toBe("false");
+  expect(within(card).queryByRole("button", { name: "Disk" })).toBeNull();
+  expect(within(card).queryByRole("application", { name: /^Download and upload/ })).toBeNull();
+  fireEvent.click(within(card).getByRole("button", { name: "mac-1's CPU, all slots" }));
+  usage.focus();
+  fireEvent.keyDown(usage, { key: "End" });
+  expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/This slot's CPU 30%.*mac-1's CPU, all slots 70%/);
+});
+
+test("a slot's 24 h and 7 d say from their first frame that work shorter than a minute may not show, and that Live shows it; its 1 h and other boxes do not", async () => {
+  const shortWork = "Work shorter than a minute may not show here, as box history reads this slot once a minute. Live shows it.";
+  let release: () => void = () => {};
+  const loaded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView({ shared: true, os: "macos", state: "stopped" } as Partial<BoxView>), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: (async (range: HistoryRange) => (await loaded, historyView(range, { slot: { host: "mac-1" } }))) as never }));
+  const card = await activity();
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 24 hours/ });
+  expect(card.querySelector("[data-history-ready]")).toBeNull();
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  release();
+  await waitFor(() => expect(card.querySelector("[data-history-ready]")).toBeTruthy());
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  fireEvent.click(within(card).getByRole("radio", { name: "7 d" }));
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 7 days/ });
+  expect(card.querySelector("[data-usage-note]")!.textContent).toBe(shortWork);
+  fireEvent.click(within(card).getByRole("radio", { name: "1 h" }));
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last hour/ });
+  expect(card.querySelector("[data-usage-note]")).toBeNull();
+  cleanup();
+  forgetActivity();
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
+  const other = await activity();
+  await within(other).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  expect(other.querySelector("[data-usage-note]")).toBeNull();
+});
+
+test("disk starts hidden as it moves slowly, and its chip shows it", async () => {
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
+  const card = await activity();
+  const disk = await within(card).findByRole("button", { name: "Disk" });
+  expect(disk.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(disk);
+  const usage = within(card).getByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  usage.focus();
+  fireEvent.keyDown(usage, { key: "End" });
+  expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/Disk 20%$/);
+});
+
+test("the range chosen for a box is kept while the session lasts, as BB may draw the page again when the window narrows", async () => {
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  fireEvent.click(await within(await activity()).findByRole("radio", { name: "7 d" }));
+  expect(await within(await activity()).findByRole("application", { name: "CPU and memory, the last 7 days, by the hour" })).toBeTruthy();
+  cleanup();
+  forgetLive();
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  const group = await within(await activity()).findByRole("radiogroup", { name: "Time range" });
+  expect(within(group).getByRole("radio", { name: "7 d" }).getAttribute("aria-checked")).toBe("true");
+});
+
+function layoutOf(): string {
+  const frame = document.querySelector("[data-activity-frame]")!;
+  const page = frame.parentElement!;
+  const blocks = Array.from(page.children).map((child) => (child === frame ? "activity" : `${child.tagName}${child.hasAttribute("data-processes") ? ".processes" : ""}${child.querySelector("h2")?.textContent ? `:${child.querySelector("h2")!.textContent}` : ""}`));
+  const charts = Array.from(frame.querySelectorAll<HTMLElement>("[data-history-chart]")).map((chart) => chart.style.height);
+  return JSON.stringify({
+    blocks,
+    charts,
+    ticks: frame.querySelectorAll("[data-ticks]").length,
+    tiles: frame.querySelectorAll("[data-tiles] > section").length,
+    lines: frame.querySelectorAll("[data-slot-line], [data-stale]").length,
+    legend: frame.querySelectorAll('[aria-label="Lines shown"]').length,
+    processes: frame.querySelectorAll("[data-processes] thead tr, [data-processes] tbody tr").length,
+  });
+}
+
+test("the page is laid out from its first frame: before the first reading the tiles, charts and processes are placeholders at their final size, and nothing below moves when it lands", async () => {
+  let release: () => void = () => {};
+  const first = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView()), reading: async () => (await first, snapshot()) } as never));
+  const card = await activity();
+  await within(card).findByRole("application", { name: "CPU and memory, Live" });
+  const before = layoutOf();
+  expect(card.querySelectorAll("[data-tiles] .animate-pulse").length).toBeGreaterThan(0);
+  const processes = screen.getByRole("region", { name: "Top processes" });
+  expect(processes.querySelectorAll("tbody tr[data-process-placeholder]")).toHaveLength(6);
+  expect(within(card).getByRole("radiogroup", { name: "Time range" })).toBeTruthy();
+  release();
+  await waitFor(() => expect(within(card).getByText(/^Read at /)).toBeTruthy());
+  await within(card).findByRole("application", { name: "CPU and memory, the last 6 min, every 5 s" });
+  expect(layoutOf()).toBe(before);
+  expect(processes.querySelectorAll("tbody tr")).toHaveLength(6);
+  expect(processes.querySelectorAll("tbody tr[data-process-placeholder]")).toHaveLength(4);
+  expect(card.querySelectorAll("[data-reveal]").length).toBeGreaterThan(0);
+  expect(card.querySelectorAll("[data-tiles] .animate-pulse")).toHaveLength(0);
+});
+
+test("a stopped box keeps the same frame while its history loads and after, with why in it, rather than collapsing", async () => {
+  let release: () => void = () => {};
+  const loaded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: (async (range: HistoryRange) => (await loaded, historyView(range))) as never }));
+  const card = await activity();
+  await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
+  const before = layoutOf();
+  expect(card.querySelector("[data-chart-words]")!.textContent).toBe("Reading its history…");
+  expect(card.querySelector("[data-activity-quiet]")!.textContent).toBe("calm-otter is stopped, so bb-box is not reading it.");
+  release();
+  await waitFor(() => expect(card.querySelector("[data-history-ready]")).toBeTruthy());
+  expect(layoutOf()).toBe(before);
+});
+
+test("a shared slot is laid out as a slot from its first frame", async () => {
+  let release: () => void = () => {};
+  const first = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const slot = snapshot({ own: { cpuCores: 2, memoryBytes: 1.5 * 1024 ** 3, processes: 9 }, slot: { host: "mac-1", encoder: null, share: { slots: 3, cores: 4, memoryBytes: 12 * 1024 ** 3 } }, history: points(72, () => ({ ownCpuCores: 2, ownMemoryBytes: 1.5 * 1024 ** 3 })) });
+  open(handlers({ page: () => page(boxView({ shared: true, os: "macos" } as Partial<BoxView>)), reading: async () => (await first, slot) } as never));
+  const card = await activity();
+  await within(card).findByRole("application", { name: "This slot's CPU and memory, Live" });
+  const before = layoutOf();
+  expect(card.querySelector("[data-slot-line]")).toBeTruthy();
+  release();
+  await waitFor(() => expect(within(card).getByText(/^Read at /)).toBeTruthy());
+  await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 6 min/ });
+  expect(layoutOf()).toBe(before);
 });

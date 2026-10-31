@@ -415,23 +415,3 @@ export class BoxLogStore implements BoxLog {
     ];
   }
 }
-
-export function historyFileChecks(file: AttachedFile): DoctorCheck[] {
-  if (file.problem) return [{ id: "box-history", name: "Box history's file", status: "fail", detail: `bb-box could not set up ${file.spec.file}: ${file.problem}`, fix: "Check that BB's data folder has room and that bb-box's files in it are writable, then restart bb-box." }];
-  let cap: number | null = null;
-  try {
-    cap = file.capBytes();
-  } catch {
-    cap = null;
-  }
-  const capWords = cap !== null ? `${(cap / 1024 / 1024).toFixed(1)} MB` : "an unknown size";
-  return [
-    {
-      id: "box-history",
-      name: "Box history's file",
-      status: file.attached ? "ok" : "warn",
-      detail: file.attached ? `${file.spec.file}, attached to bb-box's database, capped at ${capWords}.` : `In bb-box's database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}; the database is capped at ${capWords}.`,
-      fix: null,
-    },
-  ];
-}

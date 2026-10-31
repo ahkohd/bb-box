@@ -2,56 +2,15 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import Database from "better-sqlite3";
-import { BOX_HISTORY_FILE, BOX_LOG_FILE, MONITOR_CAP_BYTES, SHARED_CAP_BYTES, migrateFile, openBoxFiles, type DatabaseSource } from "../src/plugin/attached-files.ts";
+import { BOX_HISTORY_FILE, BOX_LOG_FILE, MONITOR_CAP_BYTES, SHARED_CAP_BYTES, openBoxFiles } from "../src/plugin/attached-files.ts";
 import { BOX_LOG_MIGRATIONS, BoxLogStore, SHARED_ROW_CAP } from "../src/plugin/box-log-store.ts";
 import { BY_COMMAND, BY_OUTSIDE, BY_PERSON, KEPT_AFTER_THE_END_MS, KEPT_FOR_A_BOX_MS, byAgent, byBbBox, type BoxEvent } from "../src/core/box-log.ts";
 import { createMonitorStore } from "../src/monitor/monitor-store.ts";
 import { tempDir } from "./helpers.ts";
+import { bbOf, storage } from "./box-files.ts";
 
 const MB = 1024 * 1024;
 const WORDS = "x".repeat(1100);
-
-function storage(folder: string, refuseAttach = false): DatabaseSource & { close(): void; handle(): Database.Database } {
-  let handle: Database.Database | null = null;
-  const open = () => {
-    if (!handle?.open) {
-      handle = new Database(join(folder, "data.db"));
-      handle.pragma("journal_mode = WAL");
-      handle.pragma("busy_timeout = 5000");
-    }
-    return handle;
-  };
-  const refusing = (db: Database.Database) =>
-    new Proxy(db, {
-      get(target, key) {
-        if (key === "prepare") return (sql: string) => (/^\s*ATTACH/i.test(sql) ? (() => { throw new Error("not authorized"); })() : target.prepare(sql));
-        const value = Reflect.get(target, key, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
-  let wrapped: Database.Database | null = null;
-  return {
-    database: () => {
-      const db = open();
-      if (!refuseAttach) return db as never;
-      if (!wrapped || (wrapped as unknown as { open: boolean }).open === false) wrapped = refusing(db);
-      return wrapped as never;
-    },
-    close: () => handle?.close(),
-    handle: () => open(),
-  };
-}
-
-function bbOf(source: DatabaseSource) {
-  return {
-    storage: {
-      kv: null as never,
-      database: source.database,
-      migrate: (db: Database.Database, statements: string[]) => void migrateFile(db as never, "main", "_bb_migrations_test", statements),
-    },
-  };
-}
 
 function event(at: number, more: Partial<BoxEvent> = {}): BoxEvent {
   return { box: "bxone", thread: "thr_one", name: "amber-fox", at, kind: "stopped", by: BY_PERSON, ...more };

@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -256,8 +256,27 @@ function DevicesOptions() {
   );
 }
 
+function useHistoryFull(revision: number): string | null {
+  const rpc = useRpc<Contract>();
+  const [full, setFull] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    rpc.call("monitor.state", null).then(
+      (state) => {
+        if (current) setFull(state.historyFull);
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [rpc, revision]);
+  return full;
+}
+
 function MonitorOptions() {
   const { state, instant, writes } = useSettings();
+  const historyFull = useHistoryFull(state.document.revision);
   const draft = useDraft(MONITOR_PART, "the Monitor");
   const monitor = { ...state.defaults.monitor, ...state.document.monitor };
   const enabledKey = switchKey.monitor("enabled");
@@ -269,7 +288,7 @@ function MonitorOptions() {
         <Rows>
           <AtOnceSwitch
             label="Machine status"
-            description="Machine status in BB's sidebar footer, for BB's server, your machines and every box. Off, nothing of the Monitor runs: no machine status, sampling, background monitoring or Mac sensors helper."
+            description="Machine status in BB's sidebar footer, for BB's server, your machines and every box. Off, nothing of the Monitor runs: no machine status, sampling, background monitoring, box history or Mac sensors helper."
             settingKey={enabledKey}
             path="monitor/enabled"
             value={monitor.enabled}
@@ -282,8 +301,22 @@ function MonitorOptions() {
           <DraftNumberRow draft={draft} path="monitor/refreshIntervalSeconds" label="Refresh every" unit="s" unitWord="seconds" description="Seconds between readings while machine status is open, 2 to 60." disabled={!on} />
           <AtOnceSwitch label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs." settingKey={switchKey.monitor("backgroundMonitoring")} path="monitor/backgroundMonitoring" value={monitor.backgroundMonitoring} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "backgroundMonitoring", value, "Background monitoring"))} />
           <AtOnceSwitch label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers." settingKey={switchKey.monitor("pressureNotifications")} path="monitor/pressureNotifications" value={monitor.pressureNotifications} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "pressureNotifications", value, "Pressure notifications"))} />
+          <AtOnceSwitch
+            label="Keep each box's history"
+            description="Reads every running box once a minute, lightly, and keeps 24 hours by the minute and 7 days by the hour, for the 1 h, 24 h and 7 d of a box's page. Off, nothing is read in the background; a box's page still reads it live while open, and what was kept stays until it ages out."
+            settingKey={switchKey.monitor("boxHistory")}
+            path="monitor/boxHistory"
+            value={monitor.boxHistory}
+            disabled={!on}
+            onChange={(value) => void instant.run(writes.monitor(state, "boxHistory", value, "Keep each box's history"))}
+          />
         </Rows>
       </Card>
+      {historyFull ? (
+        <p role="status" data-history-full className="rounded-lg border border-surface-warning-border px-4 py-3 text-xs text-warning-text">
+          {historyFull}
+        </p>
+      ) : null}
       {monitorChanged() ? <ReloadNote /> : null}
       <SaveBar draft={draft} unplaced={unplacedProblems(draft, ["monitor/refreshIntervalSeconds"])} />
     </div>

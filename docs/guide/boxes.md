@@ -144,6 +144,7 @@ Who stopped or started a box comes from its log, so the page leaves it out where
 While a box runs and the page is shown, Activity reads it through the Monitor, every 5 seconds unless you set the Monitor's interval otherwise. The Monitor's machine status and the page share one reading. At the top right it says when it last read the box.
 
 - Four tiles give its CPU, with the load or, in a container, the pressure; its memory, marked **Normal**, **High** or **Critical**; its free disk; and its network down and up. A box with GPU readings has a fifth.
+- The page is laid out from the start: until the first reading, the tiles, the charts and the processes are placeholders where their numbers will be, so nothing moves when it arrives. A box that is not read keeps the same layout and says why in it.
 - A chart shows its CPU and memory, as % used, over the last 6 minutes. Select **CPU** or **Memory** above it to hide or show a line. A second chart shows its download and upload.
 - Point at a chart to read its numbers at that time. With the keyboard, Tab to a chart, then Left and Right move from reading to reading, Page Up and Page Down 10 at a time, Home and End to the first and last, and Escape clears it. A screen reader hears each reading, and a summary of the chart, such as 'CPU averaged 31%, highest 78% at 4:10:05 PM; memory last 58%', with any gaps.
 - **Top processes** lists its 6 busiest processes, by name, PID, CPU and memory. CPU is per core, so a build on four cores shows 400%; 100% or more is in amber. BB Box reads names and PIDs only, never a process's arguments or environment.
@@ -152,7 +153,21 @@ A shared iOS or macOS box is a macOS user on a Mac shared with other boxes. Its 
 
 When the box is stopped, or not running, Activity says it is not read, and when it stopped. While it stops, it keeps reading until the stop is confirmed. If a reading fails after one worked, it keeps the last numbers and says which time they are from. A box that BB Box cannot read, such as a Windows box that is not a BB machine, says why. When the Monitor is off, BB Box reads nothing, and Activity has a link to the Monitor's settings to turn it on.
 
-Activity shows only the last few minutes for now: BB Box keeps no history of a box yet.
+#### Over 1 hour, 24 hours and 7 days
+
+Above the chart, choose **Live**, **1 h**, **24 h** or **7 d**. With focus on the one chosen, the arrow keys choose another. A box being read opens on Live; a stopped box, or one BB Box cannot read now, opens on 24 h, and Live says why it cannot be chosen.
+
+These ranges come from box history: BB Box reads every running box once a minute, lightly, and keeps what it read.
+
+- **1 h** has a point for each minute, **24 h** for each 10 minutes, and **7 d** for each hour. Each point is the box's mean over that time, not a sample of it.
+- Over 24 h and 7 d, a light band above CPU's line is each step's busiest minute, so a short spike is not averaged away. Reading a point names the busiest minute where it is 5 points or more above the mean.
+- **Disk** is a third line, hidden until you select it, as it moves slowly. A shared slot's third line is the Mac's CPU instead, and it has no network chart, as the Mac's network is every slot's. Over 24 h and 7 d, a slot says that its work shorter than a minute may not show, and that Live shows it.
+- A gap says why: **Not made yet**, **Starting**, **Stopped**, **Not read** (the Monitor or box history was off) or **No reading** (a reading failed or was skipped). Only a stop BB Box confirmed shows as Stopped. A gap shows at its own times, even within a step that has a value. A step of 24 h or 7 d that missed a minute or more of readings says 'partly read', and for how long it was read.
+- Each chart's description says its numbers and its gaps, such as 'Over the last 24 hours, by 10 minutes: CPU averaged 31%, busiest minute 78% between today at 4:10 PM and 4:20 PM; memory last 58%. Stopped from today at 3:53 PM.' Its averages count each step by the time it was read.
+- If BB Box cannot read a box's history again, the charts stay as they were and say when they were read, and a screen reader hears it.
+- On the night the clocks go back, a time the clock shows twice says its time zone, such as 1:00 AM EDT and 1:00 AM EST.
+
+With box history off, Live still reads while the page is open, and 1 h, 24 h and 7 d keep what was read before, under 'Box history is off'. With the Monitor off, what was read before stays on show too. See [box history](monitor.md#box-history).
 
 When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread on this box are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread on this box are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
 

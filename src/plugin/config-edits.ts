@@ -439,6 +439,7 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "monitor.refreshIntervalSeconds", type: { kind: "whole", least: MONITOR_REFRESH_SECONDS.least, most: MONITOR_REFRESH_SECONDS.most }, default: MONITOR_DEFAULTS.refreshIntervalSeconds, help: "Seconds between readings while machine status is open." },
   { name: "monitor.backgroundMonitoring", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.backgroundMonitoring, help: "Whether bb-box checks BB's server's CPU and memory every 30 s while nobody looks." },
   { name: "monitor.pressureNotifications", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.pressureNotifications, help: "Whether background monitoring shows a toast when CPU or memory stays high." },
+  { name: "monitor.boxHistory", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.boxHistory, help: "Whether bb-box keeps each box's history: a light reading of every running box once a minute, for the 1 h, 24 h and 7 d of a box's page." },
 ];
 
 const CEILING_OPTION = /^general\.snapshots\.ceilings\.([A-Za-z0-9][A-Za-z0-9._-]*)$/;

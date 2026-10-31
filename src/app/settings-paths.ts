@@ -1030,6 +1030,7 @@ const SETTING_LABELS: Readonly<Record<string, string>> = {
   "monitor/refreshIntervalSeconds": "Refresh every",
   "monitor/backgroundMonitoring": "Background monitoring",
   "monitor/pressureNotifications": "Pressure notifications",
+  "monitor/boxHistory": "Keep each box's history",
 };
 
 function kindLabelOf(path: Path): string | null {

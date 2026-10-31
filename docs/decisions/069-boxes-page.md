@@ -945,6 +945,87 @@ On 30 October 2026, during unit 2:
   on the charts they hold the reading they had, as a screen reader
   otherwise says the changed summary again at each reading.
 
+## Decided during unit 3
+
+On 30 October 2026, during unit 3:
+
+- **Each box's second is spread, in the order of its ID's hash.** Seconds
+  taken straight from a hash clump: in a test of 30 boxes whose readings
+  take 9.9 s, several shared their seconds and coverage fell to 93%. So
+  the boxes are ordered by their IDs' hashes and read 60/n seconds
+  apart, planned once a minute; a box is read at most once a minute. The
+  same test then keeps 99% or more.
+- **A point covers its time.** Each point keeps when it starts and ends,
+  and is spread over the minutes, 10-minute steps and hours it overlaps,
+  by the seconds in each. So the reading after one missed, as in a quick
+  restart of bb-box, fills both minutes, and an hour's mean is weighted by
+  the seconds it covers.
+- **A capacity change starts a new baseline.** The reading that sees a
+  new capacity (cores or memory) makes no point, as the minute before it
+  was under the old one; the next is measured against the new.
+- **After 3 failed readings, the reach check is asked.** History pauses
+  the box and asks the reach check to check it once, so a box is marked
+  as not answering only when it does not answer. If it does answer, the
+  failures were not about reaching it, and history reads it again after
+  15 minutes rather than every few.
+- **Before box history existed is Not read.** The time before its file
+  was first made shows as "Not read", not "No reading".
+- **Its write-ahead log is truncated each minute.** After each minute's
+  pruning, `box-history.db` checkpoints and truncates its log, which
+  otherwise stays at its 4 MB limit.
+- **The tiles and processes stay.** While a box is read, Activity keeps
+  its tiles and its top processes on every range; only the chart changes.
+- **A slot's counters are not kept in the file.** A shared slot's own
+  processes' counters stay in memory, so after a restart of bb-box its
+  first reading is a new baseline.
+- **History reads a person's own machines too.** Box history reads every
+  running box in the background, a person's own machines included, not
+  only while a page is open: its cost is small (G19), and history is
+  useful only if it is there before you look. The switch turns it off.
+- **A slot's 24 h and 7 d say what a minute's reading misses: the lead's
+  decision.** A reading once a minute misses work in a shared slot that is
+  shorter than a minute, such as an 18-second build. The lead accepted this
+  limit, so G2 passes with it: a long build's history is within G2's 20%,
+  and a short one shows on Live. On a slot's 24 h and 7 d, a line under the
+  chart says that work shorter than a minute may not show, and that Live
+  shows it.
+
+After the independent review of unit 3:
+
+- **Pruning runs whether history reads or not.** Each minute, and when
+  bb-box starts, box history prunes its file, with the Monitor or history
+  off too, so released and forgotten boxes' points go 24 hours after them
+  and old points age out. It lists box records for this itself, so a
+  history that is off does not take every box for gone.
+- **Turning history off forgets each box's counters.** In memory and in
+  its file, so the first reading after it is on again is a new baseline,
+  and no point spans the time it was off, however short. A reading begun
+  before it went off is dropped. A restart of bb-box with history on keeps
+  its counters, as G12 needs.
+- **Monotonic time for the schedule and for rates.** Box history schedules
+  its readings, times them and measures CPU and network over monotonic
+  time. When the wall clock steps by more than 1 s, against monotonic time,
+  each box's next reading starts a new baseline rather than claim the time
+  between, and the schedule goes on from the new time.
+- **Known gaps at their own times, and coverage said.** A stop, a start, a
+  time history or the Monitor was off, and the time before a box was made
+  show at their own times, even inside a step that has a value. A step of
+  24 h or 7 d that missed a minute or more says how long it was read
+  ("partly read, 40 min of the hour"), not only one read for under half
+  its time, as section 10 said.
+- **A failed refresh says so.** The charts stay as they were, and the words
+  line, the charts' descriptions and a status message read aloud say that
+  the refresh failed and when they were read. A page opened again from its
+  kept charts says so too, if it cannot read them again.
+- **Summaries count time.** A chart's description weights each step by the
+  time it was read, for each measure apart, and names the step its busiest
+  minute or highest value fell in, not a minute it does not keep.
+- **Ticks by elapsed time.** The ticks of 1 h, 24 h and 7 d are found every
+  15 minutes of elapsed time and kept where the local clock shows a tick's
+  time, so the night clocks go back keeps all its ticks. A time that the
+  local clock shows twice carries its time zone, such as 1:00 AM EDT and
+  1:00 AM EST.
+
 ## Decided during unit 5
 
 On 30 October 2026, during unit 5:

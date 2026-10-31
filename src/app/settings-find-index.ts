@@ -252,6 +252,7 @@ function optionEntries(state: ConfigState): FindEntry[] {
     option("monitor", "Monitor", "refresh", "Refresh every", "monitor/refreshIntervalSeconds", `${monitor.refreshIntervalSeconds} s`, "refresh interval seconds readings monitor"),
     option("monitor", "Monitor", "background", "Background monitoring", "monitor/backgroundMonitoring", onOff(monitor.backgroundMonitoring), "monitor logs cpu memory while nobody looks", true),
     option("monitor", "Monitor", "pressure", "Pressure notifications", "monitor/pressureNotifications", onOff(monitor.pressureNotifications), "monitor toast cpu memory high", true),
+    option("monitor", "Monitor", "history", "Keep each box's history", "monitor/boxHistory", onOff(monitor.boxHistory), "box history minute hour day week busy chart", true),
     ...configurationEntries(state),
     entry({ key: "machines", label: "Your machines", where: "Options", value: "On the Boxes page", opens: { machinesTab: true }, words: "machines boxes page add machine" }),
   ];

@@ -76,8 +76,10 @@ import { monitorConfig, snapshotConfig } from "../core/document.ts";
 import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
 import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
-import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-files.ts";
-import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
+import { openBoxFiles, unopenedFiles } from "./attached-files.ts";
+import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore } from "./box-log-store.ts";
+import { BOX_HISTORY_MIGRATIONS, BoxHistoryStore } from "./box-history-store.ts";
+import { createBoxHistory, type BoxHistoryApp } from "./box-history.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
 import { Snapshots } from "../core/snapshots.ts";
 import { PICTURE_EDGE } from "../core/snapshot-picture.ts";
@@ -218,6 +220,7 @@ export interface BbBox {
   readonly machineRestores: MachineRestores | null;
   readonly turnHold: TurnHold;
   readonly reach: ReachCheck;
+  readonly history: BoxHistoryApp;
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
   checkNow(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord>;
@@ -1223,7 +1226,27 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     log: { warn: (message) => bb.log.warn(message) },
   });
-  monitorChanged = () => monitor.configure(monitorConfig(configuration.document));
+  const history = createBoxHistory({
+    store: new BoxHistoryStore({ file: storedFiles.history, logError }),
+    boxes,
+    boxLog,
+    reach,
+    config: () => monitorConfig(configuration.document),
+    hostLight: (hostId, request, timeoutMs) => host.call("monitor.light", request, { hostId, timeoutMs }),
+    connected: (hostId) => machineConnected(hostId).catch(() => null),
+    async unreachableHost(box, hostId) {
+      if (reach.notAnswering(box.id)) return;
+      machineStates.delete(hostId);
+      const connected = await machineConnected(hostId).catch(() => null);
+      if (connected !== true) reach.failed(box, offline(hostId, connected).message);
+    },
+    log: (message) => bb.log.info(message),
+  });
+  bb.background.service("box-history", { start: (signal) => history.start(signal) });
+  monitorChanged = () => {
+    monitor.configure(monitorConfig(configuration.document));
+    history.configure();
+  };
 
   /** Each thread's machine, once it has an environment. */
   const threadHosts = new Map<string, string>();
@@ -1446,6 +1469,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machineRestores,
     turnHold,
     reach,
+    history,
     backendInSettings,
     async forget(threadId, ref, who) {
       const box = await boxes.get(threadId, ref);
@@ -1638,7 +1662,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         return [];
       }))];
       sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: "bb-box's records of snapshots and the operations that take, delete and restore them, and boxes whose guests are locked.", checks: snapshotChecks, notes: [] } });
-      const logChecks = [...boxLog.checks(), ...historyFileChecks(storedFiles.history)];
+      const logChecks = [...boxLog.checks(), ...history.checks()];
       sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: "Who stopped, started, resized and released each box, and what bb-box saw after an operation failed.", checks: logChecks, notes: [] } });
       const overlaps = overlapChecks(backends.on());
       if (overlaps.length) {

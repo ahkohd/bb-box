@@ -2,6 +2,7 @@ import { cliCommand, type BbPluginApi, type PluginCliResult } from "@get-bb/plug
 import { PRESSURE_CHANNEL } from "../monitor/pressure.ts";
 import type { MonitorSnapshot } from "../monitor/snapshot.ts";
 import { MONITOR_OFF_WORDS, type Monitor } from "./monitor.ts";
+import type { BoxHistoryApp, HistoryReport } from "./box-history.ts";
 
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
 
@@ -27,7 +28,28 @@ export function monitorSnapshotText(snapshot: MonitorSnapshot): string {
 
 const monitorOff = (): PluginCliResult => ({ exitCode: 1, stderr: `${MONITOR_OFF_WORDS}\n` });
 
-export function monitorCommands(bb: BbPluginApi, monitor: Monitor) {
+function ago(at: number | null, now: number): string {
+  if (at === null) return "no point yet";
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  return seconds < 120 ? `newest point ${seconds} s ago` : `newest point ${Math.round(seconds / 60)} min ago`;
+}
+
+export function historyReportText(report: HistoryReport, words: string, now: number): string {
+  const hours = report.hours.map((hour) => `${new Date(hour.hour).toISOString().slice(0, 13)}:00Z  due ${hour.due}, taken ${hour.taken}, skipped ${hour.skipped}, failed ${hour.failed}, not tried ${hour.unanswered}; readings took ${hour.taken + hour.failed ? Math.round(hour.readingMs / (hour.taken + hour.failed)) : 0} ms on average, ${hour.slowestMs} ms at most; up to ${hour.workers} at once`);
+  const boxes = report.newest.map((box) => `${box.name} (${box.box}): ${ago(box.at, now)}`);
+  return [
+    words,
+    report.full ?? null,
+    report.usedBytes === null ? null : `box-history.db: ${(report.usedBytes / 1024 / 1024).toFixed(2)} MB used.`,
+    report.paused.length ? `Not read until they answer: ${report.paused.join(", ")}.` : null,
+    hours.length ? ["By the hour:", ...hours].join("\n") : "Nothing tallied yet.",
+    boxes.length ? ["Boxes read:", ...boxes].join("\n") : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+export function monitorCommands(bb: BbPluginApi, monitor: Monitor, history?: BoxHistoryApp) {
   return {
     "monitor snapshot": cliCommand({
       summary: "Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history.",
@@ -70,5 +92,18 @@ export function monitorCommands(bb: BbPluginApi, monitor: Monitor) {
         return out("Test alert sent to the BB windows that are open. Keep BB visible to see it; it is not an OS notification.");
       },
     }),
+    ...(history
+      ? {
+          "monitor history": cliCommand({
+            summary: "Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. --hours chooses how many hours, 24 by default.",
+            options: { ...jsonOption, hours: { type: "integer", min: 1, max: 168, description: "How many of the last hours to tally, 1 to 168. 24 by default." } },
+            async run({ options }) {
+              const report = history.report(options.hours ?? 24);
+              if (options.json) return { exitCode: 0, stdout: `${JSON.stringify({ ...report, words: history.stateWords() })}\n` };
+              return out(historyReportText(report, history.stateWords(), Date.now()));
+            },
+          }),
+        }
+      : {}),
   };
 }

@@ -241,7 +241,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     ping: async () => null,
-    ...monitorRpcHandlers(app.monitor),
+    ...monitorRpcHandlers(app.monitor, () => app.history.store.fullWords()),
+    async "monitor.history"({ box: boxId, range }) {
+      const found = await boxes.find(boxId);
+      if (!found || !listed(found)) return null;
+      return app.history.view(found, range);
+    },
     async profile({ seconds, keep, allocations, snapshot, collect }) {
       const lines = await profileLoop(seconds, {
         fullCollection: collect === true,

@@ -11,10 +11,13 @@ import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, Offer
 import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
+import type { BoxHistoryView } from "./box-history.ts";
 
 export type { BoxSnapshotsView, FailedRestoreView, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
+export type { BoxHistoryView } from "./box-history.ts";
+export type { GapKind, HistoryGap, HistoryRange, HistoryStep, Span } from "../monitor/history-view.ts";
 
 export { TERMINAL_ROUTE, terminalPath } from "./terminal-route.ts";
 
@@ -343,7 +346,8 @@ export const contract = defineRpcContract({
    * has boxes. Answers with the configuration's answer and the list again.
    */
   "docker.host.set": { input: z.object({ hostId: z.string().min(1).max(64), enabled: z.boolean(), operation: z.string().min(1).max(200).optional() }), output: z.custom<{ result: ApplyResult; hosts: DockerHostView[] }>() },
-  "monitor.state": { input: z.null(), output: z.object({ enabled: z.boolean(), backgroundMonitoring: z.boolean(), pressureNotifications: z.boolean() }) },
+  "monitor.state": { input: z.null(), output: z.object({ enabled: z.boolean(), backgroundMonitoring: z.boolean(), pressureNotifications: z.boolean(), boxHistory: z.boolean(), historyFull: z.string().nullable() }) },
+  "monitor.history": { input: z.object({ box: z.string().min(1), range: z.enum(["1h", "24h", "7d"]) }), output: z.custom<BoxHistoryView | null>() },
   "monitor.server": { input: z.object({ force: z.boolean() }), output: snapshotSchema },
   "monitor.machines": { input: z.null(), output: z.object({ machines: z.array(machineSchema) }) },
   "monitor.machine": { input: z.object({ machineId: z.string().min(1), force: z.boolean() }), output: snapshotSchema },

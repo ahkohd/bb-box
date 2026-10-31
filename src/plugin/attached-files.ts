@@ -22,7 +22,6 @@ export interface FileSpec {
 export const BOX_LOG_FILE: FileSpec = { schema: "boxlog", file: "box-log.db", capBytes: 8 * MB, sharedCapBytes: 4 * MB };
 export const BOX_HISTORY_FILE: FileSpec = { schema: "boxhistory", file: "box-history.db", capBytes: 64 * MB, sharedCapBytes: 30 * MB };
 export const SNAPSHOTS_FILE: FileSpec = { schema: "boxsnapshots", file: "snapshots.db", capBytes: 64 * MB, sharedCapBytes: 8 * MB };
-export const BOX_HISTORY_MIGRATIONS: readonly string[] = [];
 
 export interface AttachedFile {
   readonly spec: FileSpec;

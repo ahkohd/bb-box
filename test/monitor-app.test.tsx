@@ -99,7 +99,7 @@ const MACHINES_STATE = {
 function handlers(readings: Record<string, MonitorSnapshot>): PluginRpcTestHandlers<Contract> {
   return {
     "machines.list": () => MACHINES_STATE,
-    "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true }),
+    "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     "monitor.machines": () => ({ machines: MACHINES }),
     allBoxes: () => BOX_ENTRIES,
     "monitor.server": () => readings.server ?? snapshot(),
@@ -207,7 +207,7 @@ test("with the Monitor off, BB's next load of bb-box's app has no machine status
 test("the overlay remembers the server's switch for the next load", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const overlay = app.appOverlays.find((entry) => entry.id === "monitor")!;
-  const off = { ...handlers({}), "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true }) } as unknown as PluginRpcTestHandlers<Contract>;
+  const off = { ...handlers({}), "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }) } as unknown as PluginRpcTestHandlers<Contract>;
   renderSlot(overlay, {} as never, { rpc: off, pluginId: "bb-box" });
   await waitFor(() => expect(localStorage.getItem("bb-box:monitor:on")).toBe("off"));
 });
