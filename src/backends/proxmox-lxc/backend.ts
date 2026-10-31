@@ -40,6 +40,7 @@ import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -109,6 +110,7 @@ import {
   type TaskRef,
   type WarmShortfall,
   type IdentitySource,
+  type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
@@ -755,15 +757,13 @@ export class ProxmoxLxcBackend implements Backend {
     return { macs, smbios: null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
     }
     const vmid = this.#freeVmid(await api.listPool(this.#config.proxmox.pool, signal), this.#nextVmid);
-    if (vmid === null) {
-      throw new SnapshotFailed(`Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`);
-    }
+    if (vmid === null) throw noneFree(`from ${this.#config.vmids.first} to ${this.#config.vmids.last}`);
     this.#reserved.add(vmid);
     this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
     await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
@@ -799,6 +799,7 @@ export class ProxmoxLxcBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), storageOfVolume(config.rootfs), hooks, signal);
+      await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false }, signal);
       return copy;
     } finally {
@@ -876,6 +877,49 @@ export class ProxmoxLxcBackend implements Backend {
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    this.#offer(box.kind);
+    return forkByFullClone(
+      {
+        installId: this.#context.installId,
+        pool: this.#config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        rootDisk: () => "rootfs",
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        unreserve: (vmid) => this.#reserved.delete(vmid),
+        forget: (vmid) => this.#forget(vmid),
+        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build),
+        addressed: async (api, vmid, made, forked, template, signal) => {
+          const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()},link_down=1` };
+          for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: false });
+          await api.setNetwork(vmid, nets, signal);
+          await api.configure(vmid, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
+        },
+        sizeOf,
+        logError: (operation, error) => this.#context.logError(operation, error),
+      },
+      ref,
+      box,
+      previous,
+      hooks,
+      signal,
+    );
+  }
+
+  boxAddresses(): readonly string[] {
+    return this.#config.network.addresses;
+  }
+
+  armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
+  }
+
+  disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
+    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId }, guest, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {
@@ -1276,7 +1320,7 @@ export class ProxmoxLxcBackend implements Backend {
     return status ? powerOf(status.status) : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void> {
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1292,7 +1336,7 @@ export class ProxmoxLxcBackend implements Backend {
         }
       : untimed;
     if (status.status !== "running") await step("boot", () => api.start(vmid, signal));
-    await this.#waitReady(vmid, null, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step);
+    await this.#waitReady(vmid, null, this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS, signal, step);
     await answered?.();
     // A GPU desktop's display takes its path again at each boot, and falls back to the CPU when its GPU is short of memory (#597).
     const template = typeof guest.data?.template === "number" ? guest.data.template : null;

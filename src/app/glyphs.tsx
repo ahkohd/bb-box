@@ -311,3 +311,14 @@ export function WarningGlyph(props: Props) {
     </Stroked>
   );
 }
+
+export function ForkGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="5" r="2" />
+      <circle cx="12" cy="19" r="2" />
+      <path d="M6 7v1.5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7M12 11.5V17" />
+    </Stroked>
+  );
+}

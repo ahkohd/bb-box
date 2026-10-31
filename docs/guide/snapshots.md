@@ -2,15 +2,15 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
+You take, restore, [fork](#forking-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Keeping one after its box is released comes later: see [decision 070](../decisions/070-snapshots.md).
 
 ## What each backend offers
 
-| Backend | Holds | While the box runs | Restores |
-| --- | --- | --- | --- |
-| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS |
-| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory |
-| Every other backend | no snapshots yet | | |
+| Backend | Holds | While the box runs | Restores | Forks |
+| --- | --- | --- | --- | --- |
+| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset |
+| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only |
+| Every other backend | no snapshots yet | | | |
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
@@ -21,6 +21,7 @@ A box's page has a Snapshots card, after its activity and before its facts. Its 
 - **Take snapshot**, in the card or in the menu of the page's heading beside Resize…, asks for a name (the time if you leave it empty), a note, and on a VM that can, "With its memory". It says what the snapshot holds and leaves out, how long it takes, the count after it, whether a picture is kept, and what it costs. When the box's backend would refuse a take now, the card says why, with the fix, and Take snapshot is off.
 - **Restore** opens a dialog that reads what the restore would do and end, live. It says when the box goes back to and what goes, and names each thread on the box, a person holding its desktop and each BB terminal open on it. A box with a thread on it is not restored, as on the command line: the dialog names the threads and says why. A person's control of the desktop or a terminal is named under "Also goes", and the button says "Restore (box) anyway". The undo is ticked: untick it and the button turns red and says "Restore without undo". When no undo can be taken, for room or the ceiling, the dialog says why and leaves it unticked. The restore goes on only past what the dialog showed: if a thread, a terminal or the person's control has come since, or the plan changed, BB Box restores nothing and the dialog reads it all again. If BB Box cannot flush the box's writes before stopping it (below), nothing changes and the dialog asks whether to restore anyway with an undo that may miss the last seconds' writes.
 - **While it restores**, a notice at the top of the page says so and follows each part: the stop, the undo, the rollback and the start. After it, a notice says when the box was restored, to what, and by whom, for 24 hours. Its **Undo…** opens the same dialog for the restore's undo. A restore BB Box could not confirm after a restart has its own notice, with **Check now**, which settles it as the sweep does.
+- **Fork**, beside Restore, opens the [Fork dialog](#forking-a-snapshot). Below 640 px it is in the row's menu, as Fork…. It is off, with why, for a snapshot that cannot fork.
 - **Rename…**, **Note…**, **Copy ID** and **Delete…** are in each row's menu. A name is at most 60 characters and unique on the box; a note at most 1 KB. Delete says what it frees, whether you kept it, and whether it is a restore's undo. A snapshot a restore uses cannot be renamed, noted or deleted until the restore ends.
 
 Every dialog starts on its safe choice, Cancel for Restore and Delete, the name for Take snapshot and Rename, and gives focus back to the button that opened it, or to the menu's button.
@@ -36,6 +37,8 @@ bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 ```
 
 `--memory` holds the box's memory too, where its backend can: Proxmox QEMU can, for a box that runs; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
+
+Before it takes a snapshot of a box that runs, BB Box flushes the box's writes to its disk, with `sync` in the box, for at most 15 seconds, so the snapshot's disk holds what was just written, with or without memory. If the flush fails or takes longer, the snapshot is taken anyway, and it says it may miss the last writes: in the take's answer, in the list, on the page and in every fork of it.
 
 The command waits until the backend confirms the snapshot is complete. A box holds 5 snapshots unless you change it in the settings (below). A take is refused when the host's storage is more than 85% full, or would be with the snapshot, or when its thin metadata is more than 80% full, as a full thin pool stops every box on the host. Both numbers follow the settings.
 
@@ -81,7 +84,7 @@ At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's 
 
 - if any of the marker's MAC addresses is on any of its cards, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
 - if its cards are all known, and it has a new card but none of the marker's, it is a copy, and it resets
-- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above
+- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above. On Proxmox LXC, a box that starts with no `eth` card and none of the marker's MAC addresses on any interface also sets its network settings for `eth` cards aside at once, before it waits, in `/var/lib/bb-box/held-network`. A card added later then gets its settings from Proxmox, never the ones a copy brought from its source. Once it decides, at this boot or a later one, a copy drops them, and the box itself gets them back unless Proxmox wrote new ones. If it cannot set them aside, it deletes them, as Proxmox writes a card's settings again when it adds the card; if it cannot delete them either, the network and everything after it stay off until the next start
 
 A card is one the backend gave the box, as the kernel reports it. On Proxmox LXC it is a veth whose other end is outside the box, on no bridge, named `eth` and a number; on a VM, one with a device. Interfaces the box makes itself, such as Docker's and Tailscale's, bridges and tunnels, are never cards, whatever their names. An LXC card renamed from `eth` is no card either, so the box waits, as above, until it has its name again. Cards join the marker only as the box starts, before its own software makes interfaces again.
 
@@ -120,11 +123,42 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken. A snapshot without one says "not fork-safe". Forks, which come later, will start only from snapshots that had it.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
+
+## Forking a snapshot
+
+A fork is a new box made from a snapshot's disk: of the same kind, at the size the snapshot holds, on the same host, with a new name and box ID. It is for trying two things from one set-up state. On Proxmox it is a full copy of the snapshot, so it holds nothing of its source afterwards; either can be released alone.
+
+It never acts as its source. BB Box makes the copy unable to start on its own: in its first request after the copy, it turns `onboot` off and takes every link down. It gives the copy its own address and new MAC addresses with its links still down, brings them up just before its first start, and turns `onboot` on only once the fork passes the check below. With new MAC addresses, so at its first boot its [identity reset](#a-copy-of-a-box-gives-up-its-identity) runs before its network, SSH, Tailscale and BB's daemon start, and removes its source's BB machine credentials and host ID, the thread's access file and the tailnet node, and makes new SSH host keys and a new machine ID. Then BB Box:
+
+1. checks, before it hands the fork over, that the reset ran: its boot says it reset, its identity marker names its own MAC addresses and no box, BB's credentials and the access file are gone, its Tailscale state holds no node, its machine ID and SSH host keys are not those the snapshot held, as BB Box read them at the take, and it holds its own address and no other box's. Every item must be read: one BB Box cannot read refuses the fork. A fork whose first boot cannot tell yet whether it is a copy, as when its network card comes late, keeps SSH and BB's daemon off until it can; BB Box waits up to 3 minutes for its first start, on Proxmox LXC as on QEMU, and up to a minute more for the check, and never counts such a boot as a reset. A fork that fails the check is released, and says why. If BB Box cannot delete its copy yet, it stops it, says so, and tries again at each sweep; it never hands such a fork over
+2. writes the fork's own identity marker
+3. enrols it as a new BB machine, and gives it its thread's access, or yours
+
+A fork given its source's name still resets: the name plays no part. What a fork still holds is everything else on the disk: a project's secrets, a signed-in browser, a keychain and cloud credentials in files. It is a new BB identity, not a cleaned box. It starts fresh: no apps are running, even from a snapshot with memory: it has what the box's disk held, which the flush before each take brings up to date.
+
+Its page's facts say where it came from: "Forked from amber-fox, "before the migration" (yesterday 23:39)". Its log starts with the same words, and its source's log says `fork-asked`, then `forked` or `fork-failed`. While the fork is made, its snapshot cannot be deleted, and its source's take, restore, stop and release wait for the copy.
+
+Who forks:
+
+- **You**, from a box's page or the command line, into the box's thread, or as one of your machines. A fork of one of your machines is one of your machines.
+- **A thread's agent**, with `box_fork`, from its thread's own box into its own thread. Left without a snapshot, `box_fork` checks first that the box could be forked now, then takes one of the box now, named "for a fork", and forks that. If the fork is still refused, BB Box deletes that snapshot and says so; if the take deleted an older snapshot of the agent's to make room, it says that too. An agent does not fork a box threads run on, nor makes a fork one of your machines.
+
+Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows and macOS boxes have no reset yet, so they do not fork.
+
+The **Fork dialog** asks for the new box's name (one is made up if you leave it empty): a lower-case letter first, then lower-case letters, digits and hyphens, up to 32, not ending in a hyphen and, for a thread's box, where it goes: in the box's thread, or as one of your machines. It says what the fork holds, its size, and at most how long the copy takes and how much space it uses on the host. **Fork** opens the new box's page, starting.
+
+On the command line:
+
+```
+bb box snapshot fork <box> <snapshot> [--as-machine] [--name <name>] [--check]
+```
+
+`--check` says what the fork would be and refuses what it would refuse, changing nothing. Like the other snapshot commands, `--thread` or `--machine` say where the source box is.
 
 ## Agents' snapshots
 
-A thread's agent has four tools:
+A thread's agent has five tools:
 
 | Tool | Does |
 | --- | --- |
@@ -132,12 +166,13 @@ A thread's agent has four tools:
 | `box_snapshots` | lists a box's, or every box's of the thread and of the machine it runs on, that the thread may see |
 | `box_snapshot_delete` | deletes one that an agent of the thread took and nobody kept |
 | `box_restore` | restores a box, always taking an undo first |
+| `box_fork` | makes a new box of the thread from a snapshot of one of its boxes, or from the box now |
 
 Its skill tells it to take one before a change it cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when you ask; never on a schedule of its own; to restore when an attempt went wrong rather than undo it by hand; and to delete its own when they are no longer needed.
 
 What an agent may do follows the box:
 
-- **Its thread's own box**, one no thread runs on: it takes snapshots, sees and restores all of the box's, and deletes those an agent of its thread took. It restores without asking you, always with an undo; it cannot restore without one, nor past a person holding the desktop or a BB terminal open on the box, whether it asks through the form or not.
+- **Its thread's own box**, one no thread runs on: it takes snapshots, sees, restores and forks all of the box's, and deletes those an agent of its thread took. It restores without asking you, always with an undo; it cannot restore without one, nor past a person holding the desktop or a BB terminal open on the box, whether it asks through the form or not.
 - **A box threads run on**: the box its thread runs on, another thread's box it runs on, or one of your machines. It takes snapshots there, and sees and deletes only what it took there. It restores the box only on a yes given in the thread, through a form (below), and only once such restores are on.
 - **A kept snapshot** is yours: an agent sees it while its box lives, and nothing more.
 

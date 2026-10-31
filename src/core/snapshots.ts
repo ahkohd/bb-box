@@ -18,9 +18,9 @@ import {
   type TaskKind,
   type TaskOutcome,
 } from "../backends/types.ts";
-import { BoxError, type BoxRecord, OPERATOR, identity, restoringWords, type RestoringMark } from "./boxes.ts";
+import { BoxError, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
-import { readForkSafe } from "./identity.ts";
+import { readForkSafe, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
 import { ceilingOf, snapshotConfig, type SnapshotConfig } from "./document.ts";
@@ -36,6 +36,7 @@ import {
   gbWords,
   heldByProvider,
   holdsWords,
+  isKept,
   limitVictim,
   MACHINE_RESTORES_SHIP,
   mayAct,
@@ -79,6 +80,8 @@ export interface SnapshotBoxes {
   update(box: Pick<BoxRecord, "threadId" | "id">, change: (current: BoxRecord) => Partial<BoxRecord>): Promise<BoxRecord | null>;
   writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void>;
   machineBack(box: BoxRecord): boolean;
+  fork(request: ForkRequest): Promise<BoxRecord>;
+  admitFork(request: ForkAdmission): Promise<void>;
 }
 
 export interface ThreadOnTheBox {
@@ -175,6 +178,43 @@ export interface DeleteAnswer {
   readonly snapshot: SnapshotRecord | null;
   readonly operation: SnapshotOperation | null;
   readonly repeated: boolean;
+}
+
+export interface ForkInput {
+  readonly name?: string;
+  readonly asMachine?: boolean;
+  readonly request?: string;
+  readonly projectId?: string | null;
+}
+
+export interface ForkCheck {
+  readonly snapshot: SnapshotRecord;
+  readonly box: BoxRecord;
+  readonly threadId: string;
+  readonly asMachine: boolean;
+  readonly size: BoxSize;
+  readonly aboutMs: number;
+  readonly bytes: number | null;
+  readonly host: string | null;
+  readonly storage: string;
+}
+
+export interface ForkAnswer {
+  readonly box: BoxRecord | null;
+  readonly snapshot: SnapshotRecord | null;
+  readonly operation: SnapshotOperation;
+  readonly repeated: boolean;
+}
+
+interface ForkConsent {
+  readonly box: string;
+  readonly threadId: string;
+  readonly name: string | null;
+}
+
+function forkConsentOf(operation: Pick<SnapshotOperation, "consent">): ForkConsent | null {
+  const fork = (operation.consent as { fork?: Partial<ForkConsent> } | null)?.fork;
+  return fork && typeof fork.box === "string" && typeof fork.threadId === "string" ? { box: fork.box, threadId: fork.threadId, name: typeof fork.name === "string" ? fork.name : null } : null;
 }
 
 export interface HeldOnBackend {
@@ -442,7 +482,7 @@ interface Prepared {
   readonly byCopy: boolean;
   readonly swap: boolean;
   readonly anyway: readonly string[];
-  readonly forkSafe: number | null;
+  readonly forkSafe: ForkSafety;
   readonly through: "restore" | "form";
   readonly onAMachine: boolean;
   readonly losses: readonly Loss[];
@@ -608,7 +648,7 @@ export class Snapshots {
       if (earlier) return this.#repeat(earlier);
     }
     const { box, backend, offer, plan, memory } = await this.#takeContext(boxId, input.memory === true);
-    const forkSafe = await this.#forkSafe(box, backend);
+    const safety = await this.#forkSafe(box, backend);
     const spends = takeSpends(plan, memory);
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
     const now = this.#now();
@@ -649,7 +689,8 @@ export class Snapshots {
         keptUntil: null,
         keptAt: null,
         undoOf: null,
-        forkSafe,
+        forkSafe: safety.version,
+        identity: safety.identity,
         dependsOn: [],
         picture: null,
         ref: null,
@@ -896,15 +937,16 @@ export class Snapshots {
     }
   }
 
-  async #forkSafe(box: BoxRecord, backend: Backend): Promise<number | null> {
-    if (box.state !== "ready" || box.capabilities.os !== "linux" || !box.guest) return null;
+  async #forkSafe(box: BoxRecord, backend: Backend): Promise<ForkSafety> {
+    const none: ForkSafety = { version: null, identity: null };
+    if (box.state !== "ready" || box.capabilities.os !== "linux" || !box.guest) return none;
     try {
       const command = (await backend.transports(box.guest, box.kind)).command;
-      return command ? await readForkSafe(command, this.#stopping.signal) : null;
+      return command ? await readForkSafe(command, this.#stopping.signal) : none;
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.log?.(`Could not read box ${box.name}'s identity reset at a take, so the snapshot is not fork-safe: ${message(error)}`);
-      return null;
+      return none;
     }
   }
 
@@ -939,6 +981,11 @@ export class Snapshots {
     this.#running.add(operation.id);
     try {
       await this.#deps.hold?.(operation, "planned", this.#stopping.signal);
+      const unflushed = await this.#flushWrites(box, backend, box.guest!, this.#stopping.signal);
+      if (unflushed) {
+        record = ledger.updateRecord(record.id, { unflushed }) ?? record;
+        this.#deps.log?.(`Took snapshot ${record.id} of box ${box.name} without flushing its writes first: ${unflushed}`);
+      }
       const stillWhileTaken = record.holds === "disk" && this.offerFor(backend, box.kind)?.whileRunning === "live";
       const picturing = this.#keepPicture(record.id, box);
       if (!stillWhileTaken) await picturing;
@@ -1320,7 +1367,8 @@ export class Snapshots {
           keptUntil: null,
           keptAt: null,
           undoOf: operationId,
-          forkSafe,
+          forkSafe: forkSafe.version,
+          identity: forkSafe.identity,
           dependsOn: [],
           picture: null,
           ref: null,
@@ -1403,14 +1451,225 @@ export class Snapshots {
     if (!route.ok) throw new BoxError(seen.onAMachine ? "in_use" : "not_owner", `${route.why} bb-box changed nothing.`);
     if (seen.onAMachine && input.undo === false) throw new BoxError("not_owner", `bb-box always takes an undo before it restores a box threads run on, as box ${box.name} is. bb-box changed nothing.`);
     const anyway = this.#consented(caller, route.through, seen.onAMachine, box, target, seen.losses, input);
-    const forkSafe = input.undo === false ? null : await this.#forkSafe(box, backend);
-    if (byCopy && input.undo !== false && forkSafe === null) {
+    const forkSafe = input.undo === false ? { version: null, identity: null } : await this.#forkSafe(box, backend);
+    if (byCopy && input.undo !== false && forkSafe.version === null) {
       throw new BoxError(
         "unsupported",
         `bb-box would copy box ${box.name} in full as the undo of this restore, and it makes such a copy only of a box whose identity reset works now, so that a copy that started before it is disarmed gives up the box's identity. Box ${box.name} has none that bb-box could read${box.state === "ready" ? "" : ", as it is stopped"}.${caller.is === "agent" ? "" : " Restore without an undo, with --no-undo, or start the box first."}`,
       );
     }
     return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway, forkSafe, through: route.through, onAMachine: seen.onAMachine, losses: seen.losses };
+  }
+
+  async checkFork(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: ForkInput = {}): Promise<ForkCheck> {
+    const prepared = await this.#prepareFork(caller, standing, box, ref, input);
+    return {
+      snapshot: prepared.target,
+      box: prepared.box,
+      threadId: prepared.threadId,
+      asMachine: prepared.threadId === OPERATOR,
+      size: prepared.size,
+      aboutMs: prepared.plan.fork.aboutMs,
+      bytes: prepared.plan.fork.bytes,
+      host: prepared.target.livesOn.host,
+      storage: prepared.plan.storage.name,
+    };
+  }
+
+  async fork(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: ForkInput = {}): Promise<ForkAnswer> {
+    const by: Actor = caller.is === "agent" ? { is: "agent", threadId: caller.threadId } : caller;
+    if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
+    this.#requireStore("forks");
+    const digest = input.request ? requestDigest("fork", box.id, { snapshot: ref, name: input.name ?? null, asMachine: input.asMachine === true }) : null;
+    if (input.request) {
+      const earlier = this.#earlier(by, input.request, digest);
+      if (earlier) return this.#forkedBefore(earlier);
+    }
+    return this.#deps.boxes.inTurn(box.id, async () => {
+      if (input.request) {
+        const earlier = this.#earlier(by, input.request, digest);
+        if (earlier) return this.#forkedBefore(earlier);
+      }
+      const prepared = await this.#prepareFork(caller, standing, box, ref, input);
+      const { target, plan } = prepared;
+      const source = prepared.box;
+      const backend = prepared.backend;
+      const sourceMacs = Object.values((await backend.guestIdentity!(target.livesOn, this.#stopping.signal)).macs);
+      const ledger = this.#deps.ledger;
+      const now = this.#now();
+      const forkId = newBoxId(this.#random);
+      const operation: SnapshotOperation = {
+        id: newOperationId(this.#random),
+        request: input.request ? requestKey(by, input.request) : null,
+        requestDigest: digest,
+        kind: "fork",
+        box: source.id,
+        guest: target.livesOn.ref,
+        snapshots: [target.id],
+        by,
+        consent: { fork: { box: forkId, threadId: prepared.threadId, name: input.name ?? null } },
+        undo: null,
+        guests: null,
+        step: "planned",
+        task: null,
+        state: "running",
+        reserved: null,
+        error: null,
+        startedAt: now,
+        endedAt: null,
+        snapshotsGoneAt: null,
+      };
+      ledger.insertOperation(operation);
+      let made: BoxRecord;
+      try {
+        made = await this.#deps.boxes.fork({
+          id: forkId,
+          threadId: prepared.threadId,
+          projectId: prepared.threadId === OPERATOR ? null : (input.projectId ?? null),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          backend: backend.id,
+          backendLabel: backend.label,
+          kind: source.kind,
+          size: prepared.size,
+          origin: {
+            operation: operation.id,
+            snapshot: { id: target.id, name: target.name, takenAt: target.takenAt, ref: target.ref ?? "", livesOn: target.livesOn, identity: target.identity ?? null },
+            source: { id: source.id, name: source.name, threadId: source.threadId, macs: sourceMacs, address: source.guest?.address ?? target.livesOn.address ?? null },
+          },
+          who: by,
+        });
+      } catch (error) {
+        ledger.updateOperation(operation.id, { state: "failed", endedAt: this.#now(), error: sentence(message(error)) });
+        throw error;
+      }
+      const started = ledger.updateOperation(operation.id, { step: "acquiring", consent: { fork: { box: made.id, threadId: made.threadId, name: made.name } } }) ?? operation;
+      this.#event(target, "fork-asked", by, `"${target.name}" (${target.id}) into box ${made.name} (${made.id})${made.threadId === OPERATOR ? ", one of your machines" : ""}, up to about ${seconds(plan.fork.aboutMs)} to copy.${target.unflushed ? " The snapshot may miss the box's last writes before it." : ""}`);
+      this.#notify(source.threadId);
+      return { box: made, snapshot: target, operation: started, repeated: false };
+    });
+  }
+
+  async checkForkOfBox(caller: Caller, box: BoxRecord, standing: Standing, input: ForkInput = {}): Promise<void> {
+    const named = input.name === undefined ? null : forkNameProblem(input.name);
+    if (named) throw new BoxError("invalid_name", named);
+    const allowed = mayAct(caller, "fork", standing);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
+    this.#requireStore("forks");
+    if (box.capabilities.os !== "linux") throw new BoxError("unsupported", `bb-box forks Linux boxes only, as only they reset their identity at a fork's first boot. Box ${box.name} runs ${box.capabilities.os}.`);
+    const holding = this.#restoreHolding(box);
+    if (holding) throw holding;
+    if (box.state !== "ready" || !box.guest) throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box forks a box as it is now only while it runs, so it can read its identity reset; start it first.`);
+    const backend = this.#deps.backends.get(box.backend);
+    if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it forks nothing.`);
+    const offer = this.offerFor(backend, box.kind);
+    if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity) throw new BoxError("unsupported", `${backend.label} does not fork ${box.kind} boxes.`);
+    const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
+    if (plan.busy) throw new BoxError("try_again", `bb-box cannot fork box ${box.name} now: ${plan.busy}`);
+    if (!plan.fork.ok) throw new BoxError("unsupported", `bb-box cannot fork box ${box.name}: ${plan.fork.why ?? `${backend.label} refused it.`}`);
+    if (!plan.take.ok) throw new BoxError("unsupported", `bb-box cannot take the snapshot to fork box ${box.name} from: ${plan.take.why ?? `${backend.label} refused it.`}`);
+    const safety = await this.#forkSafe(box, backend);
+    const safeFrom = offer.forkSafeFrom ?? 1;
+    if (safety.version === null) throw new BoxError("unsupported", `Box ${box.name} has no working identity reset now, so a copy of it would not give up its identity, and bb-box does not fork it.`);
+    if (safety.version < safeFrom) throw new BoxError("unsupported", `Box ${box.name} has version ${safety.version} of the identity reset, and bb-box forks ${backend.label}'s boxes only from version ${safeFrom}.`);
+    const asMachine = caller.is !== "agent" && (input.asMachine === true || box.threadId === OPERATOR);
+    await this.#deps.boxes.admitFork({
+      threadId: asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : box.threadId,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      backend: backend.id,
+      backendLabel: backend.label,
+      kind: box.kind,
+      size: box.guest.size ?? box.size ?? null,
+    });
+  }
+
+  async #forkedBefore(operation: SnapshotOperation): Promise<ForkAnswer> {
+    const fork = forkConsentOf(operation);
+    return { box: fork ? await this.#deps.boxes.find(fork.box) : null, snapshot: this.#deps.ledger.record(operation.snapshots[0] ?? ""), operation, repeated: true };
+  }
+
+  async #prepareFork(caller: Caller, standing: Standing, box: BoxRecord, ref: string, input: ForkInput) {
+    const named = input.name === undefined ? null : forkNameProblem(input.name);
+    if (named) throw new BoxError("invalid_name", named);
+    const target = this.find(caller, standing, ref);
+    const allowed = mayAct(caller, "fork", standing, target);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
+    this.#requireStore("forks");
+    const source = await this.#deps.boxes.find(target.box.id);
+    if (!source || target.boxGone) throw new BoxError("released", `Box ${target.box.name} was released, and bb-box forks only a living box's snapshots for now.`);
+    if (target.state !== "ready") throw new BoxError(target.state === "taking" ? "try_again" : "unsupported", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not fork it.`);
+    if (target.scope !== "box") throw new BoxError("unsupported", `Snapshot ${quoted(target)} holds ${source.name}'s device only, so it does not fork.`);
+    if (target.guest === "held-copy") throw new BoxError("unsupported", `Snapshot ${quoted(target)} is a held copy, which bb-box does not fork yet.`);
+    if (target.box.system !== "linux") throw new BoxError("unsupported", `bb-box forks Linux boxes only, as only they reset their identity at a fork's first boot. Box ${source.name} runs ${target.box.system}.`);
+    if (target.forkSafe === null) {
+      throw new BoxError("unsupported", `${source.name} had no working identity reset when ${quoted(target)} was taken, so bb-box does not fork it: a copy of it would not give up ${source.name}'s identity, and could act as ${source.name}.`);
+    }
+    const backend = this.#deps.backends.get(target.backend.id);
+    if (!backend) throw new BoxError("backend_off", `The ${target.backend.label} backend that holds snapshot ${quoted(target)} is not in bb-box's settings, so it forks nothing.`);
+    const offer = this.offerFor(backend, source.kind);
+    if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity) throw new BoxError("unsupported", `${backend.label} does not fork ${source.kind} boxes.`);
+    const safeFrom = offer.forkSafeFrom ?? 1;
+    if (target.forkSafe < safeFrom) {
+      throw new BoxError(
+        "unsupported",
+        `${source.name} had version ${target.forkSafe} of the identity reset when ${quoted(target)} was taken, and bb-box forks ${backend.label}'s boxes only from version ${safeFrom}, which keeps a copy from coming up as its source in every case bb-box checks. Take a snapshot of a box whose image has version ${safeFrom} or later.`,
+      );
+    }
+    const holding = this.#restoreHolding(source);
+    if (holding) throw holding;
+    const plan = await backend.planSnapshots(target.livesOn, source.kind, { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
+    if (plan.busy) throw new BoxError("try_again", `bb-box cannot fork ${quoted(target)} now: ${plan.busy}`);
+    if (!plan.fork.ok || !plan.fork.size) throw new BoxError("unsupported", `bb-box cannot fork ${quoted(target)} of box ${source.name}: ${plan.fork.why ?? `${backend.label} refused it.`}`);
+    const asMachine = caller.is !== "agent" && (input.asMachine === true || source.threadId === OPERATOR || isKept(target));
+    const threadId = asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : source.threadId;
+    return { target, box: source, backend, plan, threadId, size: plan.fork.size };
+  }
+
+  forkEnded(box: BoxRecord): void {
+    const operationId = box.fork?.operation;
+    const operation = operationId ? this.#deps.ledger.operation(operationId) : null;
+    if (!operation || operation.kind !== "fork" || (operation.state !== "running" && operation.state !== "unknown")) return;
+    this.#settleFork(operation, box);
+  }
+
+  #settleFork(operation: SnapshotOperation, box: BoxRecord | null): void {
+    const ledger = this.#deps.ledger;
+    const now = this.#now();
+    const target = ledger.record(operation.snapshots[0] ?? "");
+    const fork = forkConsentOf(operation);
+    const named = box ? `box ${box.name} (${box.id})` : `box ${fork?.name ?? fork?.box ?? "unknown"}`;
+    if (box?.state === "failed" && box.guest) {
+      const pending = `Its guest ${box.guest.ref} is not deleted yet; bb-box tries again at each sweep.`;
+      if (operation.error !== pending) {
+        ledger.updateOperation(operation.id, { state: "unknown", error: pending });
+        if (target) this.#event(target, "fork-failed", operation.by, `"${target.name}" into ${named}: ${sentence(box.error ?? "it failed")}`);
+      }
+      return;
+    }
+    if (box?.state === "ready") {
+      ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null });
+      const total = typeof box.timings.total === "number" ? `, ready in ${seconds(box.timings.total)}` : "";
+      if (target) this.#event(target, "forked", operation.by, `"${target.name}" into ${named}${total}.`);
+    } else {
+      const why = box ? (box.state === "failed" ? (box.error ?? "it failed") : `it was ${box.state === "releasing" ? "released" : box.state} before it was ready`) : "its box is gone";
+      ledger.updateOperation(operation.id, { state: "failed", step: "done", endedAt: now, error: sentence(why) });
+      if (target) this.#event(target, "fork-failed", operation.by, `"${target.name}" into ${named}: ${sentence(why)}`);
+    }
+    if (target) this.#notify(target.box.thread);
+  }
+
+  async #recoverForks(waiting: readonly SnapshotOperation[]): Promise<number> {
+    let settled = 0;
+    for (const operation of waiting) {
+      const fork = forkConsentOf(operation);
+      const box = fork ? await this.#deps.boxes.find(fork.box) : null;
+      if (box && (box.state === "acquiring" || box.state === "starting")) continue;
+      if (box?.state === "failed" && box.guest) continue;
+      this.#settleFork(operation, box);
+      settled++;
+    }
+    return settled;
   }
 
   #restoreHolding(box: BoxRecord): BoxError | null {
@@ -1643,7 +1902,7 @@ export class Snapshots {
             throw new BoxError("unflushed", `${words} bb-box changed nothing.`);
           }
           ledger.updateOperation(operation.id, { consent: { ...(operation.consent as object), unflushedWhy: unflushed } });
-          undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed) }) ?? undo;
+          undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed), unflushed }) ?? undo;
         }
         await admitted(box, "planned");
         await this.#deps.hold?.(operation, "checked", signal);
@@ -2160,7 +2419,9 @@ export class Snapshots {
     const ledger = this.#deps.ledger;
     if (ledger.problem) return 0;
     const waiting = ledger.unsettled().filter((operation) => !this.#running.has(operation.id));
-    const settledHere = waiting.length ? await this.#recoverWaiting(waiting, signal) : 0;
+    const forks = waiting.filter((operation) => operation.kind === "fork");
+    const others = waiting.filter((operation) => operation.kind !== "fork");
+    const settledHere = (forks.length ? await this.#recoverForks(forks) : 0) + (others.length ? await this.#recoverWaiting(others, signal) : 0);
     await this.#clearStaleMarks();
     this.#marksChanged();
     return settledHere;

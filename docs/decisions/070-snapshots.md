@@ -454,7 +454,7 @@ bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 bb box snapshot list [<box>] [--kept] [--json]
 bb box snapshot delete <box> <snapshot>
 bb box snapshot restore <box> <snapshot> --replace [--no-undo] [--force]
-bb box snapshot fork <box> <snapshot> [--machine | --thread <thread>] [--name <name>]
+bb box snapshot fork <box> <snapshot> [--as-machine] [--name <name>] [--check]
 bb box snapshot keep <box> <snapshot> [--days <n> | --until <date>]
 bb box snapshot unkeep <box> <snapshot>
 bb box snapshot rename <box> <snapshot> <name>
@@ -1372,6 +1372,111 @@ On 31 October 2026, during unit 5:
   backup holding the guest's lock.
 - **`box_snapshots` has no `pictures` parameter yet**; pictures come with
   unit 6, and `box_fork` with unit 7.
+
+## Decided during unit 7
+
+On 31 October 2026, during unit 7:
+
+- **The check before ready compares what the snapshot held.** At each take,
+  with `forkSafe`, bb-box keeps a hash of the box's machine ID and of each
+  SSH host key on the snapshot's record (`identity`, a new column). On a
+  fork's first contact, before anything else bb-box runs there, it reads
+  the fork's identity reset, marker, BB folders, access file, Tailscale
+  state, machine ID and host keys, and hands it over only if the reset ran:
+  its boot says `reset` (or `kept` on a later boot of a fork that reset),
+  its marker names only the fork's own MAC addresses and no box, BB's
+  credentials, the access file and a tailnet node are gone, and the
+  machine ID and host keys are not the snapshot's. `boot=unknown` and a
+  reset still pending are waited for, up to a minute, never counted as
+  reset. A fork that fails the check is released, and fails with why. A
+  snapshot taken before this unit has no such hashes, and its forks are
+  checked without that last comparison.
+- **`forkSnapshot` makes the guest; core starts it.** The backend copies
+  the snapshot in full into a VMID of its own, recorded before the clone,
+  and re-arms it in one step: `onboot` 1, every link up, new MAC
+  addresses, the address of its own VMID, on QEMU a new SMBIOS UUID, and
+  the new box's labels. It takes the previous guest of a fork cut short by
+  a restart, as `acquire` does, and deletes it before it copies again.
+  Core starts the guest with the backend's `start`, then checks it.
+- **The copy runs on the source box's queue**, so the source's take,
+  restore, stop and release wait for it, and the fork's operation pins its
+  snapshot until the fork is ready or failed. Its box log has `fork-asked`
+  then `forked` or `fork-failed`; the fork's own log starts with `made`,
+  "Forked from (source), (snapshot) (taken ...)".
+- **Where a fork goes.** An agent forks into its own thread; the person
+  into the box's thread, or with `--as-machine` (the page's "As one of
+  your machines") as a machine of theirs; a fork of one of the person's
+  machines is one of theirs. The CLI's `--machine` and `--thread` already
+  say where the source box is, so the fork's own choice is `--as-machine`.
+  Forks into another thread stay later, as section 9 says.
+- **A fork has the snapshot's size**, read from the snapshot's config; no
+  larger size is offered yet.
+- **Held copies do not fork yet**: they come with Keep (unit 8).
+- **Takes flush first** (the lead's request after the first live check).
+  Before a take of a running box, bb-box runs `sync` in it, as unit 6's
+  restore does before its stop, with the same 15 s limit, disk only and
+  with memory alike: a QEMU memory snapshot's disk otherwise lacked what
+  the guest had not written yet, so its fork lacked it too. A flush that
+  fails or times out stops nothing: the take goes ahead, and its record
+  (`unflushed`, a new column), its answer, the list, the page's row and
+  every fork of it say it may miss the last writes. Keep (unit 8) is to
+  say so too.
+- **A fork's first start waits up to 180 s for SSH** on Proxmox LXC as on
+  QEMU (the lead's request), so an LXC fork whose card comes late is
+  waited for until its reset, not failed at the container's usual 30 s.
+  Other starts keep their own wait.
+- **A fork never keeps its source's address.** Live, an LXC fork started
+  without its card kept its source's network file, as Proxmox writes one
+  only for the cards a container starts with; when the card was
+  hot-plugged, systemd-networkd brought up the source's address before
+  Proxmox wrote the fork's own, and the source lost its connection to BB
+  for 40 s. Two fixes: the check before ready refuses a fork that holds
+  its source's address; and version 6 of the identity program, on Proxmox
+  LXC, sets the `eth` cards' network files aside while a boot cannot tell
+  whether it is a copy, so a card added later gets only Proxmox's settings.
+  The reset is too late for that: networkd applies a file the moment the
+  card appears. The fix needs the LXC templates rebuilt with version 6;
+  until then the check before ready refuses such a fork.
+
+After the two reviews of unit 7, the lead decided:
+
+- **A clone cannot start until bb-box arms it.** The first request after
+  the clone task sets `onboot` 0 and every link down. The copy gets its
+  own addresses with its links down. Its links come up just before its
+  first start, and `onboot` only once the check before ready passes. The
+  gap between the clone's lock going and that first request is accepted,
+  with no hookscript: the lock covers the copy, a reboot inside the gap
+  still resets on the new MAC address, and recovery deletes a half-made
+  fork.
+- **Version 7 holds from the first look.** On Proxmox LXC, a boot with no
+  `eth` card and none of the marker's MAC addresses on any interface holds
+  the copied network files before it waits, in `/var/lib/bb-box/`,
+  flushed, and settles them at the next decision. If it cannot hold them
+  it deletes them, and if it cannot delete them the boot fails closed.
+  This replaces version 6's hold after the wait.
+- **Each backend forks only from a version known safe**: Proxmox LXC from
+  7, QEMU from 5, before the copy and at first contact.
+- **The check before ready reads everything or refuses**: every probe must
+  finish and every item be read; the fork must hold its own address and
+  no other address of the box range; a shared MAC or another box's
+  address refuses at once, before any wait.
+- **A failed clean-up is kept, not hidden**: the guest stays on the record,
+  stopped, the operation unknown and pinned, and the sweep deletes it.
+- **`box_fork` checks before it takes**, deletes the snapshot it took if
+  the fork is still refused, and passes on the take's words.
+- **Names are checked before anything is recorded**, by the machine rule.
+- **A fork of a kept snapshot is one of the person's machines.**
+
+After the re-reviews:
+
+- **A fork's record keeps its guest when bb-box stops.** Recovery deletes
+  that guest, and confirms it is gone, before it copies the snapshot
+  again.
+- **A read that fails is unreadable, never a negative answer**, so it
+  refuses the fork.
+- **`box_fork`'s check before its take includes the fork's room and
+  place**: the backend's room, the thread's limit and the name.
+- **An abandoned clone is disarmed before each attempt to delete it.**
 
 ## Alternatives considered
 

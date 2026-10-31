@@ -1,5 +1,5 @@
 import type { DoctorCheck, Guest } from "../backends/types.ts";
-import type { Actor } from "../core/box-log.ts";
+import { utf8Prefix, type Actor } from "../core/box-log.ts";
 import {
   BOX_GONE_HOW,
   OPERATION_KINDS,
@@ -14,6 +14,7 @@ import {
   type StoredPicture,
 } from "../core/snapshot.ts";
 import { chargeOf, type Charge } from "../core/snapshot-cost.ts";
+import type { HeldIdentity } from "../core/identity.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
@@ -108,9 +109,12 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
     height INTEGER NOT NULL CHECK(height > 0),
     taken_at INTEGER NOT NULL
   )`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN identity TEXT`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN unflushed TEXT CHECK(unflushed IS NULL OR length(CAST(unflushed AS BLOB)) <= 1024)`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
+const UNFLUSHED_BYTES = 1000;
 
 interface PictureRow {
   snapshot: string;
@@ -174,6 +178,8 @@ interface SnapshotRow {
   kept_at: number | null;
   undo_of: string | null;
   fork_safe: number | null;
+  identity: string | null;
+  unflushed: string | null;
   depends_on: string;
   picture: SnapshotRecord["picture"];
   ref: string | null;
@@ -268,6 +274,8 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     keptAt: row.kept_at,
     undoOf: row.undo_of,
     forkSafe: row.fork_safe,
+    identity: parsed<HeldIdentity | null>(row.identity, null),
+    unflushed: row.unflushed,
     dependsOn: parsed<string[]>(row.depends_on, []),
     picture: row.picture,
     ref: row.ref,
@@ -313,6 +321,8 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     kept_at: record.keptAt,
     undo_of: record.undoOf,
     fork_safe: record.forkSafe,
+    identity: json(record.identity ?? null),
+    unflushed: record.unflushed ? utf8Prefix(record.unflushed, UNFLUSHED_BYTES) : null,
     depends_on: JSON.stringify(record.dependsOn),
     picture: record.picture,
     ref: record.ref,

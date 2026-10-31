@@ -5,16 +5,17 @@ import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { isMachineName } from "../core/names.ts";
 import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
-import type { BoxSnapshotsView, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
+import type { BoxSnapshotsView, ForkPreview, ForkStarted, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
 import type { BoxHistoryView } from "./box-history.ts";
 
-export type { BoxSnapshotsView, FailedRestoreView, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
+export type { BoxSnapshotsView, FailedRestoreView, ForkPreview, ForkStarted, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 export type { BoxHistoryView } from "./box-history.ts";
@@ -298,6 +299,8 @@ export const contract = defineRpcContract({
   "snapshot.note": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), note: z.string().max(4096) }), output: z.custom<SnapshotChange>() },
   "snapshot.picture": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<{ readonly jpeg: string; readonly width: number; readonly height: number } | null>() },
   "snapshot.settle": { input: z.object({ box: z.string().min(1) }), output: z.custom<SnapshotChange>() },
+  "snapshot.forkCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), asMachine: z.boolean().optional() }), output: z.custom<ForkPreview>() },
+  "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).refine((name) => name === "" || isMachineName(name)).optional(), asMachine: z.boolean().optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import type { BoxSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
-import { BoxError, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, eligible, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
-import { restoreStepWords, unflushedOf, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
+import { restoreStepWords, unflushedOf, type ForkCheck, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
+import { describeSize } from "../core/sizes.ts";
+import type { Snapshotting } from "../backends/types.ts";
 import { withinWait } from "../core/snapshot-picture.ts";
 
 export const PERSON: Caller = { is: "person" };
@@ -36,6 +38,8 @@ export interface SnapshotRowView {
   readonly undoOf: { readonly at: number; readonly to: string | null } | null;
   readonly picture: PictureState | null;
   readonly busyWhy: string | null;
+  readonly forkWhy: string | null;
+  readonly unflushed: string | null;
 }
 
 export interface RestoredView {
@@ -56,7 +60,7 @@ export interface FailedRestoreView {
 }
 
 export interface BoxSnapshotsView {
-  readonly offer: { readonly holds: readonly Holds[]; readonly scope: SnapshotScope; readonly whileRunning: WhileRunning; readonly restore: "in-place" | "new-guest" | "none"; readonly excludes: string | null; readonly price: Price | null } | null;
+  readonly offer: { readonly holds: readonly Holds[]; readonly scope: SnapshotScope; readonly whileRunning: WhileRunning; readonly restore: "in-place" | "new-guest" | "none"; readonly fork: "copy" | "none"; readonly excludes: string | null; readonly price: Price | null } | null;
   readonly noneWhy: string | null;
   readonly perBox: number;
   readonly counted: number;
@@ -108,6 +112,19 @@ export class TakeChecks {
   }
 }
 
+export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): string | null {
+  if (!offer || offer.fork !== "copy") return "its backend forks none";
+  if (record.state === "taking") return "it is still being taken";
+  if (record.state === "deleting") return "it is being deleted";
+  if (record.state !== "ready") return `it is ${record.state}`;
+  if (record.scope === "device") return "it holds the device only";
+  if (record.guest === "held-copy") return "it is a held copy, which bb-box does not fork yet";
+  if (record.box.system !== "linux") return "bb-box forks Linux boxes only";
+  if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
+  if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
+  return null;
+}
+
 function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): SnapshotRowView {
   const ledger = snapshots.ledger;
   const pin = ledger.pins().get(record.id) ?? null;
@@ -133,6 +150,8 @@ function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): Snaps
     undoOf: undoOperation ? { at: undoOperation.startedAt, to: undoTarget?.name ?? null } : null,
     picture: record.picture,
     busyWhy: verdict.ok ? null : verdict.why,
+    forkWhy: forkWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind)),
+    unflushed: record.unflushed ?? null,
   };
 }
 
@@ -170,7 +189,7 @@ export function boxSnapshotsView(snapshots: Snapshots, box: BoxRecord, takeWhy: 
   const offer = backend ? snapshots.offerFor(backend, box.kind) : null;
   const records = snapshots.visible(PERSON, personStanding(box)).sort((a, b) => b.takenAt - a.takenAt);
   return {
-    offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, excludes: offer.excludes, price: offer.price } : null,
+    offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, fork: offer.fork, excludes: offer.excludes, price: offer.price } : null,
     noneWhy: offer ? null : backend ? `Boxes on ${box.backendLabel} have no snapshots.` : `The ${box.backendLabel} backend is not in bb-box's settings, so it takes no snapshots of ${box.name}.`,
     perBox: snapshots.settings.perBox,
     counted: records.filter(countsAgainstLimit).length,
@@ -230,6 +249,52 @@ export async function restorePreview(snapshots: Snapshots, box: BoxRecord, ref: 
     preview = { ...seen, refusal: message(error), check: null };
   }
   return { ...preview, token: tokenOf(box, preview), undoUnflushed };
+}
+
+export interface ForkPreview {
+  readonly refusal: string | null;
+  readonly check: {
+    readonly snapshot: string;
+    readonly takenAt: number;
+    readonly threadId: string;
+    readonly asMachine: boolean;
+    readonly canBeMachine: boolean;
+    readonly size: string;
+    readonly aboutMs: number;
+    readonly bytes: number | null;
+    readonly host: string | null;
+    readonly storage: string;
+    readonly unflushed: string | null;
+  } | null;
+}
+
+export interface ForkStarted {
+  readonly error: string | null;
+  readonly box: { readonly id: string; readonly name: string } | null;
+}
+
+export async function forkPreview(snapshots: Snapshots, box: BoxRecord, ref: string, asMachine: boolean): Promise<ForkPreview> {
+  try {
+    const check: ForkCheck = await snapshots.checkFork(PERSON, box, personStanding(box), ref, { asMachine });
+    return {
+      refusal: null,
+      check: {
+        snapshot: check.snapshot.name,
+        takenAt: check.snapshot.takenAt,
+        threadId: check.threadId,
+        asMachine: check.asMachine,
+        canBeMachine: box.threadId !== OPERATOR && box.capabilities.enrol && !isKept(check.snapshot),
+        size: describeSize(check.size),
+        aboutMs: check.aboutMs,
+        bytes: check.bytes,
+        host: check.host,
+        storage: check.storage,
+        unflushed: check.snapshot.unflushed ?? null,
+      },
+    };
+  } catch (error) {
+    return { refusal: message(error), check: null };
+  }
 }
 
 export interface SnapshotChange {

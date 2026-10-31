@@ -9,7 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, BoxEntry, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxEntry, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ForkPreview, ForkStarted, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { Busy } from "../src/monitor/busy.ts";
 import { busyNow, busyUntil, rowLine, rowReasons, rowWords } from "../src/app/row-line.ts";
@@ -537,7 +537,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null } } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -730,6 +730,11 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
     "snapshot.settle": ({ box: ref }) => {
       changes.push(`snapshot.settle ${ref}`);
       return { error: null, pending: false };
+    },
+    "snapshot.forkCheck": ({ asMachine }) => options.forkPreview?.(asMachine === true) ?? { refusal: "No preview.", check: null },
+    "snapshot.fork": (input) => {
+      changes.push(`snapshot.fork ${JSON.stringify({ ...input, request: undefined })}`);
+      return options.forkAnswer ?? { error: options.failWith ?? null, box: options.failWith ? null : { id: "box_fork", name: "fork-one" } };
     },
     backends: () => BACKENDS,
     doctor: (): DoctorView => ({
@@ -9545,13 +9550,15 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     undoOf: null,
     picture: null,
     busyWhy: null,
+    forkWhy: null,
+    unflushed: null,
     ...overrides,
   };
 }
 
 function snapshotsView(overrides: Partial<BoxSnapshotsView> = {}): BoxSnapshotsView {
   return {
-    offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", excludes: null, price: null },
+    offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "none", excludes: null, price: null },
     noneWhy: null,
     perBox: 5,
     counted: 1,
@@ -9596,13 +9603,60 @@ test("070 unit 6: the Snapshots card sits after Activity and before the facts, w
   expect(card.textContent).toContain("kept until 29 Nov");
   expect(card.textContent).toContain("by you · 1.2 GB");
   expect(within(card).getByText("Snapshots hold the disk. They go when calm-otter is released.")).toBeTruthy();
-  expect(within(card).queryByRole("button", { name: /^Fork/ }), "Fork comes with unit 7").toBeNull();
+  expect(within(card).queryByRole("button", { name: /^Fork/ }), "no Fork where the backend forks none: no dead controls").toBeNull();
   const facts = slot.getByRole("region", { name: "Facts" });
   expect(card.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
   const listed = items(menu);
   expect(listed.indexOf("Take snapshot…")).toBe(listed.indexOf("Resize…") + 1);
   fireEvent.keyDown(menu, { key: "Escape" });
+});
+
+test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, its size, time and space and what a fork holds; Fork sends it with what was chosen and opens the new box's page", async () => {
+  const preview = (asMachine: boolean): ForkPreview => ({
+    refusal: null,
+    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null },
+  });
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", excludes: null, price: null } }), forkPreview: preview });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const button = within(card).getByRole("button", { name: "Fork before the migration into a new box" });
+  button.focus();
+  fireEvent.click(button);
+  const dialog = await slot.findByRole("alertdialog", { name: 'Fork "before the migration" of calm-otter' });
+  const name = within(dialog).getByRole("textbox", { name: "Name of the new box" });
+  expect(document.activeElement).toBe(name);
+  expect(await within(dialog).findByText(/^A new box with calm-otter's files as they were today at \d\d:\d\d\. It gets its own BB machine, address and keys, and never acts as calm-otter\. Everything else on its disk comes with it: project secrets, signed-in browsers and keychains\. It starts fresh: no apps are running\.$/)).toBeTruthy();
+  expect(within(dialog).getByText("2 cores, 4 GiB memory, 16 GiB disk, as the snapshot holds. The copy takes up to about 38 s and 17 GB on pve-1's local-lvm, then it starts, and bb-box checks that it reset its identity before handing it over.")).toBeTruthy();
+  const machine = within(dialog).getByRole("radio", { name: "As one of your machines" });
+  expect((within(dialog).getByRole("radio", { name: /^In / }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(machine);
+  fireEvent.change(name, { target: { value: "calm-otter" } });
+  const send = within(dialog).getByRole("button", { name: "Fork calm-otter" }) as HTMLButtonElement;
+  await waitFor(() => expect(send.disabled, "the plan for one of your machines is read first").toBe(false));
+  fireEvent.click(send);
+  await waitFor(() => expect(changes).toContain(`snapshot.fork ${JSON.stringify({ box: "box_1", snapshot: "snaaaaaaaaaaaa", name: "calm-otter", asMachine: true })}`));
+  await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
+});
+
+test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a row says when its take could not flush the box's writes", async () => {
+  const forkable = { holds: ["disk" as const], scope: "box" as const, whileRunning: "live" as const, restore: "in-place" as const, fork: "copy" as const, excludes: null, price: null };
+  const { handlers } = server([box()], {
+    snapshots: snapshotsView({ offer: forkable, records: [snapshotRow({ forkWhy: "calm-otter had no working identity reset when it was taken", unflushed: "sync: Input/output error" })] }),
+    forkPreview: () => ({ refusal: "No.", check: null }),
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  expect(card.textContent).toContain("1.2 GB · may miss its last writes");
+  const off = within(card).getByRole("button", { name: "Fork: not now, as calm-otter had no working identity reset when it was taken" });
+  expect((off as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("070 unit 7: a fork's page says where it came from among its facts", async () => {
+  const { handlers } = server([box({ forkedFrom: { name: "amber-fox", snapshot: "before the migration", takenAt: Date.now() - 60_000 } })]);
+  const slot = boxPageAt(handlers, "box/box_1");
+  const facts = await slot.findByRole("region", { name: "Facts" });
+  expect(facts.textContent).toMatch(/Forked from amber-fox, "before the migration" \(today \d\d:\d\d\)/);
 });
 
 test("070 unit 6: Take snapshot asks for a name and note, says what it holds, costs and counts, and sends the take; focus starts on the name and returns to the button", async () => {

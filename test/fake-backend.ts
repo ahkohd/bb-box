@@ -104,6 +104,7 @@ export interface FakeBackendOptions {
   /** The smallest size a viewer may set a desktop to. None by default. */
   readonly minSize?: DisplaySize;
   readonly identityTool?: string;
+  readonly identityRoot?: string;
   /**
    * Virtual: the largest guest it makes; capacity refuses a larger size. Real:
    * every machine's size, which a box of any size up to it gets. 16 cores,
@@ -526,6 +527,8 @@ export class FakeBackend implements Backend {
     return { ...guest, size: to };
   }
 
+  readonly identities = new Map<string, { readonly tool: string; readonly root: string; readonly bin?: string }>();
+
   async makeGuest(box: BoxIdentity, from: string | null): Promise<Guest> {
     const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
     await this.#storage.set("counter", counter);
@@ -621,7 +624,8 @@ export class FakeBackend implements Backend {
     const daemonKeptByHost = this.#options.daemonKeptByHost
       ? { installerEnvironment: { BB_INSTALL_SKIP_SERVICE: "1" }, daemonPort: 38900, takeOver: async () => void this.calls.push(`take over ${guest.ref}`) }
       : undefined;
-    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell, this.#options.identityTool), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
+    const identity: { readonly tool?: string; readonly root?: string; readonly bin?: string } = this.identities.get(guest.ref) ?? { tool: this.#options.identityTool, root: this.#options.identityRoot };
+    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell, identity.tool, identity.root, identity.bin), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
   }
 
   async #resize(size: DisplaySize): Promise<void> {
@@ -846,12 +850,18 @@ export class FakeTransport implements CommandTransport {
   readonly #identityTool: string;
   readonly #identityState: string;
 
-  constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string, identityTool?: string) {
+  constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string, identityTool?: string, identityRoot?: string, identityBin?: string) {
     this.#home = home;
     this.#identityTool = quote(identityTool ?? join(home, ".no-identity-tool"));
     this.#identityState = join(home, ".bb-box-state");
     // A test's cgroup for the memory a box uses (061), which no real box sets.
-    const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}), ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}) };
+    const env = {
+      PATH: identityBin ? `${identityBin}:${process.env.PATH}` : process.env.PATH,
+      HOME: home,
+      ...(shell ? { SHELL: shell } : {}),
+      ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}),
+      BBBOX_IDENTITY_ROOT: identityRoot ?? join(home, ".no-identity-root"),
+    };
     const sh = (script: string) => ["sh", "-c", script] as const;
     this.#line = new CommandLine({
       argv: (script) => {

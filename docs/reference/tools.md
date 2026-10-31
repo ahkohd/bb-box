@@ -9,6 +9,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_acquire`](#box_acquire) | Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. |
 | [`box_copy`](#box_copy) | Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. |
 | [`box_device`](#box_device) | Control an ios or android box's device, as the panel's toolbar does: Home, Back and Recents, lock and wake, rotate, fold, appearance, text size, location, status bar, battery, network, install an app, switch device, and reboot. |
+| [`box_fork`](#box_fork) | Make a new box of this thread from a snapshot of one of its boxes, or from the box as it is now, to try two things from one set-up state. |
 | [`box_grant`](#box_grant) | Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. |
 | [`box_image_draft`](#box_image_draft) | Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. |
 | [`box_image_set`](#box_image_set) | Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. |
@@ -81,6 +82,16 @@ Control an ios or android box's device, as the panel's toolbar does: Home, Back 
 | `charging` | boolean | no | battery: with level, whether it charges. |
 | `paths` | array of string | no | install: in the box, as box_copy puts them there. On iOS one .app folder built for the simulator; on Android one .apk, or the split APKs of one app. |
 | `device` | string | no | switch: a model this box offers, from box_list, such as iPhone 17. Each model keeps its own apps and data. |
+
+## box_fork
+
+Make a new box of this thread from a snapshot of one of its boxes, or from the box as it is now, to try two things from one set-up state. The fork gets the snapshot's files and its own identity: a new BB machine, address and keys, so it never acts as its source. Everything else on the disk comes with it, project secrets and signed-in browsers too. It starts fresh, with no apps running, at the snapshot's size.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box to fork, by its name or ID: one of this thread's boxes, not one it runs on. |
+| `snapshot` | string | no | The snapshot's name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that. |
+| `name` | string | no | The new box's name: a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". One is made up when left out. |
 
 ## box_grant
 

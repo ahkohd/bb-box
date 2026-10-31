@@ -26,7 +26,7 @@ export const COMMAND: Caller = { is: "command" };
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 
-export function world(options: { readonly identityTool?: string; readonly markersOn?: boolean } = {}) {
+export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -51,7 +51,7 @@ export function world(options: { readonly identityTool?: string; readonly marker
     machineRestores: false,
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
-    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
+    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}), ...(options.identityRoot ? { identityRoot: options.identityRoot } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
     boxes: null as unknown as Boxes,
@@ -106,7 +106,9 @@ export function world(options: { readonly identityTool?: string; readonly marker
       events: state.log,
       log: (message) => state.boxLogs.push(message),
       ended: (box, how) => state.snapshots.boxEnded(box, how),
+      forked: (box) => state.snapshots.forkEnded(box),
       keepsGuest: (backendId, guestRef) => state.snapshots.holdsGuest(backendId, guestRef),
+      ...(options.forkWaitMs !== undefined ? { forkWaitMs: options.forkWaitMs } : {}),
       now,
     });
     state.boxes = boxes;
@@ -207,6 +209,9 @@ export function identityGuest(options: { readonly booted?: boolean; readonly on?
   writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
   writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
   writeFileSync(join(root, "ip-link.json"), JSON.stringify([{ ifindex: 2, link_index: 900, ifname: "eth0", link_type: "ether", address: "bc:24:11:aa:f1:b6", link_netnsid: 0, linkinfo: { info_kind: "veth" } }]));
+  mkdirSync(join(root, "etc/ssh"), { recursive: true });
+  writeFileSync(join(root, "etc/machine-id"), "0123456789abcdef0123456789abcdef\n");
+  writeFileSync(join(root, "etc/ssh/ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIguest guest\n");
   mkdirSync(join(dir, "bin"));
   writeFileSync(join(dir, "bin/ip"), `#!/bin/sh\nexec cat ${quote(join(root, "ip-link.json"))}\n`, { mode: 0o755 });
   const tool = join(dir, "bb-box-identity");
@@ -222,7 +227,25 @@ export function withIdentitySource(state: World, source: "eth" | "device" | "val
 
 export function armedWorld(): World {
   const guest = identityGuest();
-  const state = world({ identityTool: guest.tool });
+  const state = world({ identityTool: guest.tool, identityRoot: guest.root });
   withIdentitySource(state, "eth");
   return state;
+}
+
+export function flushing(state: World, flush: () => Promise<{ exitCode: number; stdout: string; stderr: string }>): void {
+  const transports = state.backend.transports.bind(state.backend);
+  state.backend.transports = async (guest, kind) => {
+    const found = await transports(guest, kind);
+    const command = found.command!;
+    return {
+      ...found,
+      command: Object.assign(Object.create(Object.getPrototypeOf(command)), command, {
+        run: async (script: string, options?: Parameters<typeof command.run>[1]) => {
+          if (script !== "sync") return command.run(script, options);
+          state.provider.order.push("flush");
+          return flush();
+        },
+      }),
+    };
+  };
 }

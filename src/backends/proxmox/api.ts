@@ -496,11 +496,22 @@ export class Proxmox {
     return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, `/snapshot/${enc(name)}/config`), undefined, signal)) ?? {};
   }
 
-  startFullClone(input: { readonly source: number; readonly vmid: number; readonly hostname: string; readonly pool: string; readonly storage: string | null; readonly description: string }, signal?: AbortSignal): Promise<string> {
+  startFullClone(
+    input: { readonly source: number; readonly vmid: number; readonly hostname: string; readonly pool: string; readonly storage: string | null; readonly description: string; readonly snapshot?: string },
+    signal?: AbortSignal,
+  ): Promise<string> {
     return this.#begin(
       "POST",
       this.#guest(input.source, "/clone"),
-      { newid: input.vmid, [this.type === "qemu" ? "name" : "hostname"]: input.hostname, full: 1, pool: input.pool, description: input.description, ...(input.storage ? { storage: input.storage } : {}) },
+      {
+        newid: input.vmid,
+        [this.type === "qemu" ? "name" : "hostname"]: input.hostname,
+        full: 1,
+        pool: input.pool,
+        description: input.description,
+        ...(input.storage ? { storage: input.storage } : {}),
+        ...(input.snapshot ? { snapname: input.snapshot } : {}),
+      },
       signal,
     );
   }

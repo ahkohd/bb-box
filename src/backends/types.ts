@@ -475,6 +475,7 @@ export class BackendError extends Error {
  * whose release was interrupted.
  */
 export type IdentitySource = "eth" | "device" | "value";
+export type ForkArming = "network" | "boot";
 
 export interface Backend {
   /** Unique among active backends, stable across restarts. Stored with each box. */
@@ -567,7 +568,7 @@ export interface Backend {
    * change the guest's facts. Throws BackendError("gone") when the guest no
    * longer exists.
    */
-  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void>;
+  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
@@ -721,6 +722,10 @@ export interface Backend {
   adoptCopy?(copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
   retireGuest?(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest>;
   identitySource?(kind: string): IdentitySource | null;
+  forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
+  armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
+  disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  boxAddresses?(): readonly string[];
 
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
@@ -756,6 +761,7 @@ export interface Snapshotting {
   readonly lives: "host" | "provider";
   readonly price: Price | null;
   readonly excludes: string | null;
+  readonly forkSafeFrom?: number;
 }
 
 export interface SnapshotStorage {
@@ -792,7 +798,7 @@ export interface SnapshotPlan {
     readonly copyAboutMs: number | null;
   };
   readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly price: Price | null };
-  readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null };
+  readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: BoxSize | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
   readonly busy?: string | null;
 }

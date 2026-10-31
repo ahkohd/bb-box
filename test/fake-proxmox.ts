@@ -394,8 +394,11 @@ export class FakeProxmox {
       if (params.full === "0" && !source.template) {
         return ok(this.#task("vzclone", source.vmid, `Linked clone feature for 'local-lvm:vm-${source.vmid}-disk-0' is not available`));
       }
-      const config = { ...source.config };
+      const from = params.snapname ? source.snapshots?.find((snapshot) => snapshot.name === params.snapname) : null;
+      if (params.snapname && !from) return respond(500, `snapshot '${params.snapname}' does not exist`, { data: null });
+      const config = { ...(from?.config ?? source.config) };
       delete config.template;
+      delete config.vmstate;
       let name: string;
       if (type === "qemu") {
         name = config.name = params.name ?? `VM${newid}`;

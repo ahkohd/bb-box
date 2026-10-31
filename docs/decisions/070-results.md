@@ -2191,3 +2191,550 @@ version.
    (`settings-backend-page.tsx`), the box files' heading
    (`settings-files.tsx`) and the configuration's group labels
    (`settings-configuration.tsx`).
+
+## Unit 7: forks on Proxmox
+
+Built on 31 October 2026 on main `b1bf22db` (units 0 to 6 included), and
+rebased onto `aa192bdf`. What was decided while building it is in 070's
+[Decided during unit 7](070-snapshots.md#decided-during-unit-7).
+
+### What changed
+
+- **The backends.** Proxmox LXC and Proxmox QEMU offer `fork: copy` for
+  their Linux kinds, and their plan says whether a snapshot forks now: not
+  without `VM.Clone` on the pool, under a lock or a running task, on a QEMU
+  box kept suspended to disk, or when the snapshot is missing or part-made;
+  otherwise the size it holds, read from its config, and the copy's time and
+  space at most. `forkSnapshot` (`src/backends/proxmox/forks.ts`) claims a
+  VMID of the box range, records the guest before the clone, copies the
+  snapshot in full (`snapname`, `full: 1`) onto the source's storage,
+  and in one step re-arms it: `onboot` 1, every link up, a new MAC address
+  on every card, the address of its own VMID, the snapshot's cores and
+  memory, the new box's tags, and on QEMU a new SMBIOS UUID with its own
+  address in it. The VMID stays reserved until then, so the box sweep never
+  takes the copy, whose copied tags still name its source, for a leftover.
+  A failed copy is deleted; a copy cut short by a restart is deleted before
+  the copy is made again.
+- **The fork's box** (`Boxes.fork`, `src/core/boxes.ts`): a new record with
+  its origin (`fork`: the operation, the snapshot, the source and its MAC
+  addresses), checked against the thread's box limit, the name and the
+  backend's room, and made through the acquire path. Its copy runs on the
+  source box's queue. Then bb-box starts it with the backend's `start`, and
+  **checks it before it is ready** (`forkVerdict`, `src/core/identity.ts`),
+  through the backend's own command transport, so before bb-box writes any
+  access file there: the identity reset's status, the marker's MAC
+  addresses, BB's folders under `/home/*` and `/root`, the access files,
+  Tailscale's state, the machine ID and the SSH host keys. Only then does it
+  write the fork's own marker, call it ready and enrol it as a new BB
+  machine. A fork that fails the check is released and fails, saying why
+  and "nothing of it acts as (source)". `boot=unknown` and a pending reset
+  are looked at again every 2 s for a minute.
+- **What a take records.** With `forkSafe`, a take keeps the SHA-256 of the
+  box's machine ID and of each SSH host key's key on the snapshot's record
+  (`identity`, a new column in `snapshots.db`, by migration), read by the
+  same command as `forkSafe`.
+- **The engine** (`Snapshots.fork`, `checkFork`, `forkEnded`,
+  `src/core/snapshots.ts`): `mayAct`'s fork row; the snapshot `ready`, of a
+  living box, of the box's own disk (not a device or a held copy), of a
+  Linux box, with `forkSafe`; the backend's plan. The operation is recorded
+  before the box, pins the snapshot, and is settled by the fork's box: done
+  when it is ready, failed when it fails or goes, left while it starts,
+  also after a restart. A repeated `request` gives the same fork.
+- **`box_fork`** (`box`, `snapshot`, `name`): into the agent's own thread;
+  with no snapshot it takes one of the box now, "for a fork", first. It
+  answers as `box_acquire` does, with the fork's origin among its facts.
+- **The CLI**: `bb box snapshot fork <box> <snapshot> [--as-machine]
+  [--name <name>] [--check] [--request <id>] [--json]`; with
+  `BB_BOX_LIVE_CHECKS=1`, `hold-next --at forked` holds a fork after its
+  copy is re-armed, before its first start.
+- **The page.** Each row of the Snapshots card has Fork after Restore, in
+  the row's menu as Fork… below 640 px, off with why where the snapshot
+  cannot fork. The Fork dialog asks for the name and, for a thread's box,
+  whether the fork goes in its thread or among your machines; it says what
+  the fork holds, its size, and the copy's time and space at most; Fork
+  opens the new box's page. A fork's page says "Forked from (source),
+  (snapshot) ((when))" under Made. `snapshot.forkCheck` and `snapshot.fork`
+  are new RPCs.
+- **Docs**: the guide's [Forking a snapshot](../guide/snapshots.md#forking-a-snapshot),
+  the skill's words for `box_fork`, the reference, and 070's notes.
+
+### Tests
+
+On a Linux box, 8 cores, 16 GiB, Node 24.21, in a fresh copy of this branch
+over main `aa192bdf`: `npx tsc` passes, and the reference is current; the
+node suite ran 3,184 tests, 2,896 passed, 0 failed, 288 skipped (the live
+and conformance ones); vitest ran 414, all passed. The node suite includes
+the docs, site and reference checks; they ran again on the last docs.
+
+- `test/forks.test.ts`, 7, through `Boxes` and the fake provider, whose
+  forks copy the snapshot's files and run the real `bb-box-identity` on a
+  root of their own with a new MAC address: a fork resets, is checked, gets
+  its own marker and the snapshot's file, and its source keeps its BB
+  machine, marker, machine ID and keys; a fork given its source's name, as
+  one of your machines, after the same name was refused in the thread; the
+  snapshot pinned while the copy runs and free after; the take's hashes on
+  the record; the box logs. A fork whose first boot did not reset is never
+  ready: its source's MAC address, its image's reset off, and a boot that
+  could not tell, each released with why. A late card held until `settle`
+  resets it, then ready. A snapshot without `forkSafe` refused with the
+  words, nothing copied. An agent forks its own box into its thread, never
+  one it runs on, another thread's, or as your machine; the check changes
+  nothing; a repeated request. A refused plan and a failed copy. Recovery
+  after a restart: done once ready, failed once released.
+- `test/proxmox-lxc-snapshots.test.ts` and
+  `test/proxmox-qemu-snapshots.test.ts`, 3 more: the clone of the snapshot,
+  recorded before it, re-armed with `onboot`, links up, a new MAC, its own
+  address, its labels, its source untouched, the sweep never seeing the
+  half-made copy as its source's; a failed copy and a missing snapshot; a
+  half-made fork deleted after a restart and another guest never; on QEMU a
+  new SMBIOS UUID with its own address, no saved memory, and Windows
+  refused.
+- `test/plugin.test.ts`, 1: `box_fork` takes "for a fork" first and refuses
+  a snapshot without a working reset, as the CLI's `--check` does; another
+  thread finds no such box.
+- `test/app.test.tsx`, 3: the dialog's words, focus on the name, the choice
+  of where it goes, Fork sent with them; Fork off with why; a fork's facts.
+
+The test box's `better-sqlite3` binary, installed while npm 11 held back
+install scripts, crashed at the end of files that use it, on `origin/main`
+too; with the build from another box of the same image, every file ran.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and ports,
+started with `env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1`, in a
+Proxmox LXC box, with bb-box installed from this branch
+([`live-setup.sh`](070-snapshots/unit-7/live-setup.sh)) and
+`general.identityResetBackends` set to both Proxmox backends on that BB
+only. The lead lent it a Proxmox LXC backend (template 9800, and 9803, a
+CPU desktop from before unit 2, without `bb-box-identity`) and a Proxmox
+QEMU backend (template 9806, and 9807), on LVM-thin, with the production
+token and 12 VMIDs and addresses of their own. Both Linux templates carry
+version 5 of the identity reset. An agent's thread ran on the scripted ACP
+agent of unit 5. Root steps ran from
+[`proxmox-root.sh`](070-snapshots/unit-7/proxmox-root.sh), which the lead
+read first; the page was driven by
+[`fork-page.mjs`](070-snapshots/unit-7/fork-page.mjs). The node is written
+pve-1.
+
+| Check | Result |
+| --- | --- |
+| The take | the agent's `box_snapshot` of its LXC box gentle-acorn (armed, `boot=unarmed` at its first boot, before its marker): `forkSafe` 5, and the record held the SHA-256 of its machine ID and of its two host keys, as read in the box |
+| `box_fork`, LXC | the agent forked "set up" into fair-comet, ready 15 s after the call (copy and start 12 s): at its first boot the reset ran at 09:07:12.163, before systemd-networkd (.174) and ssh (.264): "removed BB's machine credentials and host ID (host_u4mqv4jcdv), the thread's access file and the tailnet node; made new SSH host keys and a new machine ID". bb-box's check passed and wrote its marker (its own MAC, its own box). The fork had the snapshot's file, a new machine ID and new host keys (none of the take's hashes), and joined BB as host_g2az9ezrmi |
+| The source's host ID | BB's server log has one "Session opened" for host_u4mqv4jcdv, at 09:05:38, never replaced, through every fork of it; each fork had a session of its own |
+| A fork given its source's name, LXC | `bb box snapshot fork gentle-acorn "set up" --as-machine --name gentle-acorn`: ready in 13 s, `boot=reset`, the same file, BB machine host_4eb9mavc7e; BB listed two machines named gentle-acorn, each with its own host ID, both connected, and the source's still had its one session |
+| `--check` | "Forking ... would make one of your machines, with 2 cores, 4 GiB memory, 16 GiB disk, as the snapshot holds. ... Nothing changed." |
+| QEMU, from a memory snapshot | src-vm (`boot=unarmed`, armed) with `sleep 9999` running, taken `--memory`; vm-fork ready in 22 s: the reset at 09:12:02.718, before networkd (.730) and ssh (.852); a fresh boot (up 0 minutes), no `sleep 9999`, a new SMBIOS UUID; its own BB machine. The source's second session, at 09:11:50, replaced its first after the memory snapshot's pause, 12 s before the fork booted |
+| QEMU, from a disk snapshot | a file written just before the take, one flushed, and one written after `sync`: all three in the fork |
+| `onboot` and links (`proxmox-root.sh config`, by the lead) | the forks 3171, 3172, 3175 (LXC) and 3177 (QEMU): `onboot: 1`, no `link_down`, MAC addresses of their own, their own addresses, their own box's tags; 3177 a new SMBIOS UUID |
+| A first boot that says unknown, QEMU | held after its copy (`hold-next --at forked`); the lead removed its card at 09:16:59, bb-box started it at 09:17:26; its check said at 09:18:06 "not knowing yet whether this box is a copy ... It removes nothing", and SSH stayed down; bb-box showed it starting. The lead put the same card back at 09:18:42; `settle` reset it at 09:18:42.80, SSH started at .93, bb-box's check ran at 09:18:43.59 and wrote the marker at .64, and only then was it ready, 116 s after the request |
+| An image without the unit | old-desk, from template 9803, has no `bb-box-identity`; its snapshot listed "not fork-safe: old-desk had no working identity reset when it was taken", and the fork was refused before anything was copied: "old-desk had no working identity reset when "old image" was taken, so bb-box does not fork it: ..." |
+| A restart mid-fork | held after its copy at .184, then `bb plugin reload bb-box`: the copy was deleted, made again at .185 (copy 12.6 s) and checked, ready 32.5 s after the request; 0 operations not settled. The CLI that waited on it answered "is acquiring", as the reload ended its wait |
+| The page, 1,440 px, keyboard only | gentle-acorn's page: Fork reached in 14 Tab presses, focus on the name, the default "In (thread)", Enter on Fork: the new box's page opened 0.9 s later, starting; jolly-tundra was ready in 11.5 s, its facts "Forked from gentle-acorn, "set up" (today 09:06)" |
+| The page, 390 px, keyboard only | src-vm's page: the row's menu, a sheet at that width, reached in 13 Tab presses, then Fork…; the dialog on the name, "It becomes one of your machines."; the new box's page 0.9 s after Enter; page-fork ready in 19 s, with its origin in its facts |
+| Permissions | a second thread's agent: `box_fork` of the first thread's box said "This thread has no box "gentle-acorn""; the first thread's agent of one of your machines: "This thread has no box "src-vm"" |
+
+Afterwards every box and snapshot of the separate BB was released or
+deleted, and the lead's `leftovers` listed no guest of the install in the
+lent VMIDs.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| G14 fork-identity, unit 7's part | **Passed** on Proxmox LXC and QEMU: each fork reset at its first boot before its network, SSH and BB's daemon, also one given its source's name; each started with `onboot` set and its links up; the source's host ID never had a second connection from a fork; a snapshot from an image without the unit refused to fork; a fork whose first boot said unknown was not handed over until it reset, on QEMU and, after the changes above, on LXC. One LXC late-card run before those changes took its source's address, which cut the source off BB for 40 s and made it open a session of its own again; a fork that holds its source's address is now refused, and version 6 keeps a late card from taking it. A logged-in tailnet node was not part of these checks: unit 2 proved the reset removes one, and the check refuses a fork whose Tailscale state still holds a node |
+
+### Choices and deviations
+
+- **`forkSnapshot` takes the previous guest**, as `acquire` does, so a fork
+  cut short by a restart deletes its half-made copy; and it returns the
+  guest stopped, for core to start and check (070 sketched neither).
+- **The check compares hashes the take kept** (Decided during unit 7);
+  snapshots taken before this unit fork with that comparison left out.
+- **`--as-machine`**, not `--machine` or `--thread`, which already name
+  where the source box is; forks into another thread stay later.
+- **A fork has the snapshot's size**; no larger size is offered.
+- **The copy runs on the source box's queue**, so its take, restore, stop
+  and release wait for it.
+- **bb-box's authorized key** is the template's on Proxmox, the same in
+  every box of an install, so a fork's is as much its own as any box's.
+  Keys a person or agent added to `authorized_keys` come with the disk.
+- **The copy's time is an upper bound**: 2.4 s for each GiB of the disk,
+  unit 3's rate for a held copy. It said 38 s for 16 GiB disks; the copies
+  took 12 to 16 s with about 2 GB used.
+
+### Takes flush first
+
+The live check found that a fork of a QEMU memory snapshot lacked what the
+VM had not written to its disk: vm-fork's reset found no BB machine to
+remove, as the source's credentials, written 18 s before the take, were not
+yet on its disk. Proxmox saves memory instead of freezing the file system,
+and a fork starts from the disk only. At the lead's request:
+
+- **Before a take of a running box**, bb-box runs `sync` in it, as unit 6's
+  restore does before its stop, with the same helper and 15 s limit, on
+  Proxmox LXC and QEMU, disk only and with memory alike. A stopped box has
+  nothing to flush.
+- **A flush that fails or times out stops nothing.** The take goes ahead,
+  and its record keeps why (`unflushed`, a new column in `snapshots.db`, by
+  migration). The take's answer says "bb-box could not flush the box's
+  writes to its disk before it (why), so it may miss what was written in
+  the last seconds before it"; the list and the page's row say "may miss
+  its last writes"; `--check`, the Fork dialog, the fork's answer and
+  `fork-asked` say the fork may lack them too. A restore's undo whose flush
+  failed records it the same way. Keep comes in unit 8 and is to say it
+  too.
+
+Tests, in `test/take-flush.test.ts`, 3: the flush before each take, disk
+and memory, and none for a stopped box; a failed flush, the take ready
+and its record, answer and list words; a flush that never answers holds a
+take 15 s at most. In `test/forks.test.ts`: the words of `--check`, the
+fork's answer and `fork-asked` for an unflushed snapshot. Two unit 1a tests
+that restarted bb-box 20 ms into a take now wait for the take's hold, as
+the flush comes first.
+
+Live, on a second separate BB set up as the first, with the same lent
+backends: src-vm (Proxmox QEMU, armed) joined BB, whose credentials were
+written at 09:59:30.82 (`host-id`) and 09:59:30.86 (`auth.json`); a file
+was written at 09:59:32, and the memory snapshot taken at once, ready in
+2.0 s, flushed (no `unflushed`). Its fork vm-fork was ready in 15 s; its
+reset at 09:59:49 removed `host_q83i4g7zfe`, the source's machine, so its
+credentials were on the snapshot's disk; the file was there too, and no
+process of the source ran in it.
+
+### A late card on Proxmox LXC, and the source's address
+
+An LXC fork whose card came late was released at the container start's
+30 s wait for SSH, before its reset could run; a VM waits 180 s. At the
+lead's request, a fork's first start now waits up to 180 s for SSH on
+Proxmox LXC as on QEMU (`start` takes how long to wait; only a fork's first
+start asks for more). Then the live check of it found a fork that took its
+source's address, and two more changes answer that.
+
+**Live, on the second separate BB** (src-lxc a Proxmox LXC machine of the
+person's, armed, at .180; the lead ran
+[`proxmox-root.sh`](070-snapshots/unit-7/proxmox-root.sh) `card-late`,
+which takes a held fork's card off before its first start and puts it back
+75 s after):
+
+| Run | Result |
+| --- | --- |
+| First try, 3171 | the script acted on the clone while Proxmox still held `lock: create`, as a full clone copies its source's `onboot: 1` at once, and `pct set` failed on the lock; nothing changed, and that fork started with its card. The script now waits for no lock and for net0 to stay the same for 5 s, which is bb-box's re-arm done |
+| The wait, 3172 | started at 10:51:33 with no card; its check said "not knowing yet" after 30 s; the card came back at 10:52:50; `settle` reset it at 10:52:51.34, removing `host_w8h3gy9iwv`, src-lxc's copied machine, and refusing that machine's daemon; ssh at .37; bb-box's start waited 76.8 s for the network and handed it over, ready, joined as its own machine. **But** it held .180, src-lxc's address, beside its own .182: with no card at its start, Proxmox wrote no network file, so the copy kept its source's; when the card was hot-plugged, systemd-networkd brought up .180 before Proxmox wrote the fork's own file, at 10:52:50.877. src-lxc's daemon logged "Server heartbeat acknowledgements stopped; reconnecting" at 10:53:25 and was connected again at 10:53:37, a session of its own: BB's server shows that session from src-lxc, and the fork's copied daemon never started. src-lxc was back on .180 once the fork was released |
+| The guard, 3173 | the check before ready now reads the fork's global IPv4 addresses and refuses a fork that holds its source's address (the source's address is kept on the fork's origin). The same run: refused at 11:04:48, 3 s after the card came back, "bb-box did not hand fork lxc-late3 over: it holds src-lxc's address .180, so it would take what is sent to src-lxc. bb-box released it"; src-lxc kept its session, and its daemon logged nothing then |
+| Version 6, 3174 | `bb-box-identity` version 6 installed by hand in src-lxc, then a snapshot (`forkSafe` 6). At 11:14:28 the fork's boot said "not knowing yet" and "held its network settings ( eth0.network ) aside while it cannot tell whether it is a copy"; the card came back at 11:15:12; the reset at 11:15:13 removed src-lxc's machine; the fork held only .184 (the lead read lo and eth0 .184 alone 20 s later, and bb-box's check found no .180), and was handed over, ready, waiting 76.8 s for its network. src-lxc kept the session it had since 10:53:37, and its daemon logged no disconnect |
+
+**Version 6 of the identity program** (`bb-box-identity.sh`). On Proxmox
+LXC, when a boot cannot tell yet whether the box is a copy, the program
+moves the `eth` cards' network files (`/etc/systemd/network/ethN.network`)
+aside, to `/run/bb-box-identity/held-network`, before systemd-networkd
+starts. A card added later then gets its settings only from Proxmox's
+hot-plug, which writes them. Once `settle` decides, a copy drops the held
+files, and the box itself gets them back if Proxmox wrote none. The reset
+alone would be too late: networkd applies a file the moment the card
+appears, before `settle` looks again. A VM's address comes from its SMBIOS
+at each boot, so nothing is held there. Templates 9800 and 9806 carry
+version 5, so the LXC template needs a rebuild before production has this;
+until then bb-box's check refuses such a fork. A take now records
+`forkSafe` 6 on a box with the new program.
+
+Tests: `test/identity-reset.test.ts`, 2: an LXC copy started without its
+card holds its copied file aside, so none is there when networkd starts,
+and once it resets the backend's own file stays and the copied one is
+gone; the box itself, its card late, gets its file back if the backend
+wrote none and keeps the backend's if it did; a VM, and a copy whose card
+was there at its start, hold nothing. `test/forks.test.ts`: a fork holding
+its source's address is refused and released, and a fork's start asks for
+180 s. `test/proxmox-lxc-snapshots.test.ts`, 1: an LXC start waits 30 s,
+and a fork's first start 180 s, before it says nothing answered.
+
+After these changes, on the same kind of box, in a fresh copy over main
+`aa192bdf`: `npx tsc` passes and the reference is current; the node suite
+ran 3,191 tests, 2,903 passed, 0 failed, 288 skipped; vitest ran 414, all
+passed. The docs, site and reference checks ran again on the last docs.
+Rebased onto main `812f78dc` (069 unit 4), in a fresh copy: `npx tsc`
+passes and the reference is current; the node suite ran 3,196 tests, 2,908
+passed, 0 failed, 288 skipped; vitest ran 423, all passed.
+The second separate BB's boxes, forks and snapshots were removed, and the
+lead's `leftovers` found no guest of its install.
+
+### After the reviews
+
+Two reviews read the three commits above: Astra asked for eight fixes and
+Opus for two, with three more to follow. All of them are in. Where they
+changed what is written above, this section is what holds now.
+
+**A clone cannot start until bb-box arms it.** The first request after
+Proxmox's clone task ends sets `onboot` 0 and every link down
+(`disarm`, `src/backends/proxmox/forks.ts`). bb-box then gives the copy
+its new MAC addresses, its own address and, on QEMU, its new SMBIOS UUID,
+each with its link still down. Before the first start, bb-box brings the
+links up (`armFork("network")`). It sets `onboot` 1 only after the check
+before ready passes (`armFork("boot")`). A held copy for a restore is
+disarmed by the same first request, before its labels. A reboot of the
+node before the check passed would leave the fork stopped.
+
+**Known limit: the gap before the disarm.** A full clone copies the
+snapshot's `onboot: 1` and its source's network settings at once, while
+Proxmox holds the clone's lock. The lock goes as the task ends, and
+bb-box's disarm lands one task poll (50 ms) and two requests later. A
+hookscript could close that gap, but the lead chose not to add one, for
+these reasons:
+
+- the lock covers the whole copy
+- a node that reboots inside the gap starts the copy with a MAC address
+  of its own, so its first boot resets it
+- bb-box's recovery deletes a half-made fork when it starts again
+
+[The node-side sampling](#the-combined-live-recheck) found the gap under
+217 ms, with one 0.1 s sample in it.
+
+**The network hold, version 7 of the identity program.** Version 6 held
+an LXC copy's network files only once the boot's wait ended unknown. A
+card hot-plugged during that wait made a copy that reset without holding
+them, which raced Proxmox's own write. Version 7:
+
+- holds the copied `ethN.network` files at the boot's first look, before
+  it waits, when the box has no `eth` card and none of the marker's MAC
+  addresses on any interface (`ip -j link`, so a renamed card counts)
+- holds them in `/var/lib/bb-box/held-network`, flushed to disk, so a
+  restart before `settle` decides loses nothing: the next boot's decision
+  puts them back for the box itself if Proxmox wrote none, or drops them
+  for a copy
+- deletes the copied files if it cannot hold them; if it cannot delete
+  them either, the boot fails closed, and the network, SSH, Tailscale,
+  Docker, the desktop and the box user's services stay off
+- never holds anything for a VM, for a box whose card is there at its
+  start, or for the box itself with a renamed card that carries its
+  marker's address
+
+Template builds remove `/var/lib/bb-box/held-network` (`finalize.sh`).
+
+**Each backend forks only from a version known safe.** An offer now says
+`forkSafeFrom`: 7 on Proxmox LXC, as earlier versions can bring up a
+source's address, and 5 on QEMU. A snapshot taken under an older version
+is refused before anything is copied, with words that say which version
+it needs. The Fork button is off with the same words. The check before
+ready refuses a fork whose reset reports an older version.
+
+**The check before ready reads everything or refuses.**
+
+- Every observation prints a line of its own, `missing=` or `unreadable=`
+  for each item it could not read, and the probe ends with `probes=done`.
+  A missing end, an unreadable item, or a machine ID or host key that is
+  missing or empty refuses the fork.
+- A take records `forkSafe` only when the machine ID and host keys are
+  whole.
+- The fork must hold its own address. Reading no address at all refuses
+  it, and so does any other address in the backend's box range, not only
+  its source's.
+- A shared MAC address, the source's address and another box's address
+  refuse at once, before any wait. `unknown` and pending still wait, and
+  are never taken as a reset.
+- The marker must match and be armed, and the reset enabled.
+
+**A failed clean-up is not hidden.** When bb-box cannot delete a failed
+fork's guest, for example while Proxmox still holds its clone lock, it
+stops the guest, keeps it on the box's record and says so: "bb-box could
+not delete its guest (VMID) yet (why), so it stopped it. It tries again at
+each sweep, and never hands the fork over." The operation stays unknown,
+with "Its guest (VMID) is not deleted yet; bb-box tries again at each
+sweep", and keeps its pin. The sweep deletes the guest later and then
+settles the operation. Recovery after a restart leaves such a box for the
+sweep.
+
+**`box_fork` checks before it takes.** With no snapshot named, `box_fork`
+first checks the box as a fork of it would be checked:
+
+- who may fork it, and not a box the agent runs on
+- the backend's offer and its plan for both the fork and the take
+- the box's identity reset now, against the backend's minimum version
+
+Only then does it take "for a fork". If the fork is still refused after
+the take, bb-box deletes that snapshot and says so. The take's words,
+including an older snapshot evicted at the box's limit, are passed on.
+
+**Names and kept snapshots.**
+
+- A fork's name is checked before anything is recorded, against the same
+  rule as a machine's name, in core, the tool, the RPC and the dialog.
+- A person's fork of a kept snapshot is always one of their machines, with
+  no choice of thread, as section 3 says.
+
+**Flush words fit the record.** `unflushed` is cut on a UTF-8 boundary,
+below the column's 1,024-byte limit, so a long error in any script no
+longer fails the take.
+
+Tests, 17 new or rewritten:
+
+- `test/forks.test.ts`:
+  - the verdict table
+  - an old version refused
+  - a clean-up that fails and the sweep that finishes it
+  - kept snapshots and bad names
+  - `box_fork`'s check before the take
+  - the order of copy, links up, start (180 s), check and `onboot`
+- `test/identity-reset.test.ts`, 5 for version 7:
+  - the hold before the wait
+  - a card during the wait
+  - a reboot before `settle`
+  - a hold that fails
+  - nothing held where nothing should be
+- `test/proxmox-lxc-snapshots.test.ts` and
+  `test/proxmox-qemu-snapshots.test.ts`:
+  - the disarm as the first request after the clone
+  - the two arms
+  - a held copy disarmed before its labels
+  - the offers' `forkSafeFrom`
+- `test/plugin.test.ts`: `box_fork`'s refusals before and after its take
+- `test/take-flush.test.ts`: a long non-ASCII flush error
+
+On a Linux box, over main `812f78dc`: `npx tsc` passes and the reference
+is current; the node suite ran 3,206 tests, 2,918 passed, 0 failed, 288
+skipped; vitest ran 423, all passed. The node suite includes the docs, site
+and reference checks; they ran again on the last docs.
+
+[`proxmox-root.sh`](070-snapshots/unit-7/proxmox-root.sh) changed with
+these fixes. `card-late` now waits for the fork as bb-box holds it:
+stopped, no lock, `onboot` not set, net0's link down. It takes how long to
+wait after the start, and puts net0 back with its link up. The new `sample`
+reads the clone's config every 0.1 s until bb-box's arm. Both take several
+VMIDs, as a fork's VMID is not known ahead. Before the live run, both ran
+against a fake `/etc/pve` and `pct` on a box: `sample` passed a 20 ms gap
+and caught a 600 ms one.
+
+### The combined live recheck
+
+On the second separate BB, with this build and the same lent backends.
+src-lxc was a new Proxmox LXC machine of the person's, at .185, with
+version 7 installed by hand. Its snapshot "v7" was recorded `forkSafe` 7,
+flushed, with its identity hashes. The lead ran two commands of
+[`proxmox-root.sh`](070-snapshots/unit-7/proxmox-root.sh) on the node,
+after reading it:
+
+- `sample`, started before the fork: it read the new guest's config from
+  `/etc/pve` every 0.1 s, with whether it ran, until bb-box's arm
+- `card-late`, with 10 s: it took the held fork's card off and put it back,
+  link up, 11 s into its first boot, inside the boot's 30 s wait
+
+The fork, lxc-v7, was held for 180 s after its copy (`hold-next --at
+forked`) and became VMID 3170, at .180.
+
+| Time | What happened |
+| --- | --- |
+| 12:20:50.067 | the clone's config appeared: `lock: create`, `onboot: 1`, link up, as the snapshot held |
+| 12:20:57.603 to .712 | the lock went: the last locked sample, then one with `onboot: 1`, no lock, link up, stopped |
+| 12:20:57.812 | bb-box held the fork; the hold comes after the disarm and the addressing |
+| 12:20:57.820 | the next sample: `onboot: 0`, link down |
+| 12:21:08.208 | card-late removed net0 (the fork's own MAC address and .180, `link_down=1`) |
+| 12:23:57.995 | the fork ran, with no card, `onboot: 0` |
+| 12:23:58.876 | the boot's first look: "held its network settings ( eth0.network ) aside in /var/lib/bb-box/held-network, as it started with no card of its own" |
+| 12:24:09.229 | "this box is a copy, so it resets its identity": the card came during card-late's `pct set`, which returned at .282 with net0 back, link up |
+| 12:24:09.347 | the reset removed `host_zhgynaepxa`, src-lxc's copied machine, and made new host keys and a new machine ID |
+| 12:24:09.425 | systemd-networkd started, configuring eth0 with Proxmox's file for the fork |
+| 12:24:09.507 | ssh started |
+| 12:24:09.8 | bb-box's check passed (30 ms) and wrote the fork's marker |
+| 12:24:09.840 | `onboot: 1`, the arm, the first sample with it and no lock since .712 |
+| 12:24:11.604 | joined BB as `host_f63v89a5ig`, ready 200 s after the request (180 s of it the hold; network 10.8 s) |
+
+| Check | Result |
+| --- | --- |
+| The hold from the first look | 0.9 s into the boot, with no card, 10.4 s before the card came |
+| The reset before the network | at .347, before networkd (.425), ssh (.507) and BB's daemon (12:24:10.49) |
+| Addresses | lo and eth0 .180 only; `eth0.network` said .180; `/var/lib/bb-box/held-network` gone; `boot=reset`, version 7, the marker naming the fork's own box |
+| The source | src-lxc kept .185 and its one session, opened at 12:17:03.497; BB's server shows no other session and no close for its host ID, and its daemon logged no disconnect |
+| No start before the arm | `onboot: 0` from .820 until the arm at 12:24:09.840, after the check passed; links down until bb-box brought them up for the start |
+| The gap | one sample, at 12:20:57.712, had `onboot: 1` with no lock: the known limit above. The samples put the gap after .603 and before .820, so under 217 ms, and bb-box's hold at .812 agrees. Its expected width is one task poll, 50 ms, and two requests. The lead accepted it |
+
+The fork's file from the take was there. Afterwards src-lxc and lxc-v7
+were removed with their snapshot.
+
+### After the re-reviews
+
+Astra's re-review found three fixes only partly done, each shown by a
+probe. Opus's re-review said merge, with one cheap follow-up. All four are
+in. Each probe is now a regression test, and each test fails on the
+commit before these fixes.
+
+**A restart during a fork's first start keeps its guest** (Astra 5). When
+bb-box stopped while a fork was starting, the fork's record dropped its
+guest, which went on running. After the restart, bb-box copied the
+snapshot again beside it. Now bb-box leaves a fork's record as it is when
+it stops, guest included. After the restart, it makes the copy again only
+once the old guest is deleted. On Proxmox, the backend disarms the old
+guest, deletes it, and checks that it is gone. If it cannot delete it, it
+makes no other copy.
+
+**A read that fails is not a clean answer** (Astra 6). The fork's check
+took grep's error, reading its Tailscale state, for "no tailnet node". It
+now tells no match (exit 1) from an error (2 or more): an error makes the
+state unreadable, and the fork is refused. Two more reads failed open the
+same way, and now refuse:
+
+- a failed hash of the machine ID or a host key, which gave an empty value
+  that the parser dropped
+- a failed read of the identity marker, which gave no MAC addresses
+
+**`box_fork` checks room and place before its take** (Opus 2). The check
+before the take now runs the fork's own admission:
+
+- the backend's room for the box's size
+- the thread's box limit
+- a name the thread already has
+- for one of the person's machines, the machine-name rule and enrolment
+
+With no room, the take no longer deletes the agent's oldest snapshot for a
+fork that is then refused. Room can still change between the check and the
+fork. If it does, the snapshot taken for the fork is deleted, as before,
+but a snapshot the take evicted does not come back.
+
+**An abandoned clone is disarmed before each delete** (Opus's follow-up).
+A fork can fail, be released or be cut off by a restart while Proxmox
+still holds its clone lock. bb-box now disarms the clone, `onboot` 0 and
+every link down, before each attempt to delete it:
+
+- in the backend's own clean-up after a failed or cut-short copy
+- when it deletes a half-made fork after a restart
+- in core, before each release of a fork's guest, when the fork fails and
+  at each sweep after
+
+A Proxmox request waits up to 120 s for a lock, so the disarm lands as soon
+as the clone task ends. If the lock outlasts that, bb-box skips that
+delete, which would wait on the same lock, and tries again at the next
+sweep. The disarm finds a fork's clone by its description, which names
+the fork from the clone's start: the clone's copied tags name its source
+until bb-box labels it.
+
+Tests, 5:
+
+- `test/forks.test.ts`:
+  - the real check script with a failing grep, `sha256sum` and `sed`:
+    each item unreadable, and the fork refused
+  - bb-box stopping during a fork's first start, then recovery: the guest
+    kept on the record, and deleted before the copy is made again
+  - room and a taken name refused before `box_fork`'s take, with both
+    snapshots still there at the limit
+  - a disarm before each release of a fork's guest, at the failure and at
+    the sweep
+- `test/proxmox-lxc-snapshots.test.ts`: a failed copy disarmed before its
+  delete, and left disarmed when the delete fails; recovery's disarm
+  before its delete; `disarmFork` acting only on the fork's own guest
+
+On a new Linux box, over main `812f78dc`: `npx tsc` passes and the
+reference is current; the node suite ran 3,211 tests, 2,923 passed, 0
+failed, 288 skipped; vitest ran 423, all passed. The 5 new tests, run
+against the previous commit's source, all failed, each on the gap it
+covers.
+
+### Conditions and open questions
+
+- **Rebuild the LXC template with version 7** of the identity program
+  before arming Proxmox LXC. Until then no LXC snapshot forks: bb-box
+  forks Proxmox LXC boxes only from version 7. A snapshot keeps the
+  version it was taken under, so snapshots from before the rebuild never
+  fork on LXC. The QEMU template forks from version 5 and needs the
+  rebuild only to report version 7.
+
+- **Arming production** (`general.identityResetBackends`) is the owner's
+  call; until then no production snapshot is fork-safe, and every fork
+  there is refused with why.

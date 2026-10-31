@@ -60,3 +60,9 @@ export function generateName(taken: ReadonlySet<string>, random: (bytes: number)
   }
   throw new Error("Could not choose a unique name.");
 }
+
+const MACHINE_NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+export function isMachineName(name: string): boolean {
+  return MACHINE_NAME.test(name);
+}

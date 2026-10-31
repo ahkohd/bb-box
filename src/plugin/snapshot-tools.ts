@@ -6,8 +6,12 @@ import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import { RESTORE_FORM, RESTORE_FORM_TIMEOUT_MS, isRestoreYes, restoreFormPayload, restoreFormTitle, type RestoreFormPayload } from "./restore-form.ts";
 import type { BbBox } from "./setup.ts";
-import { deletedText, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
-import { boxParam, failure, runsOnBox, thread } from "./tools.ts";
+import { deletedText, forkMayMissWords, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
+import { boxParam, failure, ready, runsOnBox, thread, using } from "./tools.ts";
+import { boxDetail, startingWords } from "./views.ts";
+import { forkedFromWords, isAcquiring, isMachineName } from "../core/boxes.ts";
+
+const FORK_NAME_RULE = 'a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".';
 import { next } from "./views.ts";
 
 const QUIET_WAIT_MS = 60_000;
@@ -21,6 +25,7 @@ const SNAPSHOT_HINTS: Partial<Record<BoxErrorCode, string>> = {
   in_use: "Tell the person, in the thread, what the refusal names: it says what would have to change first.",
   not_owner: "Ask the person, in the thread, if it should be done.",
   needs_yes: "Call box_restore again: it asks for a yes in the thread with a form. Then end your turn.",
+  no_capacity: "Release a box you no longer need, then fork again.",
   unsupported: "Call box_status to see what the box can do: its Snapshots line says what its backend offers.",
 };
 
@@ -158,6 +163,58 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         return `${deletedText(answer, box.name)}\nBox ${box.name} holds ${counted} of ${app.snapshots.settings.perBox} snapshots.${next("box_snapshots lists what is left.")}`;
       } catch (error) {
         return snapshotFailure(error, "Deleting the snapshot");
+      }
+    },
+  });
+
+  registerTool({
+    name: "box_fork",
+    description:
+      "Make a new box of this thread from a snapshot of one of its boxes, or from the box as it is now, to try two things from one set-up state. The fork gets the snapshot's files and its own identity: a new BB machine, address and keys, so it never acts as its source. Everything else on the disk comes with it, project secrets and signed-in browsers too. It starts fresh, with no apps running, at the snapshot's size.",
+    presentation: { label: { pending: "Forking a box", completed: "Forked a box" } },
+    parameters: z.object({
+      box: boxParam.describe("The box to fork, by its name or ID: one of this thread's boxes, not one it runs on."),
+      snapshot: z.string().min(1).optional().describe('The snapshot\'s name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that.'),
+      name: z.string().min(1).max(32).refine(isMachineName, FORK_NAME_RULE).optional().describe(`The new box's name: ${FORK_NAME_RULE} One is made up when left out.`),
+    }),
+    async execute({ box: ref, snapshot, name }, { threadId, projectId, signal }) {
+      try {
+        const id = thread(threadId);
+        const { box, standing } = await snapshotTarget(app, id, ref, signal);
+        const caller = agent(id);
+        const input = { ...(name !== undefined ? { name } : {}), projectId: projectId ?? null };
+        let taken: { readonly id: string; readonly words: string } | null = null;
+        if (snapshot === undefined) {
+          await app.snapshots.checkForkOfBox(caller, box, standing, input);
+          const answer = await app.snapshots.take(caller, box, standing, { name: "for a fork" });
+          if (!answer.snapshot) throw new BoxError("failed", `bb-box took no snapshot of box ${box.name} to fork.`);
+          taken = { id: answer.snapshot.id, words: `${takenText(answer, box.name, app.snapshots.settings.perBox)}${takenNote(answer, app.snapshots.settings.perBox)}\n` };
+        }
+        let answer;
+        try {
+          answer = await app.snapshots.fork(caller, box, standing, snapshot ?? taken!.id, input);
+        } catch (error) {
+          if (!taken) throw error;
+          const removed = await app.snapshots.delete(caller, standing, taken.id).then(
+            () => `bb-box deleted the snapshot "for a fork" it took for this, as the fork was refused.`,
+            (cause: unknown) => `bb-box could not delete the snapshot "for a fork" it took for this: ${describeError(cause, "Deleting it")} Delete it with box_snapshot_delete.`,
+          );
+          throw new BoxError(error instanceof BoxError ? error.code : "failed", `${describeError(error, "Forking the box")}\n${taken.words}${removed}`);
+        }
+        const made = answer.box;
+        if (!made) throw new BoxError("not_found", "bb-box has no record of the fork's box any more.");
+        const origin = made.fork ? `\n${forkedFromWords(made.fork)}` : "";
+        const settled = await ready(app, made, signal);
+        const before = taken?.words ?? "";
+        if (!settled || isAcquiring(settled)) return `${before}${startingWords(settled ?? made, !!settled && app.boxes.stopping)}${origin}${next(`Call box_status with box "${made.name}" to see when it is ready.`)}`;
+        if (settled.state === "failed") {
+          return { content: [{ type: "text", text: `${before}Fork ${settled.name} failed: ${settled.error ?? "no reason given"}${next("Tell the person what it says, or fork again from another snapshot.")}` }], isError: true };
+        }
+        const enrolled = await app.boxes.enrolled(settled, signal);
+        const mayMiss = answer.snapshot ? forkMayMissWords(answer.snapshot) : null;
+        return `${before}${boxDetail(enrolled, app.control(enrolled))}${mayMiss ? `\n${mayMiss}` : ""}${next(...using(enrolled))}`;
+      } catch (error) {
+        return snapshotFailure(error, "Forking the box");
       }
     },
   });

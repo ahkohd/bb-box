@@ -57,6 +57,7 @@
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
 | [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace. |
+| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
@@ -1000,6 +1001,29 @@ Options:
   --unflushed        Restore anyway when bb-box cannot flush the box's writes to its disk before stopping it, so its undo may miss the last seconds' writes.
   --check            Say what the restore would do, and refuse what it would refuse, changing nothing.
   --request <value>  An ID you make, so a repeat of this command is the same restore.
+  --help, -h         Show this help and exit
+```
+
+## bb box snapshot fork
+
+Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready.
+
+```text
+Usage:
+  bb box snapshot fork <box> <snapshot> [--thread <value>] [--machine] [--json] [--as-machine] [--name <value>] [--check] [--request <value>]
+
+Arguments:
+  <box>       The box's name or ID. (required)
+  <snapshot>  The snapshot's name or ID. (required)
+
+Options:
+  --thread <value>   The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine          The box is one of your machines, from bb box machines, not a thread's.
+  --json             Print JSON.
+  --as-machine       Make the fork one of your machines, not a box of the source's thread.
+  --name <value>     The new box's name. One is made up when left out.
+  --check            Say what the fork would be, and refuse what it would refuse, changing nothing.
+  --request <value>  An ID you make, so a repeat of this command is the same fork.
   --help, -h         Show this help and exit
 ```
 

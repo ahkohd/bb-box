@@ -26,7 +26,7 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task", "checked", "stopped", "copied", "undo", "rolled-back", "adopted", "started"] as const;
+export const HOLD_STEPS = ["planned", "task", "checked", "stopped", "copied", "undo", "rolled-back", "adopted", "started", "forked"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
 
 export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
@@ -39,6 +39,7 @@ export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
   "rolled-back": "a restore's rollback",
   adopted: "a swap's new guest was made, before the swap",
   started: "a restored box's start",
+  forked: "a fork's copy was made, given its own addresses and disarmed, before its links come up and its first start",
 };
 
 export class SnapshotHolds {

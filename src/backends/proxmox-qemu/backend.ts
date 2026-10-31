@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
@@ -104,6 +105,7 @@ import {
   type WarmShortfall,
   type WithheldKind,
   type IdentitySource,
+  type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
@@ -567,15 +569,13 @@ export class ProxmoxQemuBackend implements Backend {
     return { macs, smbios: /(?:^|,)uuid=([^,]+)/.exec(String(config.smbios1 ?? ""))?.[1] ?? null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
     }
     const vmid = this.#freeVmid(await api.listPool(this.#config.proxmox.pool, signal), this.#nextVmid);
-    if (vmid === null) {
-      throw new SnapshotFailed(`Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`);
-    }
+    if (vmid === null) throw noneFree(`from ${this.#config.vmids.first} to ${this.#config.vmids.last}`);
     this.#reserved.add(vmid);
     this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
     await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
@@ -613,6 +613,7 @@ export class ProxmoxQemuBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false }, signal);
       return copy;
     } finally {
@@ -691,6 +692,56 @@ export class ProxmoxQemuBackend implements Backend {
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (!this.snapshotting(box.kind)) throw new BackendError("unsupported", `${this.label} forks no ${box.kind} boxes.`);
+    return forkByFullClone(
+      {
+        installId: this.#context.installId,
+        pool: this.#config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        rootDisk: bootDisk,
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        unreserve: (vmid) => this.#reserved.delete(vmid),
+        forget: (vmid) => this.#forget(vmid),
+        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, build),
+        addressed: async (api, vmid, made, forked, template, signal) => {
+          const address = addressFor(this.#config, vmid);
+          if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
+          const { bridge, prefix, gateway } = this.#config.network;
+          const nets: Record<string, string> = {};
+          for (const key of netKeys(made)) nets[key] = netWith(key === "net0" ? net0On(made[key], bridge) : String(made[key]), { mac: randomMac(), up: false });
+          await api.setNetwork(vmid, nets, signal);
+          await api.configure(
+            vmid,
+            { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, smbios1: smbios1For(address, prefix, gateway, randomUUID()), delete: ["protection"] },
+            signal,
+          );
+        },
+        sizeOf,
+        logError: (operation, error) => this.#context.logError(operation, error),
+      },
+      ref,
+      box,
+      previous,
+      hooks,
+      signal,
+    );
+  }
+
+  boxAddresses(): readonly string[] {
+    return this.#config.network.addresses;
+  }
+
+  armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
+  }
+
+  disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
+    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId }, guest, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {
@@ -1087,7 +1138,7 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1097,7 +1148,7 @@ export class ProxmoxQemuBackend implements Backend {
     const resumed = status.status !== "running" && status.lock === "suspended";
     if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
-    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
+    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS, signal, step, os);
     await answered?.();
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));

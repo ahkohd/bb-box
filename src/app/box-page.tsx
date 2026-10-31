@@ -20,6 +20,7 @@ import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { Activity } from "./activity.tsx";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
+import { snapshotWhen } from "./snapshot-words.ts";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
 import {
   acquireSteps,
@@ -611,7 +612,15 @@ function Facts({ box, now }: { box: BoxView; now: number }) {
         <Fact label="BB machine" second={enrol.second}>
           {enrol.first}
         </Fact>
-        <Fact label="Made" second={dayAndClock(box.createdAt, now)}>
+        <Fact
+          label="Made"
+          second={
+            <>
+              {dayAndClock(box.createdAt, now)}
+              {box.forkedFrom ? <span className="block">Forked from {box.forkedFrom.name}, "{box.forkedFrom.snapshot}" ({snapshotWhen(box.forkedFrom.takenAt, now).replace(/^[TY]/, (first) => first.toLowerCase())})</span> : null}
+            </>
+          }
+        >
           {span(now - box.createdAt)} ago
         </Fact>
         {box.device ? (

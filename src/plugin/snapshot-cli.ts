@@ -3,7 +3,7 @@ import { BoxError, OPERATOR, describeError, type BoxRecord } from "../core/boxes
 import { BY_COMMAND } from "../core/box-log.ts";
 import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core/snapshot.ts";
 import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
-import { deletedText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, forkCheckText, forkedText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
 
 const COMMAND: Caller = { is: "command" };
@@ -170,6 +170,36 @@ export function snapshotCommands(app: BbBox) {
           return options.json ? json(answer) : out(restoredText(answer, box.name));
         }),
     }),
+    "snapshot fork": cliCommand({
+      summary:
+        "Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready.",
+      positionals: [
+        { name: "box", description: "The box's name or ID.", required: true },
+        { name: "snapshot", description: "The snapshot's name or ID.", required: true },
+      ],
+      options: {
+        ...threadOption,
+        ...machineOption,
+        ...jsonOption,
+        "as-machine": { type: "boolean", description: "Make the fork one of your machines, not a box of the source's thread." },
+        name: { type: "string", description: "The new box's name. One is made up when left out." },
+        check: { type: "boolean", description: "Say what the fork would be, and refuse what it would refuse, changing nothing." },
+        request: { type: "string", description: "An ID you make, so a repeat of this command is the same fork." },
+      },
+      run: ({ positionals, options }, ctx) =>
+        guard("Forking the snapshot", async () => {
+          const box = await boxes.get(ownerOf(options, ctx), positionals.box);
+          const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}) };
+          if (options.check) {
+            const check = await snapshots.checkFork(COMMAND, box, standingOf(box), positionals.snapshot, input);
+            return options.json ? json(check) : out(forkCheckText(check));
+          }
+          const answer = await snapshots.fork(COMMAND, box, standingOf(box), positionals.snapshot, { ...input, ...(options.request !== undefined ? { request: String(options.request) } : {}) });
+          const settled = answer.box ? ((await boxes.settled(answer.box)) ?? answer.box) : null;
+          if (options.json) return json({ ...answer, box: settled });
+          return { exitCode: settled?.state === "ready" ? 0 : 1, stdout: `${forkedText(answer, settled)}\n` };
+        }),
+    }),
     "snapshot forget": cliCommand({
       summary:
         "Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes.",
@@ -199,7 +229,7 @@ export function snapshotCommands(app: BbBox) {
                 type: "enum",
                 values: HOLD_STEPS,
                 description:
-                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done.",
+                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; forked: once a fork's copy is made, given its own addresses and disarmed, before its links come up and its first start.",
               },
               seconds: { type: "integer", min: 1, max: 3600, description: "Hold for this many seconds, then go on. Without it, the hold lasts until bb-box restarts." },
               off: { type: "boolean", description: "Hold nothing." },
