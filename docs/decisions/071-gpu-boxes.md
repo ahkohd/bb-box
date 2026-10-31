@@ -1,8 +1,9 @@
 # 071: A GPU is part of a box's size, on any Linux box: none, shared or a whole card, chosen when it is made and changed by Resize
 
-Status: proposed, 31 October 2026, and revised the same day after two
-independent reviews: see [What changed after the
-reviews](#what-changed-after-the-reviews). Not built yet: see [How it is
+Status: accepted, 31 October 2026, after two independent reviews (see
+[What changed after the reviews](#what-changed-after-the-reviews)) and the
+owner's answers to its six questions, each its default (see [Questions for
+the owner](#questions-for-the-owner)). Not built yet: see [How it is
 built](#16-how-it-is-built) and its [gates](#gated-in-unit-n). It has the
 owner's direction of 31 October 2026 built in: see [The owner's
 direction](#the-owners-direction).
@@ -1438,7 +1439,13 @@ What each unit may not claim until its gate is met:
 ## Questions for the owner
 
 Each has a default this note builds in. A different answer changes the
-units named.
+units named. The owner answered all six on 31 October 2026, each with its
+default: a stopped whole box keeps its card and a stopped shared box gives
+up its place; `linux-desktop` shared, `linux` none and a fork none; one
+card per box for now; 4 boxes per card where never set, explicit values
+kept; the person updates a box's userspace, never bb-box by itself; a
+running box on the wrong card is named, new placements on both cards stop,
+and the person restarts it.
 
 1. **Does a stopped box keep its card?** If it does, a box someone forgot
    to release blocks that card from being given whole for as long as it
