@@ -258,6 +258,7 @@ export const contract = defineRpcContract({
   start: { input: oneBox, output: boxResult },
   resize: { input: oneBox.merge(resizing), output: z.custom<ResizeResult>() },
   refresh: { input: oneBox, output: boxResult },
+  enrol: { input: oneBox, output: boxResult },
   forget: { input: oneBox, output: boxResult },
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   /** Puts the box's desktop at high resolution, or not: twice the pixels at twice Xfce's scale. Refused, with why, where it cannot be. */

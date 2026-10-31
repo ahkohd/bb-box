@@ -25,7 +25,7 @@ import { canResize, ResizeDialog } from "./resize.tsx";
 import { screensOf, type Screen } from "./screens.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 
-export type BoxAction = "release" | "stop" | "start" | "refresh" | "forget";
+export type BoxAction = "release" | "stop" | "start" | "refresh" | "forget" | "enrol";
 
 export interface ThreadsBox {
   readonly owner: "thread";

@@ -119,6 +119,10 @@ To revoke a client, go to **Settings**, then **Trust credentials**, in Tailscale
 
 If your BB server is reached through bb connect, or at a public address, machines do not need to join a tailnet. On the **Network** page of BB Box's settings, choose **No: BB is reached without one**, and select **Save**. This deletes a client you entered before.
 
+## When BB Box suggests the tailnet
+
+When a box cannot join BB, BB Box suggests the tailnet only when reaching BB really fails: when no box on the backend reaches BB after 5 tries, or when every box there is refused or has no route to BB. A single failure that can pass, such as a DNS lookup of BB's server that timed out, gets no such advice: BB Box tries again by itself. See [When a box does not join BB](boxes.md#when-a-box-does-not-join-bb).
+
 ## Next
 
 Set up the cloud machines themselves: [Linux boxes on Hetzner Cloud](hetzner.md), [Mac and Linux boxes on Namespace](namespace.md), or [a cloud server as a Docker host](cloud-docker-host.md).

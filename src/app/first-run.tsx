@@ -14,6 +14,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { building, needsSignIn, restartWords, setupTarget, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
+import { joinProblem } from "../core/join-tries.ts";
 
 /**
  * How long the Linux image usually takes to build from an empty cache: 4 to 11 min in the newcomer checks, as it varies
@@ -201,8 +202,8 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
 /** Where the guide says how boxes join BB, and what to do when they cannot. */
 export const JOIN_GUIDE = `${REPOSITORY_URL}/docs/guide/boxes.md#when-a-box-does-not-join-bb`;
 
-export function joinAdvice(box: Pick<BoxView, "joinTries">): boolean {
-  return !box.joinTries || box.joinTries.setup;
+export function joinAdvice(box: Pick<BoxView, "joinTries" | "enrol">): boolean {
+  return box.joinTries ? box.joinTries.setup : !joinProblem(box.enrol.error ?? "");
 }
 
 /**

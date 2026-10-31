@@ -689,6 +689,7 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "stop (forced)" : "stop", ref, (found) => ({ ...found, state: "stopped" })),
     start: ({ box: ref }) => change("start", ref, (found) => ({ ...found, state: "ready" })),
     refresh: ({ box: ref }) => change("refresh", ref, (found) => found),
+    enrol: ({ box: ref }) => change("enrol", ref, (found) => ({ ...found, enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 0, next: Date.now(), words: found.enrol.error ?? "", of: 5, setup: false } })),
     forget: ({ box: ref }) => {
       endOf(ref, "forgotten");
       return change("forget", ref, () => null);
@@ -1024,7 +1025,7 @@ test("the status line says the state, then what to act on, then BB enrolment and
   expect(timingWords(resumed)).toBe("claiming a spare\u00a03\u00a0ms · resuming it\u00a04.1\u00a0s · total\u00a04.1\u00a0s · BB machine reconnecting\u00a017.2\u00a0s");
   expect(statusOf(box({ timings: { spare: 3, total: 3 } }), now).items.map((item) => item.text)).toEqual(["Ready in 3 ms", "BB machine", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "failed", hostId: null, error: "no route" } }), now).items[1]).toEqual({ text: "Could not join BB", tone: "warn" });
-  const tries = { failed: 1, of: 5, next: now + 30_000, words: "Could not resolve BB's address from this box: the DNS lookup timed out.", setup: false };
+  const tries = { failed: 1, of: 5, next: now + 30_000, words: "This box could not look up BB's address in time.", setup: false };
   expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: tries }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB, try 2 of 5", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { ...tries, failed: 6 } }), now).items[1]?.text).toBe("Joining BB, try 7");
   expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {}, size: null }), now).items.map((item) => item.text)).toEqual(["Ready"]);
@@ -1874,9 +1875,9 @@ test("a box that could not join BB says why in its row; for bb connect without a
   const other = panel(server([box({ enrol: { state: "failed", hostId: null, error: "BB removed the machine before it connected" } })]).handlers);
   expect(await other.findByText(/^BB removed the machine before it connected\. See Machine access in BB's settings, under Machines\./)).toBeTruthy();
   cleanup();
-  const alone = "Could not resolve BB's address from this box: the DNS lookup timed out. It failed 5 tries. Other boxes on Fake host joined BB, so BB's setup is fine: the fault is in this box's network.";
+  const alone = "This box could not look up BB's address in time. It failed 5 tries. Other boxes on Fake host joined BB, so BB's setup is fine: the fault is in this box's network.";
   const confined = panel(server([box({ enrol: { state: "failed", hostId: null, error: alone }, joinTries: { failed: 5, of: 5, next: Date.now() + 1_800_000, words: "x", setup: false } })]).handlers);
-  const line = await confined.findByText(/^Could not resolve BB's address from this box/);
+  const line = await confined.findByText(/^This box could not look up BB's address in time/);
   expect(line.textContent).not.toMatch(/Machine access|tailnet/);
 });
 
@@ -9265,6 +9266,19 @@ test("a box's page says a device did not boot, a join that failed, a box deleted
   expect(await slot.findByText("· Could not join BB")).toBeTruthy();
   expect(slot.getByRole("region", { name: "It could not join BB" }).textContent).toContain("is not reachable from the box");
   expect(slot.getByText("None. It is not a BB machine, so no thread can run on it.")).toBeTruthy();
+  fireEvent.click(within(slot.getByRole("region", { name: "It could not join BB" })).getByRole("button", { name: "Join BB again" }));
+  await waitFor(() => expect(unjoined.changes).toContain("enrol box_1"));
+  expect(await slot.findByText("Joining, try 1 of 5")).toBeTruthy();
+  expect(slot.queryByRole("region", { name: "It could not join BB" })).toBeNull();
+  expect(unjoined.changes.filter((each) => !each.startsWith("enrol")), "joining again neither starts, stops nor restarts the box").toEqual([]);
+  cleanup();
+
+  const waiting = server([box({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 1, next: Date.now() + 30_000, words: "This box could not look up BB's address in time (curl: (28) Resolving timed out after 10001 milliseconds).", of: 5, setup: false } })]);
+  slot = boxPageAt(waiting.handlers, "box/box_1");
+  const pending = await slot.findByRole("region", { name: "It has not joined BB yet" });
+  expect(pending.textContent).toContain("Try 1 failed: This box could not look up BB's address in time");
+  fireEvent.click(within(pending).getByRole("button", { name: "Join BB again" }));
+  await waitFor(() => expect(waiting.changes).toContain("enrol box_1"));
   cleanup();
 
   const gone = server([box({ state: "gone", address: null, terminal: false })]);
@@ -9958,6 +9972,8 @@ test("a row's second line says how the box is now: the state, what needs attenti
   const unjoined = rowLine(box({ readyAt: now - 12_000, enrol: { state: "failed", hostId: null, error: "BB's server is not reachable from Proxmox LXC: turn the tailnet on" } }), { now });
   expect(rowWords(unjoined)).toBe("Ready · Could not join BB · up 12 s · 2 cores · 4 GiB memory");
   expect(rowReasons(unjoined)).toEqual(["Could not join BB: BB's server is not reachable from Proxmox LXC: turn the tailnet on. See Machine access in BB's settings, under Machines."]);
+  const passing = rowLine(box({ readyAt: now - 12_000, enrol: { state: "failed", hostId: null, error: "Enrolling box calm-otter failed: Machine bootstrap command failed:\n\ncurl: (28) Resolving timed out after 10001 milliseconds" } }), { now });
+  expect(rowReasons(passing)[0], "a failure that can pass gives no settings advice, even before bb-box plans its tries").not.toContain("Machine access");
   const retrying = rowLine(box({ readyAt: now - 3 * MIN, enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 2, next: now + 10 * MIN, words: "This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out).", of: 5, setup: false } }), { now });
   expect(rowWords(retrying)).toBe("Ready · Joining BB, try 3 of 5 · up 3 min · 2 cores · 4 GiB memory");
   expect(rowReasons(retrying)).toEqual(["Joining BB, try 3 of 5: Joining BB: try 3 of 5 starts in 10 min. Try 2 failed: This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out)."]);

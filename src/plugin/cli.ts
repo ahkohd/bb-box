@@ -13,7 +13,7 @@ import { PRESETS } from "../core/sizes.ts";
 import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
+import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 import { setupDocker } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
@@ -51,6 +51,7 @@ function providersOf(text: string): string | string[] {
   const names = text.split(",").map((name) => name.trim()).filter((name) => name.length);
   return names.length === 1 ? names[0]! : names;
 }
+const CLI_JOIN_WAIT_MS = 2 * 60_000;
 const boxPositional = [{ name: "box", description: "The box's name or ID.", required: true }] as const;
 const machineOption = { machine: { type: "boolean", description: "The box is one of your machines, from bb box machines, not a thread's." } } as const;
 
@@ -381,6 +382,20 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
               const box = await boxes.enrolled(await boxes.start(owner, positionals.box, ctx.signal, BY_COMMAND), ctx.signal);
               return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
+            }),
+        }),
+        enrol: cliCommand({
+          summary:
+            "Add a ready box that is not a BB machine to BB again, as a thread's box, or with --machine one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...machineOption, ...jsonOption },
+          run: ({ positionals, options }, ctx) =>
+            guard("Adding the box to BB", async () => {
+              const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
+              const answer = await app.joinAgain(owner, positionals.box, { waitMs: CLI_JOIN_WAIT_MS, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+              const said = joinAgainWords(answer, options.machine ? "bb box machines" : `bb box status ${answer.box.name}${options.thread ? ` --thread ${owner}` : ""}`);
+              if (options.json) return { exitCode: said.failed ? 1 : 0, stdout: `${JSON.stringify({ is: answer.is, words: said.text, box: app.view(answer.box) }, null, 2)}\n` };
+              return said.failed ? { exitCode: 1, stderr: `${said.text}\n` } : out(said.text);
             }),
         }),
         forget: cliCommand({

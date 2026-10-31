@@ -27,8 +27,8 @@ interface ProblemShape {
 }
 
 const PROBLEMS: readonly ProblemShape[] = [
-  { problem: "dns-timeout", matches: /Resolving timed out|EAI_AGAIN|Temporary failure in name resolution/i, words: "Could not resolve BB's address from this box: the DNS lookup timed out" },
-  { problem: "dns", matches: /curl: \(6\)|Could not resolve host|ENOTFOUND|Name or service not known/i, words: "Could not resolve BB's address from this box: the DNS lookup found no address for it" },
+  { problem: "dns-timeout", matches: /Resolving timed out|EAI_AGAIN|Temporary failure in name resolution/i, words: "This box could not look up BB's address in time" },
+  { problem: "dns", matches: /curl: \(6\)|Could not resolve host|ENOTFOUND|Name or service not known/i, words: "This box's DNS lookup found no address for BB" },
   { problem: "refused", matches: /Connection refused|ECONNREFUSED/i, words: "This box found BB's address, but nothing there accepted the connection: it was refused" },
   { problem: "unroutable", matches: /No route to host|Network is unreachable|EHOSTUNREACH|ENETUNREACH|Couldn't connect to server/i, words: "This box has no network route to BB's address" },
   { problem: "reset", matches: /Connection reset|ECONNRESET|Empty reply from server|Recv failure|curl: \((52|56)\)/i, words: "The connection from this box to BB was cut off before BB answered" },
@@ -119,9 +119,13 @@ export function gaveUpWords(input: { readonly sentence: string; readonly failed:
       ? `Other boxes on ${input.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network.`
       : "";
   const next = input.stopped
-    ? `bb-box gave up after ${JOIN_GIVE_UP_MS / 3_600_000} hours of tries; Check now starts a new round.`
-    : `bb-box tries again every ${JOIN_EVERY_MS / 60_000} minutes for up to ${JOIN_GIVE_UP_MS / 3_600_000} hours; Check now tries at once.`;
+    ? `bb-box gave up after ${JOIN_GIVE_UP_MS / 3_600_000} hours of tries; Join BB again starts a new round.`
+    : `bb-box tries again every ${JOIN_EVERY_MS / 60_000} minutes for up to ${JOIN_GIVE_UP_MS / 3_600_000} hours; Join BB again tries at once.`;
   return [input.sentence, after, blame, next].filter(Boolean).join(" ");
+}
+
+export function failedBeforeTries(box: BoxRecord): boolean {
+  return box.state === "ready" && box.role !== "machine" && box.capabilities.enrol && box.enrol.state === "failed" && !box.joinTries && joinProblem(box.enrol.error ?? "") !== null;
 }
 
 export function waitingToJoin(box: BoxRecord): boolean {
@@ -158,11 +162,11 @@ export function joinChecks(boxes: readonly BoxRecord[], now: number): DoctorChec
     if (box.state !== "ready" || !tries || (box.enrol.state !== "enrolling" && box.enrol.state !== "failed")) return [];
     const name = `${box.name} joining BB`;
     if (box.enrol.state === "enrolling") {
-      return [{ id: `join.${box.name}`, name, status: "warn", detail: `Box ${box.name} on ${box.backendLabel} is ${joiningWords(tries, now)}.`, fix: "bb-box tries again by itself. Check now on the box tries at once." }];
+      return [{ id: `join.${box.name}`, name, status: "warn", detail: `Box ${box.name} on ${box.backendLabel} is ${joiningWords(tries, now)}.`, fix: "bb-box tries again by itself. Join BB again on the box's page, or bb box enrol, tries at once." }];
     }
     return [
       tries.setup
-        ? { id: `join.${box.name}`, name, status: "fail", detail: box.enrol.error ?? tries.words, fix: "Turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach. Then Check now on the box tries at once." }
+        ? { id: `join.${box.name}`, name, status: "fail", detail: box.enrol.error ?? tries.words, fix: "Turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach. Then Join BB again on the box's page tries at once." }
         : { id: `join.${box.name}`, name, status: "warn", detail: box.enrol.error ?? tries.words, fix: "Look at the box's network and DNS, or release it and make another." },
     ];
   });

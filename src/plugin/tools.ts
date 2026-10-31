@@ -25,7 +25,7 @@ import { wantsDevice, type ClaimSwitch } from "./devices.ts";
 import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
-import { adminText, boxDetail, deviceLines, devicesText, placementText, kindResizeText, kindSnapshotText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, deviceLines, devicesText, joinAgainWords, placementText, kindResizeText, kindSnapshotText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -41,6 +41,7 @@ const RUN_TIMEOUT_S = 10 * 60;
 export const RUN_WAIT_MS = 270_000;
 /** How long box_run waits, after a command lost its box, to see whether bb-box is stopping for a deploy (#415). */
 const LOST_BOX_MS = 10_000;
+const TOOL_JOIN_WAIT_MS = 2 * 60_000;
 const RUN_TIMEOUT_MAX_S = 60 * 60;
 
 const HINTS: Record<BoxErrorCode, string> = {
@@ -978,6 +979,25 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${back}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");
+      }
+    },
+  });
+
+  registerTool({
+    name: "box_enrol",
+    description:
+      "Add a ready box that could not join BB, or is not a BB machine, to BB again, so threads can run on it. BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine.",
+    presentation: { label: { pending: "Adding a box to BB", completed: "Added a box to BB" } },
+    parameters: z.object({ box: boxParam }),
+    async execute({ box: ref }, { threadId, signal }) {
+      try {
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const answer = await app.joinAgain(owner, found.id, { waitMs: TOOL_JOIN_WAIT_MS, ...(signal ? { signal } : {}) });
+        const said = joinAgainWords(answer, `box_status with box "${answer.box.name}"`);
+        if (!said.failed) return said.text;
+        return { content: [{ type: "text", text: `${said.text}${next(`bb-box tries again by itself when the failure can pass. Call box_enrol again to try at once.`)}` }], isError: true };
+      } catch (error) {
+        return failure(error, "Adding the box to BB");
       }
     },
   });

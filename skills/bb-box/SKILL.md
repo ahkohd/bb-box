@@ -442,6 +442,11 @@ two for a Windows box, so threads and terminals can use it. `box_acquire`,
   box has that agent's CLI, and otherwise on the first agent CLI the box
   has, with its default model. It refuses a box with none of BB's agent
   CLIs, and names them.
+- A box that could not join BB, as when a DNS lookup of BB's address timed
+  out, tries again by itself. `box_enrol` tries at once. It runs BB's
+  installer in the box. It does not restart, stop or resize the box. It
+  stops only the BB daemon of a machine that BB no longer has. A box whose
+  machine BB still has is left as it is, and recorded as a BB machine.
 - In BB's new-thread screen, "New box" starts a thread on a Linux or macOS
   box of its own, not a Windows one. From a terminal, `bb thread spawn`
   does the same with the environment provider `bb-box-new` and inputs such

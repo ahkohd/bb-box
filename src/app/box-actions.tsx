@@ -102,7 +102,7 @@ export type MachineMethod = "remove" | "stop";
 
 /** Your machines' Start, Stop and Remove, as settings does them: Remove asks first, and either asks again when threads work on the machine. */
 export function useMachineActions(refresh: () => Promise<unknown>): {
-  act: (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force?: boolean, deleteKept?: boolean) => Promise<void>;
+  act: (method: MachineMethod | "start" | "forget" | "refresh" | "enrol", box: BoxView, force?: boolean, deleteKept?: boolean) => Promise<void>;
   busy: string | null;
   problem: string | null;
   setProblem: (problem: string | null) => void;
@@ -114,7 +114,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   const [busy, setBusy] = useState<string | null>(null);
   const [inUse, setInUse] = useState<InUse<MachineMethod> | null>(null);
   const [removing, setRemoving] = useState<BoxView | null>(null);
-  const call = (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force: boolean, deleteKept: boolean) => {
+  const call = (method: MachineMethod | "start" | "forget" | "refresh" | "enrol", box: BoxView, force: boolean, deleteKept: boolean) => {
     const input = { box: box.id, ...((method === "remove" || method === "stop") && force ? { force: true } : {}) };
     switch (method) {
       case "remove":
@@ -127,9 +127,11 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
         return rpc.call("forget", { threadId: OPERATOR, box: box.id });
       case "refresh":
         return rpc.call("refresh", { threadId: OPERATOR, box: box.id });
+      case "enrol":
+        return rpc.call("enrol", { threadId: OPERATOR, box: box.id });
     }
   };
-  const act = async (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force = false, deleteKept = false) => {
+  const act = async (method: MachineMethod | "start" | "forget" | "refresh" | "enrol", box: BoxView, force = false, deleteKept = false) => {
     setBusy(`${method}:${box.id}`);
     try {
       let refused: string | null;

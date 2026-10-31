@@ -21,6 +21,7 @@
 | [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
 | [`bb box stop`](#bb-box-stop) | Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force. |
 | [`bb box start`](#bb-box-start) | Start a thread's stopped box, or with --machine one of your machines, and wait until it answers. |
+| [`bb box enrol`](#bb-box-enrol) | Add a ready box that is not a BB machine to BB again, as a thread's box, or with --machine one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try. |
 | [`bb box forget`](#bb-box-forget) | Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running. |
 | [`bb box image set`](#bb-box-image-set) | Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. bb-box keeps a copy of the files. Setting it changes every new box of those kinds in the project. |
 | [`bb box image remove`](#bb-box-image-remove) | Remove a project's image (049). Boxes of its kinds in its projects start from the standard images again. |
@@ -338,6 +339,24 @@ Start a thread's stopped box, or with --machine one of your machines, and wait u
 ```text
 Usage:
   bb box start <box> [--thread <value>] [--machine] [--json]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --json            Print JSON.
+  --help, -h        Show this help and exit
+```
+
+## bb box enrol
+
+Add a ready box that is not a BB machine to BB again, as a thread's box, or with --machine one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try.
+
+```text
+Usage:
+  bb box enrol <box> [--thread <value>] [--machine] [--json]
 
 Arguments:
   <box>  The box's name or ID. (required)

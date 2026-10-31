@@ -1003,3 +1003,21 @@ export function kindSnapshotText(kind: KindView): string {
   const others = able.length < kind.offers.length ? `; ${kind.offers.length - able.length === 1 ? "the other provider takes none" : "the other providers take none"}` : "";
   return `Snapshots: ${able.map((offer) => `on ${offer.name}, ${words(offer)}`).join("; ")}${others}.`;
 }
+
+export interface JoinAgainWords {
+  readonly text: string;
+  readonly failed: boolean;
+}
+
+export function joinAgainWords(answer: { readonly is: "joined" | "joining" | "trying"; readonly box: BoxRecord }, followWith: string): JoinAgainWords {
+  const { box } = answer;
+  const untouched = "bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.";
+  if (answer.is === "joined") return { text: `Box ${box.name} is a BB machine already, as machine ${box.enrol.hostId}. Nothing changed.`, failed: false };
+  if (answer.is === "joining") return { text: `Box ${box.name} is joining BB now, so nothing else was started. Follow it with ${followWith}.`, failed: false };
+  if (box.enrol.state === "enrolled") return { text: `Box ${box.name} joined BB as machine ${box.enrol.hostId}. ${untouched}`, failed: false };
+  if (box.enrol.state === "failed") return { text: `Box ${box.name} did not join BB: ${box.enrol.error ?? "BB gave no reason."}`, failed: true };
+  if (box.joinTries?.next && box.joinTries.failed > 0 && box.joinTries.next > Date.now()) {
+    return { text: `Box ${box.name} did not join BB at this try. It is ${joiningWords(box.joinTries, Date.now()).replace(/\.?$/, ".")}`, failed: true };
+  }
+  return { text: `Box ${box.name} is still joining BB. Follow it with ${followWith}.`, failed: false };
+}
