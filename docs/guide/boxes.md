@@ -35,6 +35,7 @@ The line under the name says how the box is doing:
 | Starting, with a time | the box is being made or started |
 | Ready in 2.2 s | the box is ready, and took that long to start |
 | Joining BB… | the box is becoming a BB machine, which takes a few seconds, or a minute or two for a Windows box |
+| Joining BB, try 2 of 5 | the box's first try to join BB failed for something that can pass, and BB Box is trying again: see [when a box does not join BB](#when-a-box-does-not-join-bb) |
 | BB machine in 5.3 s | the box is a BB machine, so the thread's commands and terminals can use it |
 | This thread's machine | the box was made for the thread to run on, from BB's new-thread screen |
 | Could not join BB | the box works, but it is not a BB machine, and a line under it says why: see [when a box does not join BB](#when-a-box-does-not-join-bb) |
@@ -76,6 +77,15 @@ A thread can run on a box rather than on your computer. That box is the first ro
 ### When a box does not join BB
 
 A box joins BB through BB's machine access, in BB's settings under Machines. BB's desktop app starts with bb connect, which needs you signed in to your bb account. Until you are, no box joins BB: the row says 'Could not join BB' and why, and the first-run offer says so before you make a box. Sign in to your bb account in BB, or set Machine access to **Manual** with an address boxes can reach, such as the machine's address on your network. BB must listen on that address too. BB on its own listens only on 127.0.0.1, which a box cannot reach: start it with `npx bb-app --server-bind-host 0.0.0.0`, or with the address itself in place of 0.0.0.0. That makes BB reachable by anything else on that network too. A box made before then stays as it is, so release it and make a new one.
+
+A box can also fail to join because it cannot reach BB for a moment: its DNS lookup of BB's address times out, or its connection to BB is cut off or times out. BB Box then tries again by itself, after 30 seconds, 2 minutes, 10 minutes and 30 minutes. Meanwhile the row says 'Joining BB, try 2 of 5', and the box's page says what the last try could not do, such as 'Could not resolve BB's address from this box: the DNS lookup timed out', and when the next try starts. Select **Check now** on the box to try again at once. A box that joins on a later try is like any other.
+
+After 5 tries the row says 'Could not join BB', and BB Box keeps trying every 30 minutes. What it says next depends on the other boxes on the same backend:
+
+- if other boxes there joined BB, BB's setup is fine, and the fault is in this box's network or DNS. Release it and make another, or look at its network
+- if no box there can reach BB, BB's address is one its boxes cannot reach: turn the tailnet on in BB Box's settings (see [the tailnet](tailnet.md)), or give BB a URL its boxes can reach
+
+When no box on a backend can reach BB and BB refuses their connections or they have no route to it, BB Box says so after the first try, as that is a setup problem. Once it is fixed, select **Check now** on each box, or wait for the next try. `bb box doctor` lists each box that did not join at its first try, under Joining BB.
 
 Boxes still work without joining BB, but the thread's commands and terminals cannot use them, and they do not get the thread's Git credentials and variables.
 

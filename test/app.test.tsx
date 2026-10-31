@@ -1001,6 +1001,9 @@ test("the status line says the state, then what to act on, then BB enrolment and
   expect(timingWords(resumed)).toBe("claiming a spare\u00a03\u00a0ms · resuming it\u00a04.1\u00a0s · total\u00a04.1\u00a0s · BB machine reconnecting\u00a017.2\u00a0s");
   expect(statusOf(box({ timings: { spare: 3, total: 3 } }), now).items.map((item) => item.text)).toEqual(["Ready in 3 ms", "BB machine", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "failed", hostId: null, error: "no route" } }), now).items[1]).toEqual({ text: "Could not join BB", tone: "warn" });
+  const tries = { failed: 1, of: 5, next: now + 30_000, words: "Could not resolve BB's address from this box: the DNS lookup timed out.", setup: false };
+  expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: tries }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB, try 2 of 5", "2 cores · 4 GiB"]);
+  expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { ...tries, failed: 6 } }), now).items[1]?.text).toBe("Joining BB, try 7");
   expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {}, size: null }), now).items.map((item) => item.text)).toEqual(["Ready"]);
   expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }, { text: "2 cores · 4 GiB" }] });
   expect(statusOf(box({ state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }, { text: "8 cores · 16 GiB · 64 GiB" }] });
@@ -1847,6 +1850,11 @@ test("a box that could not join BB says why in its row; for bb connect without a
   // Any other reason is BB's own words.
   const other = panel(server([box({ enrol: { state: "failed", hostId: null, error: "BB removed the machine before it connected" } })]).handlers);
   expect(await other.findByText(/^BB removed the machine before it connected\. See Machine access in BB's settings, under Machines\./)).toBeTruthy();
+  cleanup();
+  const alone = "Could not resolve BB's address from this box: the DNS lookup timed out. It failed 5 tries. Other boxes on Fake host joined BB, so BB's setup is fine: the fault is in this box's network.";
+  const confined = panel(server([box({ enrol: { state: "failed", hostId: null, error: alone }, joinTries: { failed: 5, of: 5, next: Date.now() + 1_800_000, words: "x", setup: false } })]).handlers);
+  const line = await confined.findByText(/^Could not resolve BB's address from this box/);
+  expect(line.textContent).not.toMatch(/Machine access|tailnet/);
 });
 
 test("first run: where BB's machine access will not let boxes join, the offer says so up front", async () => {

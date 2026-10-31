@@ -7,7 +7,8 @@ import type { BoxView } from "../plugin/views.ts";
 import { Badge, boxTitleBadges, deviceModelOf, EmptyPanel, OPERATOR, osName, SETTINGS_PATH, StatusDot, systemName, useLive, useNow } from "./common.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { ThreadChips, threadTitle, WorkingMark } from "./thread-chips.tsx";
-import { JoinHelp } from "./first-run.tsx";
+import { JoinHelp, joinAdvice } from "./first-run.tsx";
+import { tryWords } from "../core/join-tries.ts";
 import { BoxMenu, type MenuAsk } from "./box-menu.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
 import { controlWord } from "./status.ts";
@@ -437,7 +438,7 @@ function Notices({ page, box, now, actions, announce }: { page: BoxPageState; bo
     note("join", "It could not join BB", box.enrol.error ?? "");
     notices.push(
       <PageNotice key="join" tone="warn" title="It could not join BB">
-        <JoinHelp words={box.enrol.error} />
+        <JoinHelp words={box.enrol.error} advice={joinAdvice(box)} />
       </PageNotice>,
     );
   }
@@ -518,12 +519,18 @@ function systemWords(box: BoxView): string {
   return `${osName(box.os)} ${box.arch}${box.docker ? ", with Docker" : ""}`;
 }
 
-function enrolFact(box: BoxView): { first: string; second: string | null } {
+function joiningSecond(tries: NonNullable<BoxView["joinTries"]>, now: number): string | null {
+  const last = tries.failed > 0 && tries.words ? `Try ${tries.failed} failed: ${tries.words}` : null;
+  const next = tries.next === null ? null : `Next try in ${span(Math.max(0, tries.next - now))}.`;
+  return [last, next].filter(Boolean).join(" ") || null;
+}
+
+function enrolFact(box: BoxView, now: number): { first: string; second: string | null } {
   switch (box.enrol.state) {
     case "enrolled":
       return { first: "Joined", second: box.state === "ready" && !silentWhy(box) ? "Threads can run on it" : "Offline now" };
     case "enrolling":
-      return { first: "Joining…", second: null };
+      return box.joinTries ? { first: `Joining, ${tryWords(box.joinTries.failed)}`, second: joiningSecond(box.joinTries, now) } : { first: "Joining…", second: null };
     case "failed":
       return { first: "Could not join", second: box.enrol.error };
     default:
@@ -556,7 +563,7 @@ function controlFact(box: BoxView): string | null {
 
 function Facts({ box, now }: { box: BoxView; now: number }) {
   const gone = notInSettings(box);
-  const enrol = enrolFact(box);
+  const enrol = enrolFact(box, now);
   const host = hostWords(box);
   const control = controlFact(box);
   return (

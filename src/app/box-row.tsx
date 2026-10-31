@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
 import { deviceModelOf, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
 import { DESKTOP_PAGE, MACHINES_TAB, useOpenScreen } from "./desktop.tsx";
-import { JoinHelp } from "./first-run.tsx";
+import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { useOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
@@ -182,7 +182,7 @@ export function BoxRow({
         {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
         {ready && box.enrol.state === "failed" ? (
           <p className="mt-0.5 text-xs leading-snug text-warning-text">
-            <JoinHelp words={box.enrol.error} />
+            <JoinHelp words={box.enrol.error} advice={joinAdvice(box)} />
           </p>
         ) : null}
         {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}

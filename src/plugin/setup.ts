@@ -11,6 +11,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import { providerName } from "../core/provider-name.ts";
+import { joinChecks, joiningWords } from "../core/join-tries.ts";
 import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
@@ -389,6 +390,7 @@ export interface SetupOptions {
   readonly providerRetryMs?: number;
   /** How long a release waits for BB to finish removing a Windows box's manual machine. */
   readonly manualRemoveMs?: number;
+  readonly joinWaitsMs?: readonly number[];
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
@@ -947,6 +949,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logonWaitMs: options.logonWaitMs,
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,
+    joinWaitsMs: options.joinWaitsMs,
   });
   bb.experimental_machines.register(enrolment.provider());
   registerNewBox(bb, {
@@ -1479,7 +1482,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async checkNow(threadId, ref, signal) {
       const box = await boxes.refresh(threadId, ref, signal);
       if (box.state === "ready") await reach.checkNow(box);
-      return (await boxes.find(box.id)) ?? box;
+      const checked = (await boxes.find(box.id)) ?? box;
+      return (await enrolment.tryNow(checked)) ?? checked;
     },
     control: (box) => control.view(box.id),
     async imageOptions(project) {
@@ -1619,6 +1623,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Identity resets",
           report: { ok: resetChecks.every((check) => check.status !== "fail"), summary: "Boxes of bb-box's whose identity reset at a boot, which bb-box keeps and enrols again as new BB machines.", checks: resetChecks, notes: [] },
+        });
+      }
+      const joins = joinChecks(await boxes.all(), Date.now());
+      if (joins.length) {
+        sections.push({
+          title: "Joining BB",
+          report: { ok: joins.every((check) => check.status !== "fail"), summary: "Boxes that did not join BB at their first try, and what bb-box does about them.", checks: joins, notes: [] },
         });
       }
       const spareChecks = await boxes.spareChecks();
@@ -1799,7 +1810,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       box = await boxes.enrolled(box, signal);
       if (box.enrol.state !== "enrolled" || !box.enrol.hostId) {
         const why =
-          box.enrol.state === "enrolling"
+          box.enrol.state === "enrolling" && box.joinTries
+            ? `it is ${joiningWords(box.joinTries, Date.now())}`
+            : box.enrol.state === "enrolling"
             ? `it is still becoming a BB machine. Try again in ${box.capabilities.os === "windows" ? "a minute or two" : "a few seconds"}`
             : box.enrol.state === "failed"
               ? `its enrolment as a BB machine failed: ${box.enrol.error ?? "no reason given"}`

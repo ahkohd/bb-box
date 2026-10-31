@@ -24,6 +24,7 @@ import { inSlot, isSlotKind, placementOf, slotHostName, placementWords, rootRefu
 import { offeredWords } from "../core/mac-capabilities.ts";
 import type { BoxLogView } from "../core/box-log.ts";
 import type { Reach } from "../core/reach.ts";
+import { JOIN_TRIES, joiningWords } from "../core/join-tries.ts";
 
 export type ReachView =
   | Reach
@@ -80,6 +81,7 @@ export interface BoxView {
   readonly facts: readonly { readonly label: string; readonly value: string }[];
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
+  readonly joinTries?: JoinTriesView | null;
   /** Its kind's boxes join BB as machines when enrolment is on; Windows kinds unless their backend's switch is off (#539). */
   readonly enrols: boolean;
   readonly canStopStart: boolean;
@@ -91,6 +93,14 @@ export interface BoxView {
   readonly lastResize?: ResizeView | null;
   readonly log?: BoxLogView | null;
   readonly reach?: ReachView | null;
+}
+
+export interface JoinTriesView {
+  readonly failed: number;
+  readonly of: number;
+  readonly next: number | null;
+  readonly words: string;
+  readonly setup: boolean;
 }
 
 /** A box's last resize (061), as the panel shows it. */
@@ -160,6 +170,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     facts: box.guest?.facts ?? [],
     timings: box.timings,
     enrol: box.enrol,
+    joinTries: box.joinTries ? { failed: box.joinTries.failed, of: JOIN_TRIES, next: box.joinTries.next, words: box.joinTries.words, setup: box.joinTries.setup } : null,
     enrols: box.capabilities.enrol,
     canStopStart,
     sizeNow: boxSize(box) ? sizeView(boxSize(box)!) : null,
@@ -671,7 +682,9 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
           ? // A box made before its kind's boxes joined BB, as a Windows box made before #539, is not enrolled in place.
             "not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released. A new one joins BB when bb-box enrols boxes"
           : "not enrolled",
-    enrolling: `being added, which takes ${capabilities.os === "windows" ? "a minute or two" : "a few seconds"}. box_run waits for it, so commands have the thread's access`,
+    enrolling: box.joinTries
+      ? `${joiningWords(box.joinTries, Date.now())}. Until it joins, box_run runs commands without the thread's access`
+      : `being added, which takes ${capabilities.os === "windows" ? "a minute or two" : "a few seconds"}. box_run waits for it, so commands have the thread's access`,
     enrolled: "enrolled",
     failed: `enrolment failed${box.enrol.error ? `: ${box.enrol.error}` : ""}`,
   };
