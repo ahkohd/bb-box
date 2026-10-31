@@ -68,7 +68,7 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
 }
 
 /** "Remove build-1?", with what removing does to the machine. */
-export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView | null; onClose: () => void; onRemove: (box: BoxView) => void }) {
+export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView | null; onClose: () => void; onRemove: (box: BoxView, deleteKept?: boolean) => void }) {
   return (
     <AlertDialog open={box !== null} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent>
@@ -80,10 +80,16 @@ export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView |
               : "Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first."}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {box?.releaseHeldForKept ? <p className="text-sm text-muted-foreground">Its last removal stopped before deleting anything: bb-box could not copy a snapshot you kept. Remove again tries the copy again; Remove and delete what you kept deletes those snapshots with it.</p> : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
+          {box?.releaseHeldForKept ? (
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => onRemove(box, true)}>
+              Remove and delete what you kept
+            </AlertDialogAction>
+          ) : null}
           <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => box && onRemove(box)}>
-            Remove
+            {box?.releaseHeldForKept ? "Remove again" : "Remove"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -95,7 +101,7 @@ export type MachineMethod = "remove" | "stop";
 
 /** Your machines' Start, Stop and Remove, as settings does them: Remove asks first, and either asks again when threads work on the machine. */
 export function useMachineActions(refresh: () => Promise<unknown>): {
-  act: (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force?: boolean) => Promise<void>;
+  act: (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force?: boolean, deleteKept?: boolean) => Promise<void>;
   busy: string | null;
   problem: string | null;
   setProblem: (problem: string | null) => void;
@@ -107,11 +113,11 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   const [busy, setBusy] = useState<string | null>(null);
   const [inUse, setInUse] = useState<InUse<MachineMethod> | null>(null);
   const [removing, setRemoving] = useState<BoxView | null>(null);
-  const call = (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force: boolean) => {
+  const call = (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force: boolean, deleteKept: boolean) => {
     const input = { box: box.id, ...((method === "remove" || method === "stop") && force ? { force: true } : {}) };
     switch (method) {
       case "remove":
-        return rpc.call("machines.remove", input);
+        return rpc.call("machines.remove", { ...input, ...(deleteKept ? { deleteKept: true } : {}) });
       case "stop":
         return rpc.call("machines.stop", input);
       case "start":
@@ -122,12 +128,12 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
         return rpc.call("refresh", { threadId: OPERATOR, box: box.id });
     }
   };
-  const act = async (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force = false) => {
+  const act = async (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force = false, deleteKept = false) => {
     setBusy(`${method}:${box.id}`);
     try {
       let refused: string | null;
       try {
-        const answer = await call(method, box, force);
+        const answer = await call(method, box, force, deleteKept);
         refused = answer.error;
         if ((method === "remove" || method === "stop") && answer.threads?.length) setInUse({ method, box, threads: answer.threads });
       } catch (caught) {
@@ -141,7 +147,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   };
   const dialogs = (
     <>
-      <RemoveMachineDialog box={removing} onClose={() => setRemoving(null)} onRemove={(box) => void act("remove", box)} />
+      <RemoveMachineDialog box={removing} onClose={() => setRemoving(null)} onRemove={(box, deleteKept) => void act("remove", box, false, deleteKept === true)} />
       <InUseDialog inUse={inUse} words={{ remove: "Remove", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, true)} />
     </>
   );
@@ -151,7 +157,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
 export type GuardedMethod = "release" | "stop";
 
 export interface ThreadBoxActions {
-  readonly act: (threadId: string, method: BoxAction, box: BoxView, force?: boolean) => Promise<void>;
+  readonly act: (threadId: string, method: BoxAction, box: BoxView, force?: boolean, deleteKept?: boolean) => Promise<void>;
   readonly busy: string | null;
   readonly problem: string | null;
   readonly setProblem: (problem: string | null) => void;
@@ -163,12 +169,12 @@ export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxA
   const [problem, setProblem] = useState<string | null>(null);
   const [inUse, setInUse] = useState<(InUse<GuardedMethod> & { readonly threadId: string }) | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (threadId: string, method: BoxAction, box: BoxView, force = false) => {
+  const act = async (threadId: string, method: BoxAction, box: BoxView, force = false, deleteKept = false) => {
     const guarded = method === "release" || method === "stop";
     let refused: string | null;
     setBusy(`${method}:${box.id}`);
     try {
-      const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) });
+      const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}), ...(method === "release" && deleteKept ? { deleteKept: true } : {}) });
       refused = answer.error;
       if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId });
     } catch (caught) {

@@ -22,7 +22,10 @@ import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, offlineMachineWords, readableState, unreadableWords } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
-import { answered, boxSnapshotsView, forkPreview, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
+import { answered, boxSnapshotsView, forkPreview, keepPreview, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
+import { bulkApply, bulkCheck, snapshotsTab } from "./snapshots-tab.ts";
+import { standingOfRecord } from "../core/snapshots.ts";
+import type { Standing } from "../core/snapshot.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -85,6 +88,26 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     if (!found || !listed(found)) throw new BoxError("not_found", "That box is gone.");
     return found;
   };
+
+  const standingFor = async (boxId: string, snapshot: string): Promise<{ readonly standing: Standing; readonly box: BoxRecord | null }> => {
+    const found = await boxes.find(boxId);
+    if (found && listed(found)) return { standing: personStanding(found), box: found };
+    const record = snapshots.ledger.record(snapshot) ?? snapshots.ledger.records({ box: boxId }).find((each) => each.name === snapshot) ?? null;
+    if (record && record.box.id === boxId && record.boxGone) return { standing: standingOfRecord(record), box: null };
+    throw new BoxError("not_found", "That box is gone.");
+  };
+
+  const snapshotAct = async (boxId: string, snapshot: string, action: string, work: (standing: Standing, box: BoxRecord | null) => Promise<unknown>): Promise<SnapshotChange> => {
+    try {
+      const { standing, box } = await standingFor(boxId, snapshot);
+      if (box) takeChecks.forget(box.id);
+      return await answered(work(standing, box), SNAPSHOT_ANSWER_WAIT_MS);
+    } catch (error) {
+      return { error: describeError(error, action), pending: false };
+    }
+  };
+
+  const keepInput = (days?: number, until?: string) => ({ ...(days !== undefined ? { days } : {}), ...(until !== undefined ? { until } : {}) });
 
   const snapshotChange = async (boxId: string, action: string, work: (box: BoxRecord) => Promise<unknown>): Promise<SnapshotChange> => {
     try {
@@ -207,7 +230,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     acquire: ({ threadId, kind, size, on, image, device, dedicated, shared }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}), who: BY_PERSON })),
     images: async ({ threadId, projectId }) => app.imageOptions(projectId ?? (threadId ? await app.projectOf(threadId).catch(() => null) : null)),
-    release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel", BY_PERSON))),
+    release: ({ threadId, box, force, deleteKept }) =>
+      guarded(threadId, box, force, () =>
+        change("Releasing the box", async () => {
+          if (deleteKept) await snapshots.unkeepForRelease(await boxes.get(threadId, box), BY_PERSON);
+          return boxes.release(threadId, box, "released in BB Box's panel", BY_PERSON);
+        }),
+      ),
     stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box, undefined, BY_PERSON))),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box, undefined, BY_PERSON)),
     resize: ({ threadId, box, ...options }) => resize(threadId, box, options),
@@ -350,26 +379,42 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         return { error: describeError(error, "Restoring the box"), pending: false };
       }
     },
-    "snapshot.delete": ({ box, snapshot, request }) => snapshotChange(box, "Deleting the snapshot", (found) => snapshots.delete(PERSON, personStanding(found), snapshot, { request })),
-    "snapshot.rename": ({ box, snapshot, name }) => snapshotChange(box, "Renaming the snapshot", (found) => snapshots.rename(PERSON, personStanding(found), snapshot, name)),
-    "snapshot.note": ({ box, snapshot, note }) => snapshotChange(box, "Saving the note", (found) => snapshots.annotate(PERSON, personStanding(found), snapshot, note)),
+    "snapshot.delete": ({ box, snapshot, request }) => snapshotAct(box, snapshot, "Deleting the snapshot", (standing) => snapshots.delete(PERSON, standing, snapshot, { request })),
+    "snapshot.rename": ({ box, snapshot, name }) => snapshotAct(box, snapshot, "Renaming the snapshot", (standing) => snapshots.rename(PERSON, standing, snapshot, name)),
+    "snapshot.note": ({ box, snapshot, note }) => snapshotAct(box, snapshot, "Saving the note", (standing) => snapshots.annotate(PERSON, standing, snapshot, note)),
+    async "snapshot.keepCheck"({ box, snapshot, days, until }) {
+      try {
+        const { standing } = await standingFor(box, snapshot);
+        return await keepPreview(snapshots, standing, snapshot, keepInput(days, until));
+      } catch (error) {
+        return { refusal: describeError(error, "Planning the keep"), check: null };
+      }
+    },
+    "snapshot.keep": ({ box, snapshot, days, until }) => snapshotAct(box, snapshot, "Keeping the snapshot", (standing) => snapshots.keep(PERSON, standing, snapshot, keepInput(days, until))),
+    "snapshot.unkeep": ({ box, snapshot }) => snapshotAct(box, snapshot, "Stopping keeping the snapshot", (standing) => snapshots.unkeep(PERSON, standing, snapshot)),
+    async "snapshots.tab"() {
+      return snapshotsTab(snapshots, (await boxes.all()).filter((box) => listed(box)));
+    },
+    "snapshots.bulkCheck": ({ snapshots: ids, change, days, until }) => bulkCheck(snapshots, ids, change, keepInput(days, until)),
+    "snapshots.bulk": ({ snapshots: ids, change, days, until }) => bulkApply(snapshots, ids, change, keepInput(days, until)),
     async "snapshot.picture"({ box: boxId, snapshot }) {
-      const box = await pageBox(boxId);
-      const picture = snapshots.picture(PERSON, personStanding(box), snapshot);
+      const { standing } = await standingFor(boxId, snapshot);
+      const picture = snapshots.picture(PERSON, standing, snapshot);
       return picture ? { jpeg: Buffer.from(picture.jpeg).toString("base64"), width: picture.width, height: picture.height } : null;
     },
     "snapshot.settle": ({ box }) => snapshotChange(box, "Checking the restore", () => snapshots.recover()),
     async "snapshot.forkCheck"({ box: boxId, snapshot, asMachine }) {
       try {
-        return await forkPreview(snapshots, await pageBox(boxId), snapshot, asMachine === true);
+        const { standing, box } = await standingFor(boxId, snapshot);
+        return await forkPreview(snapshots, box, standing, snapshot, asMachine === true);
       } catch (error) {
         return { refusal: describeError(error, "Planning the fork"), check: null };
       }
     },
     async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, request }) {
       try {
-        const box = await pageBox(boxId);
-        const answer = await snapshots.fork(PERSON, box, personStanding(box), snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true, request, projectId: box.projectId });
+        const { standing, box } = await standingFor(boxId, snapshot);
+        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, request, projectId: box?.projectId ?? null });
         return { error: null, box: answer.box ? { id: answer.box.id, name: answer.box.name } : null };
       } catch (error) {
         return { error: describeError(error, "Forking the snapshot"), box: null };
@@ -387,7 +432,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     "machines.add": ({ kind, size, name, on }) =>
       change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}), who: BY_PERSON })),
-    "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box, "removed in BB Box's settings", BY_PERSON))),
+    "machines.remove": ({ box, force, deleteKept }) =>
+      guarded(OPERATOR, box, force, () =>
+        change("Removing the machine", async () => {
+          if (deleteKept) await snapshots.unkeepForRelease(await boxes.get(OPERATOR, box), BY_PERSON);
+          return boxes.release(OPERATOR, box, "removed in BB Box's settings", BY_PERSON);
+        }),
+      ),
     "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box, undefined, BY_PERSON))),
     "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box, undefined, BY_PERSON)),
     "machines.resize": ({ box, ...options }) => resize(OPERATOR, box, options),

@@ -8,7 +8,7 @@ export const VIEWS = ["desktop", "device", "terminal"] as const;
 
 export type BoxViewName = (typeof VIEWS)[number];
 
-export type ListTab = "machines" | "threads";
+export type ListTab = "machines" | "threads" | "snapshots";
 
 export type BoxesRoute =
   | { readonly page: "list"; readonly tab: ListTab | null }
@@ -60,7 +60,7 @@ export function routeOf(subPath: string): BoxesRoute {
   if (parts.some((part) => part === null || part === "")) return LIST;
   const [first, second, ...rest] = parts as string[];
   if (first === undefined) return LIST;
-  if (second === undefined) return first === "machines" || first === "threads" ? { page: "list", tab: first } : LIST;
+  if (second === undefined) return first === "machines" || first === "threads" || first === "snapshots" ? { page: "list", tab: first } : LIST;
   if (first !== BOX_PART) return legacyRoute(first, second, rest);
   const [maybeView, ...after] = rest;
   if (maybeView !== undefined && isView(maybeView)) {

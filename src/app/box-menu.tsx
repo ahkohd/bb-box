@@ -32,7 +32,7 @@ export interface ThreadsBox {
   readonly threadId: string;
   readonly held: boolean;
   readonly offersThread: boolean;
-  readonly act: (method: BoxAction) => void;
+  readonly act: (method: BoxAction, options?: { readonly deleteKept?: boolean }) => void;
 }
 
 export interface YourMachine {
@@ -303,10 +303,16 @@ export function BoxMenu({
                   : "Its disk and everything on it will be deleted. Copy out anything you want to keep first."}
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {box.releaseHeldForKept ? <p className="text-sm text-muted-foreground">Its last release stopped before deleting anything: bb-box could not copy a snapshot you kept. Release again tries the copy again; Release and delete what you kept deletes those snapshots with it.</p> : null}
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
+              {box.releaseHeldForKept ? (
+                <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => thread.act("release", { deleteKept: true })}>
+                  Release and delete what you kept
+                </AlertDialogAction>
+              ) : null}
               <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => thread.act("release")}>
-                Release
+                {box.releaseHeldForKept ? "Release again" : "Release"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

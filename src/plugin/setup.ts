@@ -88,7 +88,7 @@ import { FakeSnapshotPrices, MachineRestores, SnapshotHolds, ZfsOrder } from "./
 import { registerSnapshotTools } from "./snapshot-tools.ts";
 import { TurnHold } from "./turn-hold.ts";
 import { ReachCheck } from "../core/reach.ts";
-import type { Actor } from "../core/box-log.ts";
+import { byBbBox, type Actor } from "../core/box-log.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -817,7 +817,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     ended: (box, how) => snapshots.boxEnded(box, how),
     forked: (box) => snapshots.forkEnded(box),
     ...(snapshotHolds ? { forkHold: (box: BoxRecord, signal: AbortSignal) => snapshotHolds.hold({ id: box.fork?.operation ?? box.id, kind: "fork" }, "forked", signal, (message) => bb.log.info(message)) } : {}),
-    keepsGuest: (backendId, guestRef) => snapshots.holdsGuest(backendId, guestRef),
+    keepsGuest: (backendId, guestRef, ended) => snapshots.holdsGuest(backendId, guestRef, ended),
+    holdKeptOn: (backendId, guestRef) => snapshots.holdKeptOn(backendId, guestRef, byBbBox("its guest's thread ended")),
+    leftoverReleased: (backendId, guestRef, boxId, why) => snapshots.leftoverReleased(backendId, guestRef, boxId, why),
+    beforeRelease: (box, who) => snapshots.holdKept(box, who),
     async thread(threadId): Promise<ThreadAnswer> {
       try {
         const thread = await bb.sdk.threads.get({ threadId });

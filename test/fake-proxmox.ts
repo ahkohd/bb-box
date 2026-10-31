@@ -94,6 +94,8 @@ export class FakeProxmox {
   readonly privileges = new Map<string, Set<string>>([["/pool/bbbox", new Set(TOKEN_ROLE)]]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   killNextSnapshot = false;
+  templateLag = 0;
+  readonly #templating = new Map<number, number>();
   #snapshotsTaken = 0;
   snapshotTaskFailsWhole = false;
   readonly storageConfigs = new Map<string, Record<string, unknown>>([["local-lvm", { storage: "local-lvm", type: "lvmthin", vgname: "pve", thinpool: "data", content: "rootdir,images" }]]);
@@ -301,6 +303,10 @@ export class FakeProxmox {
       const snapshot = guest.snapshots?.find((each) => each.name === name);
       if (!snapshot) return respond(500, `snapshot '${name}' does not exist`, { data: null });
       if (action === "config" && method === "GET") return ok({ ...(snapshot.config ?? {}) });
+      if (action === "config" && method === "PUT") {
+        if (params.description !== undefined) snapshot.description = params.description;
+        return ok(null);
+      }
       if (action === "rollback" && method === "POST") {
         const prefix = type === "qemu" ? "qm" : "vz";
         const what = type === "qemu" ? "VM" : "CT";
@@ -428,6 +434,14 @@ export class FakeProxmox {
       const vmid = Number(match[2]);
       const guest = this.#of(match[1]!, vmid);
       if (!guest) return this.#missing(vmid, match[1]);
+      const left = this.#templating.get(vmid);
+      if (method === "GET" && left !== undefined) {
+        if (left <= 1) {
+          this.#templating.delete(vmid);
+          guest.template = true;
+          guest.config.template = "1";
+        } else this.#templating.set(vmid, left - 1);
+      }
       if (method === "GET") return ok({ ...guest.config });
       if (method === "PUT") {
         // Deleting `vmstate` discards a suspended VM's state, and so its lock.
@@ -473,6 +487,10 @@ export class FakeProxmox {
       if (!guest) return this.#missing(Number(id), type);
       if (guest.status === "running") return respond(500, `CT ${id} is running`, { data: null });
       if (guest.template) return respond(500, `CT ${id} is already a template`, { data: null });
+      if (this.templateLag > 0) {
+        this.#templating.set(Number(id), this.templateLag);
+        return ok(null);
+      }
       guest.template = true;
       guest.config.template = "1";
       // Its disk becomes a base volume, which linked clones name.

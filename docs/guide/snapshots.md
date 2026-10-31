@@ -2,15 +2,15 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, [fork](#forking-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Keeping one after its box is released comes later: see [decision 070](../decisions/070-snapshots.md).
+You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Only you keep one.
 
 ## What each backend offers
 
-| Backend | Holds | While the box runs | Restores | Forks |
-| --- | --- | --- | --- | --- |
-| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset |
-| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only |
-| Every other backend | no snapshots yet | | | |
+| Backend | Holds | While the box runs | Restores | Forks | Keeps past a release |
+| --- | --- | --- | --- | --- | --- |
+| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
+| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
+| Every other backend | no snapshots yet | | | | |
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
@@ -22,6 +22,7 @@ A box's page has a Snapshots card, after its activity and before its facts. Its 
 - **Restore** opens a dialog that reads what the restore would do and end, live. It says when the box goes back to and what goes, and names each thread on the box, a person holding its desktop and each BB terminal open on it. A box with a thread on it is not restored, as on the command line: the dialog names the threads and says why. A person's control of the desktop or a terminal is named under "Also goes", and the button says "Restore (box) anyway". The undo is ticked: untick it and the button turns red and says "Restore without undo". When no undo can be taken, for room or the ceiling, the dialog says why and leaves it unticked. The restore goes on only past what the dialog showed: if a thread, a terminal or the person's control has come since, or the plan changed, BB Box restores nothing and the dialog reads it all again. If BB Box cannot flush the box's writes before stopping it (below), nothing changes and the dialog asks whether to restore anyway with an undo that may miss the last seconds' writes.
 - **While it restores**, a notice at the top of the page says so and follows each part: the stop, the undo, the rollback and the start. After it, a notice says when the box was restored, to what, and by whom, for 24 hours. Its **Undo…** opens the same dialog for the restore's undo. A restore BB Box could not confirm after a restart has its own notice, with **Check now**, which settles it as the sweep does.
 - **Fork**, beside Restore, opens the [Fork dialog](#forking-a-snapshot). Below 640 px it is in the row's menu, as Fork…. It is off, with why, for a snapshot that cannot fork.
+- **Keep…** is in each row's menu, below Note…: see [Keeping a snapshot](#keeping-a-snapshot). A kept snapshot's menu says **Keep 30 more days…** and **Stop keeping**.
 - **Rename…**, **Note…**, **Copy ID** and **Delete…** are in each row's menu. A name is at most 60 characters and unique on the box; a note at most 1 KB. Delete says what it frees, whether you kept it, and whether it is a restore's undo. A snapshot a restore uses cannot be renamed, noted or deleted until the restore ends.
 
 Every dialog starts on its safe choice, Cancel for Restore and Delete, the name for Take snapshot and Rename, and gives focus back to the button that opened it, or to the menu's button.
@@ -235,15 +236,62 @@ BB Box reads Proxmox's task list at each sweep. A rollback of one of its boxes t
 
 Each step is recorded before it runs, with Proxmox's task once it begins. When BB Box starts again, it finishes the restore from the step it reached, or puts the box back as it was if it never got past the stop. When it cannot tell how a step ended, such as a rollback whose task it cannot read or that still runs, it keeps the snapshots the restore uses, leaves the box as the restore left it, refuses to start it, and checks again at each sweep. `bb box sweep` checks at once, and `bb box doctor` names such a restore.
 
+## Keeping a snapshot
+
+Keep makes a snapshot yours and keeps it past its box's release, for 30 days from the day you keep it unless Settings say otherwise, or until a date you choose. No agent can delete a kept snapshot, and BB Box deletes it after its date, whether its box lives or not; from 3 days before, its row says "goes in 3 days" in amber, and the Snapshots tab counts it. Keep it again to renew it: by default that never shortens its keep. Days are counted in UTC.
+
+After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
+
+The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then.
+
+The keep date is written on the provider first, in the snapshot's own label on Proxmox (`kept 2026-11-30` in its description), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
+
+On the command line:
+
+```
+bb box snapshot keep <box> <snapshot> [--days <n> | --until <yyyy-mm-dd>] [--check]
+bb box snapshot unkeep <box> <snapshot>
+```
+
+`--check` says what keeping it would cost, changing nothing. A box that was released is named as `bb box snapshot list --all` names it; its kept snapshot can be kept longer, or deleted, not unkept.
+
+### A held copy
+
+On Proxmox, a kept snapshot outlives its box as a **held copy**: when the box is released, BB Box first copies each kept snapshot in full, its earlier guest's included, into a VMID of the box range, and only then deletes the box's guest. Each step is recorded before it runs:
+
+1. the clone of the snapshot, labelled as a held copy with the box, the snapshot, its keep date, the box's kind and the version of its identity reset
+2. the disarm: `onboot` off and every link down, and on a VM a new SMBIOS UUID
+3. the conversion to a Proxmox template, which cannot start; BB Box waits until Proxmox lists it as one
+
+The kept snapshot then lives on the copy: its row says "held copy on pve-1", and holds the disk only, also for a snapshot that held memory. It is listed under its box, marked released, on the Snapshots tab and in `bb box snapshot list --all`.
+
+A copy that is not a template yet is never trusted. If BB Box restarts in the middle of one, it deletes that copy when it starts again and makes it again from the snapshot, which the release has kept until then. A copy found running before it was a template, which should never happen, is logged `held-copy-started`.
+
+If a copy cannot be made, as for want of room (the same rule as a take's: the storage past your setting with the copy, about the box's disk use) or of a free VMID, the release stops and deletes nothing: "Release did not finish: bb-box could not copy "Thu 09:15", which you kept: pve-1's storage local-lvm has 6 GB free, and the held copy needs about 13 GB." The sweep tries again every few minutes. The box's menu then offers **Release again** and **Release and delete what you kept** (Remove, for your machines); on the command line, `bb box release --delete-kept` and `bb box machines remove --delete-kept`.
+
+A kept snapshot of a released box forks from its held copy, as one of your machines, from the Snapshots tab or with `bb box snapshot fork <box> <snapshot>`. The fork resets at its first boot and is checked as any fork is.
+
 ## When a box is released
 
-A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one.
+A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one. Kept ones outlive it as held copies, above.
+
+A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for.
 
 ## If BB Box restarts
 
 Each take, delete and restore is recorded before it starts, with the backend's task once it begins. A restore's own steps are above. If BB Box restarts in the middle of one, it reads the backend's task and the box's snapshots when it starts again, and finishes or settles it: a take is ready only if the backend shows it complete, and a take that never began is failed, never taken again.
 
-BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host for 7 days, then deleted, unless it carries a keep date.
+BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host until you delete it, or as kept until its date when it carries one. A held copy found again keeps its identity reset's version and its box's kind from its tags, so it still forks; a snapshot of a living box found again does not know its version, so it is not kept anew or forked.
+
+## The Snapshots tab
+
+The Boxes page has a third tab, Snapshots, after Machines and Threads, with its count, at `/plugins/bb-box/desktop/snapshots`. The line under the tabs says how many snapshots there are, undos apart, how many agents took, the space they use by host where known, and what paid ones cost a month; then, in amber, what needs you: keeps that end within 7 days, failed takes, snapshots that are incomplete, unavailable, lost or found.
+
+Each box with snapshots has a card: its name, a link to its page while it lives; its kind; where it lives; its thread, or "Your machine"; and for a box that is gone, "released 12 Oct". Each row is as on a box's page, and also says what it holds and its life: "goes with the box", "kept until 29 Nov", or "held copy on pve-1". Restore, Fork and the row's menu work as on the box's page; for a released box, Restore is off with "its box was released: fork it into a new box instead".
+
+Search finds a snapshot by its name, its note, its box's name or its thread's title. Filters, with counts, choose by where it lives, what it holds, who took it, kept, undos and keeps that end within 7 days. Sort by newest, oldest, largest, price or box name.
+
+**Select** puts a checkbox on each row; with some ticked, the bar offers **Keep…** and **Delete…**. Each opens a dialog that checks every snapshot as a single Keep or Delete would, at the moment you open it and again at the moment of the change, and lists those it skips with why, such as a snapshot a restore uses, and what each of the others costs or frees on its own backend.
 
 ## Settings
 
@@ -252,6 +300,7 @@ BB Box's settings have a Snapshots page, under Options. Its fields wait for Save
 | Setting | Default | Range | What it does |
 | --- | --- | --- | --- |
 | Snapshots per box | 5 | 1 to 50 | A take past it is refused, naming the snapshots to delete. Kept ones count; undos are counted apart, 2 a box. |
+| Keep keeps a snapshot for | 30 days | 1 to 365 | From the day you keep one, unless you give a date. BB Box deletes a kept snapshot after its date. |
 | Refuse new snapshots when a host's storage is past | 85% full | 50 to 90 | A take is refused past it, and past 5 points below it of a thin pool's metadata. 7 points above it, BB Box deletes agents' snapshots on that storage that nobody kept, oldest first, and logs why. |
 | A ceiling on paid snapshots, one per backend that charges | 5 a month, in the provider's currency | 0 to 1,000 | A take that would bring the monthly rate held on that backend past it is refused. |
 | Agents may restore their own boxes | on | | Off, an agent asks for a yes in its thread through the form before it restores any box. A box threads run on always needs that yes. A switch, saved at once. |

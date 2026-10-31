@@ -26,7 +26,9 @@ export const SWEEP_POINTS_ABOVE_ROOM = 7;
 export const LOST_AFTER_MISSING_MS = 10 * 60_000;
 export const FAILED_KEPT_MS = 24 * 60 * 60_000;
 export const LOST_KEPT_MS = 7 * 24 * 60 * 60_000;
-export const FOUND_KEPT_MS = 7 * 24 * 60 * 60_000;
+export const DAY_MS = 24 * 60 * 60_000;
+export const KEEP_ENDS_SOON_DAYS = 3;
+export const KEEP_ENDS_WITHIN_DAYS = 7;
 export const OPERATIONS_KEPT_MS = 30 * 24 * 60 * 60_000;
 
 export interface RoomThresholds {
@@ -218,6 +220,39 @@ export function isKept(snapshot: Pick<SnapshotRecord, "keptUntil">): boolean {
   return snapshot.keptUntil !== null;
 }
 
+export function utcDay(at: number): string {
+  return new Date(at).toISOString().slice(0, 10);
+}
+
+export function endOfUtcDay(day: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const start = Date.parse(`${day}T00:00:00Z`);
+  return Number.isNaN(start) || utcDay(start) !== day ? null : start + DAY_MS - 1;
+}
+
+export function keptUntilAfter(now: number, days: number): number {
+  return endOfUtcDay(utcDay(now + days * DAY_MS))!;
+}
+
+export function keepLabel(keptUntil: number | null): string | null {
+  return keptUntil === null ? null : utcDay(keptUntil);
+}
+
+export function daysLeft(snapshot: Pick<SnapshotRecord, "keptUntil">, now: number): number | null {
+  return snapshot.keptUntil === null ? null : Math.max(0, Math.ceil((snapshot.keptUntil - now) / DAY_MS));
+}
+
+export function keepEndsWithin(snapshot: Pick<SnapshotRecord, "keptUntil">, now: number, days: number): boolean {
+  return snapshot.keptUntil !== null && snapshot.keptUntil - now < days * DAY_MS;
+}
+
+export function keepEndsWords(snapshot: Pick<SnapshotRecord, "keptUntil">, now: number): string | null {
+  const left = daysLeft(snapshot, now);
+  if (left === null) return null;
+  if (!keepEndsWithin(snapshot, now, KEEP_ENDS_SOON_DAYS)) return `kept until ${utcDay(snapshot.keptUntil!)}`;
+  return left <= 1 ? "goes within a day" : `goes in ${left} days`;
+}
+
 export function heldByProvider(snapshot: Pick<SnapshotRecord, "state">): boolean {
   return snapshot.state === "taking" || snapshot.state === "ready" || snapshot.state === "incomplete" || snapshot.state === "unavailable" || snapshot.state === "deleting";
 }
@@ -241,7 +276,7 @@ export function operationWords(operation: Pick<SnapshotOperation, "kind" | "star
   return `the ${OPERATION_WORDS[operation.kind]} that began at ${clockWords(operation.startedAt)}`;
 }
 
-export const CHANGES = ["delete", "expire", "evict-limit", "evict-room", "replace-undo", "remove-found", "keep", "unkeep", "rename", "note"] as const;
+export const CHANGES = ["delete", "expire", "evict-limit", "evict-room", "replace-undo", "keep", "unkeep", "rename", "note"] as const;
 export type Change = (typeof CHANGES)[number];
 
 export interface ChangeContext {
@@ -288,12 +323,6 @@ export function eligible(snapshot: SnapshotRecord, change: Change, context: Chan
     case "replace-undo":
       if (snapshot.undoOf === null) return no(`${quoted(snapshot)} is not an undo.`);
       if (isKept(snapshot)) return no(`${quoted(snapshot)} is kept, so it is no longer replaced as an undo.`);
-      if (snapshot.state !== "ready" && snapshot.state !== "incomplete") return no(`${quoted(snapshot)} is ${snapshot.state}.`);
-      return YES;
-    case "remove-found":
-      if (snapshot.foundAt === null) return no(`${quoted(snapshot)} is in bb-box's records.`);
-      if (context.now - snapshot.foundAt < FOUND_KEPT_MS) return no(`${quoted(snapshot)} was found less than 7 days ago.`);
-      if (snapshot.keptUntil !== null && snapshot.keptUntil > context.now) return no(`${quoted(snapshot)} is kept.`);
       if (snapshot.state !== "ready" && snapshot.state !== "incomplete") return no(`${quoted(snapshot)} is ${snapshot.state}.`);
       return YES;
     case "keep":
@@ -490,6 +519,10 @@ export function notForkSafe(snapshot: SnapshotRecord): boolean {
   return snapshot.forkSafe === null && snapshot.box.system === "linux" && snapshot.scope === "box";
 }
 
+export function goneWords(gone: NonNullable<SnapshotRecord["boxGone"]>): string {
+  return gone.how === "unknown" ? "its box is gone" : `its box was ${gone.how} ${utcDay(gone.at)}`;
+}
+
 export function snapshotLine(snapshot: SnapshotRecord): string {
   const parts = [
     `"${snapshot.name}" (${snapshot.id})`,
@@ -499,9 +532,10 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     holdsWords(snapshot),
     sizeWords(snapshot.size),
     ...(snapshot.price ? [priceWords(snapshot.price)] : []),
-    ...(snapshot.keptUntil !== null ? [`kept until ${dayWords(snapshot.keptUntil).slice(0, 10)}`] : []),
+    ...(snapshot.keptUntil !== null ? [`kept until ${utcDay(snapshot.keptUntil)}`] : []),
     ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
+    ...(snapshot.boxGone ? [goneWords(snapshot.boxGone)] : []),
     ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
     ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),
     ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),

@@ -9,7 +9,7 @@ import { BY_COMMAND, type BoxEventKind } from "../src/core/box-log.ts";
 import { BoxError, Boxes, type BoxRecord } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { checkDocument, emptyDocument, snapshotConfig, type SnapshotSettings } from "../src/core/document.ts";
-import { LOST_AFTER_MISSING_MS, snapshotLine, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
+import { LOST_AFTER_MISSING_MS, keptUntilAfter, snapshotLine, type Caller, type SnapshotOperation, type Standing } from "../src/core/snapshot.ts";
 import { Snapshots, type HoldStep } from "../src/core/snapshots.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -22,7 +22,7 @@ import { FakeBackend } from "./fake-backend.ts";
 import { FakeSnapshots as Provider, type Held } from "./fake-snapshots.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
 
-import { COMMAND, DAY, HOUR, THREAD, identityGuest, readyBox, rejection, standing, untilHeld, withIdentitySource, world, type World } from "./snapshot-world.ts";
+import { COMMAND, DAY, HOUR, THREAD, armedWorld, identityGuest, readyBox, rejection, standing, untilHeld, withIdentitySource, world, writeIn, type World } from "./snapshot-world.ts";
 
 test("a take is recorded and pinned before the backend is asked, records the provider's task before it waits, and is ready once confirmed", async () => {
   const state = world();
@@ -515,7 +515,7 @@ test("G2: a backend that leaves the settings makes its snapshots unavailable, an
   assert.equal(state.snapshots.heldOn(state.backend.id), null);
 });
 
-test("G3: with snapshots.db's records gone, the next sweep finds every snapshot, kept ones as kept, and deletes none; a gone box's unkept one is listed 7 days, then deleted", async () => {
+test("G3: with snapshots.db's records gone, the next sweep finds every snapshot, kept ones as kept, and deletes none; a gone box's unkept one is listed until the person deletes it", async () => {
   const state = world();
   const box = await readyBox(state);
   const ordinary = (await state.snapshots.take(COMMAND, box, standing(box), { name: "ordinary" })).snapshot!;
@@ -546,11 +546,13 @@ test("G3: with snapshots.db's records gone, the next sweep finds every snapshot,
   state.tick(7 * DAY - 2000);
   await state.snapshots.sweep();
   assert.equal(state.provider.held.has(fromGone.id), true, "never deleted at once");
-  state.tick(2000);
+  state.tick(60 * DAY);
   await state.snapshots.sweep();
-  assert.equal(state.provider.held.has(fromGone.id), false, "deleted after 7 days");
-  assert.equal(state.provider.held.has(keptGone.id), true, "a kept one stays");
-  assert.deepEqual(state.log.events(fromGone.box).at(-1)?.by.is, "bb-box");
+  assert.equal(state.provider.held.has(fromGone.id), true, "a found one stays until the person deletes it");
+  assert.equal(state.store.record(fromGone.id)?.foundAt, orphan.foundAt);
+  assert.ok(state.logs.some((line) => line.includes(`Found snapshot ${fromGone.id}`) && line.endsWith("It is listed until you delete it.")), state.logs.join("\n"));
+  await state.snapshots.deleteGone(state.store.record(fromGone.id)!, BY_COMMAND);
+  assert.equal(state.provider.held.has(fromGone.id), false, "the person's delete");
 });
 
 test("a forgotten box's snapshots stay as unavailable, marked gone; a released box's go", async () => {
@@ -766,25 +768,51 @@ test("a release during a sweep's listing leaves no ghost record and no false los
   assert.deepEqual(state.kinds(box.id).filter((kind) => kind === "snapshot-lost"), []);
 });
 
-test("the sweeps together: a gone box's guest holding a found snapshot is kept by the box sweep, at its second sweep and after; one with none goes", async () => {
+test("the sweeps together: a leftover guest of an ended thread goes at once with its found snapshots; one whose thread BB has not said ended twice stays", async () => {
   const state = world();
-  const keeping = await readyBox(state);
+  const found = await readyBox(state);
   const plain = await readyBox(state);
-  await state.snapshots.take(COMMAND, keeping, standing(keeping));
-  await state.forgetBox(keeping);
+  await state.snapshots.take(COMMAND, found, standing(found));
+  await state.forgetBox(found);
   await state.forgetBox(plain);
   state.forgetRecords();
   state.threadState = "ended";
   state.tick(1000);
-  for (let sweep = 0; sweep < 3; sweep++) {
+  await state.snapshots.sweep();
+  await state.boxes.sweep();
+  assert.notEqual(await state.backend.power(found.guest!), null, "BB said the thread ended once only");
+  assert.equal(state.store.records().length, 1, "found again");
+  state.tick(3 * 60_000);
+  await state.snapshots.sweep();
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(found.guest!), null, "the guest with a found snapshot goes at once");
+  assert.equal(await state.backend.power(plain.guest!), null, "the other leftover goes");
+  assert.equal(state.provider.held.size, 0);
+  assert.equal(state.store.records().length, 0, "its found snapshot's record went with it");
+  assert.equal(state.log.events(found.id).at(-1)?.kind, "snapshot-deleted");
+  assert.match(state.log.events(found.id).at(-1)?.words ?? "", /it went with guest /);
+});
+
+test("a leftover guest of an ended thread with a kept snapshot gets its held copy first, then goes; the copy stays kept", async () => {
+  const state = armedWorld();
+  const box = await readyBox(state);
+  writeIn(state, box, "home/state.txt", "kept work");
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept one" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
+  await state.forgetBox(box);
+  state.threadState = "ended";
+  for (let sweep = 0; sweep < 2; sweep++) {
     await state.snapshots.sweep();
     await state.boxes.sweep();
     state.tick(3 * 60_000);
   }
-  assert.notEqual(await state.backend.power(keeping.guest!), null, "the guest with the found snapshot stays");
-  assert.equal(await state.backend.power(plain.guest!), null, "the other leftover goes");
-  assert.equal(state.provider.held.size, 1);
-  assert.ok(state.boxLogs.some((line) => /^Kept guest .* which no box records and its box's thread .* ended.*: it holds a snapshot bb-box keeps: found and kept 7 days\.$/.test(line)), state.boxLogs.join("\n"));
+  assert.equal(await state.backend.power(box.guest!), null, "the leftover goes once its copy is made");
+  const kept = state.store.record(taken.id)!;
+  assert.equal(kept.guest, "held-copy");
+  assert.equal(kept.keptUntil, keptUntilAfter(Date.UTC(2026, 9, 30, 10, 42), 30));
+  assert.equal(state.provider.copies.get(kept.livesOn.ref)?.state, "template");
+  assert.ok(state.provider.order.indexOf(`copy-snapshot ${taken.id}`) >= 0);
+  assert.ok(state.boxLogs.some((line) => line.startsWith(`Releasing guest ${box.guest!.ref}`)), state.boxLogs.join("\n"));
 });
 
 test("with snapshots.db unreadable, the box sweep keeps every leftover guest", async () => {

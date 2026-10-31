@@ -65,7 +65,7 @@ function tasks(): { hooks: SnapshotHooks; seen: TaskRef[]; submitted: number[] }
 
 test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs, and forks by a full copy from version 5 of the identity reset; a Windows VM offers none yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 5, keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 5, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows-desktop"), null);
 });
 

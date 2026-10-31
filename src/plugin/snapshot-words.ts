@@ -1,8 +1,8 @@
 import type { Backend, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, dayWords, gbWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, type SnapshotRecord } from "../core/snapshot.ts";
+import { countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
-import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
+import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type KeepAnswer, type KeepCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
 
 function seconds(ms: number): string {
@@ -57,12 +57,43 @@ export function forkMayMissWords(snapshot: Pick<SnapshotRecord, "unflushed">): s
   return snapshot.unflushed ? `The snapshot may miss what the box wrote in its last seconds before it: ${unflushedWords(snapshot.unflushed).replace(/, so it may miss .*$/, "")}, so the fork may lack them too.` : null;
 }
 
+export function keepCostWords(check: KeepCheck): string {
+  const on = `${check.host ? `${check.host}'s ` : ""}${check.storage ?? "its storage"}`;
+  const until = utcDay(check.keptUntil);
+  if (check.gone) return `Its box was released, so it lives on as a held copy, guest ${check.snapshot.livesOn.ref}, a template that cannot start${check.host ? ` on ${check.host}` : ""}, which bb-box deletes after ${until}.`;
+  if (check.way === "as-is") return `If ${check.snapshot.box.name} is released, it stays where it is until ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}.`;
+  const space = check.usedBytes !== null ? `about ${gbWords(check.usedBytes)}${check.bytes !== null && check.bytes > check.usedBytes ? `, at most ${gbWords(check.bytes)},` : ""}` : check.bytes !== null ? `up to ${gbWords(check.bytes)}` : "the space its disk uses";
+  const time = check.aboutMs !== null ? `up to about ${seconds(check.aboutMs)}` : "a while";
+  return `If ${check.snapshot.box.name} is released, bb-box first copies this snapshot in full into a template that cannot start: ${time}, and ${space} on ${on} until ${until}${check.price ? `, at ${priceWords(check.price)}` : ", at no charge"}.`;
+}
+
+export function keepCheckText(check: KeepCheck): string {
+  const snapshot = check.snapshot;
+  const until = utcDay(check.keptUntil);
+  const now = snapshot.keptUntil !== null ? `It is kept until ${utcDay(snapshot.keptUntil)} now. ` : "";
+  return [
+    `${now}Keeping "${snapshot.name}" (${snapshot.id}) of box ${snapshot.box.name} until ${until} makes it yours: no agent can delete it, it outlives its box's release, and a fork of it after then is one of your machines. bb-box deletes it after ${until}.`,
+    ...(check.shortens ? [`This shortens its keep, from ${utcDay(snapshot.keptUntil!)} to ${until}.`] : []),
+    keepCostWords(check),
+    ...(check.warning ? [check.warning] : []),
+    ...(snapshot.unflushed ? ["It may miss what the box wrote in its last seconds before it, as bb-box could not flush them first."] : []),
+    "Nothing changed.",
+  ].join("\n");
+}
+
+export function keptText(answer: KeepAnswer): string {
+  const snapshot = answer.snapshot;
+  const until = utcDay(answer.check.keptUntil);
+  if (answer.repeated) return `"${snapshot.name}" (${snapshot.id}) of box ${snapshot.box.name} was kept until ${until} already.`;
+  return [`Kept "${snapshot.name}" (${snapshot.id}) of box ${snapshot.box.name} until ${until}.`, keepCostWords(answer.check), ...(answer.check.warning ? [answer.check.warning] : [])].join(" ");
+}
+
 export function forkCheckText(check: ForkCheck): string {
   const snapshot = check.snapshot;
   const where = check.asMachine ? "one of your machines" : `a box of thread ${check.threadId}`;
   const space = check.bytes !== null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
   return [
-    `Forking "${snapshot.name}" (${snapshot.id}) of box ${check.box.name}, taken ${dayWords(snapshot.takenAt)}, would make ${where}, with ${describeSize(check.size)}, as the snapshot holds.`,
+    `Forking "${snapshot.name}" (${snapshot.id}) of box ${check.box?.name ?? snapshot.box.name}${snapshot.boxGone ? `, ${goneWords(snapshot.boxGone)},` : ""} taken ${dayWords(snapshot.takenAt)}, would make ${where}, with ${describeSize(check.size)}, as the snapshot holds.`,
     `bb-box copies the snapshot in full, which takes up to about ${seconds(check.aboutMs)}${space}, then starts the copy, checks that it reset its identity, and only then hands it over.`,
     FORK_HOLDS,
     ...(forkMayMissWords(snapshot) ? [forkMayMissWords(snapshot)!] : []),

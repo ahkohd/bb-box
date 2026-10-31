@@ -16,9 +16,9 @@
 | [`bb box machines`](#bb-box-machines) | List your machines: boxes you own, kept as BB machines, which no thread ending releases. |
 | [`bb box machines add`](#bb-box-machines-add) | Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it. |
 | [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
-| [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. |
+| [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
 | [`bb box thread`](#bb-box-thread) | Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project. |
-| [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. |
+| [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
 | [`bb box stop`](#bb-box-stop) | Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force. |
 | [`bb box start`](#bb-box-start) | Start a thread's stopped box, or with --machine one of your machines, and wait until it answers. |
 | [`bb box forget`](#bb-box-forget) | Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running. |
@@ -57,7 +57,9 @@
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
 | [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace. |
-| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. |
+| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks from its held copy, as one of your machines; name its box as bb box snapshot list --all does. |
+| [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it. |
+| [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
@@ -260,18 +262,19 @@ Options:
 
 ## bb box machines remove
 
-Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force.
+Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.
 
 ```text
 Usage:
-  bb box machines remove <machine> [--force]
+  bb box machines remove <machine> [--force] [--delete-kept]
 
 Arguments:
   <machine>  The machine's name or ID, from bb box machines. (required)
 
 Options:
-  --force     Remove it even while threads are working on it, which ends their work.
-  --help, -h  Show this help and exit
+  --force        Remove it even while threads are working on it, which ends their work.
+  --delete-kept  Delete the snapshots of it you kept too, instead of copying them first so they outlive it.
+  --help, -h     Show this help and exit
 ```
 
 ## bb box thread
@@ -294,11 +297,11 @@ Options:
 
 ## bb box release
 
-Release a box. Its disk is deleted. A box a thread is working on is refused unless --force.
+Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.
 
 ```text
 Usage:
-  bb box release <box> [--thread <value>] [--force]
+  bb box release <box> [--thread <value>] [--force] [--delete-kept]
 
 Arguments:
   <box>  The box's name or ID. (required)
@@ -306,6 +309,7 @@ Arguments:
 Options:
   --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
   --force           Release it even while threads are working on it, which ends their work.
+  --delete-kept     Delete the snapshots of it you kept too, instead of copying them first so they outlive it.
   --help, -h        Show this help and exit
 ```
 
@@ -1006,7 +1010,7 @@ Options:
 
 ## bb box snapshot fork
 
-Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready.
+Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks from its held copy, as one of your machines; name its box as bb box snapshot list --all does.
 
 ```text
 Usage:
@@ -1025,6 +1029,47 @@ Options:
   --check            Say what the fork would be, and refuse what it would refuse, changing nothing.
   --request <value>  An ID you make, so a repeat of this command is the same fork.
   --help, -h         Show this help and exit
+```
+
+## bb box snapshot keep
+
+Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.
+
+```text
+Usage:
+  bb box snapshot keep <box> <snapshot> [--thread <value>] [--machine] [--json] [--days <1-365>] [--until <value>] [--check]
+
+Arguments:
+  <box>       The box's name or ID. (required)
+  <snapshot>  The snapshot's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --json            Print JSON.
+  --days <1-365>    Keep it this many days from today.
+  --until <value>   Keep it until the end of this day, in UTC, as yyyy-mm-dd.
+  --check           Say what keeping it would cost and refuse what it would refuse, changing nothing.
+  --help, -h        Show this help and exit
+```
+
+## bb box snapshot unkeep
+
+Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete.
+
+```text
+Usage:
+  bb box snapshot unkeep <box> <snapshot> [--thread <value>] [--machine] [--json]
+
+Arguments:
+  <box>       The box's name or ID. (required)
+  <snapshot>  The snapshot's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --json            Print JSON.
+  --help, -h        Show this help and exit
 ```
 
 ## bb box snapshot forget

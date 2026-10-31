@@ -71,6 +71,7 @@ export interface KeptGuest {
   readonly takenAt: number | null;
   readonly kept: string | null;
   readonly template: boolean;
+  readonly forkSafe?: number | null;
 }
 
 export interface SnapshotGuests {
@@ -88,6 +89,7 @@ export interface SnapshotGuests {
   sizeOf(config: Record<string, unknown>): BoxSize | null;
   guests(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly guest: Guest; readonly owner: BoxOwner | null }[]>;
   copies?(api: Proxmox, signal?: AbortSignal): Promise<readonly KeptGuest[]>;
+  freeVmids?(api: Proxmox, signal?: AbortSignal): Promise<{ readonly free: number; readonly range: string }>;
 }
 
 const MiB = 1024 * 1024;
@@ -172,7 +174,7 @@ export class ProxmoxSnapshotting {
   }
 
   offer(): Snapshotting {
-    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: this.#guests.type === "lxc" ? LXC_FORK_SAFE_FROM : QEMU_FORK_SAFE_FROM, keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: this.#guests.type === "lxc" ? LXC_FORK_SAFE_FROM : QEMU_FORK_SAFE_FROM, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null };
   }
 
   #tool(): string {
@@ -308,6 +310,7 @@ export class ProxmoxSnapshotting {
         else memory = { storage: memoryStorage, addsBytes: (memoryMiB * 2 + STATE_EXTRA_MIB) * MiB };
       }
     }
+    const fork = await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal);
     return {
       storage: storage ?? { key: storageKey(api.node, storageName, false), name: storageName, type, percentFull: 0, metadataPercentFull: null, metadataUnread: null, totalBytes: null, usedBytes: null },
       take: {
@@ -320,8 +323,8 @@ export class ProxmoxSnapshotting {
         memoryWhy,
       },
       restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, lockWhy, takeWhy: reasons[0] ?? null }, target, signal),
-      keep: { way: "no", why: "bb-box does not keep snapshots past a release yet.", aboutMs: null, bytes: null, price: null },
-      fork: await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal),
+      keep: await this.#keepPlan(api, vmid, fork, signal),
+      fork,
       locked,
       busy,
     };
@@ -404,6 +407,40 @@ export class ProxmoxSnapshotting {
       });
     if (!size) return none(`bb-box could not read the size snapshot ${name} of guest ${vmid} holds, which its fork would have.`);
     return { ok: true, why: null, ...copyOf(size), size };
+  }
+
+  async #keepPlan(api: Proxmox, vmid: number, fork: SnapshotPlan["fork"], signal?: AbortSignal): Promise<SnapshotPlan["keep"]> {
+    const usedBytes = await api
+      .status(vmid, signal)
+      .then((status) => status?.diskUsed ?? null)
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return null;
+      });
+    const room = await this.#guests.freeVmids?.(api, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    const why = room && room.free < 1 ? `Every VMID ${room.range} is in use now, so a release would have none for the held copy. Release a box, or widen the VMID range in bb-box's settings.` : null;
+    return { way: "held-copy", why, aboutMs: fork.aboutMs, bytes: fork.bytes, usedBytes: usedBytes !== null && fork.bytes !== null ? Math.min(usedBytes, fork.bytes) : usedBytes, price: null };
+  }
+
+  async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    const api = await this.#guests.client();
+    const vmid = this.#guests.vmid(ref.guest);
+    const name = snapshotName(ref.id);
+    const listed = await this.#listed(api, vmid, name, signal);
+    if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}, so bb-box cannot write its keep date there.`);
+    const label = parseSnapshotLabel(listed.description);
+    if (!label || label.install !== this.#guests.installId || label.snapshot !== ref.id) {
+      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
+    }
+    try {
+      await api.describeSnapshot(vmid, name, snapshotLabel({ ...label, kept }), signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to write the keep date on snapshot ${name} of guest ${vmid}: ${taskWords(error)}`);
+      throw error;
+    }
   }
 
   async #listed(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<ProxmoxSnapshot | null> {
@@ -549,6 +586,7 @@ export class ProxmoxSnapshotting {
         takenAt: copy.takenAt,
         keptUntil: keptUntilOf(copy.kept),
         storage: null,
+        forkSafe: copy.forkSafe ?? null,
       });
     }
     const guests = [...(await this.#guests.guests(api, signal)).map((each) => ({ ...each, where: "current" as const })), ...kept.filter((copy) => copy.where === "earlier").map((copy) => ({ guest: copy.guest, owner: copy.owner, where: "earlier" as const }))];

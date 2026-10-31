@@ -34,7 +34,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Gue
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
-import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
+import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -97,6 +97,7 @@ import {
   type TaskKind,
   SnapshotFailed,
   type CopyHooks,
+  type CopyPlan,
   type CopyState,
   type GuestIdentity,
   type HeldCopyLabel,
@@ -494,6 +495,7 @@ export class ProxmoxQemuBackend implements Backend {
         disks: (config) => Object.keys(config).filter((key) => (isDisk(config, key) || /^(?:efidisk|tpmstate)\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
         guests: (api, signal) => this.#boxGuests(api, signal),
         copies: (api, signal) => this.#keptGuests(api, signal),
+        freeVmids: async (api, signal) => ({ free: this.#freeCount(await api.listPool(this.#config.proxmox.pool, signal)), range: `from ${this.#config.vmids.first} to ${this.#config.vmids.last}` }),
         sizeOf: (config) => sizeOf(config),
       },
       ["disk", "disk-and-memory"],
@@ -558,9 +560,19 @@ export class ProxmoxQemuBackend implements Backend {
     return config;
   }
 
+  async #ownOrCopyConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const config = await this.#guestConfig(api, this.#vmid(guest), signal);
+    if (config && isHeldCopy(parseTags(config.tags))) {
+      const copy = await this.#copyConfig(api, guest, signal);
+      if (!copy) throw gone(this.#vmid(guest));
+      return copy;
+    }
+    return this.#ownConfig(api, guest, signal);
+  }
+
   async guestIdentity(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity> {
     const api = await this.client();
-    const config = await this.#ownConfig(api, guest, signal);
+    const config = await this.#ownOrCopyConfig(api, guest, signal);
     const macs: Record<string, string> = {};
     for (const key of netKeys(config)) {
       const mac = macOf(String(config[key]));
@@ -582,11 +594,11 @@ export class ProxmoxQemuBackend implements Backend {
     return vmid;
   }
 
-  async #fullClone(api: Proxmox, source: number, vmid: number, name: string, description: string, storage: string | null, hooks: CopyHooks, signal?: AbortSignal): Promise<void> {
+  async #fullClone(api: Proxmox, source: number, vmid: number, name: string, description: string, storage: string | null, hooks: CopyHooks, signal?: AbortSignal, snapshot?: string): Promise<void> {
     let upid: string;
     try {
       await hooks.submitting();
-      upid = await api.startFullClone({ source, vmid, hostname: name, pool: this.#config.proxmox.pool, storage, description }, signal);
+      upid = await api.startFullClone({ source, vmid, hostname: name, pool: this.#config.proxmox.pool, storage, description, ...(snapshot ? { snapshot } : {}) }, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to copy guest ${source}: ${error.message}`);
       throw error;
@@ -621,6 +633,44 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
+  async copySnapshot(ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const api = await this.client();
+    const from = this.#vmid(ref.guest);
+    const config = await this.#ownOrCopyConfig(api, ref.guest, signal);
+    const disk = bootDisk(config);
+    const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
+    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Release a box, or widen the VMID range in bb-box's settings.`));
+    try {
+      const copy = this.#guest(api.node, vmid, template, label.box);
+      await hooks.claimed(copy);
+      await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal, ref.ref);
+      await disarm(api, vmid, signal);
+      await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false, delete: ["protection"] }, signal);
+      return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
+    } finally {
+      this.#reserved.delete(vmid);
+    }
+  }
+
+  async copyPlan(copy: Guest, signal?: AbortSignal): Promise<CopyPlan> {
+    const api = await this.client();
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) return { state: "gone", size: null, running: false };
+    const running = (await api.status(this.#vmid(copy), signal))?.status === "running";
+    return { state: isTemplate(config) && isHeldCopy(parseTags(config.tags)) ? "template" : "copy", size: sizeOf(config), running };
+  }
+
+  async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    if (ref.from !== "held-copy") return this.#snapshots.labelKept(ref, kept, signal);
+    const api = await this.client();
+    const vmid = this.#vmid(ref.guest);
+    const config = await this.#copyConfig(api, ref.guest, signal);
+    if (!config) throw gone(vmid);
+    const tags = parseTags(config.tags);
+    const box = copyTags(tags).box ?? (typeof ref.guest.data?.box === "string" ? ref.guest.data.box : "");
+    await api.configure(vmid, { tags: withKeptTag(tags, kept), description: heldCopyDescription(this.#context.installId, { box, snapshot: ref.id, kept }) }, signal);
+  }
+
   async #copyConfig(api: Proxmox, copy: Guest, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
     const config = await this.#guestConfig(api, this.#vmid(copy), signal);
     if (!config) return null;
@@ -644,6 +694,7 @@ export class ProxmoxQemuBackend implements Backend {
     const config = await this.#copyConfig(api, copy, signal);
     if (!config) throw gone(vmid);
     if (!isTemplate(config)) await api.makeTemplate(vmid, signal);
+    await untilTemplate(() => this.#copyConfig(api, copy, signal), isTemplate, (ms) => (this.#options.sleep ?? pause)(ms, signal), TEMPLATE_POLL_MS, vmid);
   }
 
   async copyState(copy: Guest, signal?: AbortSignal): Promise<CopyState> {
@@ -703,6 +754,7 @@ export class ProxmoxQemuBackend implements Backend {
         client: () => this.client(),
         vmid: (guest) => this.#vmid(guest),
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        sourceConfig: (api, guest, signal) => this.#ownOrCopyConfig(api, guest, signal),
         rootDisk: bootDisk,
         claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
         unreserve: (vmid) => this.#reserved.delete(vmid),
@@ -766,9 +818,9 @@ export class ProxmoxQemuBackend implements Backend {
       .filter((guest) => guest.type === "qemu" && this.#inRange(guest.vmid) && guest.tags.includes(install) && (isHeldCopy(guest.tags) || isEarlierGuest(guest.tags)))
       .flatMap((guest): KeptGuest[] => {
         const tags = copyTags(guest.tags);
-        const owner = ownerFromTags(guest.tags, guest.name || null) ?? (tags.box ? { boxId: tags.box, threadId: "unknown", name: null, kind: null, createdAt: null } : null);
+        const owner = ownerFromTags(guest.tags, guest.name || null) ?? (tags.box ? { boxId: tags.box, threadId: "unknown", name: null, kind: tags.kind, createdAt: null } : null);
         if (!owner) return [];
-        return [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner, where: isHeldCopy(guest.tags) ? "held-copy" : "earlier", snapshot: tags.snapshot, takenAt: tags.takenAt, kept: tags.kept, template: guest.template }];
+        return [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner, where: isHeldCopy(guest.tags) ? "held-copy" : "earlier", snapshot: tags.snapshot, takenAt: tags.takenAt, kept: tags.kept, template: guest.template, forkSafe: tags.forkSafe }];
       });
   }
 
@@ -1778,6 +1830,14 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** The first free VMID from `from`, wrapping round the range. */
+  #freeCount(guests: readonly PoolGuest[]): number {
+    const { first, last } = this.#config.vmids;
+    const used = new Set<number>([...this.#reserved, ...guests.map((guest) => guest.vmid)]);
+    let free = 0;
+    for (let vmid = first; vmid <= last; vmid++) if (!used.has(vmid)) free++;
+    return free;
+  }
+
   #freeVmid(guests: readonly PoolGuest[], from = this.#config.vmids.first): number | null {
     const { first, last } = this.#config.vmids;
     const count = last - first + 1;

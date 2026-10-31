@@ -107,7 +107,10 @@ export function world(options: { readonly identityTool?: string; readonly identi
       log: (message) => state.boxLogs.push(message),
       ended: (box, how) => state.snapshots.boxEnded(box, how),
       forked: (box) => state.snapshots.forkEnded(box),
-      keepsGuest: (backendId, guestRef) => state.snapshots.holdsGuest(backendId, guestRef),
+      keepsGuest: (backendId, guestRef, ended) => state.snapshots.holdsGuest(backendId, guestRef, ended),
+      holdKeptOn: (backendId, guestRef) => state.snapshots.holdKeptOn(backendId, guestRef, BY_COMMAND),
+      leftoverReleased: (backendId, guestRef, boxId, why) => state.snapshots.leftoverReleased(backendId, guestRef, boxId, why),
+      beforeRelease: (box, who) => state.snapshots.holdKept(box, who),
       ...(options.forkWaitMs !== undefined ? { forkWaitMs: options.forkWaitMs } : {}),
       now,
     });

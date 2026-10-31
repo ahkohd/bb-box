@@ -6868,3 +6868,37 @@ test("allBoxes says each box's thread and whether it works, when it was last sta
   const listed = (await harness.behavior.callRpc("machines.list", null)) as { machines: Record<string, unknown>[] };
   assert.equal(listed.machines[0]!.busy, undefined, "machines.list no longer reads box history");
 });
+
+test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what was kept first, and a released box's kept snapshot kept longer, checked for a fork and deleted without a thread", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.attach(world.backend!, Date.now);
+  assert.equal((await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD])).exitCode, 0);
+  const box = await only(app);
+  assert.equal((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "old image"])).exitCode, 0);
+  const refused = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD]);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.stderr ?? "", /Taken before .*'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it\. \(unsupported\)/);
+  const [record] = app.snapshotStore.records();
+  app.snapshotStore.updateRecord(record!.id, { forkSafe: 7 });
+  const check = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10", "--check"]);
+  assert.equal(check.exitCode, 0, check.stderr);
+  assert.match(check.stdout ?? "", /^Keeping "old image" \(sn\w+\) of box .* until \d{4}-\d{2}-\d{2} makes it yours: no agent can delete it, it outlives its box's release, and a fork of it after then is one of your machines\./);
+  assert.match(check.stdout ?? "", /bb-box first copies this snapshot in full into a template that cannot start: .*\nNothing changed\.\n$/);
+  assert.equal(app.snapshotStore.record(record!.id)?.keptUntil, null, "--check changes nothing");
+  const kept = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10"]);
+  assert.match(kept.stdout ?? "", /^Kept "old image" \(sn\w+\) of box .* until \d{4}-\d{2}-\d{2}\./);
+  const unkept = await harness.behavior.runCli(["snapshot", "unkeep", box.name, "old image", "--thread", THREAD]);
+  assert.match(unkept.stdout ?? "", /is no longer kept: it goes with its box again\.\n$/);
+  await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD]);
+  assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
+  assert.equal(app.snapshotStore.record(record!.id)?.guest, "held-copy");
+  const longer = await harness.behavior.runCli(["snapshot", "keep", box.id, record!.id, "--days", "60"]);
+  assert.equal(longer.exitCode, 0, longer.stderr);
+  assert.match(longer.stdout ?? "", /Its box was released, so it lives on as a held copy, guest copy\d, a template that cannot start/);
+  assert.match((await harness.behavior.runCli(["snapshot", "unkeep", box.id, record!.id])).stderr ?? "", /only its keep holds "old image"\. Delete it instead, or keep it longer\./);
+  assert.match((await harness.behavior.runCli(["snapshot", "fork", box.id, record!.id, "--check"])).stdout ?? "", /^Forking "old image" \(sn\w+\) of box .*, its box was released \d{4}-\d{2}-\d{2}, taken .* would make one of your machines/);
+  assert.match((await harness.behavior.runCli(["snapshot", "delete", box.id, record!.id])).stdout ?? "", /its held copy, guest copy\d, is deleted\./);
+  assert.equal(app.snapshotStore.records().length, 0);
+});

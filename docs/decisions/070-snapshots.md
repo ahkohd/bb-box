@@ -206,9 +206,9 @@ by the sweep as a delete, once no operation uses it.
   - a labelled snapshot or held copy of a box that is gone, whose label has
     a keep date not yet passed, gets a record again as kept;
   - a labelled snapshot of a box that is gone, with no keep date, is listed
-    as "Found on pve-1, not in bb-box's records" for 7 days, then deleted.
-    It is never deleted at once, so a lost `snapshots.db` loses no kept
-    snapshot.
+    as "Found on pve-1, not in bb-box's records" until the person deletes
+    it (changed during unit 8: it was deleted after 7 days). It is never
+    deleted by bb-box, so a lost `snapshots.db` loses no kept snapshot.
 - Earlier guests and held copies are never started, warmed, lent as
   spares, released as leftovers, or checked as a kind's template: their
   labels exclude them from each of those.
@@ -1477,6 +1477,65 @@ After the re-reviews:
 - **`box_fork`'s check before its take includes the fork's room and
   place**: the backend's room, the thread's limit and the name.
 - **An abandoned clone is disarmed before each attempt to delete it.**
+
+## Decided during unit 8
+
+On 31 October 2026, during unit 8, the lead decided, with the owner's
+earlier answers:
+
+- **A leftover guest of an ended thread** (a guest with no box record,
+  whose thread BB says ended at two sweeps) goes at once, with its
+  snapshots. First, bb-box makes held copies of those it carries a keep
+  date for, as they are the person's; the rest go with it.
+- **Found snapshots are kept until the person deletes them.** Only a
+  forgotten box's guest still holds snapshots once its box is gone, and
+  the person who forgot it was told nothing was deleted. So section 1's
+  7-day deletion of found snapshots is dropped: they are listed as found
+  until the person deletes them, or until their guest goes as above.
+- **Keep has no switch of its own.** It needs a snapshot that could fork
+  after the release, so it is refused on a backend that is not armed
+  (`general.identityResetBackends`), as production is. Arming is the
+  owner's call, and gates Keep too. G16's node reboot stays unproved, as
+  no node is rebooted.
+- **A living box's kept snapshot goes at its date**, as section 1 says,
+  not back to "goes with the box".
+
+Built so:
+
+- **A keep date is the end of a UTC day**, the same day the label
+  carries. Keep keeps from today for the days in Settings, or until the
+  date given, at most 365 days from today. Keeping a kept snapshot again
+  renews it and, by default, never shortens it; a date the person gives
+  may, and the dialog and `--check` say so.
+- **The keep date is written on the provider first.** If Proxmox refuses
+  the snapshot's label, or the held copy's tags, nothing is kept. Stop
+  keeping takes it off the label first too. A released box's kept
+  snapshot is not unkept, as only its keep holds it: it is kept longer, or
+  deleted.
+- **A held copy is a copy of the snapshot**, cloned while the box still
+  runs (Proxmox allows a full clone of a running guest only from a
+  snapshot), then disarmed and made a template, before the guest is
+  deleted. It carries the snapshot's time, the box's kind and the version
+  of the box's identity reset in its tags, so one found again after
+  `snapshots.db` is lost still forks. bb-box waits until Proxmox lists the
+  copy as a template: Proxmox's call for a container answers before its
+  worker ends.
+- **A held copy's room** is a take's: refused when the storage would be
+  past "Refuse new snapshots when a host's storage is past" with the copy,
+  sized at the box's disk use now where Proxmox reads it (containers), or
+  the snapshot's disk size (VMs). A held copy replaces its snapshot in the
+  paid rate, so a release checks no ceiling; no backend charges yet.
+- **With `snapshots.db` unreadable**, a release reads the provider's labels
+  and refuses while one of the box's snapshots carries a keep date, so a
+  broken record never deletes a kept snapshot. Unit 1a's release with an
+  unwritable file goes on otherwise.
+- **"Release and delete what you kept"** stops keeping each kept snapshot
+  of the box not yet copied, at the person's word, then releases it; held
+  copies already made stay kept.
+- **Any held copy forks**, a kept one of a released box as one of the
+  person's machines, by a full clone of the template.
+- **A fork's guest is disarmed before every attempt to delete it**, the
+  sweep's retries of its release included (unit 7's follow-up).
 
 ## Alternatives considered
 

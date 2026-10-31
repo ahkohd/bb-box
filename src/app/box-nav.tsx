@@ -10,7 +10,7 @@ const SETTINGS_BACK_WORDS = "Back to BB Box settings";
 
 const LIST_BACK_WORDS = "Back to boxes";
 
-const LIST_ROUTES: readonly BoxesRoute[] = [LIST, { page: "list", tab: "machines" }, { page: "list", tab: "threads" }];
+const LIST_ROUTES: readonly BoxesRoute[] = [LIST, { page: "list", tab: "machines" }, { page: "list", tab: "threads" }, { page: "list", tab: "snapshots" }];
 
 export function boxesPath(pluginId: string, route: BoxesRoute): string {
   const subPath = subPathOf(route);

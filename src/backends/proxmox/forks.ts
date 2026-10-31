@@ -10,6 +10,7 @@ export interface ForkGuests {
   client(): Promise<Proxmox>;
   vmid(guest: Guest): number;
   ownConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  sourceConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>>;
   rootDisk(config: Record<string, unknown>): string | null;
   claimVmid(api: Proxmox, signal?: AbortSignal): Promise<number>;
   unreserve(vmid: number): void;
@@ -94,7 +95,8 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
   const api = await guests.client();
   if (previous) await dropHalfMadeFork(guests, api, previous, box, signal);
   const from = guests.vmid(ref.guest);
-  const source = await guests.ownConfig(api, ref.guest, signal);
+  const fromCopy = ref.from === "held-copy";
+  const source = await guests.sourceConfig(api, ref.guest, signal);
   const disk = guests.rootDisk(source);
   const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
   const build = typeof ref.guest.data?.build === "string" ? ref.guest.data.build : null;
@@ -105,9 +107,9 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
     const began = performance.now();
     let upid: string;
     try {
-      upid = await api.startFullClone({ source: from, vmid, hostname: box.name, pool: guests.pool, storage: disk ? storageOfVolume(source[disk]) : null, description: describe(box, guests.installId), snapshot: ref.ref }, signal);
+      upid = await api.startFullClone({ source: from, vmid, hostname: box.name, pool: guests.pool, storage: disk ? storageOfVolume(source[disk]) : null, description: describe(box, guests.installId), ...(fromCopy ? {} : { snapshot: ref.ref }) }, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && error.status >= 400) throw new Error(`Proxmox refused to copy snapshot ${ref.ref} of guest ${from}: ${proxmoxWords(error)}`);
+      if (error instanceof ProxmoxError && error.status >= 400) throw new Error(`Proxmox refused to copy ${fromCopy ? "held copy" : `snapshot ${ref.ref} of guest`} ${from}: ${proxmoxWords(error)}`);
       throw error;
     }
     try {

@@ -55,6 +55,7 @@ export interface BoxView {
   readonly size: string | null;
   readonly state: BoxState;
   readonly error: string | null;
+  readonly releaseHeldForKept?: boolean;
   /** Why it last stopped without bb-box's request, and what bb-box did, in words (#406). */
   readonly stopped: string | null;
   readonly waitingOn?: string | null;
@@ -151,6 +152,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     size: sizeWords(box),
     state: box.state,
     error: box.error,
+    releaseHeldForKept: box.state === "releasing" && (box.error ?? "").startsWith("Release did not finish: "),
     stopped: stopWords(box) || null,
     waitingOn: waitingWords(box),
     createdAt: box.createdAt,

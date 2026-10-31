@@ -232,6 +232,9 @@ can put the box back to it.
   past that, bb-box deletes the oldest one an agent of this thread took.
   You cannot delete or restore a kept snapshot. You delete only those an
   agent of this thread took; on a box you run on, you see only those.
+- Only the person keeps a snapshot, so that it outlives the box's
+  release; no tool keeps one. If a state should outlive the box, say so
+  and let the person keep it, on the box's page or the Snapshots tab.
 - To try two things from one set-up state, fork the box with `box_fork`:
   a new box of this thread from one of its snapshots, or from the box now.
   The fork has the snapshot's files and its own BB machine, address and

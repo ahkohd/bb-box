@@ -168,7 +168,7 @@ export interface SnapshotSettings {
    * that storage that nobody kept, oldest first. 85 unless set.
    */
   readonly roomPercent?: number;
-  /** Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. */
+  /** Days Keep keeps a snapshot from the day the person keeps it, unless they choose a date: 1 to 365, 30 unless set. bb-box deletes a kept snapshot after its date. */
   readonly keepDays?: number;
   /**
    * Whether an agent restores its thread's own boxes without asking, always with an undo first. Off, it asks for a yes

@@ -61,7 +61,7 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
 
 test("a container offers disk snapshots taken while it runs, forks by a full copy from version 7 of the identity reset, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 7, keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 7, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -597,4 +597,40 @@ test("070 unit 7 re-review: a fork's clone is disarmed before each attempt to de
   assert.deepEqual(recovery.map((call) => call.method), ["PUT", "DELETE"], "recovery disarms the half-made fork before it deletes it");
   assert.equal(recovery[0]!.params.onboot, "0");
   assert.ok(state.proxmox.guests.has(Number(again.ref)));
+});
+
+test("070 unit 8: Keep's held copy is a full copy of the snapshot into the box range, recorded before the clone, disarmed, labelled with its box, snapshot, keep date, kind and reset version, and a template only once Proxmox says so", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks: snapshotHooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, snapshotHooks);
+  await state.backend.labelKept({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, "2026-11-30");
+  const vmid = Number(guest.ref);
+  const label = state.proxmox.guests.get(vmid)!.snapshots!.find((each) => each.name === snapshotName(SNAPSHOT))!.description;
+  assert.deepEqual({ ...parseSnapshotLabel(label)!, install: "" }, { install: "", box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30" }, "the keep date is on the snapshot's own label");
+  const claimed: string[] = [];
+  const copy = await state.backend.copySnapshot(
+    { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest },
+    { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30", takenAt: Date.UTC(2026, 9, 31, 14, 21), forkSafe: 7, kind: "linux" },
+    { ...tasks().hooks, claimed: async (made) => void claimed.push(made.ref) },
+  );
+  assert.deepEqual(claimed, [copy.ref], "the copy's VMID is recorded before the clone");
+  assert.equal(state.proxmox.calls.filter((call) => call.method === "POST" && call.path.endsWith(`/lxc/${vmid}/clone`) && call.params.snapname === snapshotName(SNAPSHOT)).length, 1, "a clone of the snapshot itself");
+  const copied = state.proxmox.guests.get(Number(copy.ref))!;
+  for (const tag of ["held-copy", `box.${id.boxId}`, `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7", "kind.linux", `taken.${Date.UTC(2026, 9, 31, 14, 21) / 1000}`]) assert.match(copied.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), tag);
+  assert.equal(copied.config.onboot, "0");
+  assert.match(copied.config.net0 ?? "", /link_down=1/);
+  assert.match(copied.config.description ?? "", new RegExp(`held copy of snapshot ${SNAPSHOT} kept 2026-11-30$`));
+  state.proxmox.templateLag = 3;
+  await state.backend.templateCopy(copy);
+  assert.equal(await state.backend.copyState(copy), "template", "templateCopy returns once Proxmox lists it as a template, not when its call answers");
+  assert.deepEqual(await state.backend.copyPlan(copy), { state: "template", size: (await state.backend.copyPlan(copy)).size, running: false });
+  await state.backend.labelKept({ id: SNAPSHOT, ref: copy.ref, guest: copy, from: "held-copy" }, "2027-01-15");
+  assert.match(state.proxmox.guests.get(Number(copy.ref))!.config.tags ?? "", /(^|;)kept\.2027-01-15(;|$)/);
+  assert.doesNotMatch(state.proxmox.guests.get(Number(copy.ref))!.config.tags ?? "", /kept\.2026-11-30/);
+  const listed = (await state.backend.heldSnapshots()).find((held) => held.where === "held-copy")!;
+  assert.equal(listed.keptUntil, Date.UTC(2027, 0, 15, 23, 59, 59, 999));
+  assert.equal(listed.forkSafe, 7);
+  assert.equal(listed.owner?.kind, "linux");
+  assert.equal(listed.takenAt, Date.UTC(2026, 9, 31, 14, 21));
 });

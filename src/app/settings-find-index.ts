@@ -265,6 +265,7 @@ function snapshotEntries(state: ConfigState): FindEntry[] {
   return [
     option("snapshots", "Snapshots", "page", "Snapshots", null, null, "options page snapshot checkpoint backup restore"),
     option("snapshots", "Snapshots", "per-box", "Snapshots per box", snapshotPath("perBox"), String(snapshots.perBox), "snapshot limit most each box undos kept count"),
+    option("snapshots", "Snapshots", "keep-days", "Keep keeps a snapshot for", snapshotPath("keepDays"), `${snapshots.keepDays} days`, "snapshot keep kept days expiry renew held copy release"),
     option("snapshots", "Snapshots", "room", "Refuse new snapshots when a host's storage is past", snapshotPath("roomPercent"), `${snapshots.roomPercent}% full`, "snapshot room storage disk full percent thin pool metadata sweep"),
     option("snapshots", "Snapshots", "agents-restore", "Agents may restore their own boxes", snapshotPath("agentsRestore"), snapshots.agentsRestore ? "On" : "Off", "snapshot restore agent ask form yes undo rollback revert"),
     option("snapshots", "Snapshots", "agents-memory", "Agents may restore memory snapshots", snapshotPath("agentsMemory"), snapshots.agentsMemory ? "On" : "Off", "snapshot restore agent memory running apps ram"),
