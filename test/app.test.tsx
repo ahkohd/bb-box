@@ -6095,9 +6095,11 @@ test("the Boxes page lists every box under its thread, servers as well as deskto
   await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(1));
   const card = list.getByRole("region", { name: "UI thread" });
   expect(within(card).getByText("calm-otter")).toBeTruthy();
-  // The title and its boxes are one group: no line under the title, and the first row sits close under it.
-  expect(within(card).getByRole("button", { name: "UI thread" }).parentElement!.className).not.toContain("border-b");
-  expect(card.querySelector("[data-resource-row]")!.parentElement!.className).toContain("[&>*:first-child]:pt-1");
+  const header = within(card).getByRole("button", { name: "UI thread" }).parentElement!;
+  expect(header.className).not.toContain("border-b");
+  expect(header.className).toContain("mt-1.5 flex h-7");
+  expect(card.querySelector("[data-resource-row]")!.parentElement!.className).toMatch(/^mt-1\.5 /);
+  expect(card.className).not.toMatch(/\b(py|pb|pt)-/);
   fireEvent.click(within(card).getByRole("button", { name: "UI thread" }));
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
 
@@ -6484,14 +6486,14 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   const list = boxesPage(handlers);
   expect(await list.findByText("Machines")).toBeTruthy();
   expect(list.getAllByRole("button", { name: /Fix the login form/ })).toHaveLength(1);
-  // Every row has the same padding above and below, in Automations' card (px-4 py-1, rows py-3): none loses it as first or last.
   const rows = Array.from(list.container.querySelectorAll("[data-resource-row]"));
   expect(rows).toHaveLength(2);
   for (const row of rows) {
     expect(row.className).toContain("py-3");
     expect(row.className).not.toMatch(/first:pt-0|last:pb-0/);
   }
-  expect(rows[0]!.parentElement!.parentElement!.className).toContain("px-4 py-1");
+  expect(rows[0]!.parentElement!.parentElement!.className).toContain("px-4");
+  expect(rows[0]!.parentElement!.parentElement!.className).not.toMatch(/\b(py|pb|pt)-/);
   // A machine's desktop opens on the page, with the way back to the page, not settings.
   fireEvent.click(list.getAllByRole("button", { name: "Open desktop" })[0]!);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_m1/desktop/from-list" } });
@@ -10036,7 +10038,7 @@ test("a long reason sits behind a warning mark on the second line, in its toolti
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
 });
 
-test("a thread's card says whether it works, a row says when its box is busy, and the list asks again every 15 s while shown (069 unit 4)", async () => {
+test("a thread's card shows a spinner while it works and nothing when idle, a row says when its box is busy, and the list asks again every 15 s while shown (069 unit 4)", async () => {
   const now = Date.now();
   const { handlers } = server([box(), box({ id: "box_6", name: "swift-fox" })], {
     entries: (found) => (found.id === "box_1" ? { thread: { id: THREAD, title: "Fix the sign-in flow", running: true }, busy: busyFor("cpu", 96, 9) } : { thread: { id: THREAD, title: "Fix the sign-in flow", running: true } }),
@@ -10048,7 +10050,8 @@ test("a thread's card says whether it works, a row says when its box is busy, an
     const list = boxesPage(counted);
     await list.findByRole("link", { name: "calm-otter" });
     const card = list.getByRole("region", { name: "Fix the sign-in flow" });
-    expect(card.querySelector("[data-thread-state]")!.textContent).toBe("Working");
+    expect(within(card).getByRole("img", { name: "Working" })).toBeTruthy();
+    expect(card.textContent).not.toContain("Working");
     expect(rowOf(list, "calm-otter").querySelector("[data-row-line]")!.textContent).toContain("Busy: CPU 96% for 9 min");
     expect(rowOf(list, "swift-fox").querySelector("[data-row-line]")!.textContent).not.toContain("Busy");
     const before = asked;
@@ -10061,7 +10064,9 @@ test("a thread's card says whether it works, a row says when its box is busy, an
   const idle = server([box()], { entries: () => ({ thread: { id: THREAD, title: "Fix the sign-in flow", running: false, activeAt: now - 3 * 60 * MIN - 60_000 } }) });
   const quiet = boxesPage(idle.handlers);
   await quiet.findByRole("link", { name: "calm-otter" });
-  expect(quiet.getByRole("region", { name: "Fix the sign-in flow" }).querySelector("[data-thread-state]")!.textContent).toBe("Idle 3 h");
+  const quietCard = quiet.getByRole("region", { name: "Fix the sign-in flow" });
+  expect(within(quietCard).queryByRole("img", { name: "Working" })).toBeNull();
+  expect(quietCard.textContent).not.toMatch(/Idle|Working/);
 });
 
 test("Last active sorts the boxes used most recently first, and boxes nobody used for days last (069 unit 4)", () => {
@@ -10290,6 +10295,16 @@ test("070 unit 8 review 7: a held copy found again with no known thread says so 
   expect(within(card).getByText("Found again on its host; its thread is not known")).toBeTruthy();
   expect(within(card).queryByRole("button", { name: /unknown/ })).toBeNull();
   expect(within(card).queryByText("Your machine")).toBeNull();
+});
+
+test("an empty Snapshots tab shows one empty state: no count line, and only where to take one", async () => {
+  const { handlers } = server([box()]);
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  const empty = await list.findByText("No snapshots yet. Take one from a box's page.");
+  expect(empty).toBeTruthy();
+  expect(list.queryByText(/^0 snapshots/)).toBeNull();
+  expect(list.queryByText(/agent/i)).toBeNull();
 });
 
 test("070 unit 8 review: the Snapshots tab says it is reading them until its answer comes, and says why when it fails", async () => {

@@ -56,7 +56,7 @@ import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from
 import { BoxPage, Loading, NotHere, THREADS_RECHECK_MS, useBoxPage } from "./box-page.tsx";
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
-import { threadTitle, ThreadState } from "./thread-chips.tsx";
+import { threadTitle, ThreadWorking } from "./thread-chips.tsx";
 import { BarNumbers, OtherViews, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
@@ -2474,7 +2474,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box.</EmptyPanel> : null}
             {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}
             {tab === "machines" && machineRows.length ? (
-              <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
+              <div className="overflow-hidden rounded-lg border border-border bg-card px-4">
                 <div className="divide-y divide-border">
                   {machineRows.map(({ entry, busy: busyFlag }) => (
                     <MachineRow
@@ -2497,18 +2497,15 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             ) : null}
             {tab === "threads"
               ? [...groups].map(([threadId, rows]) => (
-                  // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page. The
-                  // title and its boxes read as one group (the operator, 10 October 2026): no line under the title, which sits 16 px from
-                  // the card's top as the last row does from its bottom, and 8 px above the first row; the rows keep their dividers.
                   <section key={threadId} aria-label={titleOf(threadId) ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
-                    <div className="flex items-center gap-3 pl-4 pr-3 pt-3">
+                    <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">
                       <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
                         {titleOf(threadId) ?? threadId}
                       </button>
-                      <ThreadState thread={threadOf.get(threadId)} now={now} />
+                      <ThreadWorking thread={threadOf.get(threadId)} />
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
                     </div>
-                    <div className="divide-y divide-border px-4 pb-1 [&>*:first-child]:pt-1">
+                    <div className="mt-1.5 divide-y divide-border px-4">
                       {rows.map(({ box, busy }) => (
                         <BoxRow key={box.id} box={box} threadId={threadId} opening={{ page: ways.page(box.id) }} act={actOn(threadId)} now={now} opens={ways.opens} busy={busy} threading={false} />
                       ))}

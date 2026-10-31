@@ -102,7 +102,7 @@ When a box stops answering, BB Box checks it again by itself after 1 minute, aft
 Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
 
 - **Machines** lists your machines.
-- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread. Beside the arrow, the card says whether the thread is working, with a spinner and 'Working', or how long it has been idle, such as 'Idle 3 h'.
+- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread. While the thread works, a spinner shows beside the arrow; point at it to read 'Working'.
 
 The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
 
