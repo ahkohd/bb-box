@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "prepare-avds: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 
 usage() {
   cat >&2 <<'USAGE'

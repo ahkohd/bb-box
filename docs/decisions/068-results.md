@@ -481,3 +481,29 @@ The two templates production had adopted on the first day, built by the
 separate BB's install, were left on the account after production
 replaced them, as an install tidies only the templates it built. They were
 deleted by hand.
+
+### Snapshots cut short
+
+With the header in, production's next Android build failed at 23:47 UTC
+just after saving the Pixel 8's snapshot. Two builds in fresh sandboxes
+passed; a third failed the same way, and said why: the Pixel 8 "did not
+boot from its snapshot", the emulator finding "Device 'cache' does not
+have the requested snapshot". Its RAM had been saved, its disks' snapshots
+not. The emulator's launcher waits 20 s for the emulator to shut down
+before it kills it, unless `ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL` says
+otherwise, and saving a snapshot on that machine took longer: the builds
+that passed saved in 6.6 to 14 s, the failures took 17.8 s, 21 s and about
+30 s, killed part way. In the sandbox that failed, each save failed again
+the same way, until the launcher was given 120 s: the save took 45 s, and
+the device booted from it.
+
+So `bb-box-emulator` gives the emulator 180 s to save, and waits that long
+and 30 s more before it kills it; it and `prepare-avds.sh` also say which
+line failed when one does. Run again in the same sandbox, the Android step
+made all three devices, whose saves took 63, 97 and 88 s, and each booted
+from its snapshot.
+
+The device server's own emulator unit (`src/device/emulator.ts`) does not
+set the launcher's wait either, so a box's stop, which saves its device,
+can be cut short the same way on a busy machine. That is left for the
+device server.
