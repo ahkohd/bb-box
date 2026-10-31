@@ -143,6 +143,8 @@ export function busyWords(busy: Busy, measure: (ms: number) => string = span): s
       return `Busy: load${busy.value === null ? "" : ` ${busy.value.toFixed(1)}`}${busy.cores ? ` on ${busy.cores} ${busy.cores === 1 ? "core" : "cores"}` : ""} ${lasting}`;
     case "disk":
       return busy.value === null ? "Disk nearly full" : `Disk${wholePercent(busy.value)} full`;
+    case "gpu":
+      return `Busy: GPU${wholePercent(busy.value)} ${lasting}`;
   }
 }
 

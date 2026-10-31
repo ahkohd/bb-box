@@ -99,7 +99,7 @@ function historyView(range: HistoryRange, patch: Partial<BoxHistoryView> = {}, m
     stepMs,
     from,
     to,
-    steps: Array.from({ length: steps }, (_, index) => ({ at: from + index * stepMs, covered: stepMs / 1000, cpuCovered: stepMs / 1000, memoryCovered: stepMs / 1000, netCovered: stepMs / 1000, cpu: 30, cpuBusiest: range === "1h" ? null : 33, memory: 50, memoryHighest: 55, disk: 20, down: 1024, up: 512, host: null, high: 0, partial: false, ...make(index) })),
+    steps: Array.from({ length: steps }, (_, index) => ({ gpus: [], at: from + index * stepMs, covered: stepMs / 1000, cpuCovered: stepMs / 1000, memoryCovered: stepMs / 1000, netCovered: stepMs / 1000, cpu: 30, cpuBusiest: range === "1h" ? null : 33, memory: 50, memoryHighest: 55, disk: 20, down: 1024, up: 512, host: null, high: 0, partial: false, ...make(index) })),
     gaps: [],
     kept: true,
     monitor: true,
@@ -603,6 +603,8 @@ function layoutOf(): string {
     tiles: frame.querySelectorAll("[data-tiles] > section").length,
     lines: frame.querySelectorAll("[data-slot-line], [data-stale]").length,
     legend: frame.querySelectorAll('[aria-label="Lines shown"]').length,
+    chips: frame.querySelectorAll('[aria-label="Lines shown"] button').length,
+    columns: Array.from(frame.querySelectorAll("[data-processes] thead th")).map((column) => column.textContent),
     processes: frame.querySelectorAll("[data-processes] thead tr, [data-processes] tbody tr").length,
   });
 }
@@ -661,4 +663,109 @@ test("a shared slot is laid out as a slot from its first frame", async () => {
   await waitFor(() => expect(within(card).getByText(/^Read at /)).toBeTruthy());
   await within(card).findByRole("application", { name: /^This slot's CPU and memory, the last 6 min/ });
   expect(layoutOf()).toBe(before);
+});
+
+const MiB = 1024 ** 2;
+
+function gpuReading(shared: boolean): Partial<MonitorSnapshot> {
+  return {
+    gpus: {
+      cards: [{ index: 0, name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition", usagePercent: 82, memoryUsedBytes: 13250 * MiB, memoryTotalBytes: 97887 * MiB, temperatureC: 69, powerWatts: 285, powerLimitWatts: 300, shared, ownMemoryBytes: shared ? 0 : 12900 * MiB, ownProcesses: shared ? 0 : 1 }],
+      processes: shared ? [] : [{ pid: 9001, name: "python3", card: 0, memoryBytes: 12900 * MiB }],
+    },
+    processes: { available: true, total: 3, running: 1, top: [{ pid: 4242, name: "stress-ng-cpu", cpuPercent: 199.5, memoryPercent: 1, rssBytes: 12 * MiB }, { pid: 9001, name: "python3", cpuPercent: 12, memoryPercent: 20, rssBytes: 3 * 1024 * MiB }] },
+    history: points(72, (index) => ({ gpus: [{ card: 0, usage: index % 2 ? 80 : 84, memory: 13.5 }] })),
+  };
+}
+
+test("an NVIDIA GPU: its tile gives its use, memory and power, its line joins the chart with its memory hidden at first, and its processes show their card memory", async () => {
+  open(handlers({ page: () => page(boxView({ gpu: true })), reading: () => snapshot(gpuReading(false)) }));
+  const card = await readActivity();
+  const tile = within(card).getByRole("region", { name: "GPU" });
+  expect(tile.textContent).toContain("82");
+  expect(tile.textContent).toContain("69°C");
+  expect(tile.textContent).toMatch(/12\.9 of 95\.6 GiB · 285 W$/);
+  expect((await within(card).findByRole("button", { name: "GPU" })).getAttribute("aria-pressed")).toBe("true");
+  expect(within(card).getByRole("button", { name: "GPU memory" }).getAttribute("aria-pressed")).toBe("false");
+  const usage = within(card).getByRole("application", { name: "CPU, memory and GPU, the last 6 min, every 5 s" });
+  expect(usage.getAttribute("aria-description") ?? usage.textContent).toMatch(/GPU averaged 82%, highest 84%/);
+  const table = await screen.findByRole("region", { name: "Top processes" });
+  const rows = within(table).getAllByRole("row");
+  expect(rows[0]!.textContent).toBe("ProcessPIDCPUMemoryGPU");
+  expect(rows[2]!.textContent).toContain("12.6 GiB");
+  expect(rows[1]!.querySelector("[data-gpu-memory]")!.textContent).toBe("–");
+});
+
+test("a box that shares its card says so: the whole card's numbers, marked shared, with its own use beside them", async () => {
+  open(handlers({ page: () => page(boxView({ gpu: true, kind: "linux-desktop" })), reading: () => snapshot(gpuReading(true)) }));
+  const card = await readActivity();
+  const tile = within(card).getByRole("region", { name: "GPU, whole card" });
+  expect(tile.textContent).toContain("shared card");
+  expect(tile.textContent).toContain("% whole card");
+  expect(tile.textContent).toMatch(/This box: 0 B of 12\.9 GiB$/);
+  const mark = tile.querySelector<HTMLElement>("[data-gpu-shared]")!;
+  expect(mark.tabIndex).toBe(0);
+  expect(document.getElementById(mark.getAttribute("aria-describedby")!)!.textContent).toMatch(/^This box shares its GPU with other boxes or the host\. Its numbers are the whole card's, every user's together\. .*a shared card never makes this box busy\.$/);
+});
+
+test("a reading that misses the GPU keeps its tile, lines and column, says the card was not read, and is not remembered as no card", async () => {
+  let readings = 0;
+  open(handlers({ page: () => page(boxView({ gpu: false, id: "bxlostcard001" })), reading: () => (++readings === 1 ? snapshot(gpuReading(false)) : snapshot({ gpus: null })) }));
+  const card = await readActivity();
+  await within(card).findByRole("region", { name: "GPU" });
+  const read = layoutOf();
+  await waitFor(() => expect(within(card).getByRole("region", { name: "GPU" }).textContent).toContain("not read"), { timeout: 15_000 });
+  expect(layoutOf()).toBe(read);
+  expect(within(card).getByRole("region", { name: "GPU" }).textContent).toContain("No reading of this card this time");
+  expect(localStorage.getItem("bb-box:activity:gpu-cards:bxlostcard001")).toBe("1");
+}, 20_000);
+
+test("eight cards keep a clean grid: every tile bordered on wide screens, in rows of four", async () => {
+  const cards = Array.from({ length: 8 }, (_, index) => ({ index, name: "NVIDIA H100", usagePercent: 90 + index, memoryUsedBytes: 70_000 * MiB, memoryTotalBytes: 81_559 * MiB, temperatureC: 60, powerWatts: 600, powerLimitWatts: 700, shared: false, ownMemoryBytes: 70_000 * MiB, ownProcesses: 1 }));
+  open(handlers({ page: () => page(boxView({ gpu: true, id: "bxeightcards01" })), reading: () => snapshot({ gpus: { cards, processes: [] }, history: points(72, () => ({ gpus: cards.map((each) => ({ card: each.index, usage: each.usagePercent, memory: 85 })) })) }) }));
+  const card = await readActivity();
+  const grid = card.querySelector<HTMLElement>("[data-tiles]")!;
+  expect(grid.querySelectorAll(":scope > section")).toHaveLength(12);
+  expect(grid.className).toContain("lg:grid-cols-4");
+  expect(grid.className).toContain("[&>*]:border-b");
+  expect(grid.className).toContain("[&>*]:border-r");
+  expect(grid.parentElement!.className).toContain("overflow-hidden");
+  expect(within(card).getByRole("region", { name: "GPU 7" }).textContent).toContain("97");
+  expect(within(card).getAllByRole("button", { name: /^GPU \d$/ })).toHaveLength(8);
+});
+
+test("a GPU box is laid out with its GPU tile, lines and column from its first frame, so nothing moves when the GPU's numbers land", async () => {
+  let release: () => void = () => {};
+  const first = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  open(handlers({ page: () => page(boxView({ gpu: true })), reading: async () => (await first, snapshot(gpuReading(false))) } as never));
+  const card = await activity();
+  await within(card).findByRole("application", { name: "CPU, memory and GPU, Live" });
+  const before = layoutOf();
+  expect(JSON.parse(before).tiles).toBe(5);
+  expect(Array.from(card.querySelectorAll('[aria-label="Lines shown"] button')).map((chip) => chip.textContent)).toEqual(["CPU", "Memory", "GPU", "GPU memory"]);
+  release();
+  await waitFor(() => expect(within(card).getByText(/^Read at /)).toBeTruthy());
+  await within(card).findByRole("application", { name: "CPU, memory and GPU, the last 6 min, every 5 s" });
+  expect(layoutOf()).toBe(before);
+});
+
+test("over 1 h and 24 h each GPU is a line from box history, with its busiest minute, and a card that was shared is said to be the whole card's", async () => {
+  const history = (range: HistoryRange) => historyView(range, {}, (index) => ({ gpus: [{ card: 0, covered: 60, usage: 50 + (index % 3), usageBusiest: range === "1h" ? null : 90, memory: 30, memoryHighest: 31, shared: index > 10 }] }));
+  open(handlers({ page: () => page(boxView({ gpu: true, state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history }));
+  const card = await activity();
+  const usage = await within(card).findByRole("application", { name: "CPU, memory and GPU, the last 24 hours, by 10 minutes" });
+  await waitFor(() => expect(card.querySelector("[data-history-ready]")).toBeTruthy());
+  const summary = usage.getAttribute("aria-description") ?? usage.textContent ?? "";
+  expect(summary).toMatch(/GPU averaged 51%, busiest minute 90%/);
+  expect(summary).toContain("GPU was shared with other boxes for some of this time, so its lines are the whole card's then.");
+  cleanup();
+  forgetActivity();
+  const always = (range: HistoryRange) => historyView(range, {}, () => ({ gpus: [{ card: 0, covered: 60, usage: 70, usageBusiest: null, memory: 30, memoryHighest: 31, shared: true }] }));
+  open(handlers({ page: () => page(boxView({ gpu: true, state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: always }));
+  const again = await activity();
+  const chart = await within(again).findByRole("application", { name: "CPU, memory and GPU, the last 24 hours, by 10 minutes" });
+  await waitFor(() => expect(chart.textContent).toContain("GPU was shared with other boxes, so its lines are the whole card's."));
+  expect(within(card).getByRole("button", { name: "GPU" }).getAttribute("aria-pressed")).toBe("true");
 });

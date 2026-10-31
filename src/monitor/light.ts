@@ -3,6 +3,8 @@ import { calculateCpuUsage, parseMeminfo, parseNetDev, parseNetstatLinks, parseP
 import { containerCapacity, containerCpuPercent, containerMemory, parseContainer, type ContainerCounters, type ContainerFile } from "./container.ts";
 import { assessHealth } from "./health.ts";
 import { clampPercentage } from "./numbers.ts";
+import type { GpuMinute } from "./history-view.ts";
+import { GPU_BUSY_PERCENT, MOST_CARDS, countedGpuPercent, type GpuCard, gpuMemoryPercent, gpuReadingFromSections, nvidiaScript } from "./nvidia.ts";
 import { macOwnCommand, parseOwnReading, psOwnCommand, type OwnReading } from "./own-usage.ts";
 import { parseDfRoot, parseLinuxLoad, parseMacLoad } from "./route.ts";
 
@@ -38,6 +40,22 @@ export const lightReadingSchema = z
     load: z.tuple([finite, finite, finite]).nullable(),
     disk: z.object({ totalBytes: finite.nonnegative(), usedBytes: finite.nonnegative() }).strict().nullable(),
     network: z.object({ interface: z.string().max(64), rxBytes: finite.nonnegative(), txBytes: finite.nonnegative() }).strict().nullable(),
+    gpus: z
+      .array(
+        z
+          .object({
+            index: z.number().int().nonnegative(),
+            usagePercent: z.number().min(0).max(100).nullable(),
+            memoryUsedBytes: finite.nonnegative().nullable(),
+            memoryTotalBytes: finite.nonnegative().nullable(),
+            shared: z.boolean(),
+            ownProcesses: z.number().int().nonnegative().nullable(),
+          })
+          .strict(),
+      )
+      .max(MOST_CARDS)
+      .nullable()
+      .optional(),
     own: z
       .object({
         mode: z.enum(["with-children", "self-only"]),
@@ -61,7 +79,14 @@ export interface LightReading {
   readonly load: [number, number, number] | null;
   readonly disk: { readonly totalBytes: number; readonly usedBytes: number } | null;
   readonly network: NetworkTotals | null;
+  readonly gpus?: readonly LightGpu[] | null;
   readonly own: OwnReading | null;
+}
+
+export type LightGpu = Pick<GpuCard, "index" | "usagePercent" | "memoryUsedBytes" | "memoryTotalBytes" | "shared" | "ownProcesses">;
+
+export function lightGpusOf(reading: { readonly cards: readonly LightGpu[] } | null): LightGpu[] | null {
+  return reading ? reading.cards.map(({ index, usagePercent, memoryUsedBytes, memoryTotalBytes, shared, ownProcesses }) => ({ index, usagePercent, memoryUsedBytes, memoryTotalBytes, shared, ownProcesses })) : null;
 }
 
 export interface LightRequest {
@@ -93,6 +118,7 @@ function linuxScript(): string {
     part("net", `d=$(awk '$2=="00000000"{print $1; exit}' /proc/net/route); [ -n "$d" ] && grep "^ *$d:" /proc/net/dev`),
     ...LINUX_CGROUP_WHOLE.map((name) => `[ -f ${cgroup}/${name} ] && { ${part(`cgroup:${name}`, `cat ${cgroup}/${name}`)}; }`),
     ...LINUX_CGROUP_LINES.map(([name, pattern]) => `[ -f ${cgroup}/${name} ] && { ${part(`cgroup:${name}`, `grep '${pattern}' ${cgroup}/${name}`)}; }`),
+    nvidiaScript(part),
     "true",
   ].join("; ");
 }
@@ -151,6 +177,7 @@ function linuxReading(sections: Map<string, string>): LightReading {
   for (const [name, text] of sections) if (name.startsWith("cgroup:") && text.trim() !== "") files[name.slice("cgroup:".length) as ContainerFile] = text;
   const memoryTotalBytes = meminfo.get("MemTotal") ?? null;
   const available = meminfo.get("MemAvailable");
+  const container = parseContainer(files);
   return {
     os: "linux",
     bootAt,
@@ -158,10 +185,11 @@ function linuxReading(sections: Map<string, string>): LightReading {
     memoryTotalBytes,
     cpu,
     memoryUsedBytes: memoryTotalBytes !== null && available !== undefined ? Math.max(0, memoryTotalBytes - available) : null,
-    container: parseContainer(files),
+    container,
     load: parseLinuxLoad(sections.get("loadavg")),
     disk: diskOf(sections.get("df")),
     network: parseNetDev(`\n\n${sections.get("net") ?? ""}`),
+    gpus: lightGpusOf(gpuReadingFromSections(sections, container !== null)),
     own: sections.has("own") ? parseOwnReading(sections.get("own") ?? "") : null,
   };
 }
@@ -218,7 +246,7 @@ export function shareOf(macCores: number, macMemoryBytes: number, most: number):
   return { cores: macCores / slots, memoryBytes: macMemoryBytes / slots };
 }
 
-export const HIGH = { cpu: 1, cpuPressure: 2, memory: 4, memoryPressure: 8, disk: 16, load: 32 } as const;
+export const HIGH = { cpu: 1, cpuPressure: 2, memory: 4, memoryPressure: 8, disk: 16, load: 32, gpu: 64 } as const;
 
 export type HighReason = keyof typeof HIGH;
 
@@ -229,6 +257,8 @@ export function reasonsOf(high: number): HighReason[] {
 }
 
 export interface Point {
+  readonly gpus?: readonly GpuMinute[];
+  readonly gpu?: number | null;
   readonly start: number;
   readonly end: number;
   readonly cpu: number | null;
@@ -304,6 +334,10 @@ function diskPercent(reading: LightReading): number | null {
   return disk && disk.totalBytes > 0 ? clampPercentage((disk.usedBytes / disk.totalBytes) * 100) : null;
 }
 
+export function gpuHigh(gpu: number | null): number {
+  return gpu !== null && gpu >= GPU_BUSY_PERCENT ? HIGH.gpu : 0;
+}
+
 export function machinePoint(previous: Kept, current: Kept): Point {
   const now = current.reading;
   const container = now.container;
@@ -326,7 +360,9 @@ export function machinePoint(previous: Kept, current: Kept): Point {
   const cores = Math.max(1, Math.ceil(capacity.cores - 1e-6));
   const cpuStall = container?.cpuStall?.[1] ?? null;
   const memoryStall = container?.memoryStall?.[1] ?? null;
+  const gpu = countedGpuPercent(now.gpus);
   return {
+    ...(now.gpus?.length ? { gpus: now.gpus.map((card) => ({ card: card.index, usage: card.usagePercent, memory: gpuMemoryPercent(card), shared: card.shared })), gpu } : {}),
     start: previous.at,
     end: current.at,
     cpu,
@@ -337,7 +373,7 @@ export function machinePoint(previous: Kept, current: Kept): Point {
     cores,
     cpuStall,
     memoryStall,
-    high: highOf({ cpuPercent: cpu, memoryPercent: memory, diskPercent: disk, load: load === null ? null : { fiveMinutes: load, cores }, cpuStall: container?.cpuStall ?? null, memoryStall: container?.memoryStall ?? null }),
+    high: highOf({ cpuPercent: cpu, memoryPercent: memory, diskPercent: disk, load: load === null ? null : { fiveMinutes: load, cores }, cpuStall: container?.cpuStall ?? null, memoryStall: container?.memoryStall ?? null }) | gpuHigh(gpu),
   };
 }
 

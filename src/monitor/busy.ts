@@ -1,7 +1,7 @@
 import { HIGH, type HighReason } from "./light.ts";
 import { BUSY_AFTER_MS, BUSY_FRESH_MS, POINTS_JOIN_MS, READING_LATE_MS } from "./busy-times.ts";
 
-export const BUSY_ORDER: readonly HighReason[] = ["cpu", "cpuPressure", "memory", "memoryPressure", "load", "disk"];
+export const BUSY_ORDER: readonly HighReason[] = ["cpu", "cpuPressure", "gpu", "memory", "memoryPressure", "load", "disk"];
 
 export interface BusyPoint {
   readonly at: number;
@@ -11,6 +11,7 @@ export interface BusyPoint {
   readonly disk: number | null;
   readonly load: number | null;
   readonly cores: number | null;
+  readonly gpu?: number | null;
   readonly high: number;
 }
 
@@ -51,6 +52,8 @@ function valueFor(reason: HighReason, point: BusyPoint): number | null {
       return point.load;
     case "disk":
       return point.disk;
+    case "gpu":
+      return point.gpu ?? null;
   }
 }
 

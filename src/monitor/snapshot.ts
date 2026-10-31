@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MOST_CARDS, gpuReadingSchema } from "./nvidia.ts";
 
 const percentageSchema = z.number().min(0).max(100);
 const metricPointSchema = z.object({
@@ -8,6 +9,7 @@ const metricPointSchema = z.object({
   networkRxBytesPerSecond: z.number().nullable(),
   networkTxBytesPerSecond: z.number().nullable(),
   gpuPercent: percentageSchema.nullable().optional(),
+  gpus: z.array(z.object({ card: z.number().int().nonnegative(), usage: percentageSchema.nullable(), memory: percentageSchema.nullable() })).max(MOST_CARDS).optional(),
   ownCpuCores: z.number().nonnegative().nullable().optional(),
   ownMemoryBytes: z.number().nonnegative().nullable().optional(),
 });
@@ -89,6 +91,7 @@ export const snapshotSchema = z.object({
     gpuWatts: z.number().nonnegative().nullable(),
     gpuPercent: percentageSchema.nullable(),
   }).nullable().optional(),
+  gpus: gpuReadingSchema.nullable().optional(),
   tailscale: z.object({
     dnsName: z.string().max(255),
     ipv4: z.string().max(64).nullable(),
@@ -136,6 +139,7 @@ export type MetricPoint = z.infer<typeof metricPointSchema>;
 export type Processes = MonitorSnapshot["processes"];
 export type Health = MonitorSnapshot["health"];
 export type OwnReading = NonNullable<MonitorSnapshot["own"]>;
+export type { GpuCard, GpuProcess, GpuReading } from "./nvidia.ts";
 export type SlotReading = NonNullable<MonitorSnapshot["slot"]>;
 
 export const machineSchema = z.object({

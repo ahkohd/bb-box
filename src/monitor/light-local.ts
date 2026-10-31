@@ -4,7 +4,8 @@ import { cpus, loadavg, platform, totalmem, uptime } from "node:os";
 import { promisify } from "node:util";
 import { parseNetDev, parseProcStat, parseVmStatUsedBytes, readCpuTimes, readDisk, readMacNetworkTotals, readNetworkTotals, readOwnProcesses, type NetworkTotals } from "./collector.ts";
 import { readContainer } from "./container.ts";
-import type { LightReading, LightRequest } from "./light.ts";
+import { lightGpusOf, type LightReading, type LightRequest } from "./light.ts";
+import { readNvidiaHere } from "./nvidia-local.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,14 +45,16 @@ async function diskNow(): Promise<LightReading["disk"]> {
 }
 
 async function readLinux(request: LightRequest, signal: AbortSignal): Promise<LightReading> {
-  const [stat, meminfo, loads, container, disk, network, own] = await Promise.all([
+  const containerReading = readContainer(signal);
+  const [stat, meminfo, loads, container, disk, network, own, gpus] = await Promise.all([
     text("/proc/stat", signal),
     text("/proc/meminfo", signal),
     text("/proc/loadavg", signal),
-    readContainer(signal),
+    containerReading,
     diskNow(),
     linuxNetwork(signal),
     request.own ? readOwnProcesses(signal) : Promise.resolve(null),
+    containerReading.then((reading) => readNvidiaHere(signal, { inContainer: reading !== null, processes: false })).catch(() => null),
   ]);
   const parsed = stat ? parseProcStat(stat) : null;
   const total = Number(/^MemTotal:\s+(\d+)\s+kB$/m.exec(meminfo ?? "")?.[1]) * 1024;
@@ -69,6 +72,7 @@ async function readLinux(request: LightRequest, signal: AbortSignal): Promise<Li
     load: load.length === 3 && load.every(Number.isFinite) ? [load[0]!, load[1]!, load[2]!] : null,
     disk,
     network,
+    gpus: lightGpusOf(gpus),
     own,
   };
 }

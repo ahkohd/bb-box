@@ -117,6 +117,7 @@ function measure(times: readonly number[], values: readonly (number | null)[]): 
 export interface UsageLines {
   readonly cpu: { readonly label: string; readonly values: readonly (number | null)[] };
   readonly memory: { readonly label: string; readonly values: readonly (number | null)[] };
+  readonly gpus?: readonly { readonly label: string; readonly values: readonly (number | null)[] }[];
 }
 
 const percent = (value: number) => `${Math.round(value)}%`;
@@ -128,6 +129,10 @@ export function usageSummary(span: string, times: readonly number[], lines: Usag
   const parts = [
     cpu ? `${lines.cpu.label} averaged ${percent(cpu.mean)}, highest ${percent(cpu.highest)} at ${timeWords(cpu.highestAt)}` : `${lines.cpu.label} not read`,
     memory ? `${lines.memory.label.toLowerCase() === "memory" ? "memory" : lines.memory.label} last ${percent(memory.last)}` : null,
+    ...(lines.gpus ?? []).map((gpu) => {
+      const read = measure(times, gpu.values);
+      return read ? `${gpu.label} averaged ${percent(read.mean)}, highest ${percent(read.highest)} at ${timeWords(read.highestAt)}` : `${gpu.label} not read`;
+    }),
   ].filter(Boolean);
   return `Over ${span}: ${parts.join("; ")}.${gapsWords(gaps, timeWords)}`;
 }
@@ -325,7 +330,7 @@ function weighed(values: readonly (number | null)[], weights: readonly number[] 
   return highestIndex >= 0 && covered > 0 ? { mean: sum / covered, highest, highestIndex, last } : null;
 }
 
-export function historySummary(words: string, lines: { readonly cpu: HistoryLine; readonly memory: HistoryLine }, gaps: readonly HistoryGap[], stepWords: (index: number) => string, timeWords: (at: number) => string, now: number): string {
+export function historySummary(words: string, lines: { readonly cpu: HistoryLine; readonly memory: HistoryLine; readonly gpus?: readonly HistoryLine[] }, gaps: readonly HistoryGap[], stepWords: (index: number) => string, timeWords: (at: number) => string, now: number): string {
   const cpu = weighed(lines.cpu.values, lines.cpu.weights, lines.cpu.peaks);
   const memory = weighed(lines.memory.values, lines.memory.weights);
   const gapWords = historyGapsWords(gaps, timeWords, now);
@@ -334,6 +339,10 @@ export function historySummary(words: string, lines: { readonly cpu: HistoryLine
   const parts = [
     cpu ? `${lines.cpu.label} averaged ${percent(cpu.mean)}, ${peak} ${percent(cpu.highest)} ${stepWords(cpu.highestIndex)}` : `${lines.cpu.label} not read`,
     memory ? `${lines.memory.label.toLowerCase() === "memory" ? "memory" : lines.memory.label} last ${percent(memory.last)}` : null,
+    ...(lines.gpus ?? []).map((gpu) => {
+      const read = weighed(gpu.values, gpu.weights, gpu.peaks);
+      return read ? `${gpu.label} averaged ${percent(read.mean)}, ${gpu.peaks ? "busiest minute" : "highest"} ${percent(read.highest)} ${stepWords(read.highestIndex)}` : `${gpu.label} not read`;
+    }),
   ].filter(Boolean);
   return `Over ${words}: ${parts.join("; ")}.${gapWords}`;
 }

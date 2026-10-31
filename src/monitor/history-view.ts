@@ -12,7 +12,37 @@ export type GapKind = "not-made" | "starting" | "stopped" | "not-read" | "no-rea
 
 const PRECEDENCE: readonly Exclude<GapKind, "no-reading">[] = ["not-made", "stopped", "starting", "not-read"];
 
+export interface GpuStep {
+  readonly card: number;
+  readonly covered: number;
+  readonly usage: number | null;
+  readonly usageBusiest: number | null;
+  readonly memory: number | null;
+  readonly memoryHighest: number | null;
+  readonly shared: boolean;
+}
+
+export interface GpuMinute {
+  readonly card: number;
+  readonly usage: number | null;
+  readonly memory: number | null;
+  readonly shared: boolean;
+}
+
+export interface GpuHour {
+  readonly card: number;
+  readonly covered: number;
+  readonly usageCovered: number;
+  readonly memoryCovered: number;
+  readonly usage: number | null;
+  readonly usageBusiest: number | null;
+  readonly memory: number | null;
+  readonly memoryHighest: number | null;
+  readonly shared: boolean;
+}
+
 export interface HistoryStep {
+  readonly gpus: readonly GpuStep[];
   readonly at: number;
   readonly covered: number;
   readonly cpuCovered: number;
@@ -42,6 +72,7 @@ export interface Span {
 }
 
 export interface HistoryMinute {
+  readonly gpus?: readonly GpuMinute[];
   readonly at: number;
   readonly covered: number;
   readonly cpu: number | null;
@@ -53,6 +84,7 @@ export interface HistoryMinute {
 }
 
 export interface HistoryHour {
+  readonly gpus?: readonly GpuHour[];
   readonly hour: number;
   readonly covered: number;
   readonly cpuCovered: number;
@@ -111,7 +143,19 @@ export function partlyRead(covered: number, stepMs: number): boolean {
   return stepMs - covered * 1000 >= UNREAD_SHOWN_MS;
 }
 
+interface GpuSums {
+  covered: number;
+  usage: number;
+  usageCovered: number;
+  usageBusiest: number | null;
+  memory: number;
+  memoryCovered: number;
+  memoryHighest: number | null;
+  shared: boolean;
+}
+
 interface Sums {
+  gpus: Map<number, GpuSums>;
   covered: number;
   cpu: number;
   cpuCovered: number;
@@ -128,7 +172,7 @@ interface Sums {
 }
 
 function sums(): Sums {
-  return { covered: 0, cpu: 0, cpuCovered: 0, cpuBusiest: null, memory: 0, memoryCovered: 0, memoryHighest: null, disk: 0, diskCovered: 0, down: 0, up: 0, netCovered: 0, high: 0 };
+  return { gpus: new Map(), covered: 0, cpu: 0, cpuCovered: 0, cpuBusiest: null, memory: 0, memoryCovered: 0, memoryHighest: null, disk: 0, diskCovered: 0, down: 0, up: 0, netCovered: 0, high: 0 };
 }
 
 function most(left: number | null, right: number | null): number | null {
@@ -159,7 +203,42 @@ function addMinute(into: Sums, minute: HistoryMinute, weight: number): void {
     into.netCovered += weight;
   }
   into.high |= minute.high;
+  for (const gpu of minute.gpus ?? []) {
+    let card = into.gpus.get(gpu.card);
+    if (!card) {
+      card = { covered: 0, usage: 0, usageCovered: 0, usageBusiest: null, memory: 0, memoryCovered: 0, memoryHighest: null, shared: false };
+      into.gpus.set(gpu.card, card);
+    }
+    card.covered += weight;
+    card.shared ||= gpu.shared;
+    if (gpu.usage !== null) {
+      card.usage += gpu.usage * weight;
+      card.usageCovered += weight;
+      card.usageBusiest = most(card.usageBusiest, gpu.usage);
+    }
+    if (gpu.memory !== null) {
+      card.memory += gpu.memory * weight;
+      card.memoryCovered += weight;
+      card.memoryHighest = most(card.memoryHighest, gpu.memory);
+    }
+  }
 }
+
+function gpuStepsOf(gpus: ReadonlyMap<number, GpuSums>, busiest: boolean): GpuStep[] {
+  return [...gpus.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([card, sums]) => ({
+      card,
+      covered: sums.covered,
+      usage: mean(sums.usage, sums.usageCovered),
+      usageBusiest: busiest ? sums.usageBusiest : null,
+      memory: mean(sums.memory, sums.memoryCovered),
+      memoryHighest: busiest ? sums.memoryHighest : null,
+      shared: sums.shared,
+    }));
+}
+
+const mean = (sum: number, covered: number) => (covered > 0 ? sum / covered : null);
 
 export function overlaps(start: number, end: number, from: number, stepMs: number, count: number): { readonly index: number; readonly seconds: number }[] {
   const first = Math.max(0, Math.floor((start - from) / stepMs));
@@ -189,15 +268,15 @@ function hourBuckets(count: number, from: number, stepMs: number, hours: readonl
   return buckets;
 }
 
-const mean = (sum: number, covered: number) => (covered > 0 ? sum / covered : null);
 
 function unread(at: number, host: number | null): HistoryStep {
-  return { at, covered: 0, cpuCovered: 0, memoryCovered: 0, netCovered: 0, cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, host, high: 0, partial: false };
+  return { gpus: [], at, covered: 0, cpuCovered: 0, memoryCovered: 0, netCovered: 0, cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, host, high: 0, partial: false };
 }
 
 function stepOfSums(at: number, bucket: Sums | null, host: number | null, partial: boolean, busiest: boolean): HistoryStep {
   if (!bucket) return unread(at, host);
   return {
+    gpus: gpuStepsOf(bucket.gpus, busiest),
     at,
     covered: bucket.covered,
     cpuCovered: bucket.cpuCovered,
@@ -218,7 +297,8 @@ function stepOfSums(at: number, bucket: Sums | null, host: number | null, partia
 
 function stepOfHour(at: number, hour: HistoryHour | null, host: number | null, partial: boolean): HistoryStep {
   if (!hour) return unread(at, host);
-  return { at, covered: hour.covered, cpuCovered: hour.cpuCovered, memoryCovered: hour.memoryCovered, netCovered: hour.netCovered, cpu: hour.cpu, cpuBusiest: hour.cpuBusiest, memory: hour.memory, memoryHighest: hour.memoryHighest, disk: hour.disk, down: hour.down, up: hour.up, host, high: hour.high, partial };
+  const gpus = (hour.gpus ?? []).map((gpu) => ({ card: gpu.card, covered: gpu.covered, usage: gpu.usage, usageBusiest: gpu.usageBusiest, memory: gpu.memory, memoryHighest: gpu.memoryHighest, shared: gpu.shared }));
+  return { gpus, at, covered: hour.covered, cpuCovered: hour.cpuCovered, memoryCovered: hour.memoryCovered, netCovered: hour.netCovered, cpu: hour.cpu, cpuBusiest: hour.cpuBusiest, memory: hour.memory, memoryHighest: hour.memoryHighest, disk: hour.disk, down: hour.down, up: hour.up, host, high: hour.high, partial };
 }
 
 export function lifeSpans(events: readonly LoggedEvent[], createdAt: number, now: number, state: string, readAfter: (at: number) => number | null): { stopped: Span[]; starting: Span[] } {

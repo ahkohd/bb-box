@@ -5,6 +5,7 @@ import type { ExperimentalSidebarFooterDisclosureProps, PluginSidebarThread } fr
 import type { ComponentType } from "react";
 import type { BoxEntry, Contract, Machine, MachinesState, MonitorSnapshot, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { BoxView } from "../src/plugin/views.ts";
+import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 
 const SERVER_HOST = "host_server";
 
@@ -692,3 +693,64 @@ test("a box lists none of its hidden threads, its holder included, and keeps the
   const menu = await openViews();
   expect(threadLabels(menu)).toEqual(["Finished last year, idle"]);
 });
+
+const MiB = 1024 ** 2;
+
+function cards(shared: boolean): Partial<MonitorSnapshot> {
+  return {
+    gpus: {
+      cards: [
+        { index: 0, name: "NVIDIA GeForce RTX 4090", usagePercent: 97, memoryUsedBytes: 20_000 * MiB, memoryTotalBytes: 24_564 * MiB, temperatureC: 81, powerWatts: 410, powerLimitWatts: 450, shared, ownMemoryBytes: shared ? 0 : 19_000 * MiB, ownProcesses: shared ? 0 : 1 },
+        { index: 1, name: "NVIDIA GeForce RTX 4090", usagePercent: 2, memoryUsedBytes: 300 * MiB, memoryTotalBytes: 24_564 * MiB, temperatureC: 38, powerWatts: 21, powerLimitWatts: 450, shared: false, ownMemoryBytes: 0, ownProcesses: 0 },
+      ],
+      processes: shared ? [] : [{ pid: 4242, name: "python3", card: 0, memoryBytes: 19_000 * MiB }],
+    },
+  };
+}
+
+test("a machine with NVIDIA cards has a section for each, with its use, memory and power, and its processes' card memory in Top processes", async () => {
+  forgetMonitorReadings();
+  localStorage.setItem("bb-box:monitor:machine", "host_build");
+  const reading = snapshot({ ...cards(false), processes: { available: true, total: 2, running: 1, top: [{ pid: 4242, name: "python3", cpuPercent: 101, memoryPercent: 10, rssBytes: 2 * 1024 * MiB }] } });
+  renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({ host_build: reading }), pluginId: "bb-box" });
+  const first = await screen.findByRole("region", { name: "GPU 0" });
+  expect(first.textContent).toContain("97");
+  expect(first.textContent).toContain("81°C");
+  expect(screen.getByRole("region", { name: "GPU 1" }).textContent).toContain("2");
+  const processes = screen.getByRole("region", { name: "Top processes" });
+  expect(processes.textContent).toMatch(/^Top processesMemoryGPU% CPU/);
+  expect(processes.querySelector("[data-gpu-memory]")!.textContent).toMatch(/GB$/);
+  expect(localStorage.getItem("bb-box:monitor:shape:host_build")).toContain('"gpuCards":2');
+});
+
+test("a box that shares its card says the numbers are the whole card's, and its two sections are there before the reading lands", async () => {
+  forgetMonitorReadings();
+  localStorage.setItem("bb-box:monitor:machine", "host_lxc");
+  localStorage.setItem("bb-box:monitor:shape:host_lxc", JSON.stringify({ gpu: true, gpuCards: 2, battery: false, tailscaleRows: 0 }));
+  let release: () => void = () => {};
+  const landed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reading = snapshot(cards(true));
+  const rpc = { ...handlers({}), "monitor.machine": async () => (await landed, reading) } as never;
+  renderSlot(footer!, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+  expect(await screen.findByRole("region", { name: "GPU 0" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "GPU 1" })).toBeTruthy();
+  release();
+  const shared = await screen.findByRole("region", { name: "GPU 0, whole card" });
+  expect(shared.textContent).toContain("shared card");
+  expect(shared.textContent).toMatch(/This box: 0 B of [\d.]+ GB$/);
+});
+
+test("a reading that misses the cards keeps their sections and the GPU column, says they were not read, and the remembered count stays", async () => {
+  forgetMonitorReadings();
+  localStorage.setItem("bb-box:monitor:machine", "host_build");
+  let readings = 0;
+  const rpc = { ...handlers({}), "monitor.machine": () => (++readings === 1 ? snapshot(cards(false)) : snapshot({ gpus: null, refreshIntervalMs: 2000 })) } as never;
+  renderSlot(footer!, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+  expect(await screen.findByRole("region", { name: "GPU 0" })).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("region", { name: "GPU 1" }).textContent).toContain("not read"), { timeout: 15_000 });
+  expect(screen.getByRole("region", { name: "GPU 0" }).textContent).toContain("No reading of this card this time");
+  expect(screen.getByRole("region", { name: "Top processes" }).textContent).toMatch(/^Top processesMemoryGPU% CPU/);
+  expect(localStorage.getItem("bb-box:monitor:shape:host_build")).toContain('"gpuCards":2');
+}, 20_000);

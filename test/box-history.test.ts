@@ -1093,3 +1093,72 @@ test("G15: a streak never reaches back past the box's last start, the end of a t
   opened.source.close();
   back.source.close();
 });
+
+test("box history keeps each GPU's use and memory at the minute points and in hourly rollups, with its busiest minute, and prunes them with the box's", () => {
+  const clock = { now: T0 + 2 * HOUR };
+  const opened = openedHistory(tempDir("history-gpus"), () => clock.now);
+  const gpus = (usage: number, shared = false) => [{ card: 0, usage, memory: 40, shared }, { card: 1, usage: 5, memory: 2, shared }];
+  for (let index = 0; index < 20; index++) points(opened.store, "bxgpubox000001", T0 + index * MINUTE, 1, { gpus: gpus(index === 7 ? 99 : 60), gpu: index === 7 ? 99 : 60 });
+  points(opened.store, "bxgpubox000001", T0 + 20 * MINUTE, 1, { gpus: gpus(0, true), gpu: null });
+  const minutes = opened.store.minutes("bxgpubox000001", T0, T0 + HOUR);
+  assert.equal(minutes.length, 21);
+  assert.deepEqual(minutes[0]!.gpus, [{ card: 0, usage: 60, memory: 40, shared: false }, { card: 1, usage: 5, memory: 2, shared: false }]);
+  assert.equal(minutes[0]!.gpu, 60);
+  assert.equal(minutes.at(-1)!.gpu, null);
+  const hour = opened.store.hours("bxgpubox000001", T0, T0 + HOUR)[0]!;
+  assert.equal(hour.gpus.length, 2);
+  assert.equal(hour.gpus[0]!.usageBusiest, 99);
+  assert.equal(hour.gpus[0]!.covered, 21 * 60);
+  assert.ok(Math.abs(hour.gpus[0]!.usage! - (19 * 60 + 99) / 21) < 0.01, "the hour's use is the mean weighted by the minutes it covers");
+  assert.equal(hour.gpus[0]!.shared, true, "an hour with a shared minute says so");
+
+  const day = historyShape({ range: "24h", now: clock.now, createdAt: T0 - HOUR, state: "ready", minutes, hours: [], host: null, events: [], quiet: [] });
+  const step = day.steps.find((each) => each.at === T0)!;
+  assert.deepEqual(step.gpus.map((gpu) => [gpu.card, gpu.usage, gpu.usageBusiest, gpu.memory]), [[0, 63.9, 99, 40], [1, 5, 5, 2]], "a 10-minute step keeps its busiest minute, 99%, above its mean");
+  assert.equal(day.steps.find((each) => each.at === T0 + 10 * MINUTE)!.gpus[0]!.usageBusiest, 60);
+  const hourLong = historyShape({ range: "1h", now: T0 + 30 * MINUTE, createdAt: T0 - HOUR, state: "ready", minutes, hours: [], host: null, events: [], quiet: [] });
+  const seventh = hourLong.steps.find((each) => each.at === T0 + 7 * MINUTE)!;
+  assert.equal(seventh.gpus[0]!.usage, 99);
+  assert.equal(seventh.gpus[0]!.usageBusiest, null, "1 h has no busiest band");
+  const week = historyShape({ range: "7d", now: clock.now, createdAt: T0 - HOUR, state: "ready", minutes: [], hours: [hour], host: null, events: [], quiet: [] });
+  assert.equal(week.steps.find((each) => each.at === T0)!.gpus[0]!.usageBusiest, 99);
+  assert.deepEqual(historyShape({ range: "1h", now: clock.now, createdAt: T0 - HOUR, state: "ready", minutes: opened.store.minutes("bxnogpubox0001", T0, T0 + HOUR), hours: [], host: null, events: [], quiet: [] }).steps[0]!.gpus, []);
+
+  clock.now = T0 + 24 * HOUR + 10 * MINUTE;
+  opened.store.prune(() => true);
+  assert.equal(opened.store.minutes("bxgpubox000001", 0, T0 * 2).filter((minute) => minute.gpus.length).length, 11, "GPU minutes go after 24 hours, as the minute points do");
+  opened.store.prune(() => false);
+  assert.equal(opened.store.hours("bxgpubox000001", 0, T0 * 2).length, 0);
+  const rows = (opened.source.handle().prepare("SELECT (SELECT COUNT(*) FROM boxhistory.gpu_minutes) AS minutes, (SELECT COUNT(*) FROM boxhistory.gpu_hours) AS hours").get() as { minutes: number; hours: number });
+  assert.deepEqual(rows, { minutes: 0, hours: 0 }, "a forgotten box's GPU rows go with it");
+  opened.source.close();
+});
+
+test("G15 for the GPU: a box is busy after 5 whole minutes of its GPU judged high, and its counters keep no GPU figures", () => {
+  const clock = { now: T0 + 6 * MINUTE + 20_000 };
+  const config = { current: { ...MONITOR_DEFAULTS } as MonitorConfig };
+  const opened = openedHistory(tempDir("history-gpu-busy"), () => clock.now);
+  const history = busyApp(opened.store, clock, config);
+  points(opened.store, "bxtrainingbox01", T0, 6, { cpu: 12, gpu: 97, gpus: [{ card: 0, usage: 97, memory: 80, shared: false }], high: HIGH.gpu });
+  points(opened.store, "bxbesidebox0001", T0, 6, { cpu: 12, gpu: null, gpus: [{ card: 0, usage: 97, memory: 80, shared: true }], high: 0 });
+  assert.deepEqual(history.busy(readyRecord("bxtrainingbox01")), { reason: "gpu", value: 97, cores: null, since: T0, at: T0 + 6 * MINUTE, slot: false, readAt: clock.now });
+  assert.equal(history.busy(readyRecord("bxbesidebox0001")), null, "the box beside it on the same card is not busy");
+  const reading = { ...parseLightOutput("linux", linuxOutput({})), gpus: [{ index: 0, usagePercent: 97, memoryUsedBytes: GiB, memoryTotalBytes: 2 * GiB, shared: false, ownProcesses: 1 }] };
+  opened.store.keep("bxtrainingbox01", { at: clock.now, reading });
+  const kept = opened.source.handle().prepare("SELECT reading FROM boxhistory.counters WHERE key = ?").get("bxtrainingbox01") as { reading: string };
+  assert.equal(JSON.parse(kept.reading).gpus, null);
+  opened.source.close();
+});
+
+test("G18 where ATTACH is refused: each GPU's minute row counts against the row cap, so eight cards fill it nine times as fast", () => {
+  const clock = { now: T0 + 2 * HOUR };
+  const source = storage(tempDir("history-shared-gpus"), true);
+  const files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: BOX_HISTORY_MIGRATIONS });
+  const store = new BoxHistoryStore({ file: files.history, now: () => clock.now, sharedMinuteRows: 90 });
+  const reading = parseLightOutput("linux", linuxOutput({}));
+  const gpus = Array.from({ length: 8 }, (_, card) => ({ card, usage: 90, memory: 80, shared: false }));
+  for (let minute = 0; minute < 60; minute++) store.record("bxeightcards001", { start: T0 + minute * MINUTE, end: T0 + (minute + 1) * MINUTE, cpu: 1, memory: 1, disk: 1, down: 1, up: 1, load: null, cores: 1, cpuStall: null, memoryStall: null, high: 0, gpus, gpu: 90 }, { at: T0, reading });
+  assert.equal(store.minutes("bxeightcards001", 0, T0 * 2).length, 10, "10 points of 1 + 8 rows each fill a cap of 90");
+  assert.match(store.fullWords() ?? "", /at most 90 minute points, each GPU's counted as one/);
+  source.close();
+});

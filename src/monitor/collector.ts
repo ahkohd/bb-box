@@ -11,6 +11,8 @@ import { readMacSensors } from "./mac-sensors.ts";
 import { containerCapacity, containerCpuPercent, containerMemory, readContainer, type ContainerCounters } from "./container.ts";
 import { assessHealth } from "./health.ts";
 import { clampPercentage } from "./numbers.ts";
+import { gpuMemoryPercent, gpuPids, type GpuReading } from "./nvidia.ts";
+import { readNvidiaHere } from "./nvidia-local.ts";
 import { createOwnUsage, developerToolsLook, parseOwnReading, psOwnArgs, readMacOwn, type OwnReading, type OwnUsage } from "./own-usage.ts";
 
 export { clampPercentage } from "./numbers.ts";
@@ -252,7 +254,17 @@ export function processArgs(scope: ProcessScope, uid: number | null): string[] {
   return scope === "user" && uid !== null ? ["-U", String(uid), "-o", PROCESS_COLUMNS] : ["-eo", PROCESS_COLUMNS];
 }
 
-export function parseProcesses(source: string, nameOf: (command: string) => string = (command) => command): Processes {
+export const TOP_PROCESSES = 6;
+
+function topWith<Row extends { pid: number; cpuPercent: number }>(rows: readonly Row[], pinned: ReadonlySet<number>): Row[] {
+  const sorted = [...rows].sort((a, b) => b.cpuPercent - a.cpuPercent || a.pid - b.pid);
+  const kept = sorted.filter((row) => pinned.has(row.pid)).slice(0, TOP_PROCESSES);
+  const rest = sorted.filter((row) => !pinned.has(row.pid)).slice(0, TOP_PROCESSES - kept.length);
+  const chosen = new Set([...kept, ...rest]);
+  return sorted.filter((row) => chosen.has(row));
+}
+
+export function parseProcesses(source: string, nameOf: (command: string) => string = (command) => command, pinned: ReadonlySet<number> = new Set()): Processes {
   const rows = source.split("\n").flatMap((line) => {
     const match = /^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
     if (!match || match[6] === "ps") return [];
@@ -264,16 +276,16 @@ export function parseProcesses(source: string, nameOf: (command: string) => stri
     available: true,
     total: rows.length,
     running: rows.filter((row) => row.running).length,
-    top: rows.sort((a, b) => b.cpuPercent - a.cpuPercent || a.pid - b.pid).slice(0, 6).map(({ running: _running, ...row }) => row),
+    top: topWith(rows, pinned).map(({ running: _running, ...row }) => row),
   };
 }
 
 export const NO_PROCESSES: Processes = { available: false, total: 0, running: 0, top: [] };
 
-async function readProcesses(signal: AbortSignal, scope: ProcessScope): Promise<Processes> {
+async function readProcesses(signal: AbortSignal, scope: ProcessScope, pinned: Promise<ReadonlySet<number>> = Promise.resolve(new Set())): Promise<Processes> {
   try {
-    const { stdout } = await execFileAsync("ps", processArgs(scope, process.getuid?.() ?? null), { timeout: 1500, maxBuffer: 512 * 1024, signal, env: { ...process.env, LC_ALL: "C" } });
-    const processes = parseProcesses(stdout, platform() === "linux" ? undefined : basename);
+    const [{ stdout }, pids] = await Promise.all([execFileAsync("ps", processArgs(scope, process.getuid?.() ?? null), { timeout: 1500, maxBuffer: 512 * 1024, signal, env: { ...process.env, LC_ALL: "C" } }), pinned]);
+    const processes = parseProcesses(stdout, platform() === "linux" ? undefined : basename, pids);
     if (platform() === "linux") {
       await Promise.all(processes.top.map(async (entry) => {
         try { entry.name = basename((await readlink(`/proc/${entry.pid}/exe`)).replace(/ \(deleted\)$/, "")).slice(0, 128); }
@@ -308,6 +320,10 @@ export async function readOwnProcesses(signal: AbortSignal): Promise<OwnReading 
   }
 }
 
+export function gpuPoints(reading: GpuReading | null | undefined): MetricPoint["gpus"] {
+  return reading ? reading.cards.map((card) => ({ card: card.index, usage: card.usagePercent, memory: gpuMemoryPercent(card) })) : undefined;
+}
+
 export function pushHistory(history: MetricPoint[], point: MetricPoint): MetricPoint[] {
   history.push(point);
   if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
@@ -334,6 +350,7 @@ export interface CollectorOptions {
   readonly scope?: ProcessScope;
   readonly readContainer?: (signal: AbortSignal) => Promise<ContainerCounters | null>;
   readonly readOwn?: (signal: AbortSignal) => Promise<OwnReading | null>;
+  readonly readGpus?: (signal: AbortSignal, inContainer: boolean) => Promise<GpuReading | null>;
 }
 
 function noReading(): Promise<null> {
@@ -370,12 +387,17 @@ export function createCollector(options: CollectorOptions) {
     await sleep(BASELINE_WINDOW_MS, undefined, { signal });
   }
 
+  const readGpus = options.readGpus ?? ((signal: AbortSignal, inContainer: boolean) => readNvidiaHere(signal, { inContainer, processes: true }));
+  let inContainer: Promise<boolean> | null = null;
+
   async function collect(signal: AbortSignal): Promise<MonitorSnapshot> {
     const whole = scope === "machine";
+    inContainer ??= readOwnContainer(signal).then((container) => container !== null, () => false);
+    const gpuReading = whole ? inContainer.then((contained) => readGpus(signal, contained)).catch(() => null) : Promise.resolve(null);
     const slowReadings = Promise.all([
       readMemoryDetails(signal),
       readDisk(),
-      readProcesses(signal, scope),
+      readProcesses(signal, scope, gpuReading.then(gpuPids)),
       readTailscale(signal),
       whole ? readBattery(signal) : noReading(),
       whole ? readMacSensors(signal) : noReading(),
@@ -405,9 +427,10 @@ export function createCollector(options: CollectorOptions) {
     previousContainerUsage = container ? { usageMicros: container.usageMicros, at: containerAt } : null;
     const userUsage = await takeOwn(signal);
 
-    const [networkReading, [memoryDetails, disk, processes, tailscale, battery, sensors]] = await Promise.all([
+    const [networkReading, [memoryDetails, disk, processes, tailscale, battery, sensors], gpus] = await Promise.all([
       readNetworkTotals(signal).then((totals) => ({ totals, time: performance.now() })),
       slowReadings,
+      gpuReading,
     ]);
     signal.throwIfAborted();
     const visibleTotal = totalmem();
@@ -460,6 +483,7 @@ export function createCollector(options: CollectorOptions) {
       tailscale,
       battery,
       sensors,
+      gpus,
       processes,
       ...(userUsage ? { own: userUsage } : {}),
       runtime: runtimeNow(),
@@ -478,6 +502,7 @@ export function createCollector(options: CollectorOptions) {
         networkRxBytesPerSecond: network?.rxBytesPerSecond ?? null,
         networkTxBytesPerSecond: network?.txBytesPerSecond ?? null,
         gpuPercent: sensors?.gpuPercent ?? null,
+        ...(gpus ? { gpus: gpuPoints(gpus) } : {}),
         ...(userUsage ? { ownCpuCores: userUsage.cpuCores, ownMemoryBytes: userUsage.memoryBytes } : {}),
       }),
     };
