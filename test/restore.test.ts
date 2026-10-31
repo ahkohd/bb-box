@@ -460,3 +460,25 @@ test("G6 and G16 in ZFS's order: a copy cut short before it is a template is del
   assert.equal([...state.provider.earlier].length, 0, "the old guest, disarmed, held no snapshot, so it is deleted");
   assert.match(state.log.events(box.id).at(-1)!.words!, /a new guest made from its held copy runs the box now, and its old guest g\d+, which held no snapshot, is deleted\.$/);
 });
+
+test("a check says what a restore would do, refuses what it would refuse, and changes nothing", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  state.backend.setSize(box.guest!.ref, { cores: 4, memoryMiB: 8192, diskGiB: null });
+  await state.boxes.update(box, (latest) => ({ guest: { ...latest.guest!, size: { cores: 4, memoryMiB: 8192, diskGiB: null } } }));
+  state.guard = { threads: [], threadsUnread: null, control: false, terminals: 1 };
+  state.provider.order.length = 0;
+  const check = await state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true });
+  assert.equal(check.undo?.kind, "snapshot");
+  assert.equal(check.undo?.name, "before the restore at 10:42");
+  assert.deepEqual(check.to && { cores: check.to.cores, memoryMiB: check.to.memoryMiB }, { cores: box.guest!.size!.cores, memoryMiB: box.guest!.size!.memoryMiB });
+  assert.deepEqual(check.anyway, ["a BB terminal is open on it"]);
+  assert.match((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), "one"))).message, /a BB terminal is open on it\. Restore anyway with --force\./);
+  state.provider.percentFull = 90;
+  assert.equal((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true }))).code, "no_capacity");
+  assert.equal((await state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true, undo: false })).undo, null);
+  assert.deepEqual(state.provider.order, [], "nothing stopped");
+  assert.equal(state.store.unsettled().length, 0);
+  assert.equal(state.store.records({ box: box.id }).length, 1);
+});

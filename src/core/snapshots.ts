@@ -296,6 +296,29 @@ function sizeChangeWords(from: BoxSize | null, to: BoxSize | null): string {
   return `; its size went from ${describeSize(from)} to ${describeSize(to)}, as it was then`;
 }
 
+interface Prepared {
+  readonly box: BoxRecord & { readonly guest: Guest };
+  readonly target: SnapshotRecord;
+  readonly backend: Backend;
+  readonly offer: Snapshotting;
+  readonly plan: SnapshotPlan;
+  readonly byCopy: boolean;
+  readonly swap: boolean;
+  readonly anyway: readonly string[];
+}
+
+export interface RestoreCheck {
+  readonly snapshot: SnapshotRecord;
+  readonly box: BoxRecord;
+  readonly swap: boolean;
+  readonly undo: { readonly kind: "snapshot" | "held-copy"; readonly name: string; readonly aboutMs: number; readonly bytes: number | null } | null;
+  readonly from: BoxSize | null;
+  readonly to: BoxSize | null;
+  readonly anyway: readonly string[];
+  readonly leavesOnEarlierGuest: number;
+  readonly storage: string;
+}
+
 interface Restoring {
   readonly swap: boolean;
   readonly operation: SnapshotOperation;
@@ -911,36 +934,12 @@ export class Snapshots {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#restoredBefore(earlier);
     }
-    const box = await this.#deps.boxes.find(boxId);
-    if (!box) throw new BoxError("released", "That box was released, so it restores nothing.");
-    const target = ledger.record(targetId);
-    if (!target) throw new BoxError("not_found", `bb-box has no snapshot ${targetId}: it was deleted.`);
-    const cutShort = ledger.unsettled().find((operation) => operation.box === box.id && operation.kind === "restore" && !this.#running.has(operation.id));
-    if (cutShort) {
-      throw new BoxError("not_ready", `bb-box could not confirm ${operationWords(cutShort)} on box ${box.name}: ${cutShort.error ?? "it was cut short"} It checks again at each sweep, and bb box sweep checks now.`);
-    }
-    if (box.restoring) throw new BoxError("not_ready", restoringWords(box, box.restoring));
-    if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box restores a box that is running or stopped.`);
-    const backend = this.#deps.backends.get(box.backend);
-    if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it restores nothing there.`);
-    const offer = this.offerFor(backend, box.kind);
-    if (!offer || offer.restore === "none" || !backend.planSnapshots || !backend.rollbackSnapshot || !backend.powerOff || !backend.start || !backend.snapshot) {
-      throw new BoxError("unsupported", `${box.backendLabel} restores no snapshots of its ${box.kind} boxes.`);
-    }
-    if (target.box.id !== box.id) throw new BoxError("unsupported", `Snapshot ${quoted(target)} is of box ${target.box.name}, not ${box.name}.`);
-    if (target.guest === "earlier") throw new BoxError("unsupported", `Snapshot ${quoted(target)} is on ${box.name}'s earlier guest, so it cannot be restored there, only forked.`);
-    if (target.state !== "ready") throw new BoxError("not_ready", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not restore it.`);
-    this.#requireStore("restores");
-    const swap = target.guest === "held-copy";
-    const plan = await backend.planSnapshots(box.guest, box.kind, swap ? null : { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
-    const byCopy = this.#restoreOrder(box, backend, plan, target, swap) === "copy";
-    const anyway = await this.#guarded(caller, standing, box, target, input.force === true);
+    const { box, target, backend, offer, plan, byCopy, swap, anyway } = await this.#prepare(caller, standing, boxId, targetId, input);
     const wantsUndo = input.undo !== false;
     const now = this.#now();
-    const settings = this.settings;
     const operationId = newOperationId(this.#random);
     const undoId = wantsUndo ? newSnapshotId(this.#random) : null;
-    const undoBytes = byCopy ? (box.guest.size?.diskGiB ?? 0) * 1024 * MiB : (plan.restore.undoBytes ?? 0);
+    const undoBytes = this.#undoBytes(box, plan, byCopy);
     const admitted = ledger.transaction((): { refused: BoxError } | { repeat: SnapshotOperation } | { undo: SnapshotRecord | null; operation: SnapshotOperation } => {
       if (input.request) {
         const raced = ledger.byRequest(requestKey(by, input.request));
@@ -948,19 +947,8 @@ export class Snapshots {
       }
       let undo: SnapshotRecord | null = null;
       if (undoId) {
-        const instead = caller.is === "agent" ? "" : " Or restore without an undo, with --no-undo.";
-        const room = this.#roomProblem(box, plan.storage, ledger.reservedBytes(plan.storage.key) + undoBytes, false, settings.roomPercent);
-        if (room) return { refused: new BoxError("no_capacity", `bb-box would take an undo of box ${box.name} before restoring it, and ${room.charAt(0).toLowerCase()}${room.slice(1)}${instead}`) };
-        const paid = ceilingVerdict({
-          change: "undo",
-          backend: backend.label,
-          held: heldRate(ledger.records({ backend: backend.id }), backend.id),
-          price: offer.price,
-          bytes: undoBytes || null,
-          ceiling: ceilingOf(settings, backend.id),
-          byPerson: caller.is !== "agent",
-        });
-        if (!paid.ok) return { refused: new BoxError("limit_reached", `bb-box would take an undo of box ${box.name} before restoring it. ${paid.why}${instead}`) };
+        const refused = this.#undoRefused(caller, box, backend, offer, plan, undoBytes);
+        if (refused) return { refused };
         const names = new Set(ledger.records({ box: box.id }).map((record) => record.name));
         undo = {
           id: undoId,
@@ -1031,6 +1019,85 @@ export class Snapshots {
     const mark: RestoringMark = { operation: operation.id, snapshot: target.id, name: target.name, at: now, ran: box.state === "ready" };
     await this.#deps.boxes.update(box, (current) => (current.state === "releasing" ? {} : { restoring: mark }));
     return this.#runRestore({ swap, operation, target, undo, backend, anyway, from: box.guest!.size, after: "" }, "planned");
+  }
+
+  async #prepare(caller: Caller, standing: Standing, boxId: string, targetId: string, input: RestoreInput): Promise<Prepared> {
+    const ledger = this.#deps.ledger;
+    const box = await this.#deps.boxes.find(boxId);
+    if (!box) throw new BoxError("released", "That box was released, so it restores nothing.");
+    const target = ledger.record(targetId);
+    if (!target) throw new BoxError("not_found", `bb-box has no snapshot ${targetId}: it was deleted.`);
+    const cutShort = ledger.unsettled().find((operation) => operation.box === box.id && operation.kind === "restore" && !this.#running.has(operation.id));
+    if (cutShort) {
+      throw new BoxError("not_ready", `bb-box could not confirm ${operationWords(cutShort)} on box ${box.name}: ${cutShort.error ?? "it was cut short"} It checks again at each sweep, and bb box sweep checks now.`);
+    }
+    if (box.restoring) throw new BoxError("not_ready", restoringWords(box, box.restoring));
+    if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box restores a box that is running or stopped.`);
+    const backend = this.#deps.backends.get(box.backend);
+    if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it restores nothing there.`);
+    const offer = this.offerFor(backend, box.kind);
+    if (!offer || offer.restore === "none" || !backend.planSnapshots || !backend.rollbackSnapshot || !backend.powerOff || !backend.start || !backend.snapshot) {
+      throw new BoxError("unsupported", `${box.backendLabel} restores no snapshots of its ${box.kind} boxes.`);
+    }
+    if (target.box.id !== box.id) throw new BoxError("unsupported", `Snapshot ${quoted(target)} is of box ${target.box.name}, not ${box.name}.`);
+    if (target.guest === "earlier") throw new BoxError("unsupported", `Snapshot ${quoted(target)} is on ${box.name}'s earlier guest, so it cannot be restored there, only forked.`);
+    if (target.state !== "ready") throw new BoxError("not_ready", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not restore it.`);
+    this.#requireStore("restores");
+    const swap = target.guest === "held-copy";
+    const plan = await backend.planSnapshots(box.guest, box.kind, swap ? null : { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
+    const byCopy = this.#restoreOrder(box, backend, plan, target, swap) === "copy";
+    const anyway = await this.#guarded(caller, standing, box, target, input.force === true);
+    return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway };
+  }
+
+  #undoBytes(box: BoxRecord, plan: SnapshotPlan, byCopy: boolean): number {
+    return byCopy ? (box.guest?.size?.diskGiB ?? 0) * 1024 * MiB : (plan.restore.undoBytes ?? 0);
+  }
+
+  #undoRefused(caller: Caller, box: BoxRecord, backend: Backend, offer: Snapshotting, plan: SnapshotPlan, undoBytes: number): BoxError | null {
+    const ledger = this.#deps.ledger;
+    const settings = this.settings;
+    const instead = caller.is === "agent" ? "" : " Or restore without an undo, with --no-undo.";
+    const room = this.#roomProblem(box, plan.storage, ledger.reservedBytes(plan.storage.key) + undoBytes, false, settings.roomPercent);
+    if (room) return new BoxError("no_capacity", `bb-box would take an undo of box ${box.name} before restoring it, and ${room.charAt(0).toLowerCase()}${room.slice(1)}${instead}`);
+    const paid = ceilingVerdict({
+      change: "undo",
+      backend: backend.label,
+      held: heldRate(ledger.records({ backend: backend.id }), backend.id),
+      price: offer.price,
+      bytes: undoBytes || null,
+      ceiling: ceilingOf(settings, backend.id),
+      byPerson: caller.is !== "agent",
+    });
+    return paid.ok ? null : new BoxError("limit_reached", `bb-box would take an undo of box ${box.name} before restoring it. ${paid.why}${instead}`);
+  }
+
+  async checkRestore(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: RestoreInput = {}): Promise<RestoreCheck> {
+    const target = this.find(caller, standing, ref);
+    const allowed = mayAct(caller, "restore", standing, target);
+    if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
+    const prepared = await this.#prepare(caller, standing, box.id, target.id, input);
+    const undoBytes = this.#undoBytes(prepared.box, prepared.plan, prepared.byCopy);
+    const refused = input.undo === false ? null : this.#undoRefused(caller, prepared.box, prepared.backend, prepared.offer, prepared.plan, undoBytes);
+    if (refused) throw refused;
+    const restore = prepared.plan.restore;
+    const onGuest = prepared.swap ? this.#deps.ledger.records({ box: box.id }).filter((record) => record.guest === "current" && record.livesOn.ref === prepared.box.guest?.ref).length : 0;
+    return {
+      snapshot: prepared.target,
+      box: prepared.box,
+      swap: prepared.swap,
+      undo:
+        input.undo === false
+          ? null
+          : prepared.byCopy
+            ? { kind: "held-copy", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.copyAboutMs ?? restore.undoAboutMs, bytes: undoBytes || null }
+            : { kind: "snapshot", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.undoAboutMs, bytes: restore.undoBytes },
+      from: prepared.box.guest?.size ?? null,
+      to: prepared.swap ? null : restore.sizeBack,
+      anyway: prepared.anyway,
+      leavesOnEarlierGuest: onGuest,
+      storage: prepared.plan.storage.name,
+    };
   }
 
   #restoreOrder(box: BoxRecord, backend: Backend, plan: SnapshotPlan, target: SnapshotRecord, swap: boolean): "rollback" | "copy" {

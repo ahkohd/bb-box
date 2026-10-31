@@ -3,7 +3,7 @@ import { BoxError, OPERATOR, describeError, type BoxRecord } from "../core/boxes
 import { BY_COMMAND } from "../core/box-log.ts";
 import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core/snapshot.ts";
 import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
-import { deletedText, listText, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
 
 const COMMAND: Caller = { is: "command" };
@@ -139,11 +139,16 @@ export function snapshotCommands(app: BbBox) {
         replace: { type: "boolean", description: "Replace the box's disk with the snapshot's." },
         "no-undo": { type: "boolean", description: "Take no undo first, so this cannot be undone." },
         force: { type: "boolean", description: "Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them." },
+        check: { type: "boolean", description: "Say what the restore would do, and refuse what it would refuse, changing nothing." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same restore." },
       },
       run: ({ positionals, options }, ctx) =>
         guard("Restoring the snapshot", async () => {
           const box = await boxes.get(ownerOf(options, ctx), positionals.box);
+          if (options.check) {
+            const check = await snapshots.checkRestore(COMMAND, box, standingOf(box), positionals.snapshot, { ...(options["no-undo"] ? { undo: false } : {}), ...(options.force ? { force: true } : {}) });
+            return options.json ? json(check) : out(restoreCheckText(check));
+          }
           if (!options.replace) {
             return {
               exitCode: 1,
