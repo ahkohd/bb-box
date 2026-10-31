@@ -1679,3 +1679,262 @@ the test node's name.
   templates' storage without one.
 - **No backend charges yet**, so the ceiling bites only on the made-up
   price until unit 11.
+
+## Unit 5: the agent's tools, the form and the turn hold
+
+Built on 31 October 2026 on main `ec8e31e7` (units 0 to 4 included), and
+rebased onto `e55c35f4`. The lead's answers are in 070's [Decided during
+unit 5](070-snapshots.md#decided-during-unit-5).
+
+### What changed
+
+- **The agent's tools**, `src/plugin/snapshot-tools.ts`: `box_snapshot`
+  (`box`, `name`, `note`, `memory`), `box_snapshots` (`box`, optional),
+  `box_snapshot_delete` (`box`, `snapshot`) and `box_restore` (`box`,
+  `snapshot`, `replace`, which must be true, and `request`). Each answers as
+  section 4 says, with "3 of 5 for this box", and each refusal ends with a
+  hint for snapshots: what to delete, whom to ask, or to try again. A tool
+  finds its box as the other box tools do, and counts the box its thread
+  runs on, its own new box included, as one it runs on.
+- **Section 3, in one place.** `mayAct` lets an agent restore on a box it
+  runs on, and `restoreRoute` (`src/core/snapshot.ts`) decides how: at once,
+  through the form, or not at all. An agent restores its thread's own box
+  at once, with an undo; through the form when "Agents may restore their
+  own boxes" is off, or when the box is one threads run on; never a memory
+  snapshot with "Agents may restore memory snapshots" off. Nobody restores
+  a box threads run on while such restores are off, and when on, only from
+  a disk snapshot and always with an undo, `--no-undo` refused.
+- **The agent's take past the limit** deletes, once the new one is ready,
+  the oldest snapshot an agent of the same thread took and nobody kept, on
+  the person's machines too, checked with `eligible` at that moment
+  (`limitVictim`, from unit 1a). The take's operation records it, so a
+  restart finishes the replacement. A person's take past the limit is
+  refused, as before; so is an agent's when no snapshot qualifies, saying
+  so. If the delete is refused at that moment, the take stands and its
+  answer says the box is over its limit.
+- **"Try again".** A new error code, `try_again`, for refusals that hold
+  only for now: a host's storage too full, for a take or a restore's undo,
+  and a task such as a backup holding the guest's lock. The Proxmox plan
+  says the latter as `busy`. Agents get "This holds only for now, not for
+  good"; "unsupported" is kept for what the box cannot do.
+- **The form**, through `bb.ui.requestInput`: `box_restore` asks the engine
+  to restore; when the route is the form, the engine refuses with
+  `needs_yes` and the plan it would carry out (`YesNeeded`), and the tool
+  opens the form in the thread (renderer `restore`, `src/app/restore-form.tsx`,
+  registered with `pendingInteraction`). The form says what goes, the undo
+  that is always taken, the size the box goes back to, what the backend
+  leaves out, and on the box the thread runs on, that its session goes back
+  too. It says an answer is "a yes given in this thread". On a yes, bb-box
+  holds every new turn on the box, waits up to a minute for turns there to
+  end, then restores the snapshot the form named, by its ID, as its own
+  work, not under the tool's signal. The yes is bound to a digest of the
+  plan: the box, its guest, the target and its reference, the undo's kind,
+  what else goes, each thread by its ID, and the box's snapshots. A plan
+  that changed since asks again, at most three times, and a yes is checked
+  on any route. The form agrees to what goes only on a box threads run on;
+  with agents' own restores off, a person's desktop control or a terminal
+  refuses the restore before any form, as it does without one. Cancel and a timeout answer the agent;
+  a stop of the thread, a BB restart and bb-box stopping answer it as an
+  error, which BB only steers in.
+- **The yes on the record.** The operation keeps the yes (thread, title,
+  time, plan), and `restore-asked` and `restored` end "on a yes given in
+  "Asks" (thr_...)".
+- **The turn hold**, `src/plugin/turn-hold.ts`, on BB's `message.dispatch`
+  hook: a message for a thread on a box that bb-box restores waits, with
+  "bb-box is restoring box dev-desk, the machine this thread runs on. This
+  message waits until the box is ready again." It holds from a form's yes,
+  and from a restore's record by any route, until the box is ready, also
+  after bb-box restarts, as it reads the boxes' restoring marks. When a
+  hold ends, bb-box asks BB to try the held messages again
+  (`recheck`), and each wait also asks BB to try again in 15 s (`sendAt`),
+  as the live check found a recheck BB did not act on.
+- **Checks for a running turn**: before the stop, just after it, and before
+  the rollback. One found stops the restore: before the stop with nothing
+  changed, after it by starting the box again as it was.
+- **Restores of boxes threads run on stay off** (`MACHINE_RESTORES_SHIP`),
+  as G17 did not pass (below). For live checks only, with
+  `BB_BOX_LIVE_CHECKS=1`, `bb box snapshot machine-restores on|off` changes
+  that until bb-box restarts, and `bb box snapshot hold-next` gains
+  `--at checked` (after the last check, before the stop) and `--seconds`.
+- **Settings**: the agents' two switches are on the Snapshots page, under
+  Agents, saved at once as 067's switches are, and in Find.
+- **`bb box option`** sets `general.snapshots.ceilings.<backend>`, in whole
+  cents, refusing a backend that is not there, and the two switches;
+  `option list` shows a ceiling row for each backend.
+- **Words**: the skill's Snapshots section (when to take one, restore
+  rather than undo by hand, delete your own, try again, the form and ending
+  the turn, never answer bb-box's forms); the guide's Agents' snapshots
+  section; the reference regenerated; requests 38 and 39 in
+  [bb-requests](../bb-requests.md).
+
+### Tests
+
+On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's commit over
+main `e55c35f4`, after the reviews' fixes: `npx tsc` passes, and the
+reference is current; the node suite ran 3,118 tests, 2,830 passed, 0
+failed, 288 skipped (the live and conformance ones); vitest ran 386, all
+passed. The node suite includes the docs, site and reference checks; they
+ran again, with the new tests, on the last commit, which adds only docs. New
+or changed tests, each on a set clock where time matters:
+
+- `test/snapshot-rules.test.ts`, 2 new: section 3's table cell by cell on a
+  set clock (an agent on its own box, on a box it runs on, on another
+  thread's box, kept snapshots, the person, a command; take, see, see the
+  picture, restore, fork, delete, keep, unkeep, rename and note), and
+  `restoreRoute` for each switch and case.
+- `test/snapshot-agents.test.ts`, 13: the agent's take past the limit,
+  never another thread's, a kept or the person's, on the person's machine,
+  and finished after a restart; `try_again` for room and
+  a task's lock; a box threads run on off for everyone, then the person's
+  restore naming each thread, never without an undo or from memory; G17 in
+  the engine, a running turn before the stop and one that starts as it
+  stops; the yes bound to its plan, a stale one asking again, and the yes
+  on the record, and checked on any route; the settings route and a
+  terminal; agreement by thread ID; an orphan ceiling unset; the turn
+  hold's release and its words for an unconfirmed restore; an agent's own
+  box restored at once.
+- `test/plugin.test.ts`, 5 new: the four tools through BB's fake host,
+  with G12's guesses from another thread; the form's cancel, a wrong
+  answer, a changed plan and the yes; the hold on `message.dispatch` from
+  the yes until ready, its words within BB's 200 characters, `sendAt` and
+  the recheck; `bb box option` for ceilings and the switches; a failed
+  workspace lookup showing only what the agent took.
+- `test/app.test.tsx`, 2 new: the switches and Find; the form's words,
+  focus on Cancel and its answer.
+- Changed for this unit: a room refusal is `try_again`; agents' restores
+  off now ask through the form; `mayAct` lets an agent restore what it took
+  on a box it runs on; unit 4's page test no longer expects no switches.
+
+### On a separate BB
+
+A fresh `npx bb-app` (latest) with no account, its own data folder and
+ports, started with `env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1`,
+in a Proxmox LXC box, with bb-box installed from this branch
+([`live-setup.sh`](070-snapshots/unit-5/live-setup.sh)). The lead gave it a
+Proxmox LXC backend with production's template on LVM-thin and its own
+VMIDs. dev-desk was a machine of the person's (`bb box machines add`), and
+the thread "Asks" ran on it, on a scripted ACP agent
+([`acp-agent.mjs`](070-snapshots/unit-5/acp-agent.mjs)) that calls bb-box's
+tools as an agent would and runs shell commands in its own process. Forms
+were answered in BB's app, in headless Chromium
+([`form.mjs`](070-snapshots/unit-5/form.mjs)). The node is written pve-1.
+
+**G11, the form** (restores of boxes threads run on turned on with the
+live-check switch):
+
+| Check | Result |
+| --- | --- |
+| Off (the default): `box_restore` of dev-desk | refused: "Box dev-desk is a box threads run on: "Asks" (working) runs on it. ... bb-box does not restore such a box yet ... bb-box changed nothing." No form |
+| On: `box_restore` of dev-desk | the form opened; the agent got BB's own notice, "The request is shown to the user. A successful result will arrive separately. Do not ask again or assume an answer. ..." The form named "Asks" with its worktree, files and session, said the thread's session goes back too, and named the undo |
+| Cancel in the app | "bb-box did not restore box dev-desk: ... Nothing changed." reached the thread as a message and started a turn; the file written after the snapshot stayed |
+| A stop of the thread | the form went, nothing was restored, and nothing more reached the thread |
+| BB's server restarted (its process killed, BB's supervisor started it again) | the form went, nothing was restored |
+| Restore in the app | restored with its undo first: `restore-asked`, the undo in 0.3 s, `restored` in 47 s (stop 1.2 s, undo 0.3 s, rollback 0.4 s, start 45 s, access 0.5 s), each "on a yes given in "Asks" (thr_...)"; the file written after the snapshot was gone; the result started a turn on the restored box, in a fresh session |
+| A BB terminal opened on dev-desk after the form, then Restore | nothing restored; the form came again, `changed`, adding "a BB terminal is open on it" |
+| No room for the undo (room set to 50%, the pool 53% full) | refused before any form: "bb-box would take an undo of box dev-desk before restoring it, and pve-1's storage local-lvm is 53% full ...", with "This holds only for now"; nothing changed |
+| "Agents may restore their own boxes" off, on the agent's own box bold-cloud | the form, "Settings turn agents' own restores off"; Restore in the app restored it with its undo, "on a yes given in "Asks"" |
+| Timeout | after 10 minutes BB ended the form (`interrupted`, reason `timeout`); the agent was told "nobody answered the form within 10 minutes. Nothing changed.", and the box was as it was |
+| The asking agent answers its own form: `bb thread interactions list --self --json`, then `bb thread interactions respond <id> --self --value '{"restore":true,"plan":"..."}'` | `bb` was on the agent's path, and the list gave it the form's whole payload, plan included. BB said "Interaction ... answered". bb-box restored bold-cloud with its undo and logged it "on a yes given in "Asks" (thr_...)", word for word as for the app. BB's own record of the form says `plugin_submitted`, with nothing of who answered. Recorded in request 38 |
+
+**G12**: a second thread on the same BB, "Guesses", given the first
+thread's snapshot IDs and names: `box_snapshots` of the first thread's box
+said it has no such box; of dev-desk, which it also runs on, "No
+snapshots, and 4 you cannot see"; `box_snapshot_delete` and `box_restore`
+by ID and by name said "That box has no snapshot ..." or no such box.
+Nothing changed. Pictures come with unit 6; `mayAct`'s `see-picture` is
+tested above.
+
+**G17, the turn hold.** Each case restored dev-desk by the person's
+command, with a live-check hold at the step named, and a message to "Asks"
+during it; "Send now" is `bb thread queue send`
+([`g17.sh`](070-snapshots/unit-5/g17.sh), sampling the box, the thread,
+its queue and the machine each second).
+
+| Case | Result |
+| --- | --- |
+| A message while dev-desk is held stopped | at first BB refused it: "The "bb-box" plugin's message.dispatch hook failed: returned an invalid decision: reason Too big: expected string to have <=200 characters". Fixed to a shorter reason; then it was queued, "waiting on bb-box", and ran on the restored box only after it was ready |
+| "Send now" while the box is stopped | BB refused it: "This message cannot be sent yet: the "dev-desk" host is not ready" (HTTP 409); it stayed queued. bb-box's recheck when the restore ended did not send it, as BB had tried it seconds before, at the machine's reconnection; fixed with `sendAt`, it ran 23 s after the box was ready |
+| "Send now" after the last check, before the stop (held 25 s at `checked`) | **the turn started** on the running box; bb-box's stop then interrupted it ("Thread interrupted because the host daemon disconnected"); the check after the stop found it, and bb-box started the box again: "a turn runs on it now ... Nothing on its disk changed, and bb-box started box dev-desk again as it was." No disk was replaced under a turn, but a turn ran on a box bb-box was stopping |
+| "Send now" while the restored box reconnects (held 25 s at `started`) | BB's daemon on dev-desk had reconnected by itself during the boot, so the turn started about 25 s before bb-box called the box ready. The rollback was done and the access file written; the steps left (reading the size, Proxmox's labels, BB's reconnect) did not interrupt it. It did not wait, but no disk changed under it |
+| bb-box restarted mid-restore (`bb plugin reload bb-box`, held at `stopped`) with a message held | the message stayed held through the reload; bb-box finished the restore from the step it reached and the message ran when the box was ready. BB's orphan sweep releasing held rows was not seen in a reload this short |
+
+### After the reviews
+
+Two independent reviews read the commit at `1942c189`: Astra (merge after
+fixes, six findings) and Opus (merge after fixes, nine findings, having run
+the unit's tests on a box). Every finding below is fixed, with a test,
+except where it says otherwise.
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| A yes given while the route was the form could restore another snapshot after a rename and a settings change, as the tool looked the name up again and a direct route skipped the plan's check | Astra 1 | The restore after a yes names the snapshot by the ID the form showed, and a yes is checked against the plan on any route; a stale one restores nothing | `snapshot-agents.test.ts`: "a yes is checked against the plan wherever the restore's route now goes" |
+| When BB could not say where the thread runs, its own box counted as one it does not run on, showing the person's and other threads' snapshots | Astra 2, Opus 4 | One check, `runsOnBox`, for the snapshot tools and `box_status`: a failed lookup counts as running on it | `plugin.test.ts`: "when bb-box cannot tell where the thread runs ..." |
+| With agents' own restores off, the form let an agent past a person's desktop control or a terminal, which the direct route refuses | Opus 1 | The form agrees to what goes only on a box threads run on; on the settings route, control and terminals refuse as before | "with agents' restores off, the form does not let an agent past ..."; live, below |
+| The limit never replaced an agent's snapshot on one of the person's machines, as such snapshots are the person's by owner | Astra 5, Opus 2 | The limit goes by who took it: an agent's, unkept, not an undo; the room sweep still spares the person's | "an agent's take past the limit on one of the person's machines ..."; the 1a rule test; live, below |
+| A restart between a take and its replacement left the box over its limit | Astra 4 | The take's operation records the snapshot it replaces and stays unsettled until it is gone; recovery finishes it | "a take that was to replace one past the limit finishes the replacement after bb-box restarts" |
+| What goes was agreed by its words, so a new thread with the same title counted as agreed | Opus 3 | Each loss has a key, a thread's by its ID, and the operation keeps the keys; the plan's digest hashes the keys and the box's snapshots, so a new snapshot asks again too | "what goes is agreed by each thread's ID ..."; the plugin's changed plan is now a snapshot taken meanwhile |
+| A form's hold that ended with no restore on the box did not ask BB to send the held messages | Opus 5 | `release` asks BB at once when no restore marks the box | "the turn hold asks BB again when a form's hold ends ..." |
+| A restore bb-box could not confirm held the machine's messages with words that said it was restoring | Opus 6 | The hold stays, and says "bb-box could not confirm its restore of box ..., so this message waits. bb box doctor says why." | the same test |
+| `try_again` for a full storage, which does not clear by itself | Opus 7 | Kept, as the brief asks, with a hint that it works once what it names changes, such as snapshots deleted, and not to retry in a loop | |
+| A ceiling for a backend that is gone could not be unset | Opus 8 | The backend is checked only when setting one | "bb box option unsets a ceiling whose backend is gone" |
+| A refusal after a yes came back as an error, which BB only steers in, so an agent that had ended its turn would not hear it | Opus 9 | It comes back as a plain result, which starts a turn | |
+| Words: the tool's description and the skill said a box threads run on goes through the form; the guide said an agent restores only its thread's own snapshots on its own box | Opus | Both now say such restores are off for now; the guide gives section 3's row | |
+| The form waits on the asking thread's own turn | Astra 3 | Not changed: live, BB's notice ended the asking turn and the thread was idle (`bb thread show`) while the form waited, and every yes from the app restored | |
+| A name taken by a snapshot the agent cannot see gives its new one " (2)", which tells it the name exists | Astra 6 | Not changed: names are unique per box in `snapshots.db`. Recorded below | |
+
+Live again, with bb-box reinstalled from the fixed commit on the same
+separate BB:
+
+| Check | Result |
+| --- | --- |
+| Agents' own restores off, a BB terminal open on the agent's own box | refused before any form: "Restoring box bold-cloud to "one" would end what is on it now: a BB terminal is open on it. Ask the person to end it first ..." |
+| The same, the terminal closed, Restore in the app | restored with its undo, "It was restored on a yes given in this thread." |
+| Snapshots per box set to 2 on dev-desk, which held the agent's "before the upgrade" and a command's "g17 base" | the agent's take "limit check" was ready, and "The box was at its limit of 2, so bb-box deleted the oldest snapshot an agent of this thread took and nobody kept: "before the upgrade"." The command's stayed |
+
+At the end bb-box on the separate BB listed no box and no snapshot.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| G11 form | **Passed** with the live-check switch on: the form, cancel, a stop of the thread, a BB restart, the yes from the app with its undo, a changed loss list, no room for an undo, and the agent's own box with its restores off, each as the gate says, and the timeout. The asking agent's own answer is taken as a yes, as 070 expected, and recorded |
+| G12 permissions | **Passed** live and in the tests, pictures apart (unit 6) |
+| G17 turns held | **Not passed**: "Send now" after the last check and before the stop runs a turn on a box being stopped. So restores of boxes threads run on ship off, as 070 and the lead say, until BB can hold a machine against "Send now" (request 39) |
+
+### Choices and deviations
+
+- **Restores of boxes threads run on ship off**, on the page (unit 6), the
+  form and the command line. The form, the hold and the checks are built
+  and tested, and work under the live-check switch.
+- **The yes is recorded on the asking agent's operation**, not as an actor
+  of its own; the undo's record names the agent (Decided during unit 5).
+- **A wait of up to a minute** for turns on the box to end after a form's
+  yes, so the asking agent can end its turn.
+- **A check just after the stop** besides 070's checks before the stop and
+  before the rollback; it is what caught G17's third case.
+- **The hold's reason** names the box but not the snapshot, to keep within
+  BB's 200 characters.
+- **`box_snapshots` has no `pictures` parameter** until unit 6; `box_fork`
+  comes with unit 7.
+- **A memory snapshot with agents' memory restores off is refused**, not
+  asked for through the form.
+- **The form's restore by the asking agent's own answer** cannot be told
+  from the person's; bb-box says "a yes given in the thread" everywhere, as
+  070 says.
+
+### Known limits
+
+- **A hidden name shows as taken.** An agent naming its snapshot as one it
+  cannot see on the same box gets " (2)", which tells it such a name
+  exists. Names are unique per box in `snapshots.db`; making them unique
+  per audience needs a migration. Names only, never their snapshots.
+
+### Conditions and open questions
+
+- **Restores of boxes threads run on** need BB to hold a machine against
+  "Send now" (request 39) before G17 can pass.
+- **An actor for a yes given in a thread**, so the undo's record says it
+  too, needs new rows in `snapshots.db` and the box log's store; worth it
+  with request 38, when BB can say who answered.
+- **BB's recheck** did not send a held message that BB had re-tried
+  seconds earlier; bb-box relies on `sendAt` 15 s ahead.

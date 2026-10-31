@@ -794,6 +794,7 @@ export interface SnapshotPlan {
   readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
+  readonly busy?: string | null;
 }
 
 export interface SnapshotTake {

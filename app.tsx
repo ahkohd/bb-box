@@ -11,6 +11,8 @@ import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
 import { TERMINAL_ACTION, TerminalPanel } from "./src/app/terminal.tsx";
 import { registerMonitor } from "./src/app/monitor/status.tsx";
+import { RestoreForm } from "./src/app/restore-form.tsx";
+import { RESTORE_FORM } from "./src/plugin/restore-form.ts";
 
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
@@ -58,5 +60,6 @@ export default definePluginApp((app) => {
     machineProviderId: "bb-box-new",
     component: NewBoxInputs,
   });
+  app.slots.pendingInteraction({ id: RESTORE_FORM, component: RestoreForm });
   registerMonitor(app);
 });

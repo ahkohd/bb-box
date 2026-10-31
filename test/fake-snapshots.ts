@@ -74,6 +74,7 @@ export class FakeSnapshots {
   memoryStorage: SnapshotStorage | null = null;
   memoryWhy: string | null = null;
   locked: SnapshotPlan["locked"] = null;
+  busy: string | null = null;
   takeWhy: string | null = null;
   gate: Promise<void> | null = null;
   running = 0;
@@ -109,8 +110,8 @@ export class FakeSnapshots {
     target.planSnapshots = async (_guest: Guest, _kind: string, snapshot: SnapshotRef | null): Promise<SnapshotPlan> => ({
       storage: this.storage(),
       take: {
-        ok: this.takeWhy === null,
-        why: this.takeWhy,
+        ok: this.takeWhy === null && this.busy === null,
+        why: this.busy ?? this.takeWhy,
         aboutMs: 1000,
         memoryAboutMs: 5000,
         addsBytes: 0,
@@ -131,6 +132,7 @@ export class FakeSnapshots {
       keep: { way: "no", why: null, aboutMs: null, bytes: null, price: null },
       fork: { ok: false, why: null, aboutMs: 0, bytes: null },
       locked: this.locked,
+      busy: this.busy,
     });
     target.snapshot = async (guest: Guest, take: { id: string; box: string; memory: boolean }, hooks: SnapshotHooks) => {
       this.running++;

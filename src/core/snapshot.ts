@@ -247,9 +247,9 @@ function notTakenByAnAgent(snapshot: SnapshotRecord): Verdict {
   return snapshot.by.is === "agent" ? YES : no(`${quoted(snapshot)} was not taken by an agent, so bb-box never deletes it by itself.`);
 }
 
-function automaticDeletion(snapshot: SnapshotRecord): Verdict {
+function automaticDeletion(snapshot: SnapshotRecord, byAuthor = false): Verdict {
   if (isKept(snapshot)) return no(`${quoted(snapshot)} is kept, so bb-box never deletes it by itself.`);
-  if (snapshot.owner === "person") return no(`${quoted(snapshot)} is the person's, so bb-box never deletes it by itself.`);
+  if (snapshot.owner === "person" && !(byAuthor && snapshot.by.is === "agent")) return no(`${quoted(snapshot)} is the person's, so bb-box never deletes it by itself.`);
   if (snapshot.undoOf !== null) return no(`${quoted(snapshot)} is an undo, which only a newer undo replaces.`);
   if (snapshot.state !== "ready") return no(`${quoted(snapshot)} is ${snapshot.state}.`);
   return notTakenByAnAgent(snapshot);
@@ -268,6 +268,7 @@ export function eligible(snapshot: SnapshotRecord, change: Change, context: Chan
       if (snapshot.state !== "ready" && snapshot.state !== "incomplete") return no(`${quoted(snapshot)} is ${snapshot.state}.`);
       return YES;
     case "evict-limit":
+      return automaticDeletion(snapshot, true);
     case "evict-room":
       return automaticDeletion(snapshot);
     case "replace-undo":
@@ -341,7 +342,9 @@ export interface Standing {
 }
 
 export const NOT_THE_AGENTS = "That is the person's to do: ask them, in the thread.";
-const OFF_ON_A_MACHINE = "An agent cannot restore a box threads run on: its restore is off until bb-box can hold every turn on it while it restores.";
+export const MACHINE_RESTORES_SHIP = false;
+export const MACHINE_RESTORES_OFF = "bb-box does not restore a box threads run on yet: that stays off until bb-box can hold every turn on it while it restores.";
+export const MACHINES_RESTORE_DISK_ONLY = "A box threads run on is restored from disk snapshots only: a snapshot with its memory would bring back BB's daemon in the middle of its work.";
 
 function tookIt(snapshot: SnapshotRecord | null, threadId: string): boolean {
   return snapshot?.by.is === "agent" && snapshot.by.threadId === threadId;
@@ -362,9 +365,8 @@ export function mayAct(caller: Caller, act: Act, standing: Standing, snapshot: S
       case "see":
       case "see-picture":
       case "delete":
-        return YES;
       case "restore":
-        return no(OFF_ON_A_MACHINE);
+        return YES;
       default:
         return no(NOT_THE_AGENTS);
     }
@@ -382,6 +384,28 @@ export function mayAct(caller: Caller, act: Act, standing: Standing, snapshot: S
     default:
       return no(NOT_THE_AGENTS);
   }
+}
+
+export interface RestoreRules {
+  readonly agentsRestore: boolean;
+  readonly agentsMemory: boolean;
+  readonly machineRestores: boolean;
+}
+
+export interface RestoreCase {
+  readonly onAMachine: boolean;
+  readonly memory: boolean;
+}
+
+export type RestoreRoute = { readonly ok: true; readonly through: "restore" | "form" } | { readonly ok: false; readonly why: string };
+
+export function restoreRoute(caller: Caller, rules: RestoreRules, restore: RestoreCase): RestoreRoute {
+  if (restore.onAMachine && !rules.machineRestores) return { ok: false, why: MACHINE_RESTORES_OFF };
+  if (restore.onAMachine && restore.memory) return { ok: false, why: MACHINES_RESTORE_DISK_ONLY };
+  if (caller.is !== "agent") return { ok: true, through: "restore" };
+  if (restore.memory && !rules.agentsMemory) return { ok: false, why: `Settings let only the person restore a snapshot that holds memory. ${NOT_THE_AGENTS}` };
+  if (restore.onAMachine || !rules.agentsRestore) return { ok: true, through: "form" };
+  return { ok: true, through: "restore" };
 }
 
 export function holdsWords(snapshot: Pick<SnapshotRecord, "holds" | "scope">): string {

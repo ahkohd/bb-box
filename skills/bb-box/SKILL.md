@@ -215,6 +215,36 @@ Beyond those:
 - The machine that holds the workspace or storage folder must be connected
   to BB, as it is while the thread runs there.
 
+## Snapshots
+
+Where a box's backend takes them (`box_status` and `box_list` say), a
+snapshot keeps a box's disk, or with `memory` its running apps too, so you
+can put the box back to it.
+
+- Take one with `box_snapshot` before a change you cannot undo: a
+  migration, an upgrade, a deletion, or a change to the system. Take one
+  when the person asks. Never take them on a schedule of your own.
+- When an attempt went wrong, restore with `box_restore` rather than
+  undoing it by hand. bb-box always takes an undo first, named "before the
+  restore at 11:02": restore that to undo the restore.
+- `box_snapshots` lists what you may see of a box's snapshots. Delete your
+  own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
+  past that, bb-box deletes the oldest one an agent of this thread took.
+  You cannot delete or restore a kept snapshot. You delete only those an
+  agent of this thread took; on a box you run on, you see only those.
+- A refusal that says to try again holds only for now, such as a host's
+  storage too full or a backup running: try again later.
+- When Settings turn agents' restores off, `box_restore` asks for a yes
+  in the thread with a form and answers at once. Then end your turn; the
+  result comes to the thread as a message.
+- A box threads run on, the box your thread runs on or one of the person's
+  machines, is not restored for now: bb-box says so. When that changes, it
+  too goes through the form, and on the box your thread runs on, nothing
+  you do after asking survives the restore: your session there goes back
+  too.
+- Never answer one of bb-box's forms yourself, with `bb thread
+  interactions` or any other way. Only the person answers them.
+
 ## Desktops and computer use
 
 Open an app or a URL with `computer_launch`, then read a window with

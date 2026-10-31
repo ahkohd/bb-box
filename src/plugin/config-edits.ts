@@ -1,6 +1,6 @@
 import { PluginCliError } from "@get-bb/plugin-sdk";
 import type { FieldValue } from "../backends/types.ts";
-import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, MONITOR_REFRESH_SECONDS, SNAPSHOT_DEFAULTS, SNAPSHOT_LIMITS, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
+import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, MONITOR_REFRESH_SECONDS, SNAPSHOT_DEFAULTS, SNAPSHOT_LIMITS, isCents, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
 import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange } from "../core/sizes.ts";
 import { DEFAULT_TAILNET_TAGS } from "../core/tailnet.ts";
 import type { FieldView } from "./configuration.ts";
@@ -408,7 +408,7 @@ function withoutKey<T extends object, K extends keyof T>(value: T, key: K): Omit
   return rest;
 }
 
-type OptionType = { readonly kind: "boolean" } | { readonly kind: "whole"; readonly least: number; readonly most: number } | { readonly kind: "choice"; readonly values: readonly string[] } | { readonly kind: "text" } | { readonly kind: "tags" } | { readonly kind: "secret" };
+type OptionType = { readonly kind: "boolean" } | { readonly kind: "whole"; readonly least: number; readonly most: number } | { readonly kind: "amount"; readonly least: number; readonly most: number } | { readonly kind: "choice"; readonly values: readonly string[] } | { readonly kind: "text" } | { readonly kind: "tags" } | { readonly kind: "secret" };
 
 export interface OptionInfo {
   readonly name: string;
@@ -433,14 +433,33 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "general.tailnet.clientSecret", type: { kind: "secret" }, default: null, help: "The Tailscale OAuth client's secret. A secret: give it with --secret." },
   { name: "general.snapshots.perBox", type: { kind: "whole", ...SNAPSHOT_LIMITS.perBox }, default: SNAPSHOT_DEFAULTS.perBox, help: "The most snapshots a box holds; kept ones count, undos are counted apart." },
   { name: "general.snapshots.roomPercent", type: { kind: "whole", ...SNAPSHOT_LIMITS.roomPercent }, default: SNAPSHOT_DEFAULTS.roomPercent, help: "How full a host's storage may be, in percent, for bb-box to take a snapshot there; 7 points above it, bb-box deletes agents' snapshots nobody kept." },
+  { name: "general.snapshots.agentsRestore", type: { kind: "boolean" }, default: SNAPSHOT_DEFAULTS.agentsRestore, help: "Whether an agent restores its thread's own boxes without asking, always with an undo; off, it asks for a yes in the thread through a form." },
+  { name: "general.snapshots.agentsMemory", type: { kind: "boolean" }, default: SNAPSHOT_DEFAULTS.agentsMemory, help: "Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one." },
   { name: "monitor.enabled", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.enabled, help: "Whether the Monitor runs: machine status in BB's sidebar, its sampling, background monitoring and its notifications. The sidebar changes when BB next loads." },
   { name: "monitor.refreshIntervalSeconds", type: { kind: "whole", least: MONITOR_REFRESH_SECONDS.least, most: MONITOR_REFRESH_SECONDS.most }, default: MONITOR_DEFAULTS.refreshIntervalSeconds, help: "Seconds between readings while machine status is open." },
   { name: "monitor.backgroundMonitoring", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.backgroundMonitoring, help: "Whether bb-box checks BB's server's CPU and memory every 30 s while nobody looks." },
   { name: "monitor.pressureNotifications", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.pressureNotifications, help: "Whether background monitoring shows a toast when CPU or memory stays high." },
 ];
 
+const CEILING_OPTION = /^general\.snapshots\.ceilings\.([A-Za-z0-9][A-Za-z0-9._-]*)$/;
+
+export function ceilingOption(backend: string): OptionInfo {
+  return {
+    name: `general.snapshots.ceilings.${backend}`,
+    type: { kind: "amount", ...SNAPSHOT_LIMITS.ceiling },
+    default: SNAPSHOT_DEFAULTS.ceiling,
+    help: `The most a month, in the provider's currency, that the paid snapshots held on backend ${backend} may cost, kept or not, undos included; a take, an undo, a Keep or a renewal past it is refused.`,
+  };
+}
+
+export function optionsOf(document: ConfigDocument): OptionInfo[] {
+  return [...OPTIONS, ...document.backends.map((backend) => ceilingOption(backend.id))];
+}
+
 export function optionNamed(name: string): OptionInfo {
   const full = name.startsWith("general.") || name.startsWith("monitor.") ? name : `general.${name}`;
+  const ceiling = CEILING_OPTION.exec(full);
+  if (ceiling) return ceilingOption(ceiling[1]!);
   const option = OPTIONS.find((candidate) => candidate.name === full);
   if (!option) throw invalid(`There is no option "${name}". The options are ${OPTIONS.map((each) => each.name).join(", ")}.`, "bb box option list shows each with its value.");
   return option;
@@ -450,6 +469,11 @@ function optionValue(option: OptionInfo, raw: string): unknown {
   const { type } = option;
   if (type.kind === "boolean") return booleanOf(raw, option.name);
   if (type.kind === "whole") return wholeOf(raw, option.name, type.least, type.most);
+  if (type.kind === "amount") {
+    const amount = Number(raw.trim().replace(/^\$/, ""));
+    if (!raw.trim() || !isCents(amount, type.least, type.most)) throw invalid(`${option.name} is an amount a month from ${type.least} to ${type.most}, in whole cents, such as 5 or 7.50, not "${raw}".`);
+    return amount;
+  }
   if (type.kind === "choice") {
     if (!type.values.includes(raw)) throw invalid(`${option.name} is ${type.values.join(", ")}, not "${raw}".`);
     return raw;
@@ -473,6 +497,7 @@ export function optionCurrent(document: ConfigDocument, option: OptionInfo): unk
   const [part, key, sub] = option.name.split(".") as [string, string, string | undefined];
   if (part === "monitor") return (document.monitor as Record<string, unknown> | undefined)?.[key];
   if (key === "tailnet") return (document.general.tailnet as Record<string, unknown> | undefined)?.[sub!];
+  if (key === "snapshots" && sub === "ceilings") return document.general.snapshots?.ceilings?.[option.name.slice("general.snapshots.ceilings.".length)];
   if (key === "snapshots") return (document.general.snapshots as Record<string, unknown> | undefined)?.[sub!];
   return (document.general as Record<string, unknown>)[key];
 }
@@ -485,6 +510,7 @@ function optionShown(value: unknown): string {
 function rebuilt(document: ConfigDocument, parts: ReturnType<typeof partsOf>, tailnetTouched: boolean): ConfigDocument {
   const general = { ...parts.general };
   if (tailnetTouched) general.tailnet = parts.tailnet;
+  if (parts.snapshots.ceilings && !Object.keys(parts.snapshots.ceilings).length) delete parts.snapshots.ceilings;
   if (Object.keys(parts.snapshots).length) general.snapshots = parts.snapshots;
   else delete general.snapshots;
   const monitor = Object.keys(parts.monitor).length ? parts.monitor : undefined;
@@ -498,8 +524,13 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
   let tailnetTouched = false;
   const put = (option: OptionInfo, value: unknown) => {
     const [part, key, sub] = option.name.split(".") as [string, string, string | undefined];
-    const target = part === "monitor" ? parts.monitor : key === "tailnet" ? parts.tailnet : key === "snapshots" ? parts.snapshots : parts.general;
-    const field = key === "tailnet" || key === "snapshots" ? sub! : key;
+    const ceiling = key === "snapshots" && sub === "ceilings" ? option.name.slice("general.snapshots.ceilings.".length) : null;
+    if (ceiling !== null && value !== undefined && !document.backends.some((backend) => backend.id === ceiling)) {
+      throw invalid(`There is no backend "${ceiling}" for a ceiling on paid snapshots.`, "bb box config show lists the backends' IDs.");
+    }
+    if (ceiling !== null) parts.snapshots.ceilings = { ...(parts.snapshots.ceilings as Record<string, number> | undefined) };
+    const target = part === "monitor" ? parts.monitor : key === "tailnet" ? parts.tailnet : ceiling !== null ? (parts.snapshots.ceilings as Record<string, unknown>) : key === "snapshots" ? parts.snapshots : parts.general;
+    const field = ceiling ?? (key === "tailnet" || key === "snapshots" ? sub! : key);
     if (key === "tailnet") tailnetTouched = true;
     const before = target[field];
     if (JSON.stringify(before) === JSON.stringify(value)) return;

@@ -127,7 +127,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot restore": cliCommand({
       summary:
-        "Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace.",
+        "Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace.",
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
@@ -191,14 +191,34 @@ export function snapshotCommands(app: BbBox) {
               at: {
                 type: "enum",
                 values: HOLD_STEPS,
-                description: "planned: once recorded, before the backend is asked; task: once a provider's task has begun; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done.",
+                description:
+                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done.",
               },
+              seconds: { type: "integer", min: 1, max: 3600, description: "Hold for this many seconds, then go on. Without it, the hold lasts until bb-box restarts." },
               off: { type: "boolean", description: "Hold nothing." },
             },
             async run({ options }) {
               const step = options.off ? null : ((options.at as HoldStepName | undefined) ?? "task");
-              holds.arm(step);
-              return out(step ? `The next snapshot operation to reach it stops after ${HOLD_WORDS[step]}, until bb-box restarts.` : "No snapshot operation is held.");
+              const seconds = typeof options.seconds === "number" && options.seconds > 0 ? options.seconds : null;
+              holds.arm(step, seconds === null ? null : seconds * 1000);
+              return out(step ? `The next snapshot operation to reach it stops after ${HOLD_WORDS[step]}, ${seconds === null ? "until bb-box restarts" : `for ${seconds} s`}.` : "No snapshot operation is held.");
+            },
+          }),
+        }
+      : {}),
+    ...(app.machineRestores
+      ? {
+          "snapshot machine-restores": cliCommand({
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: turns restores of boxes threads run on, by the person and by an agent through the form, on or off until bb-box restarts.`,
+            positionals: [{ name: "switch", description: "on or off.", required: true }],
+            async run({ positionals }) {
+              if (positionals.switch !== "on" && positionals.switch !== "off") throw new PluginCliError(`Give on or off, not "${positionals.switch}".`, { code: "invalid_value" });
+              app.machineRestores!.set(positionals.switch === "on");
+              return out(
+                positionals.switch === "on"
+                  ? "Restores of boxes threads run on are on until bb-box restarts: always with an undo, from disk snapshots only, holding every turn on the box while they run."
+                  : "Restores of boxes threads run on are off, for live checks, until bb-box restarts.",
+              );
             },
           }),
         }

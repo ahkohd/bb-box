@@ -17,6 +17,7 @@ import {
   kindSizeWords,
   optionCurrent,
   optionNamed,
+  optionsOf,
   pairOf,
   parseDotenv,
   removeBackend,
@@ -581,7 +582,7 @@ export function configCommands(configuration: Configuration) {
       options: jsonOption,
       async run({ options }) {
         const document = withoutSecretVersions((await configuration.state()).document);
-        const rows = OPTIONS.map((option) => ({ name: option.name, value: optionCurrent(document, option) ?? null, default: option.default, help: option.help }));
+        const rows = optionsOf(document).map((option) => ({ name: option.name, value: optionCurrent(document, option) ?? null, default: option.default, help: option.help }));
         if (options.json) return json(rows);
         return out(rows.map((row) => `${row.name} = ${row.value === null ? `${JSON.stringify(row.default)} (the default)` : JSON.stringify(row.value)}: ${row.help}`).join("\n"));
       },
@@ -598,7 +599,8 @@ export function configCommands(configuration: Configuration) {
       },
     }),
     "option set": cliCommand({
-      summary: "Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them.",
+      summary:
+        "Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.<backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them.",
       positionals: [{ name: "options", description: "Each as <name>=<value>, such as monitor.enabled=false; or one name and its value as two words.", required: false, variadic: true }],
       options: { ...saveOptions, ...secretOptions },
       run: async ({ positionals, options }, ctx) => {

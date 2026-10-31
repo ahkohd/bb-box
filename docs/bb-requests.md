@@ -51,7 +51,8 @@ is a log: bb-box does not file these with BB.
 | [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
 | [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each update of bb-box to new code keeps the old version's code in BB's server, about 5 MiB of heap and 4 MiB outside it, and each reload of the same code keeps the old instance, about 0.6 MiB |
 | [Leave a modified click on a panel's link to the browser](#37-leave-a-modified-click-on-a-panels-link-to-the-browser) | not met in 0.48.0 | each link on a box's page stops the click going further when Ctrl or Command is held, so the browser opens the new tab |
-| [Say who answered a plugin's form](#38-say-who-answered-a-plugins-form) | not met in 0.6.15 | a restore an agent asks for on one of the person's machines (070) is recorded as "a yes given in the thread", as the asking agent could answer the form itself with `bb thread interactions respond --self` |
+| [Say who answered a plugin's form](#38-say-who-answered-a-plugins-form) | not met in 0.6.15 | a restore an agent asks for through a form (070) is recorded as "a yes given in the thread", as the asking agent can answer the form itself with `bb thread interactions respond --self`, which 070's unit 5 measured |
+| [Let a plugin hold a machine against Send now](#39-let-a-plugin-hold-a-machine-against-send-now) | not met in 0.6.15 | restores of boxes threads run on stay off (070's G17), as "Send now" can start a turn between bb-box's last check and its stop |
 
 ## 1. BB's host app on Windows
 
@@ -1471,6 +1472,44 @@ its path. So the asking agent can answer its own form.
 given in the thread", never as the person's own; the skill tells agents never
 to answer bb-box's forms; and 070's gate G11 runs the command line's answer
 from the asking agent and records what bb-box then logs.
+
+**Measured in 070's unit 5** (G11, a fresh BB, latest bb-app, 31 October
+2026). The asking agent's own process ran `bb thread interactions list
+--self --json`, which gave it the form's whole payload, then `bb thread
+interactions respond <id> --self --value <json>` with the plan it read
+there. BB answered "Interaction ... answered", and bb-box restored the box,
+logging "on a yes given in "Asks"", word for word as for Restore pressed in
+BB's app. BB's own record of the form says `plugin_submitted`, with nothing
+of who submitted it.
+
+## 39. Let a plugin hold a machine against Send now
+
+**Status in plugin SDK 0.6.15: not met.**
+
+**What bb-box needs.** Decision 070 restores a box that threads run on only
+while no turn can start on it. bb-box holds every message for a thread on
+the box with the `message.dispatch` hook, and checks for a running turn
+before each step that changes the box.
+
+**What BB does now.** "Send now" on a queued row skips the hook, by design.
+While the machine is connected, it starts the turn at once. A plugin's check
+is never at the same moment as its next step, so a turn sent between bb-box's
+last check and its stop runs, and the stop interrupts it. Measured in 070's
+unit 5 (gate G17): the turn showed "Thread interrupted because the host
+daemon disconnected"; bb-box's check after the stop found it, started the box
+again and restored nothing. While the machine was stopped, BB refused "Send
+now" itself ("the host is not ready", HTTP 409), which is what bb-box needs
+for the whole restore.
+
+**What we ask.** Either of:
+
+- a plugin can hold a machine: no turn starts on it, "Send now" included,
+  until the plugin lets it go or stops, with a reason shown on each held row;
+- or "Send now" asks the hook too when the hook's wait names a machine, and
+  the person can still override it from the machine's own controls.
+
+**Until then.** Restores of boxes threads run on stay off, on the page,
+through the form and on the command line.
 
 ## Checked, no request needed
 

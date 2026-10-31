@@ -170,9 +170,12 @@ export interface SnapshotSettings {
   readonly roomPercent?: number;
   /** Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. */
   readonly keepDays?: number;
-  /** Whether an agent may restore its own boxes without asking, with an undo first. On unless set off. Not used yet: agents' restores come with 070's unit 5. */
+  /**
+   * Whether an agent restores its thread's own boxes without asking, always with an undo first. Off, it asks for a yes
+   * in its thread through a form. A box threads run on always needs that yes. On unless set off.
+   */
   readonly agentsRestore?: boolean;
-  /** Whether an agent may restore a snapshot that holds a box's memory. On unless set off. Not used yet: agents' restores come with 070's unit 5. */
+  /** Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one. On unless set off. */
   readonly agentsMemory?: boolean;
   /** Whether bb-box keeps a small picture of a box's screen with each snapshot. On unless set off. Not used yet: pictures come with 070's unit 6. */
   readonly pictures?: boolean;

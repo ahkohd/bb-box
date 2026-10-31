@@ -13,7 +13,10 @@ import {
   newOperationId,
   newSnapshotId,
   noteProblem,
+  restoreRoute,
   roomCandidates,
+  ACTS,
+  type Act,
   timeName,
   undoToReplace,
   uniqueName,
@@ -82,12 +85,14 @@ test("pins end with their operation: done, failed, and settled after a restart",
   assert.equal(pinsOf(unknown).get(target.id), unknown, "an operation bb-box could not confirm still pins");
 });
 
-test("automatic deletions never take a kept snapshot, the person's, an undo, or one an agent did not take", () => {
+test("automatic deletions never take a kept snapshot, the person's, an undo, or one an agent did not take; the limit goes by who took it, so an agent's on the person's machine may go", () => {
+  assert.equal(eligible(record({ owner: "person" }), "evict-limit", { pin: null, now: NOW }).ok, true, "an agent's unkept snapshot on the person's machine");
+  assert.match((eligible(record({ owner: "person" }), "evict-room", { pin: null, now: NOW }) as { why: string }).why, /is the person's/);
+  assert.match((eligible(record({ owner: "person", by: { is: "command" } }), "evict-limit", { pin: null, now: NOW }) as { why: string }).why, /is the person's/);
   const cases: [Partial<SnapshotRecord>, RegExp][] = [
     [{ keptUntil: NOW + 30 * 24 * 60 * MINUTE }, /is kept/],
-    [{ owner: "person" }, /is the person's/],
     [{ undoOf: "oprestore" }, /is an undo/],
-    [{ by: { is: "person" } }, /not taken by an agent/],
+    [{ by: { is: "person" }, owner: "thread" }, /not taken by an agent/],
     [{ by: { is: "command" } }, /not taken by an agent/],
     [{ by: { is: "unknown" } }, /not taken by an agent/],
     [{ state: "incomplete" }, /is incomplete/],
@@ -216,7 +221,7 @@ test("mayAct: on its own box an agent takes, sees, restores and forks; deletes o
   for (const act of ["keep", "unkeep", "rename", "note"] as const) assert.equal(mayAct(AGENT, act, own, mine).ok, false, act);
 });
 
-test("mayAct: on a box it runs on, an agent takes and sees and deletes only what it took there, and restores, forks and keeps nothing", () => {
+test("mayAct: on a box it runs on, an agent takes and sees and deletes only what it took there, restores only through the form, and forks and keeps nothing", () => {
   const mineThere = record({ by: { is: "agent", threadId: OTHER }, box: { id: "bxamberfox2q7k", name: "amber-fox", kind: "linux", system: "linux", thread: THREAD } });
   const ownersThere = record({ by: { is: "agent", threadId: THREAD } });
   const caller: Caller = { is: "agent", threadId: OTHER };
@@ -225,7 +230,8 @@ test("mayAct: on a box it runs on, an agent takes and sees and deletes only what
   assert.equal(mayAct(caller, "see", runsOnIt, ownersThere).ok, false, "it sees only what it took there");
   assert.ok(mayAct(caller, "delete", runsOnIt, mineThere).ok);
   assert.equal(mayAct(caller, "delete", runsOnIt, { ...mineThere, keptUntil: NOW + 1 }).ok, false);
-  assert.match((mayAct(caller, "restore", runsOnIt, mineThere) as { why: string }).why, /restore is off/);
+  assert.ok(mayAct(caller, "restore", runsOnIt, mineThere).ok, "its restore goes through the form, which restoreRoute decides");
+  assert.equal(mayAct(caller, "restore", runsOnIt, ownersThere).ok, false, "never what it did not take there");
   for (const act of ["fork", "keep", "rename"] as const) assert.equal(mayAct(caller, act, runsOnIt, mineThere).ok, false, act);
 });
 
@@ -258,4 +264,63 @@ test("mayAct: a kept snapshot is the person's first: on its own box an agent may
   assert.ok(mayAct(visitor, "see", runsOnIt, keptThere).ok, "on a box it runs on, it sees a kept one it took there");
   for (const act of ["see-picture", "delete", "restore"] as const) assert.match((mayAct(visitor, act, runsOnIt, keptThere) as { why: string }).why, /is kept/, act);
   for (const act of ["see", "restore", "delete"] as const) assert.equal((mayAct(AGENT, act, anothers, keptThere) as { why: string }).why, "This thread has no such snapshot.", act);
+});
+
+test("section 3's table, cell by cell, on a set clock: who may take, see, see the picture of, restore, fork, delete and keep on a thread's own box, a box a thread runs on, and a kept snapshot", () => {
+  const box = { id: "bxamberfox2q7k", name: "amber-fox", kind: "linux", system: "linux", thread: THREAD };
+  const machineBox = { ...box, thread: "operator" };
+  const ownBox: Standing = { box: { id: box.id, threadId: THREAD }, runsOn: false };
+  const machine: Standing = { box: { id: box.id, threadId: "operator" }, runsOn: true };
+  const takenByIt = record({ box, by: { is: "agent", threadId: THREAD }, takenAt: NOW - 5 * MINUTE });
+  const takenByAnother = record({ box, by: { is: "agent", threadId: OTHER }, takenAt: NOW - 4 * MINUTE });
+  const persons = record({ box, by: { is: "command" }, owner: "person", takenAt: NOW - 3 * MINUTE });
+  const kept = record({ box, by: { is: "agent", threadId: THREAD }, keptUntil: NOW + 30 * 24 * 60 * MINUTE, keptAt: NOW, owner: "person" });
+  const itTookThere = record({ box: machineBox, by: { is: "agent", threadId: THREAD } });
+  const theirsThere = record({ box: machineBox, by: { is: "command" }, owner: "person" });
+  const keptThere = record({ box: machineBox, by: { is: "agent", threadId: THREAD }, keptUntil: NOW + 1, owner: "person" });
+  type Cell = Readonly<Partial<Record<Act, boolean>>>;
+  const yes = (acts: readonly Act[]): Cell => Object.fromEntries(ACTS.filter((act) => act !== "take" || acts.includes("take")).map((act) => [act, acts.includes(act)]));
+  const rows: readonly (readonly [string, Caller, Standing, SnapshotRecord | null, Cell])[] = [
+    ["its box, before any snapshot", AGENT, ownBox, null, { take: true }],
+    ["its box, one its agent took", AGENT, ownBox, takenByIt, yes(["see", "see-picture", "restore", "fork", "delete"])],
+    ["its box, one another thread's agent took there", AGENT, ownBox, takenByAnother, yes(["see", "see-picture", "restore", "fork"])],
+    ["its box, the person's", AGENT, ownBox, persons, yes(["see", "see-picture", "restore", "fork"])],
+    ["its box, a kept one", AGENT, ownBox, kept, yes(["see"])],
+    ["a box it runs on, before any snapshot", AGENT, machine, null, { take: true }],
+    ["a box it runs on, one it took there", AGENT, machine, itTookThere, yes(["see", "see-picture", "restore", "delete"])],
+    ["a box it runs on, one it did not take", AGENT, machine, theirsThere, yes([])],
+    ["a box it runs on, a kept one it took", AGENT, machine, keptThere, yes(["see"])],
+    ["another thread's box, before any snapshot", AGENT, anothers, null, { take: false }],
+    ["another thread's box", AGENT, anothers, takenByAnother, yes([])],
+    ["the person, its box", PERSON, ownBox, takenByIt, yes(ACTS)],
+    ["the person, a box a thread runs on", PERSON, machine, theirsThere, yes(ACTS)],
+    ["the person, a kept one", PERSON, ownBox, kept, yes(ACTS)],
+    ["a bb box command", COMMAND, anothers, takenByAnother, yes(ACTS)],
+  ];
+  for (const [what, caller, standing, snapshot, cell] of rows) {
+    for (const act of ACTS) {
+      if (cell[act] === undefined) continue;
+      assert.equal(mayAct(caller, act, standing, snapshot).ok, cell[act], `${what}: ${act}`);
+    }
+  }
+});
+
+test("restoreRoute: an agent restores its own box at once, through the form when Settings turn that off or the box is one threads run on, and nobody restores a box threads run on until machine restores are on, nor from memory", () => {
+  const on = { agentsRestore: true, agentsMemory: true, machineRestores: true };
+  const disk = { onAMachine: false, memory: false };
+  const onMachine = { onAMachine: true, memory: false };
+  assert.deepEqual(restoreRoute(AGENT, on, disk), { ok: true, through: "restore" });
+  assert.deepEqual(restoreRoute(AGENT, { ...on, agentsRestore: false }, disk), { ok: true, through: "form" });
+  assert.deepEqual(restoreRoute(AGENT, on, onMachine), { ok: true, through: "form" });
+  assert.deepEqual(restoreRoute(AGENT, { ...on, agentsRestore: false }, onMachine), { ok: true, through: "form" });
+  for (const caller of [AGENT, PERSON, COMMAND]) {
+    const off = restoreRoute(caller, { ...on, machineRestores: false }, onMachine);
+    assert.equal(off.ok, false);
+    assert.match((off as { why: string }).why, /does not restore a box threads run on yet: that stays off until bb-box can hold every turn on it/);
+    assert.match((restoreRoute(caller, on, { onAMachine: true, memory: true }) as { why: string }).why, /restored from disk snapshots only/);
+  }
+  assert.deepEqual(restoreRoute(PERSON, on, onMachine), { ok: true, through: "restore" });
+  assert.deepEqual(restoreRoute(COMMAND, { ...on, agentsRestore: false, agentsMemory: false }, { onAMachine: false, memory: true }), { ok: true, through: "restore" });
+  assert.match((restoreRoute(AGENT, { ...on, agentsMemory: false }, { onAMachine: false, memory: true }) as { why: string }).why, /^Settings let only the person restore a snapshot that holds memory\./);
+  assert.deepEqual(restoreRoute(AGENT, on, { onAMachine: false, memory: true }), { ok: true, through: "restore" });
 });

@@ -12,6 +12,8 @@ import { RestoredNote, SaveBar, useDraft, type Draft } from "./settings-saving.t
 import { backendLabel, kindName } from "./settings-status.ts";
 
 const SNAPSHOTS_CHECK = ".snapshots";
+export const AGENTS_RESTORE_LABEL = "Agents may restore their own boxes";
+export const AGENTS_MEMORY_LABEL = "Agents may restore memory snapshots";
 
 export function paidBackends(state: ConfigState): { readonly config: BackendConfig; readonly live: BackendState }[] {
   return state.document.backends.flatMap((config) => {
@@ -117,7 +119,7 @@ function OfferRow({ state, config }: { state: ConfigState; config: BackendConfig
   );
 }
 
-export function SnapshotsOptions() {
+export function SnapshotsOptions({ agents }: { agents: ReactNode }) {
   const { state } = useSettings();
   const draft = useDraft(SNAPSHOTS_PART, "the snapshot settings");
   const stored = snapshotConfig(state.document);
@@ -140,6 +142,11 @@ export function SnapshotsOptions() {
             />
             <DraftNumberRow draft={draft} path={roomPath} label="Refuse new snapshots when a host's storage is past" unit="% full" unitWord="percent full" description={roomWords(typedRoom(draft, roomPath, stored.roomPercent))} />
           </Rows>
+        </Card>
+      </Group>
+      <Group title="Agents" description="Switches save at once. However they are set, an agent's restore always takes an undo first.">
+        <Card>
+          <Rows>{agents}</Rows>
         </Card>
       </Group>
       <Group
