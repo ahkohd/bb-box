@@ -939,9 +939,9 @@ wants SSH; logins do not.
 
 ## Unit 3: restore on Proxmox
 
-Built on 31 October 2026, on main `be8cfc47` (units 0, 1a, 1b, 2 and 4
-included). The lead's answers are in 070's [Decided during unit
-3](070-snapshots.md#decided-during-unit-3).
+Built on 31 October 2026 on main `be8cfc47` (units 0, 1a, 1b, 2 and 4
+included), and rebased onto `b8088de6`. The lead's answers are in 070's
+[Decided during unit 3](070-snapshots.md#decided-during-unit-3).
 
 ### What changed
 
@@ -1070,9 +1070,13 @@ included). The lead's answers are in 070's [Decided during unit
 ### Tests
 
 On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's commits over
-main `be8cfc47`: TESTS_LINE
+main `b8088de6`, in a fresh copy of the branch: `npx tsc` passes, and the
+reference is current; the node suite ran 3,067 tests, 2,779 passed, 0
+failed, 288 skipped (the live and conformance ones); vitest ran 384, all
+passed. The node suite includes the docs, site and reference checks. New
+or changed tests, each on a set clock where time matters:
 
-- `test/restore.test.ts`, 13, through `Boxes` and a fake provider whose
+- `test/restore.test.ts`, 14, through `Boxes` and a fake provider whose
   snapshots copy the fake guest's files and whose rollback puts them and
   the size back: G4 on LVM-thin (the order of stop, undo, rollback and
   start; the oldest of three; the undo holding what was written before the
@@ -1097,7 +1101,9 @@ main `be8cfc47`: TESTS_LINE
   box sweep; a release deleting both, with a listing begun before recording
   neither again); G6 and G16 in ZFS's order (a copy before its template
   deleted and made again; a swap after its new guest made, finished; an
-  old guest with no snapshot deleted).
+  old guest with no snapshot deleted); expiry of a kept snapshot on an
+  earlier guest; and `--check` (what a restore would do, its refusals,
+  nothing changed).
 - `test/proxmox-lxc-snapshots.test.ts`, 5 more: the restore plan (rollback,
   the snapshot's size, newer ones, ZFS, a missing target, the token
   without `VM.Snapshot.Rollback`); the rollback (refusing a running guest,
@@ -1162,6 +1168,9 @@ machines add`. The node is written pve-1.
 | G16: the remade copy adopted for the same box | the file written just before the stop, BB's `auth.json` and `host-id` from the enrolment at 00:32, the same MAC; BB listed the same machine, connected |
 | G6: `hold-next --at adopted`, after the swap's new guest was made, then a restart | a sweep during the hold released nothing; after the restart the swap finished: the new guest, the same MAC and machine, the copy's file |
 | An old guest with no snapshot left on it | was left behind; fixed: such a guest is now deleted at the end of the swap. The lead destroyed the one left |
+| G16 and G6 on a box made from the rebuilt template (unit 2's program, version 2, its unit enabled, the box armed, its marker matching) | a restore in ZFS's order (held copy 3242, then the rollback: `boot=kept` after); its undo, a swap held after the new guest started, then a restart: finished at the next start, onto 3240, at .250, with the same MAC `bc:24:11:d5:98:ca` and BB host ID, connected, and `boot=kept marker=matches`: no reset |
+| G16: that box's earlier guest 3241, started by hand (`pct start` by the lead) | `pct config`: `onboot: 0`, `link_down=1`, MAC `BC:24:11:CF:0F:C8`, tag `earlier-guest`. Started, it reset: "none of the marker's MAC addresses (bc:24:11:d5:98:ca) is on this box's interfaces (bc:24:11:cf:0f:c8)", removing BB's host ID; its journal, read with the guest stopped and mounted: the check began at 02:04:40.413, decided at .474 and finished at .608, then systemd-networkd at .643, ssh at .688, the box user's manager at .756; eth0 stayed down |
+| Release of that box | its earlier guest 3241 and held copy 3242 went at the next sweep |
 | Release of a box with a held copy and an earlier guest (QEMU) | the next sweep deleted both, each snapshot logged "it went with its held copy, guest 3252" and "... its box's earlier guest, guest 3251". A second sweep running at the same time had listed the copy before it went, and recorded it again as found: fixed, each such removal is now a settled operation, as unit 1a's are, and a test holds a listing open across it |
 
 ### Gates
@@ -1176,7 +1185,7 @@ machines add`. The node is written pve-1.
 | G9 serialised-and-eligible, restore's part | the undo sequences in the tests (two undos; the oldest undo restored keeps its target; a kept undo stays); live, every restore replaced the oldest undo past two, never its own target |
 | G10 ceiling-rate, the undo's part | **Passed** live on a made-up price: refused before the box stopped, and restored without it |
 | G13 outside-restore | **Passed** on LXC and QEMU: two restores to one snapshot, a failed one and a running one, between and across sweeps, each logged once by its status. A snapshot taken by hand (`pct snapshot`) logged nothing, as it is not bb-box's; one of bb-box's deleted by hand (`pct delsnapshot`, 01:46:47) was logged `snapshot-lost` at 01:57:00, at the listing 10 minutes after the first that missed it, as unit 1a does. Without a task, bb-box claims no restore |
-| G16 held-copy-inert | **Passed**: each held copy a template, disarmed, in `pct config` and `qm config`; each earlier guest with `onboot` 0, links down and a MAC that is not the box's; a copy cut short before its template deleted and made again, and the remade copy adopted for the same box with its files, credentials and host ID. EARLIER_BY_HAND **Not proved**: the node's reboot, as no node can be rebooted; it is a condition before ZFS restores or unit 8's Keep are turned on |
+| G16 held-copy-inert | **Passed**: each held copy a template, disarmed, in `pct config` and `qm config`; each earlier guest with `onboot` 0, links down and a MAC that is not the box's; a copy cut short before its template deleted and made again, and the remade copy adopted for the same box with its files, credentials and host ID. On a box made from the rebuilt template, with unit 2's program (version 2) armed: after its swap the new guest's check said `boot=kept`, with the box's MAC and host ID, so no reset ran; its earlier guest, started by hand by the lead, reset (the check decided at 02:04:40.474 and finished at .608) before systemd-networkd (.643), ssh (.688) and the box user's manager (.756), removed BB's host ID, and kept its link down. **Not proved**: the node's reboot, as no node can be rebooted; it is a condition before ZFS restores or unit 8's Keep are turned on |
 
 ### Choices and deviations
 
