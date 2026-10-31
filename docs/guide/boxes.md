@@ -80,7 +80,7 @@ A box joins BB through BB's machine access, in BB's settings under Machines. BB'
 
 A box can also fail to join because it cannot reach BB for a moment: its DNS lookup of BB's address times out, or its connection to BB is cut off or times out. BB Box then tries again by itself, after 30 seconds, 2 minutes, 10 minutes and 30 minutes. Meanwhile the row says 'Joining BB, try 2 of 5', and the box's page says what the last try could not do, such as 'Could not resolve BB's address from this box: the DNS lookup timed out', and when the next try starts. Select **Check now** on the box to try again at once. A box that joins on a later try is like any other.
 
-After 5 tries the row says 'Could not join BB', and BB Box keeps trying every 30 minutes. What it says next depends on the other boxes on the same backend:
+After 5 tries the row says 'Could not join BB', and BB Box keeps trying every 30 minutes. It gives up 24 hours after the first failure, and the line under the row then says so. **Check now** starts a new round of tries. What the line says about the cause depends on the other boxes on the same backend:
 
 - if other boxes there joined BB, BB's setup is fine, and the fault is in this box's network or DNS. Release it and make another, or look at its network
 - if no box there can reach BB, BB's address is one its boxes cannot reach: turn the tailnet on in BB Box's settings (see [the tailnet](tailnet.md)), or give BB a URL its boxes can reach

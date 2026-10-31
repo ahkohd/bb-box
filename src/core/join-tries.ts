@@ -10,6 +10,7 @@ export interface JoinTries {
   readonly problem: JoinProblem | null;
   readonly setup: boolean;
   readonly machine: string | null;
+  readonly since?: number;
 }
 
 export type BackendVerdict = "others joined" | "none can reach" | "unknown";
@@ -17,6 +18,7 @@ export type BackendVerdict = "others joined" | "none can reach" | "unknown";
 export const JOIN_TRIES = 5;
 export const JOIN_WAITS_MS: readonly number[] = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000];
 export const JOIN_EVERY_MS = 30 * 60_000;
+export const JOIN_GIVE_UP_MS = 24 * 60 * 60_000;
 
 interface ProblemShape {
   readonly problem: JoinProblem;
@@ -92,30 +94,34 @@ export function backendVerdict(box: BoxRecord, all: readonly BoxRecord[]): Backe
 
 export interface NextTry {
   readonly gaveUp: boolean;
-  readonly next: number;
+  readonly next: number | null;
   readonly setup: boolean;
 }
 
-export function nextTry(input: { readonly failed: number; readonly problem: JoinProblem; readonly verdict: BackendVerdict; readonly now: number; readonly waits?: readonly number[] }): NextTry {
+export function nextTry(input: { readonly failed: number; readonly problem: JoinProblem; readonly verdict: BackendVerdict; readonly now: number; readonly since: number; readonly waits?: readonly number[] }): NextTry {
   const everyBox = reachesBb(input.problem) && input.verdict === "none can reach";
   const gaveUp = input.failed >= JOIN_TRIES || (everyBox && clearlySetup(input.problem));
   const waits = input.waits ?? JOIN_WAITS_MS;
   const wait = gaveUp ? (waits.at(-1) ?? JOIN_EVERY_MS) : (waits[input.failed - 1] ?? waits.at(-1) ?? JOIN_EVERY_MS);
-  return { gaveUp, next: input.now + wait, setup: gaveUp && everyBox };
+  const next = input.now + wait;
+  return { gaveUp, next: gaveUp && next - input.since > JOIN_GIVE_UP_MS ? null : next, setup: gaveUp && everyBox };
 }
 
 function tries(count: number): string {
   return count === 1 ? "1 try" : `${count} tries`;
 }
 
-export function gaveUpWords(input: { readonly sentence: string; readonly failed: number; readonly verdict: BackendVerdict; readonly backendLabel: string; readonly setup: boolean }): string {
+export function gaveUpWords(input: { readonly sentence: string; readonly failed: number; readonly verdict: BackendVerdict; readonly backendLabel: string; readonly setup: boolean; readonly stopped: boolean }): string {
   const after = `It failed ${tries(input.failed)}.`;
   const blame = input.setup
     ? `No box on ${input.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md).`
     : input.verdict === "others joined"
       ? `Other boxes on ${input.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network.`
       : "";
-  return [input.sentence, after, blame, `bb-box tries again every ${JOIN_EVERY_MS / 60_000} minutes; Check now tries at once.`].filter(Boolean).join(" ");
+  const next = input.stopped
+    ? `bb-box gave up after ${JOIN_GIVE_UP_MS / 3_600_000} hours of tries; Check now starts a new round.`
+    : `bb-box tries again every ${JOIN_EVERY_MS / 60_000} minutes for up to ${JOIN_GIVE_UP_MS / 3_600_000} hours; Check now tries at once.`;
+  return [input.sentence, after, blame, next].filter(Boolean).join(" ");
 }
 
 export function waitingToJoin(box: BoxRecord): boolean {
@@ -132,7 +138,8 @@ export function tryWords(failed: number): string {
 
 export function waitWords(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
-  return seconds < 60 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
+  const minutes = Math.round(seconds / 60);
+  return seconds < 60 ? `${seconds} s` : minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
 }
 
 export function joiningWords(tries: Pick<JoinTries, "failed" | "next" | "words">, now: number): string {

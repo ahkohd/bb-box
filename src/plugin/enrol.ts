@@ -1281,25 +1281,29 @@ export class Enrolment {
       return;
     }
     const failed = (box.joinTries?.failed ?? 0) + 1;
+    const now = Date.now();
+    const since = box.joinTries?.since ?? now;
     const verdict = backendVerdict(box, await this.#deps.boxes.all());
-    const planned = nextTry({ failed, problem: found.problem, verdict, now: Date.now(), waits: this.#joinWaitsMs });
+    const planned = nextTry({ failed, problem: found.problem, verdict, now, since, waits: this.#joinWaitsMs });
+    const stopped = planned.next === null;
     const settled = await this.#deps.boxes.update(box, (current) =>
       current.enrol.state !== "failed"
         ? {}
         : {
-            joinTries: { failed, next: planned.next, words: found.sentence, problem: found.problem, setup: planned.setup, machine: current.enrol.hostId },
+            joinTries: { failed, next: planned.next, words: found.sentence, problem: found.problem, setup: planned.setup, machine: current.enrol.hostId, since },
             enrol: planned.gaveUp
-              ? { state: "failed", hostId: null, error: gaveUpWords({ sentence: found.sentence, failed, verdict, backendLabel: current.backendLabel, setup: planned.setup }) }
+              ? { state: "failed", hostId: null, error: gaveUpWords({ sentence: found.sentence, failed, verdict, backendLabel: current.backendLabel, setup: planned.setup, stopped }) }
               : { state: "enrolling", hostId: null, error: null },
           },
     );
     if (!settled?.joinTries) return;
-    this.#tryAt(boxId, planned.next);
-    const when = waitWords(planned.next - Date.now());
+    if (planned.next !== null) this.#tryAt(boxId, planned.next);
+    const when = planned.next === null ? null : `bb-box tries again in ${waitWords(planned.next - Date.now())}.`;
+    const after = when ?? `bb-box gave up, ${waitWords(now - since)} after the first failure of this round.`;
     this.#deps.log?.(
       planned.gaveUp
-        ? `Box ${settled.name} did not join BB after ${failed} ${failed === 1 ? "try" : "tries"}${planned.setup ? `, and no box on ${settled.backendLabel} reaches BB` : verdict === "others joined" ? `, while other boxes on ${settled.backendLabel} joined` : ""}: ${found.sentence} bb-box tries again in ${when}.`
-        : `Box ${settled.name} did not join BB at try ${failed} of ${JOIN_TRIES}: ${found.sentence} bb-box tries again in ${when}.`,
+        ? `Box ${settled.name} did not join BB after ${failed} ${failed === 1 ? "try" : "tries"}${planned.setup ? `, and no box on ${settled.backendLabel} reaches BB` : verdict === "others joined" ? `, while other boxes on ${settled.backendLabel} joined` : ""}: ${found.sentence} ${after}`
+        : `Box ${settled.name} did not join BB at try ${failed} of ${JOIN_TRIES}: ${found.sentence} ${after}`,
     );
   }
 
@@ -1320,6 +1324,7 @@ export class Enrolment {
           problem: tries?.problem ?? null,
           setup: tries?.setup ?? false,
           machine: tries?.machine ?? current.enrol.hostId,
+          since: gaveUp ? now : (tries?.since ?? now),
         },
       };
     });

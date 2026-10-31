@@ -30,7 +30,7 @@ import { quote } from "../src/transports/process.ts";
 import { INSTALL_ID_KEY, newInstallId } from "../src/core/install.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
-import { joinProblem, plainJoinFailure } from "../src/core/join-tries.ts";
+import { joinProblem, nextTry, plainJoinFailure } from "../src/core/join-tries.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
@@ -1804,7 +1804,7 @@ test("a box that cannot reach BB while other boxes on its backend joined says wh
   assert.equal(box.joinTries?.setup, false);
   assert.equal(
     box.enrol.error,
-    `Could not resolve BB's address from this box: the DNS lookup timed out (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. bb-box tries again every 30 minutes; Check now tries at once.`,
+    `Could not resolve BB's address from this box: the DNS lookup timed out (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once.`,
   );
   assert.ok(box.joinTries!.next! - Date.now() > 25 * 60_000, "it keeps trying every 30 minutes");
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /tailnet|not reachable from/);
@@ -1825,7 +1825,7 @@ test("a box whose connection to BB is refused while no box on its backend reache
     assert.equal(box.joinTries?.setup, true);
     assert.equal(
       box.enrol.error,
-      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). bb-box tries again every 30 minutes; Check now tries at once.`,
+      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once.`,
     );
   }
   assert.deepEqual((await joinChecksOf(harness)).map((check) => check.status), ["fail", "fail"]);
@@ -1857,6 +1857,53 @@ test("Check now tries again at once to add a box waiting for its next try, and a
   const again = await app.checkNow(THREAD, gaveUp.name);
   assert.deepEqual([again.enrol.state, again.joinTries?.failed], ["enrolling", 0], "a person's Check now starts the tries again");
   await until("the box to join", async () => (await app.boxes.find(gaveUp.id))?.enrol.state === "enrolled");
+});
+
+test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep tries no more, and Check now starts a new round (clock set ahead)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const broken = join(tempDir("dns"), "broken");
+  writeFileSync(broken, "");
+  world.installer = failingInstaller(broken, DNS_TIMEOUT);
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  let box = await failedTries(app, (await only(app)).id, 1);
+  const since = box.joinTries!.since!;
+  for (let failed = 2; failed <= 5; failed++) {
+    await dueNow(app, box);
+    await app.enrolment.sweep();
+    box = await failedTries(app, box.id, failed);
+  }
+  assert.match(box.enrol.error ?? "", /bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once\.$/);
+
+  t.mock.timers.enable({ apis: ["Date"], now: since + 24 * 3_600_000 });
+  await dueNow(app, box);
+  await app.enrolment.sweep();
+  const gaveUp = await until("bb-box to give up", async () => {
+    const current = await app.boxes.find(box.id);
+    return current?.joinTries?.failed === 6 ? current : null;
+  });
+  assert.deepEqual([gaveUp.enrol.state, gaveUp.joinTries?.next], ["failed", null]);
+  assert.match(gaveUp.enrol.error ?? "", /It failed 6 tries\. .* bb-box gave up after 24 hours of tries; Check now starts a new round\.$/);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolment failed: .*bb-box gave up after 24 hours of tries/);
+  const bootstraps = world.bootstraps.length;
+  t.mock.timers.setTime(since + 48 * 3_600_000);
+  await app.enrolment.sweep();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(world.bootstraps.length, bootstraps, "no try after bb-box gave up");
+
+  rmSync(broken);
+  const again = await app.checkNow(THREAD, box.name);
+  assert.deepEqual([again.enrol.state, again.joinTries?.failed, again.joinTries?.since], ["enrolling", 0, since + 48 * 3_600_000]);
+  await until("the box to join", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+});
+
+test("the schedule of tries ends 24 hours after a round's first failure", () => {
+  const since = 1_000_000;
+  const plan = (now: number) => nextTry({ failed: 7, problem: "dns-timeout", verdict: "others joined", now, since });
+  assert.deepEqual(plan(since + 23 * 3_600_000), { gaveUp: true, next: since + 23.5 * 3_600_000, setup: false });
+  assert.deepEqual(plan(since + 23.5 * 3_600_000), { gaveUp: true, next: since + 24 * 3_600_000, setup: false });
+  assert.equal(plan(since + 23.6 * 3_600_000).next, null);
+  assert.equal(nextTry({ failed: 2, problem: "dns-timeout", verdict: "unknown", now: since, since }).next, since + 2 * 60_000);
 });
 
 test("a join's failure says what failed in plain words first, and only a failure to reach BB is tried again", () => {
