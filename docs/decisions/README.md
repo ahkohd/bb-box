@@ -76,3 +76,4 @@ which records still stand as written. The current design as a whole is in
 | [068](068-boat-backend.md) | A boat.dev box is a sandbox forked from a template sandbox, held on a renewed auto-stop and deleted on release | Proposed; being built |
 | [069](069-boxes-page.md) | A box has a page of its own, and the Boxes page says how each box is now | Accepted; being built |
 | [070](070-snapshots.md) | A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them | Proposed; not built yet |
+| [071](071-gpu-boxes.md) | A GPU is part of a box's size, on any Linux box: none, shared or a whole card, chosen when it is made and changed by Resize | Proposed; not built yet |
