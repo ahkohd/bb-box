@@ -65,7 +65,7 @@ function tasks(): { hooks: SnapshotHooks; seen: TaskRef[]; submitted: number[] }
 
 test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs; a Windows VM offers none yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "none", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows-desktop"), null);
 });
 

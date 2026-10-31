@@ -79,7 +79,7 @@ import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-
 import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
 import { Snapshots } from "../core/snapshots.ts";
-import { FakeSnapshotPrices, SnapshotHolds } from "./live-checks.ts";
+import { FakeSnapshotPrices, SnapshotHolds, ZfsOrder } from "./live-checks.ts";
 import { ReachCheck } from "../core/reach.ts";
 import type { Actor } from "../core/box-log.ts";
 
@@ -210,6 +210,7 @@ export interface BbBox {
   readonly snapshotStore: SnapshotStore;
   readonly snapshotHolds: SnapshotHolds | null;
   readonly snapshotPrices: FakeSnapshotPrices | null;
+  readonly zfsOrder: ZfsOrder | null;
   readonly reach: ReachCheck;
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
@@ -450,6 +451,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const snapshotStore = new SnapshotStore({ file: storedFiles.snapshots, logError });
   const snapshotHolds = (options.liveChecks ?? liveChecksOn()) ? new SnapshotHolds() : null;
   const snapshotPrices = snapshotHolds ? new FakeSnapshotPrices() : null;
+  const zfsOrder = snapshotHolds ? new ZfsOrder() : null;
 
   // bb-box's host entry on BB machines (src/host/entry.ts).
   const host = bb.hosts.experimental_client({ contract: hostContract });
@@ -855,7 +857,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     log: (message) => bb.log.info(message),
     settings: () => snapshotConfig(configuration.document),
     ...(snapshotPrices ? { priced: (backend, offer) => snapshotPrices.priced(backend, offer) } : {}),
+    ...(zfsOrder ? { undoByCopy: (backendId) => zfsOrder.has(backendId) } : {}),
     ...(snapshotHolds ? { hold: (operation, step, signal) => snapshotHolds.hold(operation, step, signal, (message) => bb.log.info(message)) } : {}),
+    guard: async (box) => {
+      let threads: { id: string; title: string; running: boolean }[] | null = null;
+      let threadsUnread: string | null = null;
+      try {
+        threads = (await api.threadsOn(box)).map((thread) => ({ id: thread.id, title: thread.title ?? thread.id, running: thread.running }));
+      } catch (error) {
+        threadsUnread = error instanceof Error ? error.message : String(error);
+      }
+      const control = box.capabilities.displays.length > 0 && api.control(box).owner === "human";
+      const terminals = box.enrol.state === "enrolled" && box.enrol.hostId ? await openTerminals(box.enrol.hostId).catch(() => null) : 0;
+      return { threads, threadsUnread, control, terminals };
+    },
   });
   snapshotsHeld = () => {
     const held = new Map<string, { count: number; words: string }>();
@@ -1398,6 +1413,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     snapshotStore,
     snapshotHolds,
     snapshotPrices,
+    zfsOrder,
     reach,
     backendInSettings,
     async forget(threadId, ref, who) {
@@ -1586,8 +1602,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       sections.push({ title: "Monitor", report: { ok: true, summary: "Machine status in BB's sidebar footer, and background monitoring of BB's server.", checks: monitor.checks(), notes: [] } });
-      const snapshotChecks = snapshotStore.checks();
-      sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: "bb-box's records of snapshots and the operations that take and delete them.", checks: snapshotChecks, notes: [] } });
+      const snapshotChecks = [...snapshotStore.checks(), ...(await snapshots.restoreChecks(signal).catch((error: unknown) => {
+        logError("check restores and locked guests", error);
+        return [];
+      }))];
+      sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: "bb-box's records of snapshots and the operations that take, delete and restore them, and boxes whose guests are locked.", checks: snapshotChecks, notes: [] } });
       const logChecks = [...boxLog.checks(), ...historyFileChecks(storedFiles.history)];
       sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: "Who stopped, started, resized and released each box, and what bb-box saw after an operation failed.", checks: logChecks, notes: [] } });
       const overlaps = overlapChecks(backends.on());

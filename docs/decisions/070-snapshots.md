@@ -1276,6 +1276,41 @@ On 30 October 2026, during unit 1a:
   The lead decided this reading of section 1's "every operation that would
   change a box".
 
+## Decided during unit 3
+
+On 30 and 31 October 2026, during unit 3, the lead decided:
+
+- **No ZFS node is free**, so ZFS restores ship off, as section 13 says.
+  A switch for live checks only, `bb box snapshot zfs-order <backend> on`,
+  which exists only with `BB_BOX_LIVE_CHECKS=1` on BB's server and lasts
+  until bb-box restarts, runs ZFS's order on an LVM-thin backend: the held
+  copy as the undo, the newest snapshot only, the swap with `adoptCopy`
+  and the earlier guest. It proves those live; Proxmox's own refusal to
+  roll ZFS back past a newer snapshot stays unproved.
+- **No node is rebooted**: the only node runs everything else. G16's
+  reboot part stays unproved, and is a condition before ZFS restores or
+  unit 8's Keep are turned on.
+- **A box threads run on** is any box with a thread, working or idle, on
+  its BB machine, or the box the caller's thread runs on. In unit 3 its
+  restores are refused for everyone, the CLI's `--force` included, naming
+  the threads. So `--force`, the CLI's "Restore anyway", passes only a
+  person holding the desktop and BB terminals.
+- **After the reviews**: restoring a held copy, a swap, stays behind the
+  same switch until G4 passes on a ZFS node, so unit 8's Keep copies do not
+  become restorable before then; a held copy, as section 2 says, is made
+  only of a box whose identity reset works, read before the stop; and
+  older undos are replaced only once a restore is done.
+
+Found by measuring, and built so:
+
+- **A restore across a disk's growth goes back to the disk's size then.**
+  On LVM-thin, a rollback puts back the snapshot's own volume, and
+  Proxmox puts back its size in the guest's config: a container grown
+  from 16 to 18 GiB after a take came back with a 16 GiB file system and
+  `size=16G`, and started. So section 5's refusal of such restores is
+  lifted, and the restore reads the size back and says it, as it does
+  cores and memory.
+
 ## Decided during unit 4
 
 On 30 October 2026, during unit 4, the lead decided:

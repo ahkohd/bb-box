@@ -17,7 +17,7 @@
 // holds the thread ID, so a box can be found by its ID alone.
 
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { OfferedKind, WithheldOffer } from "../backends/index.ts";
 import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
 import { DEVICE_PLATFORMS, TEST_DEVICE_NAME, deviceModels, isTestOffer, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
@@ -54,7 +54,7 @@ import { TransportError, type ByteChannel, type CommandTransport, type RunResult
 import type { GeneralConfig } from "./config.ts";
 import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
-import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
+import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 import { MARKER_WRITE_MS, writeIdentityMarker } from "./identity.ts";
 import {
@@ -200,6 +200,7 @@ export interface BoxRecord {
   readonly unrequestedStop?: UnrequestedStop | null;
   /** The box's last resize (061), recorded before it changes anything. */
   readonly resize?: ResizeRecord | null;
+  readonly restoring?: RestoringMark | null;
   readonly endToldAt?: number | null;
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
@@ -208,6 +209,14 @@ export interface BoxRecord {
 }
 
 export type SpareSettling = { readonly is: "settled" } | { readonly is: "settling" } | { readonly is: "failed"; readonly words: string };
+
+export interface RestoringMark {
+  readonly operation: string;
+  readonly snapshot: string;
+  readonly name: string;
+  readonly at: number;
+  readonly ran: boolean;
+}
 
 /** A resize of a box (061): what it asked for, and how it went. */
 export interface ResizeRecord {
@@ -285,6 +294,10 @@ export function restartSeconds(box: BoxRecord, resumes: boolean): number | null 
 
 /** What a live memory shrink must leave free above the memory in use: the larger of this and a tenth of the new size. */
 export const RESIZE_MEMORY_MARGIN_MIB = 512;
+
+export function restoringWords(box: Pick<BoxRecord, "name">, mark: RestoringMark): string {
+  return `Box ${box.name} is being restored to snapshot "${mark.name}", or bb-box could not confirm that restore. Check its status in a few seconds; if it stays so, bb box doctor says why, and bb box sweep checks again now.`;
+}
 
 /** A stop bb-box did not make, why, and what bb-box did about it (#406). */
 export interface UnrequestedStop {
@@ -2577,7 +2590,7 @@ export class Boxes {
     const sizes = kindSizes(box.kind, (await this.#deps.general()).sizes);
     {
       const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
-      if (current.state !== "ready" && current.state !== "stopped") this.#require(current, "ready");
+      if (current.restoring || (current.state !== "ready" && current.state !== "stopped")) this.#require(current, "ready");
       const from = current.guest!.size ?? (await this.#size(current));
       const chosen = chooseResize(current.kind, sizes, from, request, current.device?.model ?? current.askedDevice ?? current.capabilities.device?.devices[0].model);
       if (!chosen.ok) throw new BoxError("invalid_size", chosen.message);
@@ -2767,6 +2780,7 @@ export class Boxes {
 
   /** Throws the reason a box is not in `state`, in words for the user. */
   #require(box: BoxRecord, state: BoxState): void {
+    if (box.restoring && box.state !== "releasing") throw new BoxError("not_ready", restoringWords(box, box.restoring));
     if (box.state === state && box.guest) return;
     const reasons: Record<BoxState, string> = {
       acquiring: `Box ${box.name} is still being acquired. Check its status in a few seconds.`,
@@ -2805,7 +2819,7 @@ export class Boxes {
     box: BoxRecord,
     options: { signal?: AbortSignal; power?: PowerState | null; moving?: boolean; seen?: (power: PowerState | null) => void } = {},
   ): Promise<BoxRecord | null> {
-    if (!box.guest) return box;
+    if (!box.guest || box.restoring) return box;
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) return box;
     const read = async () => {
@@ -2824,6 +2838,7 @@ export class Boxes {
     let unrequested = false;
     let startedOutside = false;
     const updated = await this.update(box, (current) => {
+      if (current.restoring) return {};
       const change = observed(current, power, options.moving);
       // A ready box stops through stop(), which moves it to stopping first: one that did not was not asked (#406).
       unrequested = current.state === "ready" && change.state === "stopped";
@@ -3052,6 +3067,24 @@ export class Boxes {
     }
     this.#jobsOf(box.id).received.add(id);
     return { box, job: { state: "ended", exitCode, stdout: result.stdout.slice(newline + 1), stderr: result.stderr, truncated: result.truncated } };
+  }
+
+  async writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void> {
+    const env = await this.#envFile(box);
+    if (env === undefined) throw new BoxError("unreachable", `bb-box could not work out the access of box ${box.name}, so it wrote no access file there.`);
+    const os = box.capabilities.os;
+    const digest = createHash("sha256").update(env).digest("hex");
+    const check = os === "windows" ? ":" : `[ "$(sha256sum < "$HOME/${envFile(os)}" | cut -d' ' -f1)" = ${digest} ]`;
+    const transport = (await this.#backend(box).transports(box.guest!, box.kind)).command;
+    if (!transport) throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}: its kind has no command transport.`);
+    const result = await transport.run(command(os, check, { env }), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+  }
+
+  machineBack(box: BoxRecord): boolean {
+    if (box.enrol.state !== "enrolled" || !this.#deps.reconnect) return false;
+    this.#waitFor(box.id, this.#deps.reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
+    return true;
   }
 
   /** Where commands in an enrolled box take the thread's access from, if from anywhere. */

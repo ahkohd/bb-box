@@ -25,8 +25,19 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task"] as const;
+export const HOLD_STEPS = ["planned", "task", "stopped", "copied", "undo", "rolled-back", "adopted", "started"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
+
+export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
+  planned: "its record",
+  task: "its provider's task began",
+  stopped: "a restore's stop",
+  copied: "a restore's held copy was cloned, before it is a template",
+  undo: "a restore's undo",
+  "rolled-back": "a restore's rollback",
+  adopted: "a swap's new guest was made, before the swap",
+  started: "a restored box's start",
+};
 
 export class SnapshotHolds {
   #armed: HoldStepName | null = null;
@@ -42,7 +53,7 @@ export class SnapshotHolds {
   async hold(operation: { readonly id: string; readonly kind: string }, step: HoldStepName, signal: AbortSignal, log: (message: string) => void): Promise<void> {
     if (this.#armed !== step) return;
     this.#armed = null;
-    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after its ${step === "planned" ? "record" : "provider's task began"}, as a live check asked, until bb-box stops.`);
+    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, until bb-box stops.`);
     await new Promise<never>((_, reject) => {
       if (signal.aborted) return reject(signal.reason);
       signal.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -61,5 +72,18 @@ export class FakeSnapshotPrices {
   priced(backend: { readonly id: string }, offer: Snapshotting): Snapshotting {
     const daily = this.#daily.get(backend.id);
     return daily === undefined ? offer : { ...offer, price: { amount: daily, currency: "USD", per: "day", known: true } };
+  }
+}
+
+export class ZfsOrder {
+  readonly #backends = new Set<string>();
+
+  set(backend: string, on: boolean): void {
+    if (on) this.#backends.add(backend);
+    else this.#backends.delete(backend);
+  }
+
+  has(backend: string): boolean {
+    return this.#backends.has(backend);
   }
 }

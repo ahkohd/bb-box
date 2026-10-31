@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { ProxmoxLxcBackend, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { keptUntilOf, parseSnapshotLabel, snapshotLabel, snapshotName } from "../src/backends/proxmox/snapshotting.ts";
 import type { FetchResponse } from "../src/backends/proxmox/api.ts";
-import { SnapshotFailed, SnapshotIncomplete, type AcquireHooks, type BoxIdentity, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
+import { RestoreChanged, SnapshotFailed, SnapshotIncomplete, type AcquireHooks, type BoxIdentity, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
@@ -61,7 +61,7 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
 
 test("a container offers disk snapshots taken while it runs, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "none", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -72,7 +72,8 @@ test("the plan reads the root disk's storage, its use and its thin metadata, and
   assert.deepEqual(plan.storage, { key: "proxmox:pve:local-lvm", name: "local-lvm", type: "lvmthin", percentFull: 33.3, metadataPercentFull: 9.8, metadataUnread: null, totalBytes: 900 * 2 ** 30, usedBytes: 300 * 2 ** 30 });
   assert.deepEqual(plan.take, { ok: true, why: null, aboutMs: 1000, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: null });
   assert.equal(plan.locked, null);
-  assert.equal(plan.restore.way, "none");
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.undo, "snapshot");
   assert.equal(plan.fork.ok, false);
 });
 
@@ -252,3 +253,192 @@ test("a take is complete only when its task succeeded; the provider is told befo
   assert.deepEqual(await state.backend.providerTask({ ref: "UPID:pve:00000000:0:0:vzsnapshot:7000:x:", host: "pve" }), { state: "missing", words: "Proxmox has no task UPID:pve:00000000:0:0:vzsnapshot:7000:x:." });
 });
 
+
+test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes back to from the snapshot's own config, how many are newer, and why it cannot", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  await state.backend.snapshot(guest, { id: "snbbbbbbbbbbbb", box: id.boxId, memory: false }, hooks);
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.why, null);
+  assert.equal(plan.restore.undo, "snapshot");
+  assert.equal(plan.restore.undoBytes, 0);
+  assert.equal(plan.restore.newer, 1);
+  assert.notEqual(plan.restore.sizeBack?.memoryMiB, 8192, "the size it goes back to is the snapshot's");
+  const missing = await state.backend.planSnapshots(guest, "linux", { id: "sncccccccccccc", ref: "", guest });
+  assert.equal(missing.restore.way, "none");
+  assert.equal(missing.restore.why, `Guest ${vmid} has no snapshot bbsncccccccccccc.`);
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  const zfs = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
+  assert.equal(zfs.restore.way, "rollback-newest-only");
+  assert.equal(zfs.restore.undo, "held-copy");
+  state.proxmox.storageTypes.delete("local-lvm");
+  state.proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => privilege !== "VM.Snapshot.Rollback")));
+  const fresh = new ProxmoxLxcBackend(
+    lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009 }),
+    state.context,
+    { fetch: state.proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 },
+  );
+  made.push(fresh);
+  const noRight = await fresh.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
+  assert.equal(noRight.restore.way, "none");
+  assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so bb-box cannot restore snapshots there\./);
+});
+
+test("a rollback refuses a running guest, records its task before it waits, puts the snapshot's config back, and says when its task failed part way", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks, seen } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
+  const running = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(running instanceof SnapshotFailed);
+  assert.equal((running as Error).message, `Guest ${vmid} is running, and bb-box restores a guest only once it has stopped.`);
+  await state.backend.powerOff(guest);
+  assert.equal(state.proxmox.guests.get(vmid)!.status, "stopped");
+  state.proxmox.guests.get(vmid)!.config.lock = "backup";
+  const locked = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(locked instanceof SnapshotFailed);
+  assert.match((locked as Error).message, new RegExp(`Proxmox has guest ${vmid} locked \\(backup\\), so it cannot restore the snapshot\\. Run \`pct unlock ${vmid}\` on pve\\.`));
+  delete state.proxmox.guests.get(vmid)!.config.lock;
+  seen.length = 0;
+  await state.backend.rollbackSnapshot(guest, ref, hooks);
+  assert.match(seen[0]!.ref, /^UPID:pve:.*:vzrollback:7000:/);
+  assert.notEqual(state.proxmox.guests.get(vmid)!.config.memory, "8192");
+  assert.deepEqual(await state.backend.findTasks(guest, "rollback", Date.now() - 60_000), [seen[0]]);
+  state.proxmox.nextTaskExit.set("vzrollback", "unable to rollback: interrupted");
+  const failed = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(failed instanceof RestoreChanged, String(failed));
+  assert.equal((failed as Error).message, "Proxmox's rollback task failed: unable to rollback: interrupted.");
+});
+
+test("G13: rollbacks of this install's guests are read from the node's task list with their user, time and status", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  await state.backend.powerOff(guest);
+  const since = Date.now() - 60_000;
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks);
+  state.proxmox.nextTaskExit.set("vzrollback", "unable to rollback");
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch(() => undefined);
+  const found = await state.backend.outsideRollbacks(since);
+  assert.deepEqual(
+    found.map((each) => ({ guest: each.guest, user: each.user, outcome: each.outcome })),
+    [
+      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "ok" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "failed", words: "unable to rollback" } },
+    ],
+  );
+});
+
+test("G13: a rollback the node lists as running, with no end time, is read as running from its own status", async () => {
+  const state = world();
+  const { guest } = await box(state);
+  const upid = `UPID:pve:0000AAAA:00:6AE53BE9:vzrollback:${guest.ref}:root@pam:`;
+  state.proxmox.intercept = (call) => {
+    const json = (data: unknown) => ({ ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data }) });
+    if (call.method === "GET" && /\/tasks$/.test(call.path) && call.params.typefilter === "vzrollback") return json([{ upid, type: "vzrollback", id: guest.ref, user: "root@pam", starttime: Math.floor(Date.now() / 1000), status: "RUNNING" }]);
+    if (call.method === "GET" && call.path.endsWith("/status") && call.path.includes("/tasks/")) return json({ status: "running", upid });
+    return undefined;
+  };
+  const [found] = await state.backend.outsideRollbacks(Date.now() - 60_000);
+  assert.deepEqual(found?.outcome, { state: "running" });
+  assert.equal(found?.user, "root@pam");
+});
+
+test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, disarmed and made a template; a new guest made from it takes the box's MAC and address; the old guest is disarmed with a new MAC as the earlier guest", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks: snapshotHooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, snapshotHooks);
+  const mac = "BC:24:11:AA:BB:CC";
+  state.proxmox.guests.get(vmid)!.config.net0 = `${state.proxmox.guests.get(vmid)!.config.net0},hwaddr=${mac}`;
+  const identity = await state.backend.guestIdentity(guest);
+  assert.equal(identity.macs.net0, mac);
+  const running = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async () => {} }).catch((caught: unknown) => caught);
+  assert.ok(running instanceof SnapshotFailed, "a running guest is never copied");
+  await state.backend.powerOff(guest);
+  const claimed: string[] = [];
+  const copy = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async (made) => void claimed.push(made.ref) });
+  assert.deepEqual(claimed, [copy.ref], "the copy's VMID is recorded before the clone");
+  const copied = state.proxmox.guests.get(Number(copy.ref))!;
+  assert.match(copied.config.tags ?? "", /held-copy/);
+  assert.match(copied.config.tags ?? "", /snapshot\.snbbbbbbbbbbbb/);
+  assert.equal(copied.config.onboot, "0");
+  assert.equal(await state.backend.copyState(copy), "copy");
+  await state.backend.disarmCopy(copy);
+  assert.match(copied.config.net0 ?? "", /link_down=1/);
+  await state.backend.templateCopy(copy);
+  assert.equal(await state.backend.copyState(copy), "template");
+  assert.equal((await state.backend.held()).some((held) => held.ref === copy.ref), false, "the box sweep never sees a held copy");
+  const listed = await state.backend.heldSnapshots();
+  assert.deepEqual(listed.filter((held) => held.where === "held-copy").map((held) => ({ id: held.id, ref: held.ref, state: held.state })), [{ id: "snbbbbbbbbbbbb", ref: copy.ref, state: "complete" }]);
+  const fresh = await state.backend.adoptCopy(copy, id, identity, { ...tasks().hooks, claimed: async () => {} });
+  const made = state.proxmox.guests.get(Number(fresh.ref))!;
+  assert.match(made.config.net0 ?? "", new RegExp(`hwaddr=${mac}`), "the new guest has the box's MAC");
+  assert.doesNotMatch(made.config.net0 ?? "", /link_down/);
+  assert.match(made.config.net0 ?? "", new RegExp(`ip=${fresh.address}/`), "and the address of its own VMID");
+  assert.equal(made.config.onboot, "1");
+  assert.match(made.config.tags ?? "", new RegExp(`box\\.${id.boxId}`));
+  assert.doesNotMatch(made.config.tags ?? "", /held-copy/);
+  await state.backend.retireGuest(guest, id);
+  const old = state.proxmox.guests.get(vmid)!;
+  assert.match(old.config.net0 ?? "", /link_down=1/);
+  assert.doesNotMatch(old.config.net0 ?? "", new RegExp(`hwaddr=${mac}`), "the earlier guest has a MAC of its own");
+  assert.equal(old.config.onboot, "0");
+  assert.match(old.config.tags ?? "", /earlier-guest/);
+  assert.equal((await state.backend.held()).some((held) => held.ref === guest.ref), false, "nor an earlier guest");
+  assert.deepEqual((await state.backend.heldSnapshots()).filter((held) => held.where === "earlier").map((held) => held.id), [SNAPSHOT]);
+  await state.backend.deleteCopy({ ...copy, data: { ...copy.data, box: "bxanotherbox" } });
+  assert.ok(state.proxmox.guests.has(Number(copy.ref)), "a copy that names another box is left alone");
+  await state.backend.deleteCopy(copy);
+  assert.equal(state.proxmox.guests.has(Number(copy.ref)), false);
+});
+
+test("review A3: a restore's task is looked up among the token's own, never another user's", async () => {
+  const state = world();
+  const { guest } = await box(state);
+  const now = Math.floor(Date.now() / 1000);
+  state.proxmox.intercept = (call) => {
+    if (call.method !== "GET" || !/\/tasks$/.test(call.path) || call.params.typefilter !== "vzrollback") return undefined;
+    const data = [
+      { upid: `UPID:pve:0000AAAA:00:00:vzrollback:${guest.ref}:root@pam:`, type: "vzrollback", id: guest.ref, user: "root@pam", starttime: now, status: "OK", endtime: now },
+      { upid: `UPID:pve:0000BBBB:00:00:vzrollback:${guest.ref}:bb-box@pve!plugin:`, type: "vzrollback", id: guest.ref, user: "bb-box@pve", starttime: now, status: "OK", endtime: now },
+    ];
+    return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data }) };
+  };
+  assert.deepEqual(
+    (await state.backend.findTasks(guest, "rollback", Date.now())).map((task) => task.ref),
+    [`UPID:pve:0000BBBB:00:00:vzrollback:${guest.ref}:bb-box@pve!plugin:`],
+  );
+});
+
+test("review A6: a lock a running backup holds refuses a restore as it does a take, without unlock advice", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.lock = "backup";
+  state.proxmox.intercept = (call) =>
+    call.method === "GET" && /\/tasks$/.test(call.path) && call.params.source === "active"
+      ? { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data: [{ upid: `UPID:pve:1:0:0:vzdump:${vmid}:root@pam:`, type: "vzdump" }] }) }
+      : undefined;
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
+  assert.equal(plan.locked, null);
+  assert.equal(plan.restore.way, "none");
+  assert.match(plan.restore.why!, /running a backup on guest \d+, which holds its lock \(backup\)\. Try again when it ends\./);
+});
+
+test("Opus 1: deleteCopy destroys only a held copy or an earlier guest, never the box's own guest", async () => {
+  const state = world();
+  const { guest, vmid } = await box(state);
+  const refused = await state.backend.deleteCopy(guest).catch((caught: unknown) => caught);
+  assert.ok(refused instanceof SnapshotFailed, String(refused));
+  assert.match((refused as Error).message, /is not a held copy or an earlier guest of box/);
+  assert.ok(state.proxmox.guests.has(vmid));
+});

@@ -1,16 +1,16 @@
 # Snapshots
 
-A snapshot keeps a box's state at one moment, so you can see later what it held. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
+A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-For now you take, list and delete snapshots from the command line, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Restoring a box to a snapshot, forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
+For now you take, list, delete and restore snapshots from the command line, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
 
 ## What each backend offers
 
-| Backend | Holds | While the box runs |
-| --- | --- | --- |
-| Proxmox LXC | the disk | taken live, in about a second |
-| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory |
-| Every other backend | no snapshots yet | |
+| Backend | Holds | While the box runs | Restores |
+| --- | --- | --- | --- |
+| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS |
+| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory |
+| Every other backend | no snapshots yet | | |
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
@@ -105,13 +105,50 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 Each snapshot records whether its box had a working reset when it was taken. A snapshot without one says "not fork-safe". Forks, which come later, will start only from snapshots that had it.
 
+## Restoring a box
+
+```
+bb box snapshot restore <box> <snapshot> --replace [--no-undo] [--force]
+```
+
+A restore puts the box's disk back as it was when the snapshot was taken. Everything on its disk since then goes: files, installed apps and settings. The box restarts, so every process in it ends, unless the snapshot holds its memory, when it comes back running as it was then, with the credentials its apps held then. What the box did to the world since, such as a push or an upload, stays done. The command asks for `--replace` so that none of this happens by a slip.
+
+In order, BB Box:
+
+1. Checks the snapshot and the box: the snapshot must be ready and on the box's current guest, and Proxmox must not have the guest locked.
+2. Checks what the box would lose. A restore of a box that a thread runs on, working or idle, is refused: it would take the thread's worktree, its uncommitted files and its session with it, and such restores stay off until BB Box can hold every turn on the box while it restores. Move the threads off it, or archive them, first. A person holding the box's desktop, or a BB terminal open on it, refuses the restore too, unless you give `--force`.
+3. Checks that its undo fits: the room on the host's storage, and on a paid provider the ceiling, before anything stops.
+4. Reads again what the box would lose, and refuses if a thread now runs on it, or if more would go than `--force` covered. Then it stops the box at once, without a clean shutdown.
+5. Takes the undo: a snapshot of the stopped box, named "before the restore at 01:56", so nothing written before the stop is lost. Without `--no-undo` a restore always takes one, and if it cannot, BB Box starts the box again as it was and restores nothing.
+6. Reads what the box would lose once more, then rolls the box back, and starts it.
+7. Reads the box's size back. A snapshot holds the box's cores, memory and disk as they were then, so a box resized since goes back to its size then, and the answer says so.
+8. Writes the box's access file from the thread's access now, as the first command once the box answers, before any other command of BB Box's and before BB's daemon starts again: the restored disk holds the file as it was then. Then it writes the box's labels on Proxmox again, and starts its BB machine again, as a start does.
+
+Undos are counted apart from the snapshots per box: a box keeps 2. Once a restore is done, its undo replaces the oldest one that is not kept and not the restore's own target. To undo a restore, restore its undo.
+
+`--check` says what a restore would do, with its undo, the size the box goes back to, what it would end and the undo it would replace, and refuses what the restore would refuse. It changes nothing. While a restore runs, or one BB Box could not confirm holds the box, BB Box takes no snapshot of it, and refuses to start, stop or resize it.
+
+A restore takes a few seconds. Measured on Proxmox LXC on LVM-thin, a box of 16 GiB: about 4 s, of which the stop takes about a second, the undo and the rollback under a second each, and the start about 2 s. When the snapshot was taken while the container ran, Proxmox's own start takes about 45 s instead, and BB Box waits for it.
+
+### ZFS
+
+ZFS rolls a disk back only to its newest snapshot. BB Box restores nothing on ZFS yet: it says so, and changes nothing. Its restores there come once they are checked on a ZFS node. They will take a held copy of the stopped box as the undo, a full copy that cannot start, made only of a box whose [identity reset](#a-copy-of-a-box-gives-up-its-identity) works; undoing such a restore makes the box a new guest from that copy, with the box's own identity, and the box's other snapshots then stay on its earlier guest, to fork only. Until then, restoring a held copy works only in BB Box's live checks.
+
+### Restores made outside BB Box
+
+BB Box reads Proxmox's task list at each sweep. A rollback of one of its boxes that BB Box did not make, such as `pct rollback` on the host, is logged in the box's log by how it ended: done, failed, or still running, which it looks at again at the next sweep. After one that ended well, BB Box reads the box's size back, writes its labels again, and when it runs, its access file, and starts its BB machine again. A change in a box's snapshots without such a task is not taken for a restore.
+
+### If BB Box restarts during a restore
+
+Each step is recorded before it runs, with Proxmox's task once it begins. When BB Box starts again, it finishes the restore from the step it reached, or puts the box back as it was if it never got past the stop. When it cannot tell how a step ended, such as a rollback whose task it cannot read or that still runs, it keeps the snapshots the restore uses, leaves the box as the restore left it, refuses to start it, and checks again at each sweep. `bb box sweep` checks at once, and `bb box doctor` names such a restore.
+
 ## When a box is released
 
 A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one.
 
 ## If BB Box restarts
 
-Each take and delete is recorded before it starts, with the backend's task once it begins. If BB Box restarts in the middle of one, it reads the backend's task and the box's snapshots when it starts again, and finishes or settles it: a take is ready only if the backend shows it complete, and a take that never began is failed, never taken again.
+Each take, delete and restore is recorded before it starts, with the backend's task once it begins. A restore's own steps are above. If BB Box restarts in the middle of one, it reads the backend's task and the box's snapshots when it starts again, and finishes or settles it: a take is ready only if the backend shows it complete, and a take that never began is failed, never taken again.
 
 BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host for 7 days, then deleted, unless it carries a keep date.
 

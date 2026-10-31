@@ -24,6 +24,16 @@ export const CHECKS = {
   "box-history": { name: "Box history's file", from: ["bb-box"], what: "Where bb-box will keep each box's readings over time (069): box-history.db beside its database, attached with its own cap, or its database itself where BB's handle refused to attach the file." },
   "box-log": { name: "Box log", from: ["bb-box"], what: "Where bb-box keeps who stopped, started, resized and released each box (069): box-log.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed." },
   "snapshots": { name: "Snapshots' records", from: ["bb-box"], what: "Where bb-box keeps its records of snapshots and their operations (070): snapshots.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed. While it cannot write them, bb-box takes and deletes no snapshots." },
+  "snapshots.locked.<box>": {
+    name: "<box> locked",
+    from: ["bb-box"],
+    what: "A box with snapshots whose guest its provider left locked (070), as Proxmox does when a task dies part way: bb-box takes, deletes and restores none of its snapshots until the lock is gone, and only root on the host can remove it. Says the host's command.",
+  },
+  "snapshots.restore.<box>": {
+    name: "Restore of <box>",
+    from: ["bb-box"],
+    what: "A restore of a box that bb-box could not confirm (070), as when bb-box restarted while Proxmox rolled the box back: it keeps the snapshots it used and checks again at each sweep.",
+  },
   "identity-reset.<box>": {
     name: "Identity reset of <box>",
     from: ["bb-box"],

@@ -56,6 +56,7 @@
 | [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set. |
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
+| [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
@@ -973,6 +974,30 @@ Options:
   --machine          The box is one of your machines, from bb box machines, not a thread's.
   --json             Print JSON.
   --request <value>  An ID you make, so a repeat of this command is the same delete.
+  --help, -h         Show this help and exit
+```
+
+## bb box snapshot restore
+
+Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace.
+
+```text
+Usage:
+  bb box snapshot restore <box> <snapshot> [--thread <value>] [--machine] [--json] [--replace] [--no-undo] [--force] [--check] [--request <value>]
+
+Arguments:
+  <box>       The box's name or ID. (required)
+  <snapshot>  The snapshot's name or ID. (required)
+
+Options:
+  --thread <value>   The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine          The box is one of your machines, from bb box machines, not a thread's.
+  --json             Print JSON.
+  --replace          Replace the box's disk with the snapshot's.
+  --no-undo          Take no undo first, so this cannot be undone.
+  --force            Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them.
+  --check            Say what the restore would do, and refuse what it would refuse, changing nothing.
+  --request <value>  An ID you make, so a repeat of this command is the same restore.
   --help, -h         Show this help and exit
 ```
 

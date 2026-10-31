@@ -20,7 +20,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
@@ -230,7 +230,7 @@ export class FakeBackend implements Backend {
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
   /** The facts a start finds, as a GPU desktop's display mode after it fell back to the CPU (#597); null for none. */
   startFacts: readonly GuestFact[] | null = null;
-  readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<Started | void>;
+  readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly keepsSession?: (kind: string) => boolean;
   readonly members?: () => Promise<readonly PoolMember[]>;
@@ -303,8 +303,9 @@ export class FakeBackend implements Backend {
     this.#pool = new KvPoolStore(this.#storage, () => this.machines());
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {
-      this.start = async (guest, _signal, timing) => {
+      this.start = async (guest, _signal, timing, answered) => {
         await this.#power(guest, "running");
+        await answered?.();
         for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
         if (this.startFacts) return { facts: this.startFacts };
       };
@@ -523,6 +524,28 @@ export class FakeBackend implements Backend {
     this.resized.push({ ref: guest.ref, to, restart: options.restart });
     this.#sizes.set(guest.ref, to);
     return { ...guest, size: to };
+  }
+
+  async makeGuest(box: BoxIdentity, from: string | null): Promise<Guest> {
+    const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
+    await this.#storage.set("counter", counter);
+    const guest = this.#guest(`g${counter}`, null, box.boxId, box.size);
+    await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
+    if (from) await cp(from, this.#home(guest.ref), { recursive: true });
+    else await mkdir(this.#home(guest.ref), { recursive: true });
+    return guest;
+  }
+
+  homeOf(ref: string): string {
+    return this.#home(ref);
+  }
+
+  setSize(ref: string, size: BoxSize): void {
+    this.#sizes.set(ref, size);
+  }
+
+  sizeOf(ref: string): BoxSize | null {
+    return this.#sizes.get(ref) ?? null;
   }
 
   /** Guests held() says still have what their start lowered, by ref (#888); settle() takes each out, and is noted. */

@@ -567,7 +567,7 @@ export interface Backend {
    * change the guest's facts. Throws BackendError("gone") when the guest no
    * longer exists.
    */
-  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void>;
+  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
@@ -708,7 +708,18 @@ export interface Backend {
   deleteSnapshot?(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
   heldSnapshots?(signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
   providerTask?(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome>;
-  findTasks?(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
+  findTasks?(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
+  powerOff?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  rollbackSnapshot?(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
+  outsideRollbacks?(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]>;
+  guestIdentity?(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity>;
+  copyGuest?(source: Guest, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  disarmCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
+  templateCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
+  copyState?(copy: Guest, signal?: AbortSignal): Promise<CopyState>;
+  deleteCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
+  adoptCopy?(copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  retireGuest?(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest>;
   identitySource?(kind: string): IdentitySource | null;
 
   /** Pool members and their state, for the panel. */
@@ -770,13 +781,15 @@ export interface SnapshotPlan {
     readonly memoryWhy: string | null;
   };
   readonly restore: {
-    readonly way: "rollback" | "rollback-newest-only" | "new-guest" | "none";
+    readonly way: RestoreWay;
     readonly why: string | null;
     readonly undo: "snapshot" | "held-copy" | "suspend-copy" | "none";
     readonly undoAboutMs: number;
     readonly undoBytes: number | null;
     readonly sizeBack: BoxSize | null;
     readonly leavesOnEarlierGuest: number;
+    readonly newer: number;
+    readonly copyAboutMs: number | null;
   };
   readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null };
@@ -818,10 +831,38 @@ export type TaskOutcome =
   | { readonly state: "failed"; readonly words: string }
   | { readonly state: "missing"; readonly words: string };
 
+export type TaskKind = "take" | "delete" | "rollback" | "copy";
+export type RestoreWay = "rollback" | "rollback-newest-only" | "new-guest" | "none";
+
 export interface SnapshotHooks {
   submitting(): Promise<void>;
   task(task: TaskRef): Promise<void>;
 }
+
+export interface CopyHooks extends SnapshotHooks {
+  claimed(guest: Guest): Promise<void>;
+}
+
+export interface OutsideRollback {
+  readonly task: TaskRef;
+  readonly guest: string;
+  readonly user: string;
+  readonly startedAt: number;
+  readonly outcome: TaskOutcome;
+}
+
+export interface GuestIdentity {
+  readonly macs: Readonly<Record<string, string>>;
+  readonly smbios: string | null;
+}
+
+export interface HeldCopyLabel {
+  readonly box: string;
+  readonly snapshot: string;
+  readonly kept: string | null;
+}
+
+export type CopyState = "template" | "copy" | "gone";
 
 export type HeldSnapshotState = "complete" | "incomplete" | "in-progress";
 
@@ -851,6 +892,13 @@ export class SnapshotIncomplete extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SnapshotIncomplete";
+  }
+}
+
+export class RestoreChanged extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RestoreChanged";
   }
 }
 

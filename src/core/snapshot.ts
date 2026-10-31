@@ -98,7 +98,7 @@ export interface SnapshotOperation {
   readonly by: Actor;
   readonly consent: unknown;
   readonly undo: string | null;
-  readonly guests: { readonly old: string | null; readonly new: string | null } | null;
+  readonly guests: { readonly old: Guest | null; readonly new: Guest | null } | null;
   readonly step: string;
   readonly task: TaskRef | null;
   readonly state: OperationState;
@@ -107,6 +107,7 @@ export interface SnapshotOperation {
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly snapshotsGoneAt: number | null;
+  readonly stepAt?: number | null;
 }
 
 export interface SnapshotLedger {
@@ -166,6 +167,14 @@ export function dayWords(at: number): string {
 
 export function timeName(at: number, timeZone?: string): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) }).format(at);
+}
+
+export function clockName(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) }).format(at);
+}
+
+export function undoName(at: number, timeZone?: string): string {
+  return `before the restore at ${clockName(at, timeZone)}`;
 }
 
 export function nameProblem(name: string): string | null {
@@ -451,6 +460,8 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.keptUntil !== null ? [`kept until ${dayWords(snapshot.keptUntil).slice(0, 10)}`] : []),
     ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
+    ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
+    ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),
     ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),
   ];
   return parts.join(" · ");
