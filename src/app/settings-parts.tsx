@@ -76,7 +76,7 @@ export function Chevron({ outward = false }: { outward?: boolean }) {
 
 export function PageHeading({ children, chips }: { children: ReactNode; chips?: ReactNode }) {
   return (
-    <h2 tabIndex={-1} data-page-heading className="flex min-w-0 flex-wrap items-center gap-1.5 text-base font-medium leading-tight text-foreground outline-none">
+    <h2 tabIndex={-1} data-page-heading className="flex min-w-0 flex-wrap items-center gap-1.5 text-base leading-tight text-foreground outline-none">
       <span className="min-w-0 break-words">{children}</span>
       {chips}
     </h2>

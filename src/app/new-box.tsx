@@ -539,7 +539,7 @@ export function NewBox({
                         }}
                         className={cn(rowClass(selected), !available && "cursor-default opacity-50 hover:bg-transparent")}
                       >
-                        <span className="block text-xs font-medium text-foreground">{option.title}</span>
+                        <span className="block text-xs text-foreground">{option.title}</span>
                         <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">{available ? option.words[placementChoice.kind] : `${placementChoice.why ?? "Not available"}.`}</span>
                       </button>
                     );
@@ -679,7 +679,7 @@ export function NewBox({
                   onClick={() => setOn(null)}
                   className={rowClass(onOffer === null)}
                 >
-                  <span className="block text-xs font-medium text-foreground">First with room</span>
+                  <span className="block text-xs text-foreground">First with room</span>
                   <span className="mt-0.5 block text-2xs text-muted-foreground">{takers.length === 0 ? "None below can take it now" : takers.length === 1 ? "The one below" : `Any of the ${takers.length} below, in order`}</span>
                 </button>
               ) : null}

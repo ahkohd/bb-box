@@ -128,13 +128,13 @@ function Status({ machines }: { machines: Machines }) {
       <RowNote note={checkNote} className="px-1" />
       {items.length ? (
         <div className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3" role="region" aria-label="Things that need you">
-          <p className="text-sm font-medium text-foreground">{items.length === 1 ? "1 thing needs you" : `${items.length} things need you`}</p>
+          <p className="text-sm text-foreground">{items.length === 1 ? "1 thing needs you" : `${items.length} things need you`}</p>
           <ul className="mt-2 space-y-2.5">
             {items.map((item) => (
               <li key={item.key} className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
                 <StatusDot tone={item.tone} className="text-sm" />
                 <div className="min-w-0 flex-1 text-xs leading-snug">
-                  <p className="font-medium text-foreground">{item.title}</p>
+                  <p className="text-foreground">{item.title}</p>
                   {item.detail ? <p className="text-muted-foreground">{item.detail}</p> : null}
                   {item.fix ? <p className="mt-0.5 text-foreground">Fix: {item.fix}</p> : null}
                 </div>
@@ -180,7 +180,7 @@ function BackendRow({ config, showAge, machines }: { config: BackendConfig; show
         <RowButton rowKey={rowKey} label={label} describedBy={`${chipsId} ${stateId}`} onClick={() => nav.go({ page: "backend", id: config.id }, rowKey)} />
         <ProviderGlyph type={config.type} className="pointer-events-none mt-0.5" />
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
             <span className="pointer-events-none min-w-0 truncate" aria-hidden>
               {label}
             </span>

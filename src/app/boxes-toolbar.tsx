@@ -28,7 +28,7 @@ export function PageTabs<T extends string>({ tabs, selected, onSelect }: { tabs:
           aria-selected={tab.id === selected}
           // The count is a separate span with no space before it, so the name says it apart.
           aria-label={tab.count ? `${tab.label} ${tab.count}` : undefined}
-          className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium", tab.id === selected ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+          className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1 text-sm", tab.id === selected ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
           onClick={() => onSelect(tab.id)}
         >
           {tab.label}

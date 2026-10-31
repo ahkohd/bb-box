@@ -134,7 +134,7 @@ export function MachinePicker({
     >
       <PopoverTrigger
         aria-label="Machine"
-        className="flex h-6 min-w-0 max-w-full shrink items-center gap-1 rounded-md px-1.5 text-xs font-medium text-sidebar-foreground hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:opacity-50 data-[state=open]:bg-sidebar-accent"
+        className="flex h-6 min-w-0 max-w-full shrink items-center gap-1 rounded-md px-1.5 text-xs text-sidebar-foreground hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:opacity-50 data-[state=open]:bg-sidebar-accent"
       >
         <KindIcon kind={current.kind} className="text-muted-foreground" />
         <MiddleTruncate text={current.name} />

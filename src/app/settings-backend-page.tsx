@@ -49,7 +49,7 @@ export function CheckRow({ check }: { check: DoctorCheck }) {
     <li className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2.5 text-xs leading-snug">
       <Icon name={look.icon} className={cn("mt-px size-4", look.className)} aria-label={look.label} />
       <div className="min-w-0">
-        <p className={cn("font-medium", check.status === "skipped" ? "text-muted-foreground" : "text-foreground")}>{check.name}</p>
+        <p className={check.status === "skipped" ? "text-muted-foreground" : "text-foreground"}>{check.name}</p>
         {check.detail ? <p className="break-words text-muted-foreground">{check.detail}</p> : null}
         {check.fix && check.status !== "ok" ? (
           <p className="mt-1 text-foreground">
@@ -142,7 +142,7 @@ function HealthCard({ form, check, running, onCheck, id, machines }: { form: Bac
         <div className="min-w-0 flex-1 basis-56" id={id} role="status" aria-live="polite">
           <p className="flex items-start gap-1.5 text-sm text-foreground">
             <StatusDot tone={look.tone} />
-            <span className={cn("shrink-0 font-medium", look.tone === "bad" && "text-destructive-text", look.tone === "warn" && "text-warning-text")}>{look.words}</span>
+            <span className={cn("shrink-0", look.tone === "bad" && "text-destructive-text", look.tone === "warn" && "text-warning-text")}>{look.words}</span>
             {report && !running && (ofDraft || health.status !== "off") ? <span className="hidden min-w-0 truncate text-muted-foreground sm:inline">· {report.summary}</span> : null}
           </p>
           <p className="mt-0.5 pl-3 text-xs leading-snug text-subtle-foreground">{line}</p>

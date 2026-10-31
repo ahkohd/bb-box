@@ -650,12 +650,12 @@ export class DeviceStage {
     this.#words.replaceChildren();
     if (said.dark && this.#model) {
       const name = document.createElement("div");
-      name.style.cssText = "font-size:15px;font-weight:600";
+      name.style.cssText = "font-size:15px";
       name.textContent = this.#model.name;
       this.#words.appendChild(name);
     }
     const words = document.createElement("div");
-    words.style.cssText = said.dark ? "color:#b9b9be" : "font-size:15px;font-weight:600";
+    words.style.cssText = said.dark ? "color:#b9b9be" : "font-size:15px";
     words.textContent = said.words;
     this.#words.appendChild(words);
     if (said.action) {

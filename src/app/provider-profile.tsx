@@ -191,7 +191,7 @@ export function ProviderInfo({
         ) : (
           <div className="space-y-3">
             <div>
-              <h3 className="text-xs font-medium text-foreground">{loaded.profile.name}</h3>
+              <h3 className="text-xs text-foreground">{loaded.profile.name}</h3>
               <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{loaded.profile.technology}</p>
             </div>
             <dl className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs leading-snug">

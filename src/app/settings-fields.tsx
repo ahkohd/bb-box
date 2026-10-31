@@ -35,7 +35,7 @@ export function Section({
     <section className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-xs font-medium text-foreground">{title}</h3>
+          <h3 className="text-xs text-foreground">{title}</h3>
           {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
@@ -216,11 +216,11 @@ export function FieldControl({
 export function FormHeading({ children, open, onToggle }: { children: ReactNode; open?: boolean; onToggle?: () => void }) {
   if (onToggle) {
     return (
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+      <button type="button" aria-expanded={open} onClick={onToggle} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
         <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5" aria-hidden />
         {children}
       </button>
     );
   }
-  return <p className="text-xs font-medium text-muted-foreground">{children}</p>;
+  return <p className="text-xs text-muted-foreground">{children}</p>;
 }

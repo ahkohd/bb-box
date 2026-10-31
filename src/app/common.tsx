@@ -302,7 +302,7 @@ export function RowTitle({ name, os, device = null, badges }: { name: string; os
   return (
     <span ref={title} data-row-title className="relative flex min-w-0 items-center gap-x-2 overflow-hidden whitespace-nowrap">
       <span data-title-part="name" className="min-w-0 shrink-0" style={fit?.nameRoom ? { maxWidth: fit.nameRoom } : undefined}>
-        <OneLine full={name} className="text-sm font-medium text-foreground">
+        <OneLine full={name} className="text-sm text-foreground">
           {name}
         </OneLine>
       </span>
@@ -562,7 +562,7 @@ export function EmptyPanel({ title, children, className, role }: { title?: strin
   return (
     <div role={role} className={cn("rounded-md border border-dashed border-border px-6 py-6 text-center text-sm text-subtle-foreground", className)}>
       <div className="mx-auto max-w-md">
-        {title ? <p className="font-medium text-foreground">{title}</p> : null}
+        {title ? <p className="text-foreground">{title}</p> : null}
         {children}
       </div>
     </div>

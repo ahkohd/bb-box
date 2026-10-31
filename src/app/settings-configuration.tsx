@@ -278,7 +278,7 @@ function CheckResult({ draft, current, text }: { draft: ImportDraft; current: Im
             <Rows>
               {groups.map((group) => (
                 <div key={group.place} role="group" aria-label={group.place} className="py-1">
-                  <p className="px-4 pb-0.5 pt-1.5 text-2xs font-medium text-muted-foreground">{group.place}</p>
+                  <p className="px-4 pb-0.5 pt-1.5 text-2xs text-muted-foreground">{group.place}</p>
                   {group.changes.map((change) => (
                     <ChangeRow key={change.path} draft={draft} change={change} />
                   ))}

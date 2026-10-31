@@ -2446,7 +2446,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                   // the card's top as the last row does from its bottom, and 8 px above the first row; the rows keep their dividers.
                   <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
                     <div className="flex items-center gap-3 pl-4 pr-3 pt-3">
-                      <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
+                      <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
                         {titles[threadId] ?? threadId}
                       </button>
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
