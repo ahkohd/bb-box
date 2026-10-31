@@ -829,6 +829,13 @@ export function loseLastByteOfCopies(way: "read" | "write" | null): void {
   fakeCopiesLose = way;
 }
 
+const TEST_MACHINE_WIDE_FLUSH = "sync";
+const FAKE_DISK_FLUSHED = "true";
+
+function withoutTestMachineFlush(script: string): string {
+  return script === TEST_MACHINE_WIDE_FLUSH ? FAKE_DISK_FLUSHED : script;
+}
+
 export class FakeTransport implements CommandTransport {
   readonly #home: string;
   readonly #line: CommandLine;
@@ -876,7 +883,7 @@ export class FakeTransport implements CommandTransport {
     if (hashed) return hashed;
     // A fake box has no root of its own: what bb-box runs as root runs as the test's user, never through the test machine's sudo.
     const own = script.includes(`${IDENTITY_STATE}/identity-`) ? script.replaceAll(IDENTITY_STATE, this.#identityState) : script;
-    return this.#line.run(own.replaceAll("sudo -n ", "").replaceAll(IDENTITY_TOOL, this.#identityTool), { ...options, signal: this.#signal(options?.signal) });
+    return this.#line.run(withoutTestMachineFlush(own).replaceAll("sudo -n ", "").replaceAll(IDENTITY_TOOL, this.#identityTool), { ...options, signal: this.#signal(options?.signal) });
   }
 
   /** A Windows box's file hash (#492), as PowerShell would print it, for a fake box whose scripts run in sh. */
