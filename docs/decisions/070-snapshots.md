@@ -1295,6 +1295,11 @@ On 30 and 31 October 2026, during unit 3, the lead decided:
   restores are refused for everyone, the CLI's `--force` included, naming
   the threads. So `--force`, the CLI's "Restore anyway", passes only a
   person holding the desktop and BB terminals.
+- **After the reviews**: restoring a held copy, a swap, stays behind the
+  same switch until G4 passes on a ZFS node, so unit 8's Keep copies do not
+  become restorable before then; a held copy, as section 2 says, is made
+  only of a box whose identity reset works, read before the stop; and
+  older undos are replaced only once a restore is done.
 
 Found by measuring, and built so:
 

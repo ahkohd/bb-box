@@ -200,6 +200,7 @@ test("Opus 1: a swap cut short at adopt-task discards only the half-made new gue
   await held;
   assert.equal(await state.snapshots.recover(), 1);
   assert.equal(await state.backend.power(made), null, "the half-made guest went");
+  assert.ok(state.logs.some((line) => line.startsWith(`Deleted guest ${made.ref}, the new guest part made for the restore of box ${box.name}.`)));
   assert.ok(state.provider.copies.has(state.store.record(undo)!.livesOn.ref), "the held copy it was made from stays");
   assert.equal(readIn(state, await current(state, box), "work.txt"), "before");
 });

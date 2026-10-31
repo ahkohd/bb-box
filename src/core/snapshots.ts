@@ -1510,7 +1510,12 @@ export class Snapshots {
       this.#deps.log?.(`Left guest ${made.ref} of box ${box.name} alone: it is the box's guest, or a snapshot lives on it, so it is not a new guest made part way.`);
       return;
     }
-    await backend.release(made, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal).catch((cause: unknown) => this.#deps.logError(`delete the part-made guest ${made.ref} of box ${box.name}`, cause));
+    try {
+      await backend.release(made, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
+      this.#deps.log?.(`Deleted guest ${made.ref}, the new guest part made for the restore of box ${box.name}. bb-box makes it again from the held copy, or puts the box back.`);
+    } catch (cause) {
+      this.#deps.logError(`delete the part-made guest ${made.ref} of box ${box.name}`, cause);
+    }
   }
 
   async #undoStillThere(context: Restoring, box: BoxRecord, undo: SnapshotRecord): Promise<void> {
