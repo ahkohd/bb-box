@@ -283,7 +283,7 @@ export function FormSection({ title, description, children }: { title: string; d
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="text-xs font-medium text-foreground">{title}</h3>
+        <h3 className="text-xs text-foreground">{title}</h3>
         {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
       </div>
       {children}
@@ -378,7 +378,7 @@ export function OptionCard({
     >
       {glyph}
       <span className="min-w-0">
-        <span className="block truncate text-xs font-medium text-foreground">{title}</span>
+        <span className="block truncate text-xs text-foreground">{title}</span>
         <span data-option-words className="mt-0.5 block truncate text-2xs text-muted-foreground max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words">
           {available ? keepNumbersWithUnits(words) : "Not available"}
         </span>
@@ -431,7 +431,7 @@ export function ProviderRow({
         }}
         className={cn("flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring", blocked && "cursor-not-allowed opacity-50")}
       >
-        <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer, among)}</span>
+        <span className="block w-full truncate text-xs text-foreground">{providerTitle(offer, among)}</span>
         <OfferWords offer={offer} ready={ready} reason={unavailable} />
       </button>
       {info ? (

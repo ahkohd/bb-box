@@ -72,7 +72,7 @@ export function Progress({ setup }: { setup: MachineSetup }) {
   const took = setup.took[desktop ? "desktop" : "linux"];
   return (
     <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">{desktop ? `Building the desktop image on ${whose(setup)}` : `Setting up Docker on ${whose(setup)}`}</p>
+      <p className="text-sm text-foreground">{desktop ? `Building the desktop image on ${whose(setup)}` : `Setting up Docker on ${whose(setup)}`}</p>
       <p className="mt-1 text-xs leading-snug text-muted-foreground">
         {desktop ? (place ?? "Starting") : `Building ${what} · ${place ?? "starting"}`}
       </p>
@@ -102,7 +102,7 @@ export function SetupProgress({ empty }: { empty: boolean }) {
   if (failed) {
     return (
       <div className={CARD} role="alert">
-        <p className="text-sm font-medium text-foreground">The desktop image did not build</p>
+        <p className="text-sm text-foreground">The desktop image did not build</p>
         <p className="mt-1 text-xs leading-snug text-destructive-text">{failed.build!.detail}</p>
         <p className="mt-2 text-xs text-subtle-foreground">So the desktop box was not made. To try again, choose Desktop in New box.</p>
       </div>
@@ -112,7 +112,7 @@ export function SetupProgress({ empty }: { empty: boolean }) {
   if (!ready) return null;
   return (
     <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">The Linux image is ready</p>
+      <p className="text-sm text-foreground">The Linux image is ready</p>
       <p className="mt-1 text-xs leading-snug text-muted-foreground">Make a box with the plus.</p>
     </div>
   );
@@ -141,7 +141,7 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
     };
     return (
       <div className={CARD}>
-        <p className="text-sm font-medium text-foreground">Set up BB Box</p>
+        <p className="text-sm text-foreground">Set up BB Box</p>
         <p className="mt-1 text-xs leading-snug text-muted-foreground">{target.problem}</p>
         {target.fix ? (
           <>
@@ -176,7 +176,7 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
   const has = `${target.here ? "This machine" : target.name} has Docker ${target.docker}.`;
   return (
     <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">Set up BB Box</p>
+      <p className="text-sm text-foreground">Set up BB Box</p>
       <p className="mt-1 text-xs leading-snug text-muted-foreground">{has} BB Box can make Linux boxes there.</p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <Button type="button" size="sm" onClick={() => void start()} disabled={busy}>

@@ -406,7 +406,7 @@ function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }
 function Script({ label, named, text }: { label: string; named: string; text: string }) {
   return (
     <div className="space-y-1">
-      <p className="text-2xs font-medium text-subtle-foreground">{label}</p>
+      <p className="text-2xs text-subtle-foreground">{label}</p>
       <pre tabIndex={0} aria-label={named} className={cn("max-h-56 overflow-auto rounded-md bg-surface-recessed px-3 py-2 font-mono text-2xs leading-relaxed text-foreground", FOCUS_RING)}>
         {text.trimEnd()}
       </pre>
@@ -533,7 +533,7 @@ function ProjectImages() {
   return (
     <section className="space-y-2.5" aria-labelledby="settings-project-images">
       <div>
-        <h3 id="settings-project-images" tabIndex={-1} data-project-images-heading className="text-xs font-medium text-foreground outline-none">
+        <h3 id="settings-project-images" tabIndex={-1} data-project-images-heading className="text-xs text-foreground outline-none">
           Projects' images
         </h3>
         <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">A script run as root on a kind's standard image, for the boxes of a project's threads. Agents set them with bb box image set, from the project's files.</p>

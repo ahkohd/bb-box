@@ -165,7 +165,7 @@ function OfferRow({ host, children, action, tone }: { host: DockerHostView; chil
         <ServerGlyph />
       </span>
       <div className="min-w-0 flex-1 basis-48">
-        <p className="truncate text-sm font-medium text-foreground">{host.name}</p>
+        <p className="truncate text-sm text-foreground">{host.name}</p>
         {children}
       </div>
       {action ? <div className="flex shrink-0 items-center gap-2 self-center">{action}</div> : null}
@@ -226,7 +226,7 @@ function UsedRow({ host }: { host: DockerHostView }) {
         <ServerGlyph />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">{host.name}</span>
+        <span className="block truncate text-sm text-foreground">{host.name}</span>
         <StateLine className="mt-0.5" tone={look.tone} words={look.text} items={[backendLabel(state, backend)]} />
         <MachineBuildLine host={host} className="mt-0.5" />
       </span>

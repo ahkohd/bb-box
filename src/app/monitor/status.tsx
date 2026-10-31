@@ -75,7 +75,7 @@ function Section({ label, value, children, ariaLabel }: { label: ReactNode; valu
   return (
     <section className={SECTION} aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}>
       <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-medium text-sidebar-foreground">{label}</span>
+        <span className="text-sidebar-foreground">{label}</span>
         {value === undefined ? null : <span className="shrink-0 tabular-nums text-sidebar-foreground">{value}</span>}
       </div>
       {children}
@@ -321,7 +321,7 @@ function CpuDetails({ snapshot }: { snapshot: MonitorSnapshot }) {
   const temperature = sensors?.cpuTempC ?? null;
   return (
     <>
-      <p className="font-medium">{cpu.model}</p>
+      <p>{cpu.model}</p>
       <DetailRow label="Cores" value={cpu.cores} />
       {cpu.speedMHz > 0 ? <DetailRow label="Speed" value={`${(cpu.speedMHz / 1000).toFixed(2)} GHz`} /> : null}
       {cpu.loadAverage ? <DetailRow label={snapshot.slot ? "Host load 1 · 5 · 15 min" : "Load 1 · 5 · 15 min"} value={cpu.loadAverage.map((value) => value.toFixed(2)).join(" · ")} /> : null}
@@ -551,7 +551,7 @@ function ProcessesSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   return (
     <section aria-label="Top processes" className="min-w-0 p-3">
       <div className="grid grid-cols-[1fr_auto_3rem] items-center gap-x-3 gap-y-1.5 text-xs">
-        <span className="font-medium text-sidebar-foreground">Top processes</span>
+        <span className="text-sidebar-foreground">Top processes</span>
         <span className="text-right text-subtle-foreground/75">Memory</span>
         <span className="text-right text-subtle-foreground/75">% CPU</span>
         <ProcessRows snapshot={snapshot} />

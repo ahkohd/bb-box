@@ -78,7 +78,7 @@ export function AddBackendPage() {
                   >
                     <ProviderGlyph type={driver.type} className="mt-0.5" />
                     <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+                      <span className="flex flex-wrap items-center gap-1.5 text-sm text-foreground">
                         {driver.label}
                         {added.length && driver.several ? <Badge>{added.length} added</Badge> : null}
                       </span>
@@ -131,7 +131,7 @@ function Step({ number, title, description, children }: { number: number; title:
       </span>
       <div className="min-w-0 space-y-4">
         <div>
-          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+          <h3 className="text-sm text-foreground">{title}</h3>
           {description ? <div className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</div> : null}
         </div>
         {children}
@@ -222,7 +222,7 @@ function CheckResult({ report, problems, failure, cleared }: { report: DoctorRep
       <div className="px-4 py-3" role="status">
         <p className="flex items-start gap-1.5 text-sm text-foreground">
           <StatusDot tone={look.tone} />
-          <span className={cn("font-medium", look.tone === "bad" && "text-destructive-text")}>{look.tone === "bad" ? "Not working with this form" : look.words.replace("Your changes pass", "This form passes")}</span>
+          <span className={cn(look.tone === "bad" && "text-destructive-text")}>{look.tone === "bad" ? "Not working with this form" : look.words.replace("Your changes pass", "This form passes")}</span>
         </p>
         <p className="mt-0.5 pl-3 text-xs leading-snug text-subtle-foreground">Checked just now, against this form. Nothing is saved yet. {passedWords(report)}.</p>
       </div>

@@ -101,7 +101,7 @@ function NewFileEditor({ draft, path }: { draft: Draft; path: Path }) {
   const sending = draft.beingSaved(path) && draft.busy;
   return (
     <div className="space-y-1.5 bg-surface-raised px-4 py-3">
-      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+      <p className="flex items-center gap-1.5 text-xs text-foreground">
         A new file
         <ChangedChip show />
       </p>

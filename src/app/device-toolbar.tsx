@@ -451,7 +451,7 @@ function TextSizePopover({
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent side={side} align="center" className="w-72 p-3" mobileTitle="Text size" aria-label="Text size" autoFocusRef={slider}>
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-sm font-medium text-foreground">Text size</p>
+          <p className="text-sm text-foreground">Text size</p>
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {nowWords}
           </p>
@@ -753,7 +753,7 @@ function FormDialog({ open, title, description, submit, problem, onSubmit, onClo
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-foreground">
+    <label className="flex flex-col gap-1 text-xs text-foreground">
       {label}
       {children}
     </label>
@@ -907,11 +907,11 @@ export function DevicePicker({
 }) {
   const switching = state?.power.is === "switching" ? state.power.to : null;
   const label = switching ? `Switching to the ${switching}…` : model;
-  if (offered.length < 2) return <span className="font-medium text-foreground">{model}</span>;
+  if (offered.length < 2) return <span className="text-foreground">{model}</span>;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs font-medium text-foreground" aria-label={`Device: ${label}. Choose another`} disabled={switching !== null}>
+        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-foreground" aria-label={`Device: ${label}. Choose another`} disabled={switching !== null}>
           <PhoneGlyph className="text-muted-foreground" />
           {label}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="size-3.5 text-muted-foreground" aria-hidden>

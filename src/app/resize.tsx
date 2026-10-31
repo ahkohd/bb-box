@@ -388,8 +388,8 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
             {refusal !== null ? (
               // The answer to Resize: nothing changed, and why, in bb-box's words.
               <div role="alert" className="space-y-0.5 text-xs leading-snug">
-                <p className="font-medium text-destructive-text">Not resized</p>
-                <p className="text-destructive-text">{refusal}</p>
+                <p className="text-destructive-text">Not resized</p>
+                <p className="text-foreground">{refusal}</p>
               </div>
             ) : answer?.error || (plan && !plan.room.ok) ? (
               // What stands in the way of the size chosen, before anything is tried.

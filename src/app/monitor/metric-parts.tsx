@@ -146,7 +146,7 @@ export function Pill({ children, tone = "neutral", loading = false }: { children
 export function BigValue({ value, unit, loading = false }: { value: ReactNode | null; unit?: string; loading?: boolean }) {
   return (
     <p className="flex items-baseline gap-1 leading-none" aria-label={loading ? "Loading" : undefined} data-reveal={loading ? undefined : ""}>
-      <span className="text-2xl font-semibold tabular-nums tracking-tight text-sidebar-foreground">
+      <span className="text-2xl tabular-nums tracking-tight text-sidebar-foreground">
         {loading ? <LoadingText sample="00" /> : value ?? "–"}
       </span>
       <span className="text-xs text-muted-foreground">{loading || value === null ? "\u00a0" : unit}</span>
@@ -174,7 +174,7 @@ export function MetricSection({
       className="min-w-0 space-y-2 p-3 outline-none focus-visible:bg-sidebar-accent/40"
     >
       <div className="flex min-h-5 items-center justify-between gap-3 text-xs">
-        <span className="flex items-center gap-1.5 font-medium text-sidebar-foreground">
+        <span className="flex items-center gap-1.5 text-sidebar-foreground">
           {icon}
           {label}
         </span>
