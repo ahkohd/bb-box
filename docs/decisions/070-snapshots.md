@@ -1577,7 +1577,8 @@ probe as a regression test:
   nothing is kept.
 - **A slow clone that ends well is kept.** bb-box waits for the same task
   across its retries, then labels, disarms and templates that copy, rather
-  than cloning again. A copy left by a restart is still not trusted.
+  than cloning again; one that ends well just as the wait runs out is kept
+  in the same release. A copy left by a restart is still not trusted.
 - **Each copy attempt records its start and its task.** Recovery takes only
   a task begun from this attempt's start, never an earlier attempt's, and
   stays unsettled while more than one could be its own. Proxmox lists a

@@ -3062,6 +3062,19 @@ a copy on the same kind of box: `npx tsc` passes, and the reference is
 current; the node suite ran 3,258 tests, 2,970 passed, 0 failed, 288
 skipped; vitest ran 431, all passed.
 
+A last re-review by Astra found B1, B3 and the wording answered, and one
+race left in B2: a clone that ended well between its wait running out and
+the task's read was deleted, as only a running task was kept. Now a clone
+whose task ended well in that release is labelled, disarmed and made the
+template there; only a copy whose task failed, or that cannot be finished,
+is deleted. Its probe is the test "re-review B2 race: a clone that ends
+well just as its wait runs out ...", which fails on `0135b683` and passes
+now.
+
+After that fix, on this unit's four commits over main `cf84a20a`: `npx
+tsc` passes, and the reference is current; the node suite ran 3,259
+tests, 2,971 passed, 0 failed, 288 skipped; vitest ran 431, all passed.
+
 ### Conditions and open questions
 
 - **G16's node reboot** stays a condition before production's Keep is

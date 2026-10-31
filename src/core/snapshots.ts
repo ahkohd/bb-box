@@ -1458,9 +1458,15 @@ export class Snapshots {
       }
       if (!finished) await this.#deps.hold?.(operation, "planned", signal);
       const began = this.#now();
+      const label = heldCopyLabelOf(record);
+      const makeTemplate = async (made: Guest) => {
+        await copier.disarmCopy!(made, signal);
+        step({ step: "copy-disarmed" });
+        await copier.templateCopy!(made, signal);
+        if ((await copier.copyState!(made, signal)) !== "template") throw new SnapshotFailed(`${copier.label} did not make guest ${made.ref} a template.`);
+      };
       let copy: Guest | null = finished;
       try {
-        const label = heldCopyLabelOf(record);
         if (finished) copy = await copier.labelCopy!(finished, label, signal);
         else {
           const hooks: CopyHooks = {
@@ -1478,15 +1484,25 @@ export class Snapshots {
         }
         step({ step: "copy-cloned", guests: { old: source, new: copy } });
         await this.#deps.hold?.(operation, "copied", signal);
-        await copier.disarmCopy!(copy, signal);
-        step({ step: "copy-disarmed" });
-        await copier.templateCopy!(copy, signal);
-        if ((await copier.copyState!(copy, signal)) !== "template") throw new SnapshotFailed(`${copier.label} did not make guest ${copy.ref} a template.`);
+        await makeTemplate(copy);
       } catch (error) {
         if (signal.aborted) throw error;
-        const words = sentence(message(error));
+        let words = sentence(message(error));
         const partial = copy ?? operation.guests?.new ?? null;
-        if (partial && partial.ref !== source.ref && (await this.#copyTaskMayRun(operation, copier, source))) {
+        const task = partial && partial.ref !== source.ref ? await this.#copyTaskSeen(operation, copier, source) : null;
+        if (partial && task === "ok" && copier.labelCopy) {
+          try {
+            this.#deps.log?.(`Guest ${partial.ref}, the copy of snapshot ${record.id} of box ${record.box.name}, which ${copier.label} finished as bb-box's wait for it ran out, becomes its held copy now.`);
+            const labelled = await copier.labelCopy(partial, label, signal);
+            step({ step: "copy-cloned", guests: { old: source, new: labelled } });
+            await makeTemplate(labelled);
+            return this.#copyMade(record, operation, labelled, `once ${copier.label} finished it, as bb-box's wait for it ran out`);
+          } catch (again) {
+            if (signal.aborted) throw again;
+            words = sentence(message(again));
+          }
+        }
+        if (partial && task === "running") {
           const still = `${words} ${copier.label} may still be making its copy, guest ${partial.ref}: bb-box waits for that task, and makes the copy a template once it ends well.`;
           step({ state: "unknown", error: still });
           this.#waitedOut.add(operation.id);
@@ -1504,11 +1520,12 @@ export class Snapshots {
     }
   }
 
-  async #copyTaskMayRun(operation: SnapshotOperation, backend: Backend, source: Guest): Promise<boolean> {
+  async #copyTaskSeen(operation: SnapshotOperation, backend: Backend, source: Guest): Promise<"running" | "ok" | null> {
     const current = this.#deps.ledger.operation(operation.id) ?? operation;
-    if (current.step !== "copy-submitting" && current.step !== "copy-task") return false;
+    if (current.step !== "copy-submitting" && current.step !== "copy-task") return null;
     const task = await this.#taskOf(current, backend, source, this.#stopping.signal, "copy");
-    return task?.state === "running" || task?.state === "unreadable";
+    if (task?.state === "running" || task?.state === "unreadable") return "running";
+    return task?.state === "ok" ? "ok" : null;
   }
 
   async #dropCopy(backend: Backend, copy: Guest, record: SnapshotRecord): Promise<boolean> {

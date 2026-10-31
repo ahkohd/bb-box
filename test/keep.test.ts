@@ -657,6 +657,30 @@ test("re-review B2: a clone slower than its wait that ends well is labelled and 
   assert.equal(await state.backend.power(box.guest!), null);
 });
 
+test("re-review B2 race: a clone that ends well just as its wait runs out is labelled and made the held copy in the same release, never deleted", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const copySnapshot = provider(state).copySnapshot.bind(state.backend);
+  const tasks: TaskRef[] = [];
+  let attempts = 0;
+  provider(state).copySnapshot = async (ref, label, hooks, signal) => {
+    attempts++;
+    await copySnapshot(ref, label, { ...hooks, task: async (task) => { tasks.push(task); await hooks.task(task); } }, signal);
+    state.provider.tasks.set(tasks.at(-1)!.ref, { state: "ok" });
+    throw new Error("Proxmox TASK clone failed (504): task did not finish in time.");
+  };
+  const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.equal(left, null, "the release finished");
+  assert.equal(attempts, 1, "no second clone");
+  const copy = state.store.record(taken.id)!.livesOn.ref;
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.equal(state.provider.copies.get(copy)?.state, "template", "the clone that finished is the held copy");
+  assert.ok(!state.provider.order.includes(`delete ${copy}`), "and was never deleted");
+  assert.equal(state.provider.order.filter((each) => each.startsWith("template ")).length, 1);
+  assert.equal(state.store.unsettled().filter((each) => each.kind === "hold-copy").length, 0);
+  assert.equal(await state.backend.power(box.guest!), null);
+});
+
 test("re-review B3: a copy made again after a restart, whose submission answer is lost, takes only a task of its own attempt, so it stays unsettled with its room reserved while that clone runs", async () => {
   const state = armedWorld();
   const { box, taken } = await keptBox(state);
