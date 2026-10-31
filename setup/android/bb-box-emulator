@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "bb-box-emulator: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 
 usage() {
   cat >&2 <<'USAGE'
@@ -28,6 +29,7 @@ sdk=${ANDROID_HOME:-/opt/android-sdk}
 export ANDROID_HOME=$sdk ANDROID_SDK_ROOT=$sdk
 export PATH=$sdk/platform-tools:$sdk/emulator:$PATH
 serial=emulator-5554
+save_grace=180
 state=$HOME/.bb-box/device/emulator
 mkdir -p "$state"
 chmod 0700 "$HOME/.bb-box/device" "$state"
@@ -67,7 +69,7 @@ start() {
   adb start-server >/dev/null 2>&1
   local started log=$state/emulator.log
   started=$(date +%s%N)
-  setsid emulator "${flags[@]}" >"$log" 2>&1 </dev/null &
+  ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=$save_grace setsid emulator "${flags[@]}" >"$log" 2>&1 </dev/null &
   echo $! >"$state/pid"
   echo "$avd" >"$state/avd"
   local deadline=$(($(date +%s) + timeout))
@@ -94,12 +96,12 @@ stop() {
   local pid
   pid=$(running_pid) || { echo "bb-box-emulator: no emulator is running" >&2; return 0; }
   adb -s "$serial" emu kill >/dev/null 2>&1 </dev/null || kill "$pid"
-  for _ in $(seq 1 600); do
+  for _ in $(seq 1 $(((save_grace + 30) * 10))); do
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.1
   done
   if kill -0 "$pid" 2>/dev/null; then
-    echo "bb-box-emulator: the emulator did not end within 60 s; stopping it" >&2
+    echo "bb-box-emulator: the emulator did not end within $((save_grace + 30)) s; stopping it" >&2
     kill -9 "$pid" 2>/dev/null || true
   fi
   rm -f "$state/pid" "$state/avd"

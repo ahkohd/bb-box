@@ -70,6 +70,7 @@ export const CUA_READY = [
   "exit 1",
 ].join("\n");
 const BUILD_POLL_MS = 10_000;
+const FAILED_BUILD_LOG_LINES = 120;
 const BUILD_RENEW_MS = 15 * 60_000;
 const CUSTOMIZE_WITHIN_MS = 90 * 60_000;
 const STATE_WITHIN_MS = 10 * 60_000;
@@ -466,11 +467,17 @@ export class BoatTemplates {
         const code = /^exit=(\d+)/.exec(header.trim());
         if (code) {
           if (code[1] === "0") return;
+          await this.#logBuildLog(id, kind);
           throw new Error(`boat's ${kind} template build failed with exit ${code[1]}: ${tail.join("\n").trim().slice(-600)}`);
         }
       }
       await sleep(BUILD_POLL_MS);
     }
+  }
+
+  async #logBuildLog(id: string, kind: BoatKind): Promise<void> {
+    const read = await (await this.#deps.reach(id, "user")).run(`sudo -n tail -n ${FAILED_BUILD_LOG_LINES} ${BUILD_DIR}/log`, { timeoutMs: 30_000 }).catch(() => null);
+    if (read?.stdout.trim()) this.#deps.log(`boat: ${kind} template build failed; the last ${FAILED_BUILD_LOG_LINES} lines of its log, from sandbox ${id}, which bb-box deletes now:\n${read.stdout.trimEnd()}`);
   }
 
   async #retire(sandbox: string): Promise<void> {

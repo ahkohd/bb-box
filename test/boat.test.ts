@@ -602,3 +602,37 @@ test("boat's template fingerprint and archive are the files its build reads: wha
     rmSync(copy, { recursive: true, force: true });
   }
 });
+
+test("a template build that fails writes the last lines of its log to bb-box's log before its sandbox is deleted, so the cause is not only the last 600 characters", async () => {
+  const fake = new FakeBoat();
+  const logs: string[] = [];
+  const reached = (): Reached => ({
+    run: async (script) => {
+      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      if (script.includes("exit=")) return { ...ok, stdout: "exit=1\n12:00:00  customize-android.sh\nthe end of the log\n" };
+      if (script.includes("tail -n 120")) return { ...ok, stdout: "the line that says why\nthe end of the log\n" };
+      return ok;
+    },
+  });
+  const templates = new BoatTemplates({
+    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
+    storage: new MemoryStorage(),
+    installId: "inst1",
+    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
+    publicKey: async () => "ssh-ed25519 AAAAkey",
+    reach: async () => reached(),
+    forget: async () => {},
+    answers: async () => {},
+    settled: async () => {},
+    restored: async () => {},
+    now: Date.now,
+    sleep: async () => {},
+    log: (line) => void logs.push(line),
+    fingerprint: () => "fp1",
+    setupArchive: async () => Buffer.from("tar"),
+  });
+  await assert.rejects(templates.build("linux", "test"), /failed with exit 1: 12:00:00  customize-android\.sh\nthe end of the log/);
+  const written = logs.find((line) => line.includes("the last 120 lines of its log"));
+  assert.match(written ?? "", /which bb-box deletes now:\nthe line that says why\nthe end of the log$/);
+  assert.equal([...fake.sandboxes.values()].filter((each) => each.state !== "deleted").length, 0, "the failed build is still deleted");
+});
