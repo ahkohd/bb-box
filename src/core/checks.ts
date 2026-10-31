@@ -37,7 +37,7 @@ export const CHECKS = {
   "join.<box>": {
     name: "<box> joining BB",
     from: ["bb-box"],
-    what: "A box that did not join BB at its first try. bb-box tries again after 30 s, 2 min, 10 min and 30 min, then every 30 minutes, when what failed can pass, such as a DNS lookup that timed out. It warns while it tries, and when other boxes on the same backend joined. It fails once no box on the backend can reach BB, which is a setup problem.",
+    what: "A box that did not join BB at its first try. bb-box tries again after 30 s, 2 min, 10 min and 30 min, then every 30 minutes for up to 24 hours from the first failure, when what failed can pass, such as a DNS lookup that timed out. It warns while it tries, and when other boxes on the same backend joined. It fails once no box on the backend can reach BB, which is a setup problem.",
   },
   "identity-reset.<box>": {
     name: "Identity reset of <box>",
