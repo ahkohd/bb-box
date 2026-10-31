@@ -22,7 +22,7 @@ import { FakeBackend } from "./fake-backend.ts";
 import { FakeSnapshots as Provider, type Held } from "./fake-snapshots.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
 
-import { COMMAND, DAY, HOUR, THREAD, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
+import { COMMAND, DAY, HOUR, THREAD, identityGuest, readyBox, rejection, standing, withIdentitySource, world, type World } from "./snapshot-world.ts";
 
 test("a take is recorded and pinned before the backend is asked, records the provider's task before it waits, and is ready once confirmed", async () => {
   const state = world();
@@ -934,25 +934,6 @@ test("box_status counts every snapshot against the limit while naming only those
   assert.equal(seen.counted, 4);
 });
 
-
-const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
-
-function identityGuest(options: { readonly booted?: boolean; readonly on?: boolean } = {}): { readonly root: string; readonly tool: string } {
-  const dir = tempDir("identity-guest");
-  const root = join(dir, "root");
-  mkdirSync(join(root, "sys/class/net/eth0"), { recursive: true });
-  writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
-  writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
-  const tool = join(dir, "bb-box-identity");
-  writeFileSync(tool, `#!/bin/sh\nBBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
-  if (options.on !== false) assert.equal(spawnSync(tool, ["enable", "--no-unit"]).status, 0, "the image's build turned the reset on");
-  if (options.booted !== false) assert.equal(spawnSync(tool, ["boot"]).status, 0, "the boot check ran, as its unit runs it at the box's first boot");
-  return { root, tool };
-}
-
-function withIdentitySource(state: World, source: "eth" | "device" | "value"): void {
-  (state.backend as unknown as Record<string, unknown>).identitySource = () => source;
-}
 
 test("a box is first ready with its identity marker, written with its backend's source, and each take records the reset's version as forkSafe", async () => {
   const guest = identityGuest();

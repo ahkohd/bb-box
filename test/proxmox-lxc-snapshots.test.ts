@@ -399,3 +399,46 @@ test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, di
   await state.backend.deleteCopy(copy);
   assert.equal(state.proxmox.guests.has(Number(copy.ref)), false);
 });
+
+test("review A3: a restore's task is looked up among the token's own, never another user's", async () => {
+  const state = world();
+  const { guest } = await box(state);
+  const now = Math.floor(Date.now() / 1000);
+  state.proxmox.intercept = (call) => {
+    if (call.method !== "GET" || !/\/tasks$/.test(call.path) || call.params.typefilter !== "vzrollback") return undefined;
+    const data = [
+      { upid: `UPID:pve:0000AAAA:00:00:vzrollback:${guest.ref}:root@pam:`, type: "vzrollback", id: guest.ref, user: "root@pam", starttime: now, status: "OK", endtime: now },
+      { upid: `UPID:pve:0000BBBB:00:00:vzrollback:${guest.ref}:bb-box@pve!plugin:`, type: "vzrollback", id: guest.ref, user: "bb-box@pve", starttime: now, status: "OK", endtime: now },
+    ];
+    return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data }) };
+  };
+  assert.deepEqual(
+    (await state.backend.findTasks(guest, "rollback", Date.now())).map((task) => task.ref),
+    [`UPID:pve:0000BBBB:00:00:vzrollback:${guest.ref}:bb-box@pve!plugin:`],
+  );
+});
+
+test("review A6: a lock a running backup holds refuses a restore as it does a take, without unlock advice", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.lock = "backup";
+  state.proxmox.intercept = (call) =>
+    call.method === "GET" && /\/tasks$/.test(call.path) && call.params.source === "active"
+      ? { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data: [{ upid: `UPID:pve:1:0:0:vzdump:${vmid}:root@pam:`, type: "vzdump" }] }) }
+      : undefined;
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
+  assert.equal(plan.locked, null);
+  assert.equal(plan.restore.way, "none");
+  assert.match(plan.restore.why!, /running a backup on guest \d+, which holds its lock \(backup\)\. Try again when it ends\./);
+});
+
+test("Opus 1: deleteCopy destroys only a held copy or an earlier guest, never the box's own guest", async () => {
+  const state = world();
+  const { guest, vmid } = await box(state);
+  const refused = await state.backend.deleteCopy(guest).catch((caught: unknown) => caught);
+  assert.ok(refused instanceof SnapshotFailed, String(refused));
+  assert.match((refused as Error).message, /is not a held copy or an earlier guest of box/);
+  assert.ok(state.proxmox.guests.has(vmid));
+});

@@ -107,6 +107,7 @@ export interface SnapshotOperation {
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly snapshotsGoneAt: number | null;
+  readonly stepAt?: number | null;
 }
 
 export interface SnapshotLedger {

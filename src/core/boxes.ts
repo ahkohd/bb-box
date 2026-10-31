@@ -296,7 +296,7 @@ export function restartSeconds(box: BoxRecord, resumes: boolean): number | null 
 export const RESIZE_MEMORY_MARGIN_MIB = 512;
 
 export function restoringWords(box: Pick<BoxRecord, "name">, mark: RestoringMark): string {
-  return `Box ${box.name} is being restored to snapshot "${mark.name}". Check its status in a few seconds; if bb-box restarted meanwhile, its next sweep finishes the restore or says why it could not.`;
+  return `Box ${box.name} is being restored to snapshot "${mark.name}", or bb-box could not confirm that restore. Check its status in a few seconds; if it stays so, bb box doctor says why, and bb box sweep checks again now.`;
 }
 
 /** A stop bb-box did not make, why, and what bb-box did about it (#406). */

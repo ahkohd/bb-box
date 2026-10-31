@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { scopedStorage } from "../src/backends/index.ts";
 import type { Backend, Price } from "../src/backends/types.ts";
@@ -152,4 +152,66 @@ export async function rejection(work: Promise<unknown>): Promise<BoxError> {
   );
   assert.ok(error instanceof BoxError, `expected a BoxError, got ${String(error)}`);
   return error;
+}
+
+export function fileIn(state: World, box: BoxRecord, path: string): string {
+  return join(state.root, "fake", box.guest!.ref, path);
+}
+
+export function writeIn(state: World, box: BoxRecord, path: string, text: string): void {
+  const file = fileIn(state, box, path);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, text);
+}
+
+export function readIn(state: World, box: BoxRecord, path: string): string | null {
+  const file = fileIn(state, box, path);
+  return existsSync(file) ? readFileSync(file, "utf8") : null;
+}
+
+export async function untilHeld(state: World, held: Promise<unknown>): Promise<void> {
+  let ended = false;
+  void held.then(() => (ended = true));
+  const deadline = Date.now() + 10_000;
+  while (state.holds.step !== null) {
+    if (ended) throw new Error(`the restore ended before its hold at ${state.holds.step}: ${String(await held)}`);
+    if (Date.now() > deadline) throw new Error(`the restore never reached its hold at ${state.holds.step}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+export async function untilStep(state: World, step: string): Promise<SnapshotOperation> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const found = state.store.unsettled().find((operation) => operation.kind === "restore" && operation.step === step);
+    if (found) return found;
+    if (Date.now() > deadline) throw new Error(`the restore never reached ${step}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
+
+export function identityGuest(options: { readonly booted?: boolean; readonly on?: boolean } = {}): { readonly root: string; readonly tool: string } {
+  const dir = tempDir("identity-guest");
+  const root = join(dir, "root");
+  mkdirSync(join(root, "sys/class/net/eth0"), { recursive: true });
+  writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
+  writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
+  const tool = join(dir, "bb-box-identity");
+  writeFileSync(tool, `#!/bin/sh\nBBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
+  if (options.on !== false) assert.equal(spawnSync(tool, ["enable", "--no-unit"]).status, 0, "the image's build turned the reset on");
+  if (options.booted !== false) assert.equal(spawnSync(tool, ["boot"]).status, 0, "the boot check ran, as its unit runs it at the box's first boot");
+  return { root, tool };
+}
+
+export function withIdentitySource(state: World, source: "eth" | "device" | "value"): void {
+  (state.backend as unknown as Record<string, unknown>).identitySource = () => source;
+}
+
+export function armedWorld(): World {
+  const guest = identityGuest();
+  const state = world({ identityTool: guest.tool });
+  withIdentitySource(state, "eth");
+  return state;
 }

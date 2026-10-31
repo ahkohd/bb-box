@@ -227,8 +227,8 @@ const RESTORE_STEPS = [
   "swapped",
   "retired",
   "starting",
-  "size",
   "access",
+  "size",
   "labels",
   "machine",
   "done",
@@ -270,6 +270,8 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
   done: "the end",
 };
 
+const BEGINS_A_TASK: ReadonlySet<string> = new Set(["undo-submitting", "copy-claimed", "rollback-submitting", "adopt-claimed"]);
+
 const TIMED_PARTS: Partial<Readonly<Record<RestoreStep, string>>> = {
   stopping: "stop",
   "undo-submitting": "undo",
@@ -283,6 +285,15 @@ const TIMED_PARTS: Partial<Readonly<Record<RestoreStep, string>>> = {
 
 function stepsWords(took: readonly (readonly [string, number])[]): string {
   return took.length ? ` (${took.map(([part, ms]) => `${part} ${seconds(ms)}`).join(", ")})` : "";
+}
+
+function accessFailedWords(error: unknown): string {
+  return `It was restored and started, but ${sentence(message(error)).replace(/^./, (first) => first.toLowerCase())} bb-box did not start its BB machine again; its next command writes the access file first, as every command does. What the box itself started at boot may have read the access file the snapshot held, as it can after any restore.`;
+}
+
+function consentOf(operation: SnapshotOperation): { readonly force: boolean; readonly anyway: readonly string[] } {
+  const consent = operation.consent as { force?: unknown; anyway?: unknown } | null;
+  return { force: consent?.force === true, anyway: Array.isArray(consent?.anyway) ? consent.anyway.filter((each): each is string => typeof each === "string") : [] };
 }
 
 function threadsWords(threads: readonly ThreadOnTheBox[]): string {
@@ -305,6 +316,7 @@ interface Prepared {
   readonly byCopy: boolean;
   readonly swap: boolean;
   readonly anyway: readonly string[];
+  readonly forkSafe: number | null;
 }
 
 export interface RestoreCheck {
@@ -316,6 +328,7 @@ export interface RestoreCheck {
   readonly to: BoxSize | null;
   readonly anyway: readonly string[];
   readonly leavesOnEarlierGuest: number;
+  readonly replaces: string | null;
   readonly storage: string;
 }
 
@@ -452,6 +465,8 @@ export class Snapshots {
     }
     const box = await this.#deps.boxes.find(boxId);
     if (!box) throw new BoxError("released", "That box was released, so it takes no snapshot.");
+    const restoring = this.#restoreHolding(box);
+    if (restoring) throw restoring;
     if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) {
       throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box takes a snapshot of a box that is running or stopped.`);
     }
@@ -934,7 +949,7 @@ export class Snapshots {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#restoredBefore(earlier);
     }
-    const { box, target, backend, offer, plan, byCopy, swap, anyway } = await this.#prepare(caller, standing, boxId, targetId, input);
+    const { box, target, backend, offer, plan, byCopy, swap, anyway, forkSafe } = await this.#prepare(caller, standing, boxId, targetId, input);
     const wantsUndo = input.undo !== false;
     const now = this.#now();
     const operationId = newOperationId(this.#random);
@@ -974,7 +989,7 @@ export class Snapshots {
           keptUntil: null,
           keptAt: null,
           undoOf: operationId,
-          forkSafe: target.forkSafe,
+          forkSafe,
           dependsOn: [],
           picture: null,
           ref: null,
@@ -994,7 +1009,7 @@ export class Snapshots {
         guest: box.guest!.ref,
         snapshots: undo ? [target.id, undo.id] : [target.id],
         by,
-        consent: null,
+        consent: { force: input.force === true, anyway },
         undo: undo?.id ?? null,
         guests: null,
         step: "planned",
@@ -1027,11 +1042,8 @@ export class Snapshots {
     if (!box) throw new BoxError("released", "That box was released, so it restores nothing.");
     const target = ledger.record(targetId);
     if (!target) throw new BoxError("not_found", `bb-box has no snapshot ${targetId}: it was deleted.`);
-    const cutShort = ledger.unsettled().find((operation) => operation.box === box.id && operation.kind === "restore" && !this.#running.has(operation.id));
-    if (cutShort) {
-      throw new BoxError("not_ready", `bb-box could not confirm ${operationWords(cutShort)} on box ${box.name}: ${cutShort.error ?? "it was cut short"} It checks again at each sweep, and bb box sweep checks now.`);
-    }
-    if (box.restoring) throw new BoxError("not_ready", restoringWords(box, box.restoring));
+    const restoring = this.#restoreHolding(box);
+    if (restoring) throw restoring;
     if ((box.state !== "ready" && box.state !== "stopped") || !box.guest) throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box restores a box that is running or stopped.`);
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, so it restores nothing there.`);
@@ -1047,7 +1059,22 @@ export class Snapshots {
     const plan = await backend.planSnapshots(box.guest, box.kind, swap ? null : { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
     const byCopy = this.#restoreOrder(box, backend, plan, target, swap) === "copy";
     const anyway = await this.#guarded(caller, standing, box, target, input.force === true);
-    return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway };
+    const forkSafe = input.undo === false ? null : await this.#forkSafe(box, backend);
+    if (byCopy && input.undo !== false && forkSafe === null) {
+      throw new BoxError(
+        "unsupported",
+        `bb-box would copy box ${box.name} in full as the undo of this restore, and it makes such a copy only of a box whose identity reset works now, so that a copy that started before it is disarmed gives up the box's identity. Box ${box.name} has none that bb-box could read${box.state === "ready" ? "" : ", as it is stopped"}.${caller.is === "agent" ? "" : " Restore without an undo, with --no-undo, or start the box first."}`,
+      );
+    }
+    return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway, forkSafe };
+  }
+
+  #restoreHolding(box: BoxRecord): BoxError | null {
+    const cutShort = this.#deps.ledger.unsettled().find((operation) => operation.box === box.id && operation.kind === "restore" && !this.#running.has(operation.id));
+    if (cutShort) {
+      return new BoxError("not_ready", `bb-box could not confirm ${operationWords(cutShort)} on box ${box.name}: ${cutShort.error ?? "it was cut short"} It checks again at each sweep; bb box sweep checks now, and bb box doctor says why.`);
+    }
+    return box.restoring ? new BoxError("not_ready", restoringWords(box, box.restoring)) : null;
   }
 
   #undoBytes(box: BoxRecord, plan: SnapshotPlan, byCopy: boolean): number {
@@ -1081,7 +1108,10 @@ export class Snapshots {
     const refused = input.undo === false ? null : this.#undoRefused(caller, prepared.box, prepared.backend, prepared.offer, prepared.plan, undoBytes);
     if (refused) throw refused;
     const restore = prepared.plan.restore;
-    const onGuest = prepared.swap ? this.#deps.ledger.records({ box: box.id }).filter((record) => record.guest === "current" && record.livesOn.ref === prepared.box.guest?.ref).length : 0;
+    const ofBox = this.#deps.ledger.records({ box: box.id });
+    const onGuest = prepared.swap ? ofBox.filter((record) => record.guest === "current" && record.livesOn.ref === prepared.box.guest?.ref).length : 0;
+    const undos = ofBox.filter((record) => record.undoOf !== null && record.keptUntil === null && heldByProvider(record));
+    const replaces = input.undo !== false && undos.length + 1 > UNDOS_PER_BOX ? (undoToReplace(ofBox.filter((record) => record.id !== prepared.target.id), this.#deps.ledger.pins(), this.#now())?.name ?? null) : null;
     return {
       snapshot: prepared.target,
       box: prepared.box,
@@ -1096,6 +1126,7 @@ export class Snapshots {
       to: prepared.swap ? null : restore.sizeBack,
       anyway: prepared.anyway,
       leavesOnEarlierGuest: onGuest,
+      replaces,
       storage: prepared.plan.storage.name,
     };
   }
@@ -1105,6 +1136,9 @@ export class Snapshots {
     const copies = !!(backend.copyGuest && backend.disarmCopy && backend.templateCopy && backend.copyState && backend.deleteCopy && backend.adoptCopy && backend.retireGuest && backend.guestIdentity);
     if (swap) {
       if (!copies) throw new BoxError("unsupported", `${backend.label} cannot make a box's guest from a held copy, so bb-box cannot restore ${quoted(target)}.`);
+      if (!this.#deps.undoByCopy?.(backend.id)) {
+        throw new BoxError("unsupported", `Restoring ${quoted(target)}, a held copy, makes box ${box.name} a new guest, and bb-box does that only in live checks until such restores are checked on ZFS. bb-box changed nothing.`);
+      }
       return "copy";
     }
     this.#restoreWay(box, backend, plan, target);
@@ -1132,27 +1166,43 @@ export class Snapshots {
     if (restore.way !== "rollback") throw new BoxError("unsupported", `${backend.label} restores no snapshots of its ${box.kind} boxes in place.`);
   }
 
-  async #guarded(caller: Caller, standing: Standing, box: BoxRecord, target: SnapshotRecord, force: boolean): Promise<string[]> {
+  async #lookOn(box: BoxRecord, runsOn: boolean): Promise<{ readonly refusal: string | null; readonly losses: readonly string[] }> {
     const guard: RestoreGuard = this.#deps.guard ? await this.#deps.guard(box) : { threads: [], threadsUnread: null, control: false, terminals: 0 };
     if (guard.threads === null) {
-      throw new BoxError("in_use", `bb-box could not tell which threads run on box ${box.name} (${(guard.threadsUnread ?? "BB did not answer").replace(/\.$/, "")}), so it restores nothing: a restore would take their work with it.`);
+      return { refusal: `bb-box could not tell which threads run on box ${box.name} (${(guard.threadsUnread ?? "BB did not answer").replace(/\.$/, "")}), so it restores nothing: a restore would take their work with it.`, losses: [] };
     }
-    if (standing.runsOn || box.role === "machine" || guard.threads.length) {
-      const who = guard.threads.length ? `${threadsWords(guard.threads)} ${guard.threads.length === 1 ? "runs" : "run"} on it` : "a thread runs on it as its own BB machine";
-      throw new BoxError(
-        "in_use",
-        `Box ${box.name} is a box threads run on: ${who}. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first. bb-box changed nothing.`,
-      );
+    if (runsOn || guard.threads.length) {
+      const who = guard.threads.length ? `${threadsWords(guard.threads)} ${guard.threads.length === 1 ? "runs" : "run"} on it` : "the thread asking runs on it";
+      return {
+        refusal: `Box ${box.name} is a box threads run on: ${who}. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first.`,
+        losses: [],
+      };
     }
     const losses: string[] = [];
     if (guard.control) losses.push("a person holds control of its desktop");
     if (guard.terminals === null) losses.push("bb-box could not tell whether a BB terminal is open on it");
     else if (guard.terminals > 0) losses.push(guard.terminals === 1 ? "a BB terminal is open on it" : `${guard.terminals} BB terminals are open on it`);
+    return { refusal: null, losses };
+  }
+
+  async #guarded(caller: Caller, standing: Standing, box: BoxRecord, target: SnapshotRecord, force: boolean): Promise<string[]> {
+    const seen = await this.#lookOn(box, standing.runsOn);
+    if (seen.refusal) throw new BoxError("in_use", `${seen.refusal} bb-box changed nothing.`);
+    const losses = [...seen.losses];
     if (losses.length && (caller.is === "agent" || !force)) {
       const fix = caller.is === "agent" ? "Ask the person to end it first, or to restore the box themselves." : "Restore anyway with --force.";
       throw new BoxError("in_use", `Restoring box ${box.name} to ${quoted(target)} would end what is on it now: ${losses.join("; ")}. ${fix} bb-box changed nothing.`);
     }
     return losses;
+  }
+
+  async #stillAdmitted(context: Restoring, box: BoxRecord): Promise<string | null> {
+    const seen = await this.#lookOn(box, false);
+    if (seen.refusal) return `Since the restore was asked: ${seen.refusal.charAt(0).toLowerCase()}${seen.refusal.slice(1)}`;
+    const consented = new Set(consentOf(context.operation).anyway);
+    const fresh = seen.losses.filter((loss) => !consented.has(loss));
+    if (!fresh.length) return null;
+    return `Since the restore was asked, something more would go with box ${box.name}'s disk: ${fresh.join("; ")}.${context.operation.by.is === "agent" ? "" : " Ask again, with --force if you mean it."}`;
   }
 
   #stepHooks(operation: SnapshotOperation, part: "undo" | "rollback"): SnapshotHooks {
@@ -1189,14 +1239,21 @@ export class Snapshots {
     const took: [string, number][] = [];
     let stepBegan = this.#now();
     let timed: string | null = null;
-    const at = (step: RestoreStep) => {
+    const at = (step: RestoreStep, also: Partial<SnapshotOperation> = {}) => {
       const part = TIMED_PARTS[step];
       if (part !== undefined && part !== timed) {
         if (timed) took.push([timed, this.#now() - stepBegan]);
         timed = part;
         stepBegan = this.#now();
       }
-      ledger.updateOperation(operation.id, { step });
+      ledger.updateOperation(operation.id, { step, stepAt: this.#now(), ...(BEGINS_A_TASK.has(step) ? { task: null } : {}), ...also });
+    };
+    const admitted = async (box: BoxRecord, step: RestoreStep): Promise<void> => {
+      const late = await this.#stillAdmitted(context, box);
+      if (!late) return;
+      if (box.state === "stopped" || box.state === "stopping" || reach > stepAt("stopping")) await this.#putBack(context, box, step, late);
+      await this.#neverBegan(context, box, late);
+      throw new BoxError("in_use", `bb-box did not restore box ${box.name}: ${late} bb-box changed nothing.`);
     };
     this.#running.add(operation.id);
     const replaced: string[] = [];
@@ -1207,6 +1264,7 @@ export class Snapshots {
       let undo = context.undo ? ledger.record(context.undo.id) : null;
       if (ahead("stopping")) {
         if (from === "planned") await this.#deps.hold?.(operation, "planned", signal);
+        await admitted(box, "planned");
         at("stopping");
         box = await this.#moved(box, box.state === "ready" ? { state: "stopping", error: null } : { error: null });
         try {
@@ -1240,7 +1298,6 @@ export class Snapshots {
         undo = ledger.updateRecord(undo.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - takenAt, stateAt: now, error: null }) ?? undo;
         at("undo-ready");
         this.#event(undo, "snapshot-taken", undo.by, `"${undo.name}" (${undo.id}): ${holdsWords(undo)}, the undo of the restore to ${quoted(target)}, in ${seconds(now - takenAt)}.`);
-        replaced.push(...(await this.#replaceUndos(box.id, target.id)));
         await this.#deps.hold?.(operation, "undo", signal);
       }
       if (undo && undo.guest === "held-copy" && reach < stepAt("copy-ready")) {
@@ -1249,10 +1306,7 @@ export class Snapshots {
         const begun = this.#now();
         const hooks: CopyHooks = {
           claimed: async (copy) => {
-            ledger.transaction(() => {
-              ledger.updateRecord(copying.id, { livesOn: copy, host: copy.host });
-              ledger.updateOperation(operation.id, { step: "copy-claimed", guests: { old: guest, new: copy } });
-            });
+            ledger.updateRecord(copying.id, { livesOn: copy, host: copy.host, ref: copy.ref });
           },
           submitting: async () => {
             ledger.updateOperation(operation.id, { step: "copy-submitting", task: null });
@@ -1273,8 +1327,8 @@ export class Snapshots {
         } catch (error) {
           if (signal.aborted) throw error;
           const words = sentence(message(error));
-          const partial = ledger.operation(operation.id)?.guests?.new ?? null;
-          if (partial) await backend.deleteCopy!(partial, signal).catch((cause: unknown) => this.#deps.logError(`delete the part-made copy ${partial.ref} of box ${box!.name}`, cause));
+          const partial = this.#copyOf(ledger.record(copying.id));
+          if (partial && partial.ref !== guest.ref) await backend.deleteCopy!(partial, signal).catch((cause: unknown) => this.#deps.logError(`delete the part-made copy ${partial.ref} of box ${box!.name}`, cause));
           ledger.updateRecord(copying.id, { state: "failed", error: words, stateAt: this.#now() });
           this.#event(copying, "snapshot-failed", copying.by, `"${copying.name}", the undo of a restore, as a held copy: ${words}`);
           return await this.#putBack(context, box, "copy-task", `bb-box could not copy box ${box.name} for its undo: ${words}`);
@@ -1283,8 +1337,11 @@ export class Snapshots {
         undo = ledger.updateRecord(copying.id, { state: "ready", ref: copy.ref, livesOn: copy, host: copy.host, capturedAt: begun, tookMs: now - begun, stateAt: now, error: null }) ?? copying;
         at("copy-ready");
         this.#event(undo, "held-copy-made", undo.by, `"${undo.name}" (${undo.id}): a held copy of the stopped box, guest ${copy.ref}, a template that cannot start, the undo of the restore to ${quoted(target)}, in ${seconds(now - begun)}.`);
-        replaced.push(...(await this.#replaceUndos(box.id, target.id)));
         await this.#deps.hold?.(operation, "undo", signal);
+      }
+      if (reach < stepAt(context.swap ? "adopted" : "rolled-back")) {
+        await admitted(box, context.swap ? "adopt-claimed" : "rollback-submitting");
+        if (context.after && undo) await this.#undoStillThere(context, box, undo);
       }
       if (!context.swap && reach < stepAt("rolled-back")) {
         at("rollback-submitting");
@@ -1302,7 +1359,7 @@ export class Snapshots {
       }
       if (context.swap) {
         if (reach < stepAt("adopted")) {
-          at("adopt-claimed");
+          at("adopt-claimed", { guests: { old: guest, new: null } });
           const size = guest.size ?? box.size ?? null;
           if (!size) throw this.#restoreUnsure(context, box, "adopt-claimed", "bb-box does not know the box's size to give its new guest.");
           let fresh: Guest;
@@ -1324,8 +1381,7 @@ export class Snapshots {
           } catch (error) {
             if (signal.aborted) throw error;
             const words = sentence(message(error));
-            const partial = ledger.operation(operation.id)?.guests?.new ?? null;
-            if (partial && partial.ref !== guest.ref) await backend.deleteCopy!(partial, signal).catch((cause: unknown) => this.#deps.logError(`delete the part-made guest ${partial.ref} of box ${box!.name}`, cause));
+            await this.#discardAdoption(box, backend, ledger.operation(operation.id)?.guests?.new ?? null);
             return await this.#putBack(context, box, "adopt-task", `bb-box could not make box ${box.name}'s new guest from ${quoted(target)}: ${words}`);
           }
           ledger.updateOperation(operation.id, { step: "adopted", guests: { old: guest, new: fresh } });
@@ -1362,13 +1418,26 @@ export class Snapshots {
 
       let facts: readonly GuestFact[] | undefined;
       const startParts: string[] = [];
+      let accessWritten = false;
+      let accessFailed: unknown = null;
+      const accessFirst = async (): Promise<void> => {
+        at("access");
+        try {
+          await this.#deps.boxes.writeAccess(box!, signal);
+        } catch (error) {
+          accessFailed = error;
+          throw error;
+        }
+        accessWritten = true;
+      };
       if (ahead("starting")) {
         at("starting");
         box = await this.#moved(box, { state: "starting" });
         try {
-          facts = (await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`)))?.facts;
+          facts = (await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), accessFirst))?.facts;
         } catch (error) {
           if (signal.aborted) throw error;
+          if (accessFailed) return await this.#leftStopped(context, box, "access", accessFailedWords(accessFailed), true);
           return await this.#leftStopped(context, box, "starting", `It was restored, but did not start: ${sentence(message(error))}`, true);
         }
         await this.#deps.hold?.(operation, "started", signal);
@@ -1379,13 +1448,12 @@ export class Snapshots {
         to = (await this.#sizeOf(backend, guest, signal)) ?? to;
         box = await this.#moved(box, { guest: { ...guest, ...(to ? { size: to } : {}), ...(facts ? { facts } : {}) }, ...(to ? { size: to } : {}) });
       }
-      if (ahead("access")) {
-        at("access");
+      if (ahead("access") && !accessWritten) {
         try {
-          await this.#deps.boxes.writeAccess(box, signal);
+          await accessFirst();
         } catch (error) {
           if (signal.aborted) throw error;
-          return await this.#leftStopped(context, box, "access", `It was restored and started, but ${sentence(message(error)).replace(/^./, (first) => first.toLowerCase())} bb-box did not start its BB machine again, so nothing ran with the snapshot's old access file.`, true);
+          return await this.#leftStopped(context, box, "access", accessFailedWords(error), true);
         }
       }
       if (ahead("labels")) {
@@ -1429,6 +1497,44 @@ export class Snapshots {
     } finally {
       this.#running.delete(operation.id);
     }
+  }
+
+  #copyOf(undo: SnapshotRecord | null): Guest | null {
+    return undo?.guest === "held-copy" && undo.ref !== null ? undo.livesOn : null;
+  }
+
+  async #discardAdoption(box: BoxRecord, backend: Backend, made: Guest | null): Promise<void> {
+    if (!made) return;
+    const current = (await this.#deps.boxes.find(box.id))?.guest?.ref ?? null;
+    if (made.ref === current || this.#deps.ledger.records().some((record) => record.livesOn.ref === made.ref && record.backend.id === backend.id)) {
+      this.#deps.log?.(`Left guest ${made.ref} of box ${box.name} alone: it is the box's guest, or a snapshot lives on it, so it is not a new guest made part way.`);
+      return;
+    }
+    await backend.release(made, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal).catch((cause: unknown) => this.#deps.logError(`delete the part-made guest ${made.ref} of box ${box.name}`, cause));
+  }
+
+  async #undoStillThere(context: Restoring, box: BoxRecord, undo: SnapshotRecord): Promise<void> {
+    const { backend } = context;
+    let there: boolean | null = null;
+    let words = "";
+    try {
+      if (undo.guest === "held-copy") {
+        const copy = this.#copyOf(undo);
+        there = copy !== null && (await backend.copyState!(copy, this.#stopping.signal)) === "template";
+        words = `its held copy, guest ${undo.livesOn.ref}, is gone or no longer a template`;
+      } else {
+        const found = (await backend.heldSnapshots!(this.#stopping.signal)).find((held) => held.id === undo.id);
+        there = found?.state === "complete";
+        words = `${where(undo)} no longer has it whole`;
+      }
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      throw this.#restoreUnsure(context, box, "undo-ready", `bb-box could not check that the undo "${undo.name}" is still there: ${sentence(message(error))}`);
+    }
+    if (there) return;
+    this.#deps.ledger.updateRecord(undo.id, { state: "lost", error: words, stateAt: this.#now() });
+    this.#event(undo, "snapshot-lost", UNKNOWN_ACTOR, `"${undo.name}" (${undo.id}), the undo of a restore: ${words}.`);
+    await this.#putBack(context, box, "undo-ready", `Its undo "${undo.name}" was not there when bb-box went on with the restore: ${words}.`);
   }
 
   async #replaceUndos(boxId: string, target: string): Promise<string[]> {
@@ -1594,7 +1700,7 @@ export class Snapshots {
     }
     if (step.startsWith("copy-") && step !== "copy-ready") {
       if (!undo || !backend.copyState || !backend.deleteCopy) return unsure("bb-box cannot check the undo's copy on this backend.");
-      const copy = operation.guests?.new ?? null;
+      const copy = this.#copyOf(undo);
       if (step === "copy-submitting" || step === "copy-task") {
         const task = await this.#taskOf(operation, backend, operation.guests?.old ?? box.guest, signal, "copy");
         if (task?.state === "unreadable") return unsure(`It was copying the box for its undo, and bb-box could not read the copy's task: ${sentence(task.words)}`);
@@ -1615,8 +1721,11 @@ export class Snapshots {
         await backend.deleteCopy(copy, signal);
         this.#deps.log?.(`Deleted guest ${copy.ref}, the undo's copy for the restore of box ${box.name}: bb-box restarted before it was a template, so it is not trusted. bb-box makes it again from the stopped box.`);
       }
-      ledger.updateOperation(operation.id, { step: "stopped", task: null, guests: { old: operation.guests?.old ?? box.guest, new: null } });
-      return settle(() => this.#runRestore(context, "stopped"));
+      ledger.transaction(() => {
+        ledger.updateRecord(undo.id, { ref: null, livesOn: box.guest!, host: box.guest!.host });
+        ledger.updateOperation(operation.id, { step: "stopped", task: null });
+      });
+      return settle(() => this.#runRestore({ ...context, undo: ledger.record(undo.id) }, "stopped"));
     }
     if (step === "adopt-claimed" || step === "adopt-submitting" || step === "adopt-task") {
       const fresh = operation.guests?.new ?? null;
@@ -1626,7 +1735,7 @@ export class Snapshots {
         if (task?.state === "unreadable") return unsure(`It was making the box's new guest, and bb-box could not read the copy's task: ${sentence(task.words)}`);
         if (task?.state === "running") return unsure("It was making the box's new guest, and Proxmox's copy was still running when bb-box looked.");
       }
-      if (fresh && backend.deleteCopy) await backend.deleteCopy(fresh, signal);
+      await this.#discardAdoption(box, backend, fresh);
       ledger.updateOperation(operation.id, { step: "copy-ready", task: null, guests: { old: operation.guests?.old ?? box.guest, new: null } });
       return settle(() => this.#runRestore(context, "copy-ready"));
     }
@@ -1636,7 +1745,7 @@ export class Snapshots {
       if (task?.state === "running") return unsure("It was rolling back, and Proxmox's rollback was still running when bb-box looked.");
       if (task?.state === "ok") return settle(() => this.#runRestore(context, "rolled-back"));
       if (task?.state === "failed") return settle(() => this.#leftStopped(context, box, "rollback-task", `Proxmox's rollback task failed: ${sentence(task.words).replace(/\.$/, "")}.`, false));
-      if (task === null && step === "rollback-submitting") return settle(() => this.#runRestore(context, "undo-ready"));
+      if (task === null && step === "rollback-submitting") return settle(() => this.#runRestore(context, undo?.guest === "held-copy" ? "copy-ready" : "undo-ready"));
       return unsure("It was rolling back, and Proxmox no longer has the rollback's task, so bb-box cannot tell how it ended.");
     }
     return settle(() => this.#runRestore(context, step));
@@ -1659,7 +1768,25 @@ export class Snapshots {
     const ledger = this.#deps.ledger;
     if (ledger.problem) return 0;
     const waiting = ledger.unsettled().filter((operation) => !this.#running.has(operation.id));
-    if (!waiting.length) return 0;
+    const settledHere = waiting.length ? await this.#recoverWaiting(waiting, signal) : 0;
+    await this.#clearStaleMarks();
+    return settledHere;
+  }
+
+  async #clearStaleMarks(): Promise<void> {
+    const ledger = this.#deps.ledger;
+    for (const box of await this.#deps.boxes.all()) {
+      const mark = box.restoring;
+      if (!mark || this.#running.has(mark.operation)) continue;
+      const operation = ledger.operation(mark.operation);
+      if (operation && (operation.state === "running" || operation.state === "unknown")) continue;
+      await this.#deps.boxes.update(box, (current) => (current.restoring?.operation === mark.operation ? { restoring: null } : {}));
+      this.#deps.log?.(`Cleared box ${box.name}'s mark of a restore to "${mark.name}": ${operation ? `that restore ${operation.state === "done" ? "is done" : "failed"}` : "bb-box has no record of that restore"}, so nothing holds the box any more.`);
+    }
+  }
+
+  async #recoverWaiting(waiting: readonly SnapshotOperation[], signal?: AbortSignal): Promise<number> {
+    const ledger = this.#deps.ledger;
     const byBackend = new Map<string, SnapshotOperation[]>();
     for (const operation of waiting) {
       const record = ledger.record(operation.snapshots[0] ?? "");
@@ -1707,8 +1834,10 @@ export class Snapshots {
     if (!ref && operation.step.endsWith("submitting")) {
       if (!backend.findTasks) return { state: "unreadable", words: `${backend.label} cannot say whether it accepted the request` };
       try {
-        const candidates = await backend.findTasks(guest, kind, operation.startedAt, signal);
-        ref = candidates.find((candidate) => !this.#deps.ledger.operationWithTask(candidate.ref)) ?? null;
+        const restoring = operation.kind === "restore";
+        const candidates = (await backend.findTasks(guest, kind, restoring ? (operation.stepAt ?? operation.startedAt) : operation.startedAt, signal)).filter((candidate) => !this.#deps.ledger.operationWithTask(candidate.ref));
+        if (restoring && candidates.length > 1) return { state: "unreadable", words: `${backend.label} lists ${candidates.length} tasks that could be this step's, so bb-box cannot tell which is` };
+        ref = candidates[0] ?? null;
       } catch (error) {
         if (signal?.aborted) throw error;
         return { state: "unreadable", words: message(error) };

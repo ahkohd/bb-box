@@ -43,12 +43,13 @@ export interface UnsettledSteps {
 }
 
 const GiB = 2 ** 30;
+const OWN_USER = "bb-box@pve";
 const MiB = 2 ** 20;
 
 export class FakeSnapshots {
   readonly held = new Map<string, Held>();
   readonly tasks = new Map<string, TaskOutcome>();
-  readonly started = new Map<string, { readonly ref: string; readonly at: number; readonly operation: TaskKind }>();
+  readonly started = new Map<string, { readonly ref: string; readonly at: number; readonly operation: TaskKind; readonly user?: string }>();
   restoreWay: SnapshotPlan["restore"]["way"] = "rollback";
   restoreWhy: string | null = null;
   newer = 0;
@@ -98,9 +99,9 @@ export class FakeSnapshots {
     const savedOf = (id: string) => (root ? join(root, "saved", id) : null);
     const start = backend.start?.bind(backend);
     if (start) {
-      target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => {
+      target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => {
         this.order.push("start");
-        return start(guest, signal, timing);
+        return start(guest, signal, timing, answered);
       };
     }
     const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
@@ -207,17 +208,19 @@ export class FakeSnapshots {
       if (outcome === "refused") throw new SnapshotFailed("CT is locked (backup)");
       const result: TaskOutcome = outcome === "failed" ? { state: "failed", words: "rollback interrupted" } : { state: "ok" };
       const task = this.#task(guest, "rollback", ref.id, result, now());
+      if (outcome !== "failed") {
+        const home = homeOf(guest.ref);
+        const saved = savedOf(ref.id);
+        if (home && saved && existsSync(saved)) {
+          rmSync(home, { recursive: true, force: true });
+          cpSync(saved, home, { recursive: true });
+        }
+        const size = this.sizes.get(ref.id);
+        if (size) backend.setSize(guest.ref, size);
+      }
       await hooks.task({ ref: task, host: guest.host });
       if (this.gate) await this.gate;
       if (outcome === "failed") throw new RestoreChanged("Proxmox's rollback task failed: rollback interrupted.");
-      const home = homeOf(guest.ref);
-      const saved = savedOf(ref.id);
-      if (home && saved && existsSync(saved)) {
-        rmSync(home, { recursive: true, force: true });
-        cpSync(saved, home, { recursive: true });
-      }
-      const size = this.sizes.get(ref.id);
-      if (size) backend.setSize(guest.ref, size);
       if (outcome === "unknown") throw new Error("cannot reach the provider: timed out");
     };
     target.outsideRollbacks = async (since: number): Promise<OutsideRollback[]> => {
@@ -238,11 +241,11 @@ export class FakeSnapshots {
       this.copyFault = null;
       if (fault) throw fault;
       const task = this.#task(source, "copy", label.snapshot, { state: "ok" }, now());
-      await hooks.task({ ref: task, host: source.host });
       this.copies.set(copy.ref, { state: "copy", box: label.box, snapshot: label.snapshot, disarmed: false, takenAt: now() });
       const home = homeOf(source.ref);
       const saved = savedOf(copy.ref);
       if (home && saved && existsSync(home)) cpSync(home, saved, { recursive: true });
+      await hooks.task({ ref: task, host: source.host });
       return copy;
     };
     target.disarmCopy = async (copy: Guest) => {
@@ -257,6 +260,7 @@ export class FakeSnapshots {
     target.copyState = async (copy: Guest): Promise<CopyState> => this.copies.get(copy.ref)?.state ?? (this.earlier.has(copy.ref) ? "copy" : "gone");
     target.deleteCopy = async (copy: Guest) => {
       this.order.push(`delete ${copy.ref}`);
+      if (!this.copies.has(copy.ref) && !this.earlier.has(copy.ref) && (await backend.power(copy)) !== null) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest, so bb-box does not delete it as one.`);
       this.copies.delete(copy.ref);
       if (this.earlier.has(copy.ref) || (await backend.power(copy)) !== null) {
         this.earlier.delete(copy.ref);
@@ -319,7 +323,7 @@ export class FakeSnapshots {
     target.findTasks = async (guest: Guest, operation: TaskKind, since: number): Promise<TaskRef[]> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return [...this.started.entries()]
-        .filter(([key, task]) => key.startsWith(`${guest.ref}|${operation}|`) && task.at >= since - 5000)
+        .filter(([key, task]) => key.startsWith(`${guest.ref}|${operation}|`) && task.at >= since - 5000 && (task.user ?? OWN_USER) === OWN_USER)
         .sort(([, a], [, b]) => a.at - b.at)
         .map(([, task]) => ({ ref: task.ref, host: guest.host }));
     };

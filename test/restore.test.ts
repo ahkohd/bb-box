@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { BoxIdentity, Guest } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, SnapshotRecord } from "../src/core/snapshot.ts";
-import { COMMAND, DAY, THREAD, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
+import { COMMAND, DAY, THREAD, armedWorld, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
 
 const AGENT: Caller = { is: "agent", threadId: THREAD };
 
@@ -360,7 +360,7 @@ test("G13: restores made outside bb-box are logged from the provider's tasks by 
 });
 
 test("G4 in ZFS's order (the live-check switch): the newest only, after a held copy of the stopped box; undoing it is a swap to a new guest with the box's identity, which leaves an earlier guest, fork only", async () => {
-  const state = world();
+  const state = armedWorld();
   state.undoByCopy = true;
   const box = await readyBox(state);
   const first = box.guest!;
@@ -422,7 +422,7 @@ test("G4 in ZFS's order (the live-check switch): the newest only, after a held c
 });
 
 test("G6 and G16 in ZFS's order: a copy cut short before it is a template is deleted and made again, never trusted; a swap cut short after its new guest is made finishes", async () => {
-  const state = world();
+  const state = armedWorld();
   state.undoByCopy = true;
   const box = await readyBox(state);
   write(state, box, "work.txt", "one");

@@ -99,6 +99,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
     held_until INTEGER
   )`,
   `CREATE INDEX ${SCHEMA}.snapshot_charges_by_backend ON snapshot_charges(backend, held_until)`,
+  `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN step_at INTEGER`,
 ];
 
 const CHARGES_KEPT_MS = 400 * 24 * 60 * 60_000;
@@ -188,6 +189,7 @@ interface OperationRow {
   ended_at: number | null;
   updated_at: number;
   snapshots_gone_at: number | null;
+  step_at: number | null;
 }
 
 function actorOf(who: Actor["is"], agent: string | null, why: string | null): Actor {
@@ -325,6 +327,7 @@ function operationOf(row: OperationRow): SnapshotOperation {
     startedAt: row.started_at,
     endedAt: row.ended_at,
     snapshotsGoneAt: row.snapshots_gone_at,
+    stepAt: row.step_at,
   };
 }
 
@@ -350,6 +353,7 @@ function operationRow(operation: SnapshotOperation, now: number): OperationRow {
     ended_at: operation.endedAt,
     updated_at: now,
     snapshots_gone_at: operation.snapshotsGoneAt,
+    step_at: operation.stepAt ?? null,
   };
 }
 

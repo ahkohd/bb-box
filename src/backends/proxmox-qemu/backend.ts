@@ -483,6 +483,7 @@ export class ProxmoxQemuBackend implements Backend {
         type: "qemu",
         installId: context.installId,
         pool: config.proxmox.pool,
+        tokenUser: config.proxmox.tokenId.split("!")[0] || null,
         client: () => this.client(),
         vmid: (guest) => this.#vmid(guest),
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
@@ -653,7 +654,12 @@ export class ProxmoxQemuBackend implements Backend {
 
   async deleteCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
-    if (!(await this.#copyConfig(api, copy, signal))) return;
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) return;
+    const tags = parseTags(config.tags);
+    const box = typeof copy.data?.box === "string" ? copy.data.box : "";
+    const described = typeof config.description === "string" && config.description.startsWith(`bb-box install ${this.#context.installId} box ${box} held copy of snapshot `);
+    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so bb-box does not delete it as one.`);
     await this.#forget(this.#vmid(copy));
     await api.destroy(this.#vmid(copy), signal);
   }
@@ -1081,7 +1087,7 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1092,6 +1098,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
     await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
+    await answered?.();
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
     else if (resumed && this.#kindOf(guest.data?.template) === ANDROID_IMAGE_KIND) await step("clock", () => this.#setLinuxClock(vmid, signal));

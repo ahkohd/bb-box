@@ -75,6 +75,7 @@ export interface SnapshotGuests {
   readonly type: GuestType;
   readonly installId: string;
   readonly pool: string;
+  readonly tokenUser: string | null;
   client(): Promise<Proxmox>;
   vmid(guest: Guest): number;
   ownConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>>;
@@ -278,12 +279,18 @@ export class ProxmoxSnapshotting {
       if (verdict.restore === "none" || verdict.restore === "unknown") reasons.push(`Guest ${vmid}'s ${other} is on ${name}, and ${verdict.words.replace(/\.$/, "")}, so bb-box takes no snapshot of it.`);
     }
     let locked: SnapshotPlan["locked"] = null;
+    let lockWhy: string | null = null;
     if (lock === "suspended") reasons.push("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
     else if (lock) {
       const words = await this.#lockWords(api, vmid, lock, signal);
-      if (words.running) reasons.push(words.running);
-      else if (words.fix) locked = { lock, fix: words.fix };
-      else reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so bb-box takes no snapshot of it.`);
+      if (words.running) {
+        reasons.push(words.running);
+        lockWhy = words.running;
+      } else if (words.fix) locked = { lock, fix: words.fix };
+      else {
+        reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so bb-box takes no snapshot of it.`);
+        lockWhy = `Proxmox has guest ${vmid} locked (${lock}).`;
+      }
     }
     let memory: SnapshotPlan["take"]["memory"] = null;
     let memoryWhy: string | null = null;
@@ -307,7 +314,7 @@ export class ProxmoxSnapshotting {
         memory,
         memoryWhy,
       },
-      restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, takeWhy: reasons[0] ?? null }, target, signal),
+      restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, lockWhy, takeWhy: reasons[0] ?? null }, target, signal),
       keep: { way: "no", why: "bb-box does not keep snapshots past a release yet.", aboutMs: null, bytes: null, price: null },
       fork: { ok: false, why: "bb-box does not fork snapshots yet.", aboutMs: 0, bytes: null },
       locked,
@@ -318,7 +325,14 @@ export class ProxmoxSnapshotting {
     api: Proxmox,
     guest: Guest,
     config: Record<string, unknown>,
-    seen: { readonly type: string; readonly restores: readonly { readonly restore: SnapshotRestore; readonly words: string }[]; readonly privileges: ReadonlySet<string> | null; readonly lock: string | null; readonly takeWhy: string | null },
+    seen: {
+      readonly type: string;
+      readonly restores: readonly { readonly restore: SnapshotRestore; readonly words: string }[];
+      readonly privileges: ReadonlySet<string> | null;
+      readonly lock: string | null;
+      readonly lockWhy: string | null;
+      readonly takeWhy: string | null;
+    },
     target: SnapshotRef | null,
     signal?: AbortSignal,
   ): Promise<SnapshotPlan["restore"]> {
@@ -334,6 +348,7 @@ export class ProxmoxSnapshotting {
       return none(`The Proxmox token lacks VM.Snapshot.Rollback on /pool/${this.#guests.pool}, so bb-box cannot restore snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }
     if (seen.lock === "suspended") return none("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
+    if (seen.lockWhy) return none(seen.lockWhy);
     const way: RestoreWay = seen.restores.some((each) => each.restore === "newest-only") ? "rollback-newest-only" : "rollback";
     const undo = way === "rollback" ? { undo: "snapshot" as const, undoAboutMs: TAKES_ABOUT_MS, undoBytes: SHARES_BLOCKS.has(seen.type) ? 0 : null } : { undo: "held-copy" as const, undoAboutMs: copyAboutMs ?? 0, undoBytes: copyBytes };
     if (!target) return { way, why: null, ...undo, sizeBack: null, leavesOnEarlierGuest: 0, newer: 0, copyAboutMs };
@@ -547,8 +562,9 @@ export class ProxmoxSnapshotting {
     const vmid = this.#guests.vmid(guest);
     const type = `${this.#guests.type === "qemu" ? "qm" : "vz"}${TASK_TYPES[operation]}`;
     const from = Math.floor(since / 1000) - CLOCK_SLACK_S;
+    const ours = this.#guests.tokenUser;
     return (await api.tasksSince(vmid, type, from, signal))
-      .filter((task) => task.start >= from)
+      .filter((task) => task.start >= from && (ours === null || (task.upid.split(":")[7] ?? "").split("!")[0] === ours))
       .sort((a, b) => a.start - b.start)
       .map((task) => ({ ref: task.upid, host: api.node }));
   }

@@ -61,14 +61,18 @@ export function restoreCheckText(check: RestoreCheck): string {
     lines.push(`- take its undo "${check.undo.name}", a snapshot of it stopped, about ${seconds(check.undo.aboutMs)};`);
   } else lines.push("- take no undo, so this cannot be undone;");
   if (check.swap) {
-    lines.push(`- make it a new guest from that held copy, with its own identity, and start it; ${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only;`);
+    const old = check.leavesOnEarlierGuest
+      ? `${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only`
+      : `its old guest holds no snapshot, so bb-box deletes it${check.undo ? "" : ", and with no undo, nothing then holds the box as it is now"}`;
+    lines.push(`- make it a new guest from that held copy, with its own identity, and start it; ${old};`);
   } else lines.push("- roll its disk back, and start it;");
+  if (check.replaces) lines.push(`- once it is done, delete its oldest undo, "${check.replaces}", as a box keeps two;`);
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
   lines.push(`Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
   if (check.from && check.to && describeSize(check.from) !== describeSize(check.to)) lines.push(`It goes back to ${describeSize(check.to)}, as it was then; it has ${describeSize(check.from)} now.`);
   if (snapshot.excludes) lines.push(`It leaves out ${snapshot.excludes}.`);
   if (check.anyway.length) lines.push(`It would also end what is on it now: ${check.anyway.join("; ")}. Restore anyway with --force.`);
-  lines.push("Nothing changed. Run it again without --check to restore.");
+  lines.push("Nothing changed. Run it again with --replace instead of --check to restore.");
   return lines.join("\n");
 }
 

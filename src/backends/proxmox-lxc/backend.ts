@@ -675,6 +675,7 @@ export class ProxmoxLxcBackend implements Backend {
         type: "lxc",
         installId: context.installId,
         pool: config.proxmox.pool,
+        tokenUser: config.proxmox.tokenId.split("!")[0] || null,
         client: () => this.client(),
         vmid: (guest) => this.#vmid(guest),
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
@@ -841,7 +842,12 @@ export class ProxmoxLxcBackend implements Backend {
 
   async deleteCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
-    if (!(await this.#copyConfig(api, copy, signal))) return;
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) return;
+    const tags = parseTags(config.tags);
+    const box = typeof copy.data?.box === "string" ? copy.data.box : "";
+    const described = typeof config.description === "string" && config.description.startsWith(`bb-box install ${this.#context.installId} box ${box} held copy of snapshot `);
+    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so bb-box does not delete it as one.`);
     await this.#forget(this.#vmid(copy));
     await api.destroy(this.#vmid(copy), signal);
   }
@@ -1270,7 +1276,7 @@ export class ProxmoxLxcBackend implements Backend {
     return status ? powerOf(status.status) : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void> {
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1287,6 +1293,7 @@ export class ProxmoxLxcBackend implements Backend {
       : untimed;
     if (status.status !== "running") await step("boot", () => api.start(vmid, signal));
     await this.#waitReady(vmid, null, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step);
+    await answered?.();
     // A GPU desktop's display takes its path again at each boot, and falls back to the CPU when its GPU is short of memory (#597).
     const template = typeof guest.data?.template === "number" ? guest.data.template : null;
     if (!this.#gpuOf(template)) return;
