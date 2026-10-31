@@ -19,3 +19,11 @@ export function threadOnBox(thread: BbThread): ThreadOnBox {
     ...(typeof thread.updatedAt === "number" ? { activeAt: thread.updatedAt } : {}),
   };
 }
+
+export function startedAt(box: { readonly log?: { readonly lastStart: { readonly askedAt: number } | null } | null; readonly readyAt: number | null; readonly createdAt: number }): number {
+  return box.log?.lastStart?.askedAt ?? box.readyAt ?? box.createdAt;
+}
+
+export function lastActiveAt(threads: readonly ThreadOnBox[], started: number, now: number): number {
+  return Math.max(started, ...threads.map((thread) => (thread.running ? now : (thread.activeAt ?? 0))));
+}

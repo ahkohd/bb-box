@@ -2,7 +2,7 @@
 // when open, its quick actions and its menu.
 
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useState, type MouseEvent, type ReactNode } from "react";
+import { useId, useState, type MouseEvent, type ReactNode } from "react";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
@@ -18,6 +18,9 @@ import { BoxMenu, type BoxAction } from "./box-menu.tsx";
 import { releaseUnfinished, unreachableWhy } from "./box-words.ts";
 import { followPageLink, type PageLink } from "./box-nav.tsx";
 import { ROW_NAME } from "./list-place.ts";
+import type { Busy } from "../monitor/busy.ts";
+import { rowLine } from "./row-line.ts";
+import { rowDescribedBy, RowStatus, useNameFocus } from "./row-status.tsx";
 
 /** The viewer IDs this browser tab holds, one per box, as the desktop tabs keep them. */
 export function myViewers(): Set<string> {
@@ -61,9 +64,9 @@ export function RowChevron({ page }: { page: PageLink }) {
   );
 }
 
-export function RowNameLink({ box, page, children }: { box: Pick<BoxView, "id" | "name">; page: PageLink; children: ReactNode }) {
+export function RowNameLink({ box, page, describedBy, focus, children }: { box: Pick<BoxView, "id" | "name">; page: PageLink; describedBy?: string; focus?: Pick<ReturnType<typeof useNameFocus>, "onFocus" | "onBlur">; children: ReactNode }) {
   return (
-    <a href={page.href} aria-label={box.name} {...{ [ROW_NAME]: box.id }} onClick={followPageLink(page)} className="block min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+    <a href={page.href} aria-label={box.name} aria-describedby={describedBy} onFocus={focus?.onFocus} onBlur={focus?.onBlur} {...{ [ROW_NAME]: box.id }} onClick={followPageLink(page)} className="block min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
       {children}
     </a>
   );
@@ -94,6 +97,7 @@ export function BoxRow({
   held = null,
   opens,
   meta = [],
+  busy: busyNow = null,
   extra = null,
   threading: offersThread = true,
   onBoxesPage,
@@ -109,6 +113,7 @@ export function BoxRow({
   opens?: BoxOpens;
   /** Last words on the status line, such as the Boxes page's who has control and thread title. */
   meta?: readonly (string | null)[];
+  busy?: Busy | null;
   /** A quick action before the menu, such as the Boxes page's Open thread. */
   extra?: ReactNode;
   /** "New thread on this box…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
@@ -134,6 +139,9 @@ export function BoxRow({
   const page = "page" in opening ? opening.page : null;
   const open = !page && "details" in opening && opening.details;
   const status = statusOf(box, now, myViewers());
+  const lineId = useId();
+  const nameFocus = useNameFocus();
+  const line = page ? rowLine(box, { now, busy: busyNow, viewers: myViewers(), resizeNote }) : null;
   const ready = box.state === "ready";
   const showsError = box.error !== null;
   const compact = useIsCompactViewport();
@@ -161,7 +169,7 @@ export function BoxRow({
       </span>
       <div className="min-w-0">
         {page ? (
-          <RowNameLink box={box} page={page}>
+          <RowNameLink box={box} page={page} describedBy={line ? rowDescribedBy(line, lineId) : undefined} focus={nameFocus}>
             <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
           </RowNameLink>
         ) : (
@@ -176,16 +184,22 @@ export function BoxRow({
             <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
           </button>
         )}
-        <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
-        {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
-        {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
-        {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
-        {ready && box.enrol.state === "failed" ? (
-          <p className="mt-0.5 text-xs leading-snug text-warning-text">
-            <JoinHelp words={box.enrol.error} advice={joinAdvice(box)} />
-          </p>
-        ) : null}
-        {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}
+        {line ? (
+          <RowStatus line={line} id={lineId} nameFocused={nameFocus.focused} />
+        ) : (
+          <>
+          <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
+          {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
+          {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+          {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
+          {ready && box.enrol.state === "failed" ? (
+            <p className="mt-0.5 text-xs leading-snug text-warning-text">
+              <JoinHelp words={box.enrol.error} advice={joinAdvice(box)} />
+            </p>
+          ) : null}
+          {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}
+          </>
+        )}
         {held ? (
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {held.owner === "yours" ? (

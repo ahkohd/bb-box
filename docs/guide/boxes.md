@@ -102,7 +102,7 @@ When a box stops answering, BB Box checks it again by itself after 1 minute, aft
 Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
 
 - **Machines** lists your machines.
-- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread.
+- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread. Beside the arrow, the card says whether the thread is working, with a spinner and 'Working', or how long it has been idle, such as 'Idle 3 h'.
 
 The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
 
@@ -113,7 +113,7 @@ The page opens on the tab you chose last. The first time, it opens on Machines i
 Under the tabs, a search field finds boxes by name, kind, provider, device, such as iPhone 18 Pro, or thread title. Beside it:
 
 - **Filters** keeps the boxes whose system, tags, provider and state you tick. A box with a device has its device's system, iOS or Android, so it is not under macOS or Linux. Tags say what a box is, such as Desktop, GPU or Container. Each filter offers only what the tab lists.
-- **Sort** orders the boxes by name or by when they were made. Select the same choice again to reverse the order.
+- **Sort** orders the boxes by name, by when they were made, or by when they were last active. Last active is the latest of when the box's thread last worked, or for one of your machines any thread on it, and when the box was last started. It puts the boxes used most recently first, so boxes nobody has used for days come last. Select the same choice again to reverse the order.
 
 On Threads, each thread's card comes where its first box falls in that order.
 
@@ -126,6 +126,30 @@ A desktop or terminal you open from a row shows on the page, with a back arrow t
 When you come back to the list from a box's page, a desktop or a terminal, by the page's **Boxes** link, a back arrow or the browser's Back, the list is as you left it: the same tab, search, filters, sort and scroll, with the keyboard's focus on the name of the box you opened. If that box has gone, the focus is on the row now in its place. The list keeps these until you close the browser tab. The search field and the tabs stay at the top while the rows scroll.
 
 The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. To start a thread on a box of its own, use BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
+
+### What a row says on the Boxes page
+
+On the Boxes page, the line under a box's name says how the box is now: its state, what needs your attention, how long, then its cores and memory. For example:
+
+| What it says | What it means |
+| --- | --- |
+| Ready · up 2 h · 4 cores · 8 GiB memory | the box has been running for 2 hours since it last started |
+| Ready · Busy: CPU 96% for 9 min · up 46 min | the box has been busy for at least 5 minutes |
+| Ready · You have control · up 2 h | you hold its desktop's keyboard and mouse |
+| Ready · Stop failed · up 2 h | the last stop did not work |
+| Last seen ready · Its backend is not in settings · 2 d ago | BB Box cannot check the box: see [when something goes wrong](#when-something-goes-wrong) |
+| Last seen ready · pve-3 does not answer · 12 min ago | the box's host does not answer |
+| Ready · Joining BB, try 3 of 5 · up 3 min | a try to join BB failed, and BB Box tries again |
+| Ready · Could not join BB · up 12 s | the box works, but it is not a BB machine |
+| Starting · 7 s | the box is being made or started |
+| Stopped · 3 h ago · 4 cores · 8 GiB memory | the box is off and keeps its disk |
+| Failed · 52 min ago | the box could not start |
+
+What needs your attention comes in this order: an action that failed, a backend not in settings, a host that does not answer, busy, your control of its desktop, and a box that could not join BB. It is in amber or red, in words. When there is more to say, such as why a box could not join BB or the backend's own error, a warning mark follows the words. Point at the line, or move the keyboard's focus to the box's name, to read all of it; a screen reader reads it with the box's name. The box's page says it in full, with what to do.
+
+A box is busy when box history saw it high for 5 whole minutes in a row, for one reason, by the Monitor's own rules, and its newest reading is under 2 minutes old. The words give the reason: 'Busy: CPU 96% for 9 min', 'Busy: memory 93% for 6 min', 'Busy: load 7.9 on 4 cores for 6 min' for a box with its own kernel, 'Busy: 95% of its share for 7 min' for a Mac shared with other boxes, which is judged by its own processes only, or 'Disk 97% full'. With box history or the Monitor off, no row and no page says busy. The box's page says it in its header too, as a link to its processes.
+
+The line may take 2 lines on a narrow screen. What needs your attention stays; how long and the size go first. The list asks again every 15 seconds while it is shown, so a thread that finishes says 'Idle' soon after.
 
 ## A box's page
 

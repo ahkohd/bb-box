@@ -7,13 +7,14 @@ import { test } from "node:test";
 import { openBoxFiles } from "../src/plugin/attached-files.ts";
 import { BOX_LOG_MIGRATIONS, BoxLogStore } from "../src/plugin/box-log-store.ts";
 import { BOX_HISTORY_MIGRATIONS, BoxHistoryStore, hourParts } from "../src/plugin/box-history-store.ts";
-import { historyRead, historyStateWords, retainedKeys } from "../src/plugin/box-history.ts";
+import { createBoxHistory, historyRead, historyStateWords, retainedKeys } from "../src/plugin/box-history.ts";
+import { busyOf, type BusyPoint } from "../src/monitor/busy.ts";
 import { BoxHistory, LEAST_WORKERS, MOST_WORKERS, secondOf, spreadSeconds, workersFor, type HistoryBox, type HistoryReach, type HistoryWrites, type Switches, type Tally } from "../src/monitor/box-history.ts";
 import { historyShape, type HistoryInputs } from "../src/monitor/history-view.ts";
 import { HIGH, baselineWhy, lightScript, machinePoint, measure, parseLightOutput, reasonsOf, type Kept, type LightReading, type Point } from "../src/monitor/light.ts";
 import { createMonitorStore } from "../src/monitor/monitor-store.ts";
 import { BY_COMMAND, BY_PERSON } from "../src/core/box-log.ts";
-import { MONITOR_DEFAULTS } from "../src/core/document.ts";
+import { MONITOR_DEFAULTS, type MonitorConfig } from "../src/core/document.ts";
 import type { BoxRecord, Boxes } from "../src/core/boxes.ts";
 import type { ReachCheck } from "../src/core/reach.ts";
 import { TransportError, type RunResult } from "../src/transports/types.ts";
@@ -995,4 +996,100 @@ test("a history reading goes through a connected BB machine's host entry, else o
 
   await assert.rejects(read(as("bxwindows00001"), request, signal), /not answering BB/);
   assert.deepEqual(calls.splice(0), ["machine offline bxwindows00001"]);
+});
+
+function busyApp(store: BoxHistoryStore, clock: { now: number }, config: { current: MonitorConfig }, started: { at: number | null } = { at: null }) {
+  const boxLog = { view: () => ({ lastStart: started.at === null ? null : { askedAt: started.at, readyAt: started.at + 2000, failedAt: null, by: null, first: false }, lastStop: null, lastFailed: null }) };
+  return createBoxHistory({ store, config: () => config.current, now: () => clock.now, boxes: { all: async () => [] }, boxLog, reach: {}, hostLight: async () => ({}), connected: async () => null, unreachableHost: async () => undefined, log: () => undefined } as never);
+}
+
+function readyRecord(id: string): BoxRecord {
+  return { id, name: id, threadId: "thr_one", state: "ready", createdAt: 0, readyAt: null, guest: { ref: id, host: null, data: {} } } as unknown as BoxRecord;
+}
+
+test("G15: a box is busy only after 5 whole fresh minutes in a row for one reason, by load on a box with its own kernel, and never with history off or stale", () => {
+  const clock = { now: T0 + 6 * MINUTE + 20_000 };
+  const config = { current: { ...MONITOR_DEFAULTS } as MonitorConfig };
+  const opened = openedHistory(tempDir("history-busy"), () => clock.now);
+  const history = busyApp(opened.store, clock, config);
+  points(opened.store, "bxloadedvm0001", T0, 6, { cpu: 60, load: 7.9, cores: 4, high: HIGH.load });
+  points(opened.store, "bxfourminutes1", T0 + 2 * MINUTE, 4, { cpu: 97, high: HIGH.cpu });
+  points(opened.store, "bxcalmbox00001", T0, 6, { cpu: 30 });
+  points(opened.store, "bxbothhigh0001", T0, 6, { cpu: 96, load: 9, cores: 4, high: HIGH.cpu | HIGH.load });
+  points(opened.store, "bxdiskfull0001", T0, 6, { disk: 97.2, high: HIGH.disk });
+
+  assert.deepEqual(history.busy(readyRecord("bxloadedvm0001")), { reason: "load", value: 7.9, cores: 4, since: T0, at: T0 + 6 * MINUTE, slot: false, readAt: clock.now });
+  assert.equal(history.busy(readyRecord("bxfourminutes1")), null, "4 minutes is not enough");
+  assert.equal(history.busy(readyRecord("bxcalmbox00001")), null);
+  assert.equal(history.busy(readyRecord("bxbothhigh0001"))!.reason, "cpu", "CPU is the measure a person reads first");
+  assert.equal(history.busy(readyRecord("bxdiskfull0001"))!.reason, "disk");
+  assert.equal(history.busy({ ...readyRecord("bxloadedvm0001"), state: "stopped" } as BoxRecord), null, "only a ready box is busy");
+
+  config.current = { ...MONITOR_DEFAULTS, boxHistory: false };
+  assert.equal(history.busy(readyRecord("bxloadedvm0001")), null, "history off says nothing at once");
+  config.current = { ...MONITOR_DEFAULTS, enabled: false };
+  assert.equal(history.busy(readyRecord("bxloadedvm0001")), null, "the Monitor off says nothing");
+  config.current = { ...MONITOR_DEFAULTS };
+
+  clock.now = T0 + 9 * MINUTE;
+  assert.equal(history.busy(readyRecord("bxloadedvm0001")), null, "a newest point 3 minutes old says nothing");
+  opened.source.close();
+});
+
+test("G15: a streak with a missed minute starts again, a long one reaches back past the first hour, and a slot is judged on its own points", () => {
+  const clock = { now: T0 + 90 * MINUTE + 10_000 };
+  const config = { current: { ...MONITOR_DEFAULTS } as MonitorConfig };
+  const opened = openedHistory(tempDir("history-busy-streak"), () => clock.now);
+  const history = busyApp(opened.store, clock, config);
+  points(opened.store, "bxgappedbox001", T0 + 82 * MINUTE, 3, { cpu: 98, high: HIGH.cpu });
+  points(opened.store, "bxgappedbox001", T0 + 86 * MINUTE + 30_000, 3, { cpu: 98, high: HIGH.cpu });
+  points(opened.store, "bxlongbusy0001", T0, 90, { cpu: 99, high: HIGH.cpu });
+  points(opened.store, "bxloadedslot01", T0 + 80 * MINUTE, 10, { cpu: 95, high: HIGH.cpu });
+  points(opened.store, "bxcalmslot0001", T0 + 80 * MINUTE, 10, { cpu: 12 });
+
+  assert.equal(history.busy(readyRecord("bxgappedbox001")), null, "a missed reading starts a new streak");
+  assert.equal(history.busy(readyRecord("bxlongbusy0001"))!.since, T0, "90 minutes, not cut at the first look's 70");
+  assert.equal(history.busy(readyRecord("bxloadedslot01"))!.reason, "cpu");
+  assert.equal(history.busy(readyRecord("bxcalmslot0001")), null, "its neighbour's load is not its own");
+  opened.source.close();
+});
+
+test("busyOf allows a reading's lateness: five readings covering 4 min 55 s count, a streak must reach the newest point, and an older streak does not", () => {
+  const minute = (end: number, covered: number, high: number): BusyPoint => ({ at: end, covered, cpu: 90, memory: 50, disk: 20, load: null, cores: null, high });
+  const late = [1, 2, 3, 4, 5].map((index) => minute(T0 + index * 59_000, 59, HIGH.cpu));
+  assert.equal(busyOf(late, T0 + 5 * 59_000 + 1000, false)!.since, T0);
+  const short = [1, 2, 3, 4, 5].map((index) => minute(T0 + index * 55_000, 55, HIGH.cpu));
+  assert.equal(busyOf(short, T0 + 5 * 55_000, false), null, "4 min 35 s is short of 5 minutes");
+  const ended = [...[1, 2, 3, 4, 5, 6].map((index) => minute(T0 + index * MINUTE, 60, HIGH.cpu)), minute(T0 + 7 * MINUTE, 60, 0)];
+  assert.equal(busyOf(ended, T0 + 7 * MINUTE + 1000, false), null, "the load ended a minute ago");
+  assert.equal(busyOf([], T0, false), null);
+});
+
+test("G15: a streak never reaches back past the box's last start, the end of a time history was off, or a clock that moved back (review)", () => {
+  const config = { current: { ...MONITOR_DEFAULTS } as MonitorConfig };
+  const clock = { now: T0 + 10 * MINUTE + 20_000 };
+  const started = { at: null as number | null };
+  const opened = openedHistory(tempDir("history-busy-epochs"), () => clock.now);
+  const history = busyApp(opened.store, clock, config, started);
+  points(opened.store, "bxrestarted001", T0, 10, { cpu: 98, high: HIGH.cpu });
+  assert.equal(history.busy(readyRecord("bxrestarted001"))!.since, T0);
+
+  started.at = clock.now - 1000;
+  assert.equal(history.busy(readyRecord("bxrestarted001")), null, "one second up after a restart is not 10 minutes busy");
+  started.at = T0 + 4 * MINUTE;
+  assert.equal(history.busy(readyRecord("bxrestarted001"))!.since, T0 + 4 * MINUTE, "only the minutes since the start count");
+  started.at = null;
+
+  opened.store.setQuiet("history", true, T0 + 10 * MINUTE + 5_000);
+  assert.equal(history.busy(readyRecord("bxrestarted001")), null, "history off now");
+  opened.store.setQuiet("history", false, T0 + 10 * MINUTE + 15_000);
+  assert.equal(history.busy(readyRecord("bxrestarted001")), null, "history on again with no new reading brings back nothing");
+
+  const back = openedHistory(tempDir("history-busy-clock"), () => clock.now);
+  const before = busyApp(back.store, clock, config);
+  points(back.store, "bxclockback001", T0, 10, { cpu: 98, high: HIGH.cpu });
+  clock.now = T0 + 6 * MINUTE + 20_000;
+  assert.equal(before.busy(readyRecord("bxclockback001")), null, "a clock moved back does not make old points fresh");
+  opened.source.close();
+  back.source.close();
 });

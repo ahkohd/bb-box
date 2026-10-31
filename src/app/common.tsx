@@ -64,23 +64,46 @@ export function forgetLive(): void {
   remembered.clear();
 }
 
+interface LiveRun {
+  readonly key: string;
+  again: boolean;
+  done: Promise<void>;
+}
+
 export function useLive<T>(key: string, load: () => Promise<T>, relevant: (payload: unknown) => boolean) {
   const latest = useRef({ load, relevant });
   latest.current = { load, relevant };
   const sequence = useRef(0);
+  const running = useRef<LiveRun | null>(null);
   const [value, setValue] = useState<T | null>(() => (remembered.has(key) ? (remembered.get(key) as T) : null));
   const [error, setError] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    const mine = ++sequence.current;
-    try {
-      const next = await latest.current.load();
-      if (mine !== sequence.current) return;
-      remembered.set(key, next);
-      setValue(next);
-      setError(null);
-    } catch (caught) {
-      if (mine === sequence.current) setError(message(caught));
+  const refresh = useCallback((): Promise<void> => {
+    const current = running.current;
+    if (current && current.key === key) {
+      current.again = true;
+      return current.done;
     }
+    const run: LiveRun = { key, again: false, done: Promise.resolve() };
+    const loadUntilCurrent = async () => {
+      do {
+        run.again = false;
+        const mine = ++sequence.current;
+        try {
+          const next = await latest.current.load();
+          if (mine !== sequence.current) continue;
+          remembered.set(key, next);
+          setValue(next);
+          setError(null);
+        } catch (caught) {
+          if (mine === sequence.current) setError(message(caught));
+        }
+      } while (run.again && running.current === run);
+    };
+    running.current = run;
+    run.done = loadUntilCurrent().finally(() => {
+      if (running.current === run) running.current = null;
+    });
+    return run.done;
   }, [key]);
   useEffect(() => {
     setValue(remembered.has(key) ? (remembered.get(key) as T) : null);

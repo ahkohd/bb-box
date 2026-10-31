@@ -807,7 +807,7 @@ export function Processes({ snapshot, slot, host, why = null }: { snapshot: Moni
   return (
     <section id="processes" aria-labelledby="processes-heading" data-processes className={cn("scroll-mt-4", CARD)} aria-busy={pulse || undefined}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-4 py-2.5">
-        <h2 id="processes-heading" className="text-sm font-normal text-foreground">
+        <h2 id="processes-heading" tabIndex={-1} className="text-sm font-normal text-foreground focus:outline-none">
           {slot ? "This slot's processes" : "Top processes"}
         </h2>
         <span className="text-xs text-subtle-foreground">{slot ? `Its own user's only, not ${host ?? "its Mac"}'s` : "By CPU, by name only"}</span>
