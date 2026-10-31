@@ -525,7 +525,6 @@ export class FakeBackend implements Backend {
     return { ...guest, size: to };
   }
 
-  /** Makes a stopped guest for `box` from the files in `from`, as a clone of a held copy is (070): a guest of this install that names the box. */
   async makeGuest(box: BoxIdentity, from: string | null): Promise<Guest> {
     const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
     await this.#storage.set("counter", counter);
@@ -540,7 +539,6 @@ export class FakeBackend implements Backend {
     return this.#home(ref);
   }
 
-  /** Gives a guest the size a provider would say it has now, as after a rollback to a snapshot taken at another size. */
   setSize(ref: string, size: BoxSize): void {
     this.#sizes.set(ref, size);
   }

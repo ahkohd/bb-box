@@ -3069,11 +3069,6 @@ export class Boxes {
     return { box, job: { state: "ended", exitCode, stdout: result.stdout.slice(newline + 1), stderr: result.stderr, truncated: result.truncated } };
   }
 
-  /**
-   * Writes the box's env file from its thread's access now, and checks it
-   * is there, as the first command after a restore (070): the restored disk
-   * holds the file as it was at the snapshot.
-   */
   async writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void> {
     const env = await this.#envFile(box);
     if (env === undefined) throw new BoxError("unreachable", `bb-box could not work out the access of box ${box.name}, so it wrote no access file there.`);
@@ -3086,7 +3081,6 @@ export class Boxes {
     if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
 
-  /** Starts an enrolled box's BB daemon again after a restore, as a start does: commands wait for it while it reconnects. */
   machineBack(box: BoxRecord): boolean {
     if (box.enrol.state !== "enrolled" || !this.#deps.reconnect) return false;
     this.#waitFor(box.id, this.#deps.reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));

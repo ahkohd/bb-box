@@ -937,6 +937,286 @@ wants SSH; logins do not.
   line, saying why, goes to the old one's journal; the summary line after it
   says why too.
 
+## Unit 3: restore on Proxmox
+
+Built on 31 October 2026, on main `be8cfc47` (units 0, 1a, 1b, 2 and 4
+included). The lead's answers are in 070's [Decided during unit
+3](070-snapshots.md#decided-during-unit-3).
+
+### What changed
+
+- **The plan by storage.** `planSnapshots` with a target now says how
+  Proxmox restores it, read live: `rollback` on storage that rolls back to
+  any snapshot (LVM-thin, Ceph RBD, BTRFS, qcow2 files), `rollback-newest-only`
+  on ZFS, and `none` with why (storage without snapshots, the token without
+  `VM.Snapshot.Rollback`, a stopped Proxmox QEMU box kept suspended to disk,
+  a target the guest does not have or has part-made). It also says how many
+  snapshots on the guest are newer than the target, the undo it would take
+  (a snapshot, or a held copy) with its time and space, and the size the
+  box goes back to, read from the snapshot's own config. Every disk's
+  storage counts. `src/backends/proxmox/snapshotting.ts`.
+- **The restore**, `Snapshots.restore` in `src/core/snapshots.ts`, on the
+  box's queue with its start, stop, resize and release. Each step is
+  recorded on the operation before it runs, and the provider's task as soon
+  as it begins:
+  1. It refuses what the plan refuses, with the plan's words: a lock (with
+     the host's command), ZFS (off), a target that is not ready, is on an
+     earlier guest ("only forked") or is another box's, a box that is not
+     running or stopped, and a box whose last restore bb-box could not
+     confirm.
+  2. The guard (below).
+  3. In one transaction on `snapshots.db`: the undo's record (`taking`) and
+     the operation (`running`), which pin the target and the undo, with
+     the undo's space and price reserved. The undo is refused there, before
+     anything stops, by the room rule or the ceiling (`ceilingVerdict`,
+     change `undo`), each with its own fix; the person may restore without
+     it (`--no-undo`), an agent never. `restore-asked` is logged.
+  4. A hard stop (`powerOff`, which a QEMU box needs: its `stop` hibernates).
+  5. The undo of the stopped box, "before the restore at 01:56": a
+     snapshot, or in ZFS's order a held copy. If it fails, the box starts
+     again as it was, and the restore says nothing on its disk changed.
+  6. The rollback (`rollbackSnapshot`), which refuses a running guest. If
+     Proxmox refuses it, the box starts again as it was; if its task fails
+     part way, the box stays stopped, and the answer names the undo.
+  7. The start, then the size read back from the guest, then the access
+     file, written as bb-box's first command and checked by its SHA-256,
+     then the labels again (`relabel`), then BB's machine started again as
+     a start does (commands wait for it; the restore does not).
+  8. `restored`, with the time of each part: "in 4.4 s (stop 1.1 s, undo
+     0.3 s, rollback 0.4 s, start 2.3 s, access 0.2 s)". Then undos past 2
+     a box are replaced, oldest first, never the restore's own target, a
+     kept one or a pinned one.
+- **The box while it restores** carries a `restoring` mark. Commands,
+  starts, stops and resizes are refused with "Box amber-fox is being
+  restored to snapshot ...", and the box sweep leaves it alone, so it is
+  never taken as stopped or started outside bb-box. A restore always ends
+  with the box running; one of a stopped box starts it.
+- **The guard** reads, through the plugin, the threads on the box's BB
+  machine (`threadsOn`), whether a person holds its desktop, and BB
+  terminals open on it. A box with a thread on it, working or idle, or the
+  box the caller's thread runs on, is refused for everyone, `--force`
+  included, naming the threads: execution machines' restores stay off
+  (G17). Control and terminals refuse an agent, and refuse the person
+  unless `--force`, which `restore-asked` then records. When bb-box cannot
+  tell which threads run there, or whether a terminal is open, it refuses.
+- **Agents.** `mayAct` already let an agent restore its own thread's
+  boxes only. An agent cannot pass `--no-undo` or `--force`, and unit 4's
+  two switches now bite: with "Agents may restore their own boxes" off, or
+  "Agents may restore memory snapshots" off for a memory snapshot, an
+  agent's restore is refused. The tool comes in unit 5.
+- **Restart recovery** (`#recoverRestore`). At start and at each sweep, an
+  operation cut short is finished from the step it reached or settled: one
+  recorded but not begun changes nothing; a stop that had not happened is
+  undone; an undo or a rollback is judged by its Proxmox task, found by
+  guest, type and time if its UPID was never recorded; a held copy that is
+  not a template is deleted and made again, never trusted; a half-made new
+  guest of a swap is deleted and made again; a swap that wrote the record
+  goes on to disarm the old guest. What bb-box cannot tell stays `unknown`,
+  pinned, with the box marked and stopped, and the doctor says so.
+- **Locks.** A guest Proxmox left locked refuses a restore and a take with
+  the host's command, and the doctor's Snapshots section now has a check
+  for each box with snapshots whose guest is locked (`snapshots.locked.<box>`)
+  and each restore bb-box could not confirm (`snapshots.restore.<box>`).
+- **ZFS's order: held copies, swaps and earlier guests.** Built for
+  Proxmox LXC and QEMU, and off: ZFS restores are refused. A switch for
+  live checks only (Decided during unit 3) runs it on LVM-thin:
+  - the restore stops the box, makes a held copy of the stopped guest
+    (`copyGuest`: a full clone into the box range, its VMID recorded
+    before the clone; labelled `held-copy`, `snapshot.<id>`, `taken.<s>`;
+    `disarmCopy`: `onboot` 0, every link down, and on QEMU a new SMBIOS
+    UUID; `templateCopy`), then rolls back to the newest snapshot only;
+    an older one is refused with how many are newer;
+  - restoring a held copy is a swap: `adoptCopy` makes a new guest from it
+    with the box's MAC addresses and, on QEMU, its SMBIOS UUID, `onboot`
+    1, links up, and the address of its own VMID; the record's guest is
+    swapped; `retireGuest` disarms the old guest (`onboot` 0, links down,
+    new MAC addresses and UUID, tagged `earlier-guest`), whose snapshots
+    are then "on amber-fox's earlier guest: fork only". An old guest with
+    no snapshot on it is deleted at once;
+  - held copies and earlier guests are excluded from the box sweep, the
+    snapshot listing of current guests and outside restores, are listed by
+    `heldSnapshots` as `held-copy` and `earlier`, are kept by the box
+    sweep while an operation uses them, and go with their last snapshot
+    or their box's release, each removal recorded as a settled operation
+    so a listing that began before records none of them again.
+- **Restores made outside bb-box** (`outsideRestores`, at each sweep):
+  `vzrollback` and `qmrollback` tasks on this install's guests since the
+  last look, read from the node's task list, not started by bb-box (no
+  operation names their UPID). `restored-outside` when one ended OK, after
+  which bb-box reads the size back, writes the labels again, and when the
+  box runs, its access file, and starts its BB machine; `restore-outside-failed`
+  with what bb-box then found; `restore-outside-running` once, then its
+  end at a later sweep. Each is recorded as a settled operation, so it is
+  logged once, also after a restart. A listed task with no end time is
+  read from its own status: the list gives a running one `status` RUNNING.
+- **The box log** gains `restore-asked`, `restored`, `restore-failed`,
+  `restored-outside`, `restore-outside-failed`, `restore-outside-running`
+  and `held-copy-made`, which its store already allowed.
+- **The CLI**: `bb box snapshot restore <box> <snapshot> --replace
+  [--no-undo] [--force] [--request] [--json]`, and `--check`, which says
+  what the restore would do (its undo, with time and space; a swap and
+  what stays on the earlier guest; the size it goes back to; what it would
+  end) and refuses what it would refuse, changing nothing: the plan first,
+  as 070 asks of every command; with `BB_BOX_LIVE_CHECKS=1`,
+  `hold-next` gains `stopped`, `copied`, `undo`, `rolled-back`, `adopted`
+  and `started`, and `bb box snapshot zfs-order <backend> on|off`. The list
+  says "a held copy, guest 3240" and "on amber-fox's earlier guest 3241:
+  fork only".
+- **Proxmox LXC's start** reports its parts (boot, network, ssh), as QEMU's
+  did, which the restore logs.
+- **Docs**: the guide's [Snapshots](../guide/snapshots.md#restoring-a-box)
+  page, the reference regenerated, and 070's Decided during unit 3.
+
+### Tests
+
+On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's commits over
+main `be8cfc47`: TESTS_LINE
+
+- `test/restore.test.ts`, 13, through `Boxes` and a fake provider whose
+  snapshots copy the fake guest's files and whose rollback puts them and
+  the size back: G4 on LVM-thin (the order of stop, undo, rollback and
+  start; the oldest of three; the undo holding what was written before the
+  stop); G8 (the access file written before the labels, without the
+  snapshot's stale line; the size read back and said); G9's undo sequences
+  (two undos a box; the oldest undo restored keeps its target; a kept undo
+  stays); the undo's admission (room and ceiling refused before anything
+  stops, each with its fix; `--no-undo` for the person only); G5 (a thread
+  on the box refuses everyone, `--force` included; control, terminals and
+  an unreadable guard; `--force` recorded; the agents' switches); failures
+  (an undo that fails, a refused rollback and a failed stop start the box
+  again unchanged; a failed rollback task leaves it stopped, naming the
+  undo); G7 (lock words and the doctor's check; ZFS refused; a restore
+  across a disk's growth); G6 (a restart after the stop, the undo, the
+  rollback and the start; one before anything changed; an unconfirmed
+  rollback unknown and pinned, the box marked, its start refused, the sweep
+  leaving it alone, the doctor's check, then settled); a repeated request;
+  G13 (bb-box's own rollback not logged as outside; two OK, a failed one
+  and a running one, each once, the running one's end after a restart);
+  ZFS's order (the newest only; the held copy disarmed and a template; the
+  swap with the box's identity; the earlier guest fork only and kept by the
+  box sweep; a release deleting both, with a listing begun before recording
+  neither again); G6 and G16 in ZFS's order (a copy before its template
+  deleted and made again; a swap after its new guest made, finished; an
+  old guest with no snapshot deleted).
+- `test/proxmox-lxc-snapshots.test.ts`, 5 more: the restore plan (rollback,
+  the snapshot's size, newer ones, ZFS, a missing target, the token
+  without `VM.Snapshot.Rollback`); the rollback (refusing a running guest,
+  a lock with `pct unlock`, its UPID before it waits, the config put back,
+  a failed task); outside rollbacks with user and status, and one running;
+  the copy methods (claimed before the clone, labels, disarm, template,
+  listing, the box's MAC and own address on the new guest, the earlier
+  guest's new MAC, the sweep's exclusions, a copy of another box left
+  alone).
+- `test/snapshots.test.ts`: its world moved to `test/snapshot-world.ts` for
+  both files; the reused request's words.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i`, `HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1`
+only, in a Proxmox LXC box; bb-box installed from this branch with `bb
+plugin install path:`, and BB's machine access set to direct with the
+box's address, so boxes enrol without an account. The lead gave it a
+Proxmox LXC and a Proxmox QEMU backend, on LVM-thin, with production's
+templates and their own VMIDs and addresses, and ran each root step from
+[`proxmox-root.sh`](070-snapshots/unit-3/proxmox-root.sh) after reading
+it; the script acts only on the given VMIDs whose guests carry the
+install's tag. Boxes were machines of the person's, made with `bb box
+machines add`. The node is written pve-1.
+
+**Restores by rollback** (`rest-lxc` on Proxmox LXC, 2 cores, 4 GiB, 16 GiB;
+`rest-vm` on Proxmox QEMU, the same size):
+
+| Check | Result |
+| --- | --- |
+| G4, LXC: three snapshots, a file written after the last, restore to the oldest | the file said "one"; the undo "before the restore at 00:32" was ready 1.5 s after `restore-asked`; restoring the undo then brought back the file written after the last snapshot, before the stop |
+| A restore's time, LXC | 4.4 s as bb-box timed it (stop 1.1 s, undo 0.3 s, rollback 0.4 s, start 2.3 s, access 0.2 s), 5.1 s for the command, to a snapshot taken while stopped (an undo) |
+| Proxmox's start after a rollback, LXC | 44 to 46 s for Proxmox's own start task (vzstart 00:39:06 to 00:39:50, 00:42:56 to 00:43:41, 00:46:14 to 00:46:58) when the snapshot was taken while the container ran; 1.4 to 2.5 s when taken while it was stopped; 1.8 and 2.1 s for a plain stop and start. The task log says only "TASK OK". bb-box waits for it, so such a restore takes about 47 s |
+| G4, QEMU: the same | the oldest back; its undo brought back the later file; 9.9 s (stop 0.2 s, undo 0.3 s, rollback 0.5 s, start 8.9 s, access 0.1 s) |
+| A memory snapshot, QEMU | taken with `--memory` while a `sleep` ran; the restore took 2.6 s, and the VM came back running: its uptime went on from the take, the `sleep` was there, and BB listed the machine connected |
+| G8, the check said it first, LXC: a take at 4 GiB, a live resize to 6 GiB, a BB terminal open | `--check --force`: "... It goes back to 2 cores, 4 GiB memory, 16 GiB disk, as it was then; it has 2 cores, 6 GiB memory, 16 GiB disk now. It would also end what is on it now: a BB terminal is open on it. ... Nothing changed." The restore then did that, and `bb box status` said 4 GiB |
+| G8, size, QEMU | memory resized from 4 to 6 GiB with a restart after a take; the restore said "Its size went back from 2 cores, 6 GiB memory, 16 GiB disk to 2 cores, 4 GiB memory, 16 GiB disk, as it was then", and `free` and `bb box status` said 4 GiB |
+| A restore across a disk's growth, LXC | refused at first, as 070 said. Then measured with a rollback by root across a growth from 16 to 18 GiB: Proxmox put back `size=16G`, `df` said 16G, the container started, and its file was the snapshot's. bb-box now allows it; a later restore said "... 18 GiB disk to ..., 16 GiB disk, as it was then" |
+| G8, access first, LXC and QEMU | a systemd path unit in the box logged each change of the access file with the time and whether a sentinel line was in it. A line was added after the last bb-box command, a snapshot taken, the box restored: after its boot (LXC at 1793409785), the file changed once, at 1.9 s, without the sentinel, the same second as bb-box's SSH session to it began; QEMU's the same, 4.6 s after its boot. bb-box records that step before the labels and BB's machine |
+| G5, a BB terminal open on the box | "Restoring box rest-lxc to "guard" would end what is on it now: a BB terminal is open on it. Restore anyway with --force. bb-box changed nothing." With `--force` it restored, and `restore-asked` ended "restored anyway, though a BB terminal is open on it." |
+| G5, a thread on the box (in a project on it, and the terminal) | "Box rest-lxc is a box threads run on: "Stay idle; a test of bb-box's restore guard." (working) runs on it. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet ...", also with `--force`. After the thread was archived, only the terminal was named |
+| G6, LXC: `hold-next` at stopped, undo, rolled-back and started, then `bb plugin reload bb-box` | each restore finished at the next start, logged "... after bb-box restarted", with the right file; the doctor said 0 operations not settled |
+| G6, QEMU: held after the rollback of a stopped box | finished after the restart in 13 s; started, 4 GiB, 0 operations not settled |
+| G7, LXC: the lead left 3242 locked (rollback) | take: "Proxmox LXC on pve-1 left box rest-lxc locked (rollback), so it takes no snapshot. Run `pct unlock 3242` on pve-1."; restore: "... so bb-box restores nothing. Run `pct unlock 3242` on pve-1."; the doctor: "[fail] rest-lxc locked: ... Fix: Run `pct unlock 3242` on pve-1." |
+| G7, QEMU: 3250 locked | the same three, with `qm unlock 3250` |
+| G13, LXC: root's `pct rollback` twice to one snapshot, then one refused by a lock, between sweeps | the next sweep logged two `restored-outside` ("Proxmox's task UPID:...:vzrollback:3242:root@pam:, by root@pam, at ..., ended OK ...") and one `restore-outside-failed` ("failed: CT is locked (backup). bb-box then found it stopped.") |
+| G13, LXC: a rollback held on Proxmox's config lock for 10 s, with bb-box sweeping every 5 s | the first try logged it as failed with "RUNNING": the task list gives a running task that status. Fixed: a task with no end time is read from its own status. Then: `restore-outside-running` at 00:55:35, and at 00:55:46 `restore-outside-failed`: "can't lock file '/run/lock/lxc/pve-config-3242.lock' - got timeout" |
+| G13, QEMU: root's `qm rollback` of the running VM | `restored-outside` at the next sweep, "bb-box wrote its labels again, writes its access file when it next starts" (Proxmox left it stopped) |
+| G10, the undo's price, QEMU, with a made-up $0.1 a day and one paid snapshot held | "bb-box would take an undo of box zfs-vm before restoring it. It would bring snapshots held on Proxmox QEMU on pve-1 to about $6.00 a month, past your ceiling of $5.00. ... Or restore without an undo, with --no-undo." The box stayed ready, and nothing was logged; `--no-undo` restored |
+
+**ZFS's order, under the live-check switch, on LVM-thin**:
+
+| Check | Result |
+| --- | --- |
+| An older snapshot | "Live checks run ZFS's order on Proxmox LXC on pve-1: as on ZFS, bb-box restores only the newest snapshot there, and "one" has 6 newer ones. Delete them yourself first. bb-box never deletes newer snapshots to make a rollback possible." |
+| The newest, LXC | a held copy of the stopped box into 3240 in 9.6 s, then the rollback: 58 s in all, Proxmox's start 45 s (the snapshot was taken running) |
+| The held copy, `pct config 3240` (by the lead) | `template: 1`, `onboot: 0`, `link_down=1`, its own MAC, tags `held-copy` and `snapshot.<id>` |
+| Its undo, a swap, LXC (`--no-undo`: the backend had 3 VMIDs) | 11 s (stop 1.1 s, swap 8.0 s, start 2.2 s): a new guest 3241 from the copy, with the box's MAC `bc:24:11:30:f1:13`, `onboot: 1`, link up, the address of its own VMID (.251; the box's record, its commands and `hostname -I` all said so), the same BB machine and host ID, connected, and the file from before the restore. The old guest 3242: `onboot: 0`, `link_down=1`, a new MAC, tag `earlier-guest`; its snapshots listed "on rest-lxc's earlier guest 3242: fork only" |
+| QEMU, the same | held copy into 3252 in 7.5 s; the swap in 6.5 s onto 3250 with the box's MAC `bc:24:11:68:ac:73` and SMBIOS UUID, from .253 to .252; the old guest 3251 with a new MAC and UUID, links down, `onboot: 0`; the copy a template with its own UUID. A clone of a held copy always gets the address of its own VMID, never the copy's |
+| G6 and G16: `hold-next --at copied`, so the restore stopped after its clone, before the copy was disarmed or a template | `pct config 3240` then: no `template` line, link up, `onboot: 0`. After `bb plugin reload bb-box`: "Deleted guest 3240, the undo's copy for the restore of box rest-lxc: bb-box restarted before it was a template, so it is not trusted. bb-box makes it again from the stopped box." It was made again in 7.5 s, as a template, disarmed, and the restore finished |
+| G16: the remade copy adopted for the same box | the file written just before the stop, BB's `auth.json` and `host-id` from the enrolment at 00:32, the same MAC; BB listed the same machine, connected |
+| G6: `hold-next --at adopted`, after the swap's new guest was made, then a restart | a sweep during the hold released nothing; after the restart the swap finished: the new guest, the same MAC and machine, the copy's file |
+| An old guest with no snapshot left on it | was left behind; fixed: such a guest is now deleted at the end of the swap. The lead destroyed the one left |
+| Release of a box with a held copy and an earlier guest (QEMU) | the next sweep deleted both, each snapshot logged "it went with its held copy, guest 3252" and "... its box's earlier guest, guest 3251". A second sweep running at the same time had listed the copy before it went, and recorded it again as found: fixed, each such removal is now a settled operation, as unit 1a's are, and a test holds a listing open across it |
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| G4 storage-rollback | **Passed on LVM-thin, LXC and QEMU**: the plan reads the storage; a restore to the oldest of three with its undo, nothing written before the stop lost. **ZFS's order passed under the live-check switch on LVM-thin, LXC and QEMU**: an older target refused with the words, the newest restored after its held copy, every newer snapshot still there; its undo a swap onto a new guest with the box's MAC addresses (and SMBIOS UUID on QEMU), `onboot` set and links up, the same BB host ID with no reset, the old guest an earlier guest whose snapshots list fork only; a restart while the copy was not yet a template and after the new guest was made; release deleting both. **Not proved**: Proxmox's own refusal on ZFS (no ZFS node), and expiry, which needs Keep (unit 8). ZFS restores stay off |
+| G5 restore-guard | **Passed** for a thread on the box (refused for everyone, `--force` included, naming it) and a BB terminal (refused, then restored with `--force`, which the log records). A person holding the desktop is tested only in `test/restore.test.ts`: the separate BB's backends offer no desktop. The agent's refusal is tested there too; its tool is unit 5's, the person's dialog unit 6's |
+| G6 restart-recovery | **Passed** on LXC after the stop, the undo, the rollback and the start; on QEMU after the rollback; in ZFS's order after the clone and after the swap's new guest was made. Each finished, nothing was released as a leftover, and no operation stayed unsettled. One that cannot be confirmed stays unknown and pinned, in the tests |
+| G7 lock-words | **Passed** on LXC and QEMU in the CLI's take and restore and in the doctor. The page and the tool come with units 6 and 5 and use the same words |
+| G8 access-first | **Passed** on LXC and QEMU, as measured above, and the memory read back across a resize on QEMU, the disk across a growth on LXC |
+| G9 serialised-and-eligible, restore's part | the undo sequences in the tests (two undos; the oldest undo restored keeps its target; a kept undo stays); live, every restore replaced the oldest undo past two, never its own target |
+| G10 ceiling-rate, the undo's part | **Passed** live on a made-up price: refused before the box stopped, and restored without it |
+| G13 outside-restore | **Passed** on LXC and QEMU: two restores to one snapshot, a failed one and a running one, between and across sweeps, each logged once by its status. OUTSIDE_TAKE |
+| G16 held-copy-inert | **Passed**: each held copy a template, disarmed, in `pct config` and `qm config`; each earlier guest with `onboot` 0, links down and a MAC that is not the box's; a copy cut short before its template deleted and made again, and the remade copy adopted for the same box with its files, credentials and host ID. EARLIER_BY_HAND **Not proved**: the node's reboot, as no node can be rebooted; it is a condition before ZFS restores or unit 8's Keep are turned on |
+
+### Choices and deviations
+
+- **`restore-asked` is logged when the restore is recorded**, before the
+  stop, not at step 6, so the log shows the ask before the box stops. A
+  restore refused before then logs nothing, as nothing changed.
+- **The restore does not wait for BB's machine to come back.** It starts
+  BB's daemon again as `box_start` does, and commands wait for it. On the
+  separate BB, without an account, the wait for the thread's variables
+  added 30 s to every restore.
+- **A restore across a disk's growth is allowed** after measuring it
+  (Decided during unit 3).
+- **A swap takes a held copy of the stopped guest as its undo**, as ZFS's
+  order does; 070 does not say what a swap's undo is. A swap needs a VMID
+  for each of the box, its undo's copy and its new guest.
+- **An old guest with no snapshot left on it is deleted** at the end of a
+  swap, as an earlier guest exists only for its snapshots.
+- **Undos past two are replaced** once the new undo is ready, during the
+  restore, so its own target stays pinned, and again at its end.
+- **A restore of a stopped box starts it**, as step 7 says, so the access
+  file is written at once.
+- **Proxmox LXC's start now reports its parts** (boot, network, ssh),
+  which `bb box status` shows under Last start, as QEMU's did.
+- **An outside restore is set straight once.** On LXC the lead locked the
+  guest at once after, and setting it straight failed on the lock; bb-box
+  says so in the log and does not try again. The access file is written
+  by bb-box's next command anyway.
+
+### Conditions and open questions
+
+- **ZFS restores** stay off until G4 runs on a ZFS node; the node reboot
+  of G16 is a condition before they, or unit 8's Keep, are turned on.
+- **Restores of boxes threads run on** stay off until G17 (unit 5).
+- **Proxmox's 44 s start** after a rollback to a snapshot taken while the
+  container ran: Proxmox's own task takes it, and its log says only "TASK
+  OK". Worth a look on the node (an fsck or a journal replay at mount is
+  a guess, not measured), as it makes such a restore take about 47 s.
+- **Thin metadata** is still not read (unit 1a's known limit), so a
+  restore's undo, like a take, checks the pool's data only.
+
 ## Unit 4: Settings' Snapshots page
 
 Built on 30 October 2026, on main `7bd9f833` (units 0, 1a and 1b
