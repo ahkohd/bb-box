@@ -280,7 +280,7 @@ test("with snapshots.db unreadable, a release that its provider's labels say hol
   const problem = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(state.store), "problem")!;
   Object.defineProperty(state.store, "problem", { get: () => "bb-box cannot write snapshots.db: disk I/O error." });
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(left?.error ?? "", /cannot tell whether box .* holds a snapshot you kept, and deleted nothing: its labels on .* say one is kept\./);
+  assert.match(left?.error ?? "", /cannot read its snapshots' records, so it cannot copy what box .* holds that you kept, and deleted nothing: its labels on .* say one is kept\. bb-box tries again in a few minutes\.$/);
   assert.notEqual(await state.backend.power(box.guest!), null);
   assert.equal(state.provider.held.has(taken.id), true);
   void problem;
@@ -404,13 +404,14 @@ test("review 2: with records lost while a held copy was not a template, the snap
   assert.equal(state.provider.copies.get(kept.livesOn.ref)?.state, "template");
 });
 
-test("review 2: a release refuses while a kept snapshot's held copy is not a template, and deletes nothing", async () => {
+test("review 2: a release refuses while a kept snapshot's held copy is not a template, deletes nothing, and offers only what gets past it: deleting that snapshot", async () => {
   const state = armedWorld();
   const { box, taken } = await keptBox(state);
   const untrusted = { ref: "copy9", host: null, address: null, size: null, data: { box: box.id } };
   state.store.updateRecord(taken.id, { guest: "held-copy", livesOn: untrusted, ref: "copy9", state: "incomplete", error: "Its copy is not a template yet, so bb-box does not trust it." });
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(left?.error ?? "", /The held copy of "kept one", which you kept, guest copy9, is incomplete.*so bb-box does not trust it, and deleted nothing\./);
+  assert.equal(left?.error, `Release did not finish: The held copy of "kept one", which you kept, guest copy9, is not a template, so bb-box does not trust it, and deleted nothing. Delete that snapshot, then release the box again. bb-box tries again in a few minutes.`);
+  assert.doesNotMatch(left?.error ?? "", /delete what you kept/, "Release and delete what you kept does not clear a held copy, so it is not offered");
   assert.notEqual(await state.backend.power(box.guest!), null);
 });
 
@@ -509,6 +510,7 @@ test("review: a release copies only keeps whose date has not passed; one past it
   const state = armedWorld();
   const { box, taken } = await keptBox(state);
   state.store.updateRecord(taken.id, { keptUntil: START - 1 });
+  state.provider.held.get(taken.id)!.keptUntil = START - 1;
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   assert.equal(state.provider.copies.size, 0);
   assert.equal(await state.backend.power(box.guest!), null);
@@ -565,36 +567,139 @@ test("review: a restart while the copy's task still runs leaves it unsettled and
   assert.equal(state.provider.copies.size, 1, "the copy that was not a template went, and one template is left");
 });
 
-test("a release whose copy outlasts its wait while the provider still makes it leaves the copy's operation unsettled, deletes nothing, and the sweep deletes that copy only once its task ends", async () => {
+test("a release whose copy outlasts its wait while the provider still makes it leaves the copy's operation unsettled and deletes nothing; once the task ends well, the sweep makes that same copy the template", async () => {
   const state = armedWorld();
   const { box, taken } = await keptBox(state);
   const copySnapshot = provider(state).copySnapshot.bind(state.backend);
   let task: TaskRef | null = null;
+  let clones = 0;
   provider(state).copySnapshot = async (ref, label, hooks, signal) => {
+    clones++;
     await copySnapshot(ref, label, { ...hooks, task: async (made) => { task = made; await hooks.task(made); } }, signal);
     state.provider.tasks.set(task!.ref, { state: "running" });
     throw new Error("Proxmox TASK vzclone failed (504): task did not finish in time.");
   };
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(left?.error ?? "", /task did not finish in time\. .* may still be making its copy, guest (copy\d+), so bb-box deletes that copy only once the task ends, at a later sweep\./);
-  const made = /guest (copy\d+), so/.exec(left!.error!)![1]!;
+  assert.match(left?.error ?? "", /task did not finish in time\. .* may still be making its copy, guest (copy\d+): bb-box waits for that task, and makes the copy a template once it ends well\. bb-box tries again in a few minutes\.$/);
+  const made = /guest (copy\d+):/.exec(left!.error!)![1]!;
   const cut = state.store.operations({ box: box.id, kind: "hold-copy" })[0]!;
   assert.equal(cut.state, "unknown");
   assert.equal(state.store.pins().get(taken.id)?.id, cut.id, "the snapshot stays pinned while its copy is made");
   assert.ok(state.provider.copies.has(made), "a copy still being made is not counted deleted");
   assert.notEqual(await state.backend.power(box.guest!), null);
-  provider(state).copySnapshot = copySnapshot;
   await state.snapshots.sweep();
   assert.equal(state.store.operation(cut.id)?.state, "unknown", "while the task runs, the sweep waits for it");
   assert.ok(state.provider.copies.has(made));
   state.provider.tasks.set(task!.ref, { state: "ok" });
   await state.snapshots.sweep();
-  assert.equal(state.provider.copies.has(made), false, "once the task ended, the copy that was not a template went");
+  assert.equal(state.provider.copies.get(made)?.state, "template", "the same copy, finished well, becomes the held copy");
+  assert.equal(clones, 1, "no second clone");
+  assert.equal(state.store.record(taken.id)?.livesOn.ref, made);
   state.tick(3 * 60_000);
   await state.boxes.sweep();
   assert.equal(state.store.record(taken.id)?.guest, "held-copy");
   assert.equal(await state.backend.power(box.guest!), null);
   assert.equal(state.provider.copies.size, 1);
+});
+
+test("re-review B1: after records loss, every release reads its guest's own labels: it stops while it cannot read them, or while one says kept and the records do not, and copies once they agree", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  state.forgetRecords();
+  await state.restart();
+  state.provider.listing = new Error("one guest snapshot listing is unreadable");
+  await state.snapshots.sweep();
+  assert.equal(state.store.problem, null, "a rebuilt store is healthy");
+  assert.equal(state.store.record(taken.id), null);
+  assert.ok(state.provider.held.get(taken.id)!.keptUntil! > state.now);
+  const unread = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(unread?.error ?? "", /^Release did not finish: bb-box could not read the labels of box \S+'s snapshots on .*, so it cannot tell whether one is kept, and deleted nothing: one guest snapshot listing is unreadable\. bb-box tries again in a few minutes\.$/i);
+  assert.notEqual(await state.backend.power(box.guest!), null);
+  assert.ok(state.provider.held.has(taken.id), "the kept snapshot is still there");
+  assert.equal(state.provider.copies.size, 0);
+  state.provider.listing = null;
+  const unrecorded = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(unrecorded?.error ?? "", new RegExp(`label on .* says snapshot ${taken.id} is kept until \\d{4}-\\d{2}-\\d{2}, and bb-box's records do not say so yet, so it deleted nothing\\. bb-box checks its records against the labels at its next sweep\\. bb-box tries again in a few minutes\\.$`));
+  assert.notEqual(await state.backend.power(box.guest!), null);
+  await state.snapshots.sweep();
+  assert.notEqual(state.store.record(taken.id)?.keptUntil ?? null, null, "the sweep records the label's keep");
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.equal(await state.backend.power(box.guest!), null);
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.equal(state.provider.copies.size, 1);
+});
+
+test("re-review B2: a clone slower than its wait that ends well is labelled and made the held copy once, never discarded and cloned again", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const copySnapshot = provider(state).copySnapshot.bind(state.backend);
+  const tasks: TaskRef[] = [];
+  let attempts = 0;
+  provider(state).copySnapshot = async (ref, label, hooks, signal) => {
+    attempts++;
+    await copySnapshot(ref, label, { ...hooks, task: async (task) => { tasks.push(task); await hooks.task(task); } }, signal);
+    state.provider.tasks.set(tasks.at(-1)!.ref, { state: "running" });
+    throw new Error("Proxmox TASK clone failed (504): task did not finish in time.");
+  };
+  const first = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(first!.error!, /may still be making its copy/);
+  const operation = state.store.unsettled().find((each) => each.kind === "hold-copy")!;
+  const copy = operation.guests!.new!.ref;
+  state.provider.tasks.set(tasks.at(-1)!.ref, { state: "ok" });
+  await state.snapshots.recover();
+  assert.equal(attempts, 1, "no second clone");
+  assert.equal(state.provider.copies.get(copy)?.state, "template");
+  assert.ok(state.provider.order.indexOf(`label ${copy}`) >= 0 && state.provider.order.indexOf(`label ${copy}`) < state.provider.order.indexOf(`template ${copy}`), "it gets its held copy's labels before it is a template");
+  assert.equal(state.store.record(taken.id)!.guest, "held-copy");
+  assert.equal(state.store.operation(operation.id)?.state, "done");
+  state.tick(3 * 60_000);
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(box.guest!), null);
+});
+
+test("re-review B3: a copy made again after a restart, whose submission answer is lost, takes only a task of its own attempt, so it stays unsettled with its room reserved while that clone runs", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const tasks: { task: TaskRef; at: number }[] = [];
+  const hidden = new Map<string, unknown>();
+  let attempts = 0;
+  const wrap = () => {
+    const backend = state.backend as unknown as Required<Pick<Backend, "copySnapshot" | "findTasks">>;
+    const copySnapshot = backend.copySnapshot.bind(state.backend);
+    backend.findTasks = async (_guest, _kind, since) => tasks.filter((each) => each.at >= since - 5000).map((each) => each.task);
+    backend.copySnapshot = async (ref, label, hooks, signal) => {
+      attempts++;
+      const copy = await copySnapshot(ref, label, { ...hooks, task: async (task) => { tasks.push({ task, at: state.now }); if (attempts === 1) await hooks.task(task); } }, signal);
+      state.provider.tasks.set(tasks.at(-1)!.task.ref, { state: "running" });
+      if (attempts === 2) {
+        hidden.set(copy.ref, state.provider.copies.get(copy.ref));
+        state.provider.copies.delete(copy.ref);
+      }
+      throw new Error(attempts === 1 ? "task did not finish in time" : "clone submission response lost");
+    };
+  };
+  wrap();
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const operation = state.store.unsettled().find((each) => each.kind === "hold-copy")!;
+  assert.equal(operation.task!.ref, tasks[0]!.task.ref);
+  state.provider.tasks.set(tasks[0]!.task.ref, { state: "ok" });
+  await state.restart();
+  wrap();
+  state.tick(2_000);
+  await state.snapshots.recover();
+  const after = state.store.operation(operation.id)!;
+  assert.equal(attempts, 2, "after a restart its first copy is not trusted, so it is made again");
+  assert.equal(after.state, "unknown");
+  assert.equal(after.task?.ref, tasks[1]!.task.ref, "this attempt's task, not the earlier one the provider lists first");
+  assert.deepEqual(after.attempts?.map((each) => each.task?.ref), [tasks[0]!.task.ref, tasks[1]!.task.ref]);
+  assert.ok(state.store.reservedBytes(state.provider.storageKey) > 0, "its room stays reserved while the clone runs");
+  assert.equal(state.provider.tasks.get(tasks[1]!.task.ref)!.state, "running");
+  state.provider.tasks.set(tasks[1]!.task.ref, { state: "ok" });
+  for (const [ref, held] of hidden) state.provider.copies.set(ref, held as never);
+  await state.snapshots.recover();
+  assert.equal(attempts, 2);
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.equal(state.store.reservedBytes(state.provider.storageKey), 0);
 });
 
 test("review: a restart after the record moved to its held copy, before the guest went, finishes the release with no second copy", async () => {

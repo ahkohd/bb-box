@@ -145,6 +145,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
     `ALTER TABLE ${SCHEMA}.snapshot_operations_keep RENAME TO snapshot_operations`,
     `CREATE INDEX ${SCHEMA}.snapshot_operations_by_state ON snapshot_operations(state)`,
   ].join(";\n"),
+  `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN attempts TEXT`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -248,6 +249,7 @@ interface OperationRow {
   updated_at: number;
   snapshots_gone_at: number | null;
   step_at: number | null;
+  attempts: string | null;
 }
 
 function actorOf(who: Actor["is"], agent: string | null, why: string | null): Actor {
@@ -390,6 +392,7 @@ function operationOf(row: OperationRow): SnapshotOperation {
     endedAt: row.ended_at,
     snapshotsGoneAt: row.snapshots_gone_at,
     stepAt: row.step_at,
+    attempts: parsed(row.attempts, null),
   };
 }
 
@@ -416,6 +419,7 @@ function operationRow(operation: SnapshotOperation, now: number): OperationRow {
     updated_at: now,
     snapshots_gone_at: operation.snapshotsGoneAt,
     step_at: operation.stepAt ?? null,
+    attempts: json(operation.attempts ?? null),
   };
 }
 

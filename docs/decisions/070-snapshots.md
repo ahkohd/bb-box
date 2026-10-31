@@ -1567,6 +1567,26 @@ regression test:
 - **Bulk Keep never shortens by default**, and names each keep a chosen
   date would shorten.
 
+After the re-reviews, the lead asked for these, each with the reviewer's
+probe as a regression test:
+
+- **Every release reads its guest's labels** before it deletes anything,
+  from a listing of that guest's own snapshots, and stops when it cannot
+  read them, or when a label says kept and the records do not. A rebuilt,
+  empty `snapshots.db` is healthy, so the records alone cannot show that
+  nothing is kept.
+- **A slow clone that ends well is kept.** bb-box waits for the same task
+  across its retries, then labels, disarms and templates that copy, rather
+  than cloning again. A copy left by a restart is still not trusted.
+- **Each copy attempt records its start and its task.** Recovery takes only
+  a task begun from this attempt's start, never an earlier attempt's, and
+  stays unsettled while more than one could be its own. Proxmox lists a
+  clone's task under its source's VMID only, so the target VMID cannot be
+  matched from the list.
+- **"Release and delete what you kept" is offered only where it gets past
+  the stop**: not while a copy is being made, a label cannot be read, or a
+  held copy is not a template.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

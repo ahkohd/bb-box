@@ -719,6 +719,10 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#snapshots.held(signal);
   }
 
+  snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#snapshots.on(guest, signal);
+  }
+
   providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     return this.#snapshots.task(task, signal);
   }
@@ -829,12 +833,23 @@ export class ProxmoxLxcBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), storageOfVolume(config.rootfs), hooks, signal, ref.ref, sizeOf(config)?.diskGiB ?? null);
-      await disarm(api, vmid, signal);
-      await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false, delete: ["protection"] }, signal);
-      return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
+      return await this.labelCopy(copy, label, signal);
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async labelCopy(copy: Guest, label: HeldCopyLabel, signal?: AbortSignal): Promise<Guest> {
+    const api = await this.client();
+    const vmid = this.#vmid(copy);
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) throw gone(vmid);
+    const madeFor = `bb-box install ${this.#context.installId} box ${label.box} held copy of snapshot ${label.snapshot}`;
+    if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy bb-box made of snapshot ${label.snapshot}, so bb-box does not label it as one.`);
+    const template = typeof copy.data?.template === "number" ? copy.data.template : null;
+    await disarm(api, vmid, signal);
+    await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false, delete: ["protection"] }, signal);
+    return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
   }
 
   async copyPlan(copy: Guest, signal?: AbortSignal): Promise<CopyPlan> {

@@ -113,6 +113,12 @@ export interface SnapshotOperation {
   readonly endedAt: number | null;
   readonly snapshotsGoneAt: number | null;
   readonly stepAt?: number | null;
+  readonly attempts?: readonly CopyAttempt[] | null;
+}
+
+export interface CopyAttempt {
+  readonly at: number;
+  readonly task: TaskRef | null;
 }
 
 export interface StoredPicture {

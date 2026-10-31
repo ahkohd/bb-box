@@ -9,6 +9,7 @@ import {
   type DoctorCheck,
   type Guest,
   type GuestFact,
+  type HeldCopyLabel,
   type HeldSnapshot,
   type KeepsPastRelease,
   type OutsideRollback,
@@ -20,8 +21,9 @@ import {
   type SnapshotStorage,
   type TaskKind,
   type TaskOutcome,
+  type TaskRef,
 } from "../backends/types.ts";
-import { BoxError, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
+import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
 import { readForkSafe, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
@@ -66,6 +68,7 @@ import {
   type Caller,
   type Change,
   type SnapshotLedger,
+  type CopyAttempt,
   type SnapshotOperation,
   type PictureState,
   type SnapshotRecord,
@@ -259,6 +262,16 @@ export interface HeldOnBackend {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function heldCopyLabelOf(record: SnapshotRecord): HeldCopyLabel {
+  return { box: record.box.id, snapshot: record.id, kept: keepLabel(record.keptUntil), takenAt: record.takenAt, forkSafe: record.forkSafe, kind: record.box.kind };
+}
+
+function withAttemptTask(attempts: readonly CopyAttempt[] | null | undefined, task: TaskRef): CopyAttempt[] {
+  const all = [...(attempts ?? [])];
+  const last = all.pop();
+  return [...all, { at: last?.at ?? 0, task }];
 }
 
 function sentence(text: string): string {
@@ -608,6 +621,7 @@ export class Snapshots {
   readonly #now: () => number;
   readonly #random: (bytes: number) => Uint8Array;
   readonly #running = new Set<string>();
+  readonly #waitedOut = new Set<string>();
   readonly #outsideRunning = new Set<string>();
   readonly #outsideSince = new Map<string, number>();
   readonly #stopping = new AbortController();
@@ -1270,14 +1284,23 @@ export class Snapshots {
     const offer = this.offerFor(backend, box.kind);
     if (offer?.keepsPastRelease !== "held-copy" || !box.guest) return;
     if (ledger.problem) {
-      await this.#noKeptLabelsOn(backend!, box);
+      const kept = await this.#keptLabelsOn(backend!, box);
+      if (kept.length) throw new ReleaseWaits("unreachable", `bb-box cannot read its snapshots' records, so it cannot copy what box ${box.name} holds that you kept, and deleted nothing: its labels on ${box.backendLabel} say ${kept.length === 1 ? "one is" : `${kept.length} are`} kept.`);
       return;
     }
     await this.#settleKeeps(backend!, box);
+    const labelled = await this.#keptLabelsOn(backend!, box);
+    const unrecorded = labelled.find((held) => {
+      const record = ledger.record(held.id);
+      return !record || record.keptUntil === null || record.keptUntil <= this.#now();
+    });
+    if (unrecorded) {
+      throw new ReleaseWaits("try_again", `Box ${box.name}'s label on ${box.backendLabel} says snapshot ${unrecorded.id} is kept until ${utcDay(unrecorded.keptUntil!)}, and bb-box's records do not say so yet, so it deleted nothing. bb-box checks its records against the labels at its next sweep.`);
+    }
     const ofBox = ledger.records({ box: box.id });
     const untrusted = ofBox.find((record) => record.guest === "held-copy" && record.keptUntil !== null && record.keptUntil > this.#now() && record.state !== "ready" && heldByProvider(record));
     if (untrusted) {
-      throw new BoxError("failed", `The held copy of ${quoted(untrusted)}, which you kept, guest ${untrusted.livesOn.ref}, is ${stateWords(untrusted)}, so bb-box does not trust it, and deleted nothing. Delete that snapshot, or release the box and delete what you kept.`);
+      throw new ReleaseWaits("failed", `The held copy of ${quoted(untrusted)}, which you kept, guest ${untrusted.livesOn.ref}, is not a template, so bb-box does not trust it, and deleted nothing. Delete that snapshot, then release the box again.`);
     }
     const now = this.#now();
     const waiting = ofBox.filter((record) => record.keptUntil !== null && record.keptUntil > now && record.guest !== "held-copy" && heldByProvider(record)).sort((a, b) => a.takenAt - b.takenAt || a.id.localeCompare(b.id));
@@ -1293,19 +1316,18 @@ export class Snapshots {
     }
   }
 
-  async #noKeptLabelsOn(backend: Backend, box: BoxRecord): Promise<void> {
-    const cannot = (why: string) => new BoxError("unreachable", `bb-box cannot read its snapshots' records, so it cannot tell whether box ${box.name} holds a snapshot you kept, and deleted nothing: ${why}`);
-    if (!backend.snapshot) return;
-    if (!backend.heldSnapshots) throw cannot(`${backend.label} cannot list its snapshots.`);
+  async #keptLabelsOn(backend: Backend, box: BoxRecord): Promise<readonly HeldSnapshot[]> {
+    const cannot = (why: string) => new ReleaseWaits("unreachable", `bb-box could not read the labels of box ${box.name}'s snapshots on ${box.backendLabel}, so it cannot tell whether one is kept, and deleted nothing: ${why}`);
+    if (!backend.snapshotsOn) throw cannot(`${backend.label} cannot list one guest's snapshots.`);
     let listing: readonly HeldSnapshot[];
     try {
-      listing = await backend.heldSnapshots(this.#stopping.signal);
+      listing = await backend.snapshotsOn(box.guest!, this.#stopping.signal);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       throw cannot(sentence(message(error)));
     }
-    const kept = listing.filter((held) => held.box === box.id && held.where !== "held-copy" && held.keptUntil !== null && held.keptUntil > this.#now());
-    if (kept.length) throw cannot(`its labels on ${box.backendLabel} say ${kept.length === 1 ? "one is" : `${kept.length} are`} kept.`);
+    const now = this.#now();
+    return listing.filter((held) => held.where !== "held-copy" && held.keptUntil !== null && held.keptUntil > now);
   }
 
   async holdKeptOn(backendId: string, guestRef: string, by: Actor): Promise<string | null> {
@@ -1425,29 +1447,35 @@ export class Snapshots {
       throw new BoxError(code, `bb-box could not copy ${quoted(record)}, which you kept: ${words}`);
     };
     try {
+      let finished: Guest | null = null;
       if (existing) {
-        const made = await this.#resumeCopy(record, operation, copier, source, after);
-        if (made) return made;
-        step({ step: "planned", task: null, guests: { old: source, new: null }, state: "running", error: null });
+        const resumed = await this.#resumeCopy(record, operation, copier, source, after);
+        if (resumed && "made" in resumed) return resumed.made;
+        if (resumed) {
+          finished = resumed.finish;
+          step({ step: "copy-cloned", guests: { old: source, new: finished }, state: "running", error: null });
+        } else step({ step: "planned", task: null, guests: { old: source, new: null }, state: "running", error: null });
       }
-      await this.#deps.hold?.(operation, "planned", signal);
+      if (!finished) await this.#deps.hold?.(operation, "planned", signal);
       const began = this.#now();
-      let copy: Guest | null = null;
+      let copy: Guest | null = finished;
       try {
-        const hooks: CopyHooks = {
-          claimed: async (claimed) => step({ step: "copy-claimed", guests: { old: source, new: claimed } }),
-          submitting: async () => step({ step: "copy-submitting", task: null, stepAt: this.#now() }),
-          task: async (task) => {
-            step({ step: "copy-task", task });
-            await this.#deps.hold?.(operation, "task", signal);
-          },
-        };
-        copy = await copier.copySnapshot!(
-          { id: record.id, ref: record.ref ?? "", guest: source },
-          { box: record.box.id, snapshot: record.id, kept: keepLabel(record.keptUntil), takenAt: record.takenAt, forkSafe: record.forkSafe, kind: record.box.kind },
-          hooks,
-          signal,
-        );
+        const label = heldCopyLabelOf(record);
+        if (finished) copy = await copier.labelCopy!(finished, label, signal);
+        else {
+          const hooks: CopyHooks = {
+            claimed: async (claimed) => step({ step: "copy-claimed", guests: { old: source, new: claimed } }),
+            submitting: async () => {
+              const at = this.#now();
+              step({ step: "copy-submitting", task: null, stepAt: at, attempts: [...(operation.attempts ?? []), { at, task: null }] });
+            },
+            task: async (task) => {
+              step({ step: "copy-task", task, attempts: withAttemptTask(operation.attempts, task) });
+              await this.#deps.hold?.(operation, "task", signal);
+            },
+          };
+          copy = await copier.copySnapshot!({ id: record.id, ref: record.ref ?? "", guest: source }, label, hooks, signal);
+        }
         step({ step: "copy-cloned", guests: { old: source, new: copy } });
         await this.#deps.hold?.(operation, "copied", signal);
         await copier.disarmCopy!(copy, signal);
@@ -1459,17 +1487,18 @@ export class Snapshots {
         const words = sentence(message(error));
         const partial = copy ?? operation.guests?.new ?? null;
         if (partial && partial.ref !== source.ref && (await this.#copyTaskMayRun(operation, copier, source))) {
-          const still = `${words} ${copier.label} may still be making its copy, guest ${partial.ref}, so bb-box deletes that copy only once the task ends, at a later sweep.`;
+          const still = `${words} ${copier.label} may still be making its copy, guest ${partial.ref}: bb-box waits for that task, and makes the copy a template once it ends well.`;
           step({ state: "unknown", error: still });
-          throw new BoxError("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${still}`);
+          this.#waitedOut.add(operation.id);
+          throw new ReleaseWaits("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${still}`);
         }
         if (partial && partial.ref !== source.ref && !(await this.#dropCopy(copier, partial, record))) {
           step({ state: "unknown", error: `${words} Its part-made copy, guest ${partial.ref}, is not deleted yet; bb-box tries again at its next sweep.` });
-          throw new BoxError("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${words} Its part-made copy, guest ${partial.ref}, is not deleted yet; bb-box tries again at its next sweep.`);
+          throw new ReleaseWaits("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${words} Its part-made copy, guest ${partial.ref}, is not deleted yet; bb-box tries again at its next sweep.`);
         }
         return fail(words);
       }
-      return this.#copyMade(record, operation, copy, `in ${seconds(this.#now() - began)}`);
+      return this.#copyMade(record, operation, copy, finished ? `once ${copier.label} finished it, after bb-box's wait for it ran out` : `in ${seconds(this.#now() - began)}`);
     } finally {
       this.#running.delete(operation.id);
     }
@@ -1493,22 +1522,29 @@ export class Snapshots {
     }
   }
 
-  async #resumeCopy(record: SnapshotRecord, operation: SnapshotOperation, backend: Backend, source: Guest, after: string): Promise<SnapshotRecord | null> {
+  async #resumeCopy(record: SnapshotRecord, operation: SnapshotOperation, backend: Backend, source: Guest, after: string): Promise<{ readonly made: SnapshotRecord } | { readonly finish: Guest } | null> {
     const signal = this.#stopping.signal;
     const unsure = (words: string): never => {
       this.#deps.ledger.updateOperation(operation.id, { state: "unknown", error: words });
-      throw new BoxError("try_again", `bb-box could not confirm the held copy of ${quoted(record)}: ${words} It checks again at its next sweep.`);
+      throw new ReleaseWaits("try_again", `bb-box could not confirm the held copy of ${quoted(record)}: ${words} It checks again at its next sweep.`);
     };
+    let clonedWell = false;
     if (operation.step === "copy-submitting" || operation.step === "copy-task") {
       const task = await this.#taskOf(operation, backend, source, signal, "copy");
       if (task?.state === "unreadable") unsure(`bb-box could not read the copy's task: ${sentence(task.words)}`);
-      if (task?.state === "running") unsure("Proxmox's copy was still running when bb-box looked.");
+      if (task?.state === "running") unsure(`${backend.label} was still making the copy when bb-box looked.`);
+      clonedWell = task?.state === "ok";
     }
+    const waitedOut = this.#waitedOut.delete(operation.id);
     const copy = this.#deps.ledger.operation(operation.id)?.guests?.new ?? null;
     if (!copy) return null;
     const plan = backend.copyPlan ? await backend.copyPlan(copy, signal).catch(() => null) : { state: await backend.copyState!(copy, signal).catch(() => "gone" as const), size: null, running: false };
     if (!plan) return unsure(`bb-box could not read its copy, guest ${copy.ref}.`);
-    if (plan.state === "template") return this.#copyMade(record, operation, copy, `confirmed${after}`);
+    if (plan.state === "template") return { made: this.#copyMade(record, operation, copy, `confirmed${after}`) };
+    if (plan.state === "copy" && clonedWell && waitedOut && !plan.running && backend.labelCopy) {
+      this.#deps.log?.(`Guest ${copy.ref}, the copy of snapshot ${record.id} of box ${record.box.name} that ${backend.label} finished after bb-box's wait for it ran out, becomes its held copy now.`);
+      return { finish: copy };
+    }
     if (plan.state === "copy") {
       if (plan.running) this.#event(record, "held-copy-started", byBbBox("its held copy ran before it was a template"), `"${record.name}" (${record.id}): its copy, guest ${copy.ref}, was running before it was a template. bb-box deletes it and makes it again from the snapshot.`);
       if (!(await this.#dropCopy(backend, copy, record))) unsure(`bb-box could not delete its copy, guest ${copy.ref}, which is not a template yet and so not trusted.`);
@@ -3172,15 +3208,17 @@ export class Snapshots {
     if (!ref && operation.step.endsWith("submitting")) {
       if (!backend.findTasks) return { state: "unreadable", words: `${backend.label} cannot say whether it accepted the request` };
       try {
-        const restoring = operation.kind === "restore";
-        const candidates = (await backend.findTasks(guest, kind, restoring ? (operation.stepAt ?? operation.startedAt) : operation.startedAt, signal)).filter((candidate) => !this.#deps.ledger.operationWithTask(candidate.ref));
-        if (restoring && candidates.length > 1) return { state: "unreadable", words: `${backend.label} lists ${candidates.length} tasks that could be this step's, so bb-box cannot tell which is` };
+        const thisAttempt = operation.kind === "restore" || operation.kind === "hold-copy";
+        const earlier = new Set((operation.attempts ?? []).slice(0, -1).flatMap((attempt) => (attempt.task ? [attempt.task.ref] : [])));
+        const since = thisAttempt ? (operation.stepAt ?? operation.startedAt) : operation.startedAt;
+        const candidates = (await backend.findTasks(guest, kind, since, signal)).filter((candidate) => !earlier.has(candidate.ref) && !this.#deps.ledger.operationWithTask(candidate.ref));
+        if (thisAttempt && candidates.length > 1) return { state: "unreadable", words: `${backend.label} lists ${candidates.length} tasks that could be this step's, so bb-box cannot tell which is` };
         ref = candidates[0] ?? null;
       } catch (error) {
         if (signal?.aborted) throw error;
         return { state: "unreadable", words: message(error) };
       }
-      if (ref) this.#deps.ledger.updateOperation(operation.id, { step: operation.step.replace(/submitting$/, "task"), task: ref });
+      if (ref) this.#deps.ledger.updateOperation(operation.id, { step: operation.step.replace(/submitting$/, "task"), task: ref, ...(operation.kind === "hold-copy" ? { attempts: withAttemptTask(operation.attempts, ref) } : {}) });
     }
     if (!ref) return null;
     if (!backend.providerTask) return { state: "unreadable", words: `${backend.label} cannot read its tasks` };

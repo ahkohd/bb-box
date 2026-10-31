@@ -612,7 +612,8 @@ test("a held copy cut short before its own labels still carries its source's tag
     call.method === "PUT" && /\/lxc\/\d+\/config$/.test(call.path) && !call.path.endsWith(`/lxc/${vmid}/config`)
       ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cut short" }) }
       : undefined;
-  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async () => {} }).catch((caught: unknown) => caught);
+  let claimed: Guest | null = null;
+  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async (made) => void (claimed = made) }).catch((caught: unknown) => caught);
   state.proxmox.intercept = undefined;
   assert.ok(cut instanceof Error);
   const part = [...state.proxmox.guests.values()].find((each) => each.vmid !== vmid && each.name.startsWith("bb-box-copy-"))!;
@@ -620,6 +621,24 @@ test("a held copy cut short before its own labels still carries its source's tag
   const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
   assert.ok(listed, "the sweep sees it");
   assert.equal(listed.owner, null, "as a guest that names no box");
+  await assert.rejects(state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }), /is not the copy bb-box made of snapshot snbbbbbbbbbbbb/);
+  await state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30", forkSafe: 7, kind: "linux" });
+  for (const tag of ["held-copy", `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7"]) assert.match(part.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), `labelled once its clone ends well: ${tag}`);
+  assert.equal(part.config.onboot, "0");
+  assert.match(part.config.net0 ?? "", /link_down=1/);
+  assert.equal((await state.backend.held()).some((each) => each.ref === String(part.vmid)), false, "and then a held copy, which the box sweep never sees");
+});
+
+test("a release's label check lists one guest's own snapshots with their keep dates, and fails when Proxmox cannot list them", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  await state.backend.labelKept({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, "2026-11-30");
+  assert.deepEqual((await state.backend.snapshotsOn(guest)).map((held) => ({ id: held.id, keptUntil: held.keptUntil, forkSafe: held.forkSafe })), [{ id: SNAPSHOT, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), forkSafe: null }]);
+  state.proxmox.intercept = (call) =>
+    call.method === "GET" && call.path.endsWith(`/lxc/${vmid}/snapshot`) ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cannot read" }) } : undefined;
+  await assert.rejects(state.backend.snapshotsOn(guest));
+  state.proxmox.intercept = undefined;
 });
 
 test("070 unit 8: Keep's held copy is a full copy of the snapshot into the box range, recorded before the clone, disarmed, labelled with its box, snapshot, keep date, kind and reset version, and a template only once Proxmox says so", async () => {

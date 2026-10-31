@@ -708,6 +708,7 @@ export interface Backend {
   snapshot?(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken>;
   deleteSnapshot?(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
   heldSnapshots?(signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
+  snapshotsOn?(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
   providerTask?(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome>;
   findTasks?(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
   powerOff?(guest: Guest, signal?: AbortSignal): Promise<void>;
@@ -716,6 +717,7 @@ export interface Backend {
   guestIdentity?(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity>;
   copyGuest?(source: Guest, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
   copySnapshot?(ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  labelCopy?(copy: Guest, label: HeldCopyLabel, signal?: AbortSignal): Promise<Guest>;
   copyPlan?(copy: Guest, signal?: AbortSignal): Promise<CopyPlan>;
   labelKept?(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void>;
   disarmCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;

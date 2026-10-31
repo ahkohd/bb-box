@@ -287,6 +287,14 @@ export class FakeSnapshots {
       if (fault) throw fault;
       return copy;
     };
+    target.labelCopy = async (copy: Guest, label: HeldCopyLabel): Promise<Guest> => {
+      this.order.push(`label ${copy.ref}`);
+      const held = this.copies.get(copy.ref);
+      if (!held || held.snapshot !== label.snapshot) throw new SnapshotFailed(`Guest ${copy.ref} is not the copy bb-box made of snapshot ${label.snapshot}.`);
+      held.kept = label.kept;
+      held.forkSafe = label.forkSafe ?? null;
+      return copy;
+    };
     target.copyPlan = async (copy: Guest): Promise<CopyPlan> => {
       const held = this.copies.get(copy.ref);
       if (!held) return { state: "gone", size: null, running: false };
@@ -365,7 +373,7 @@ export class FakeSnapshots {
       this.earlier.add(guest.ref);
       return guest;
     };
-    target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
+    const listedNow = (): HeldSnapshot[] => {
       if (this.listing) throw this.listing;
       const listed = [...this.held.values()].map((held) => ({
         id: held.id,
@@ -397,9 +405,14 @@ export class FakeSnapshots {
         storage: null,
         forkSafe: held.forkSafe ?? null,
       }));
-      if (this.listingGate) await this.listingGate;
       return [...listed, ...copied];
     };
+    target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
+      const listed = listedNow();
+      if (this.listingGate) await this.listingGate;
+      return listed;
+    };
+    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && held.guest.ref === guest.ref);
     target.providerTask = async (task: TaskRef): Promise<TaskOutcome> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return this.tasks.get(task.ref) ?? { state: "missing", words: `no task ${task.ref}` };

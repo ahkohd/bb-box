@@ -3030,6 +3030,38 @@ copy on the same kind of box: `npx tsc` passes, and the reference is
 current; the node suite ran 3,254 tests, 2,966 passed, 0 failed, 288
 skipped; vitest ran 431, all passed.
 
+### After the re-reviews
+
+Two re-reviews read `c5fede75`. Opus said merge, with two low findings.
+Astra said not yet, with three blockers, each reproduced by a probe. The
+lead asked for the three blockers and Opus's first low finding, each with
+the probe as a regression test. All three new tests fail on `c5fede75` and
+pass now.
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| After records loss, a rebuilt, empty `snapshots.db` is healthy. If the reconcile then failed, a release found no kept record and deleted the guest, kept snapshot and all | Astra B1 (P1) | Every release lists its guest's own snapshots (`snapshotsOn`, one call on Proxmox) before it deletes anything. It stops, deleting nothing, when it cannot read them, or when a label says kept and the records do not, until the sweep has recorded it | "re-review B1: after records loss, every release reads its guest's own labels ...", and on Proxmox LXC "a release's label check lists one guest's own snapshots ..." |
+| A clone slower than its wait, which ended well, was deleted and cloned again at every retry | Astra B2, Opus N2 | bb-box waits for the same task across retries. Once it ends well, the copy is labelled (`labelCopy`, split out of `copySnapshot`), disarmed and made a template, if its wait ran out in this run. A copy left by a restart is still deleted and made again, as G16 proved | "re-review B2: a clone slower than its wait that ends well ...", and the rewritten "a release whose copy outlasts its wait ..." |
+| A retry whose submission answer was lost could take the previous clone's task, settle the operation and drop its reservation while the new clone ran | Astra B3 (P1) | Each copy attempt records its start and task (`attempts`, a new column in an appended migration). Recovery looks from this attempt's start only, skips every earlier attempt's task, and stays unsettled while more than one could be its own. Proxmox lists a clone's task under its source's VMID only, so the target VMID cannot be matched from the list | "re-review B3: a copy made again after a restart ..." |
+| "Release and delete what you kept" did not clear an untrusted held copy, though the words offered it | Opus N1 | A stop that taking the keeps off cannot get past (`ReleaseWaits`) no longer offers it, in the words or the menu: an untrusted held copy, a copy still being made, labels that cannot be read, or labels the records do not have yet. An untrusted copy's words say to delete that snapshot | "review 2: a release refuses while a kept snapshot's held copy is not a template ..." |
+
+**Live**, on a new separate BB set up as before, with the same backends
+(VMIDs 3180 to 3189), armed on that BB only:
+
+| Check | Result |
+| --- | --- |
+| B1: a kept snapshot's record deleted from the test BB's `snapshots.db`, then a release at once | stopped: "Box b1-lxc's label on Proxmox LXC on pve-1 says snapshot ... is kept until 2026-11-30, and bb-box's records do not say so yet, so it deleted nothing."; the machine stayed in BB; the sweep found the snapshot from its label, and the release then made its held copy |
+| B1: Proxmox's API cut (`iptables` on the test BB) during a release | stopped: "bb-box could not read the labels of box b3-lxc's snapshots on Proxmox LXC on pve-1, so it cannot tell whether one is kept, and deleted nothing"; "Release and delete what you kept" not offered |
+| B2: test build with a 1 s clone wait, LXC and QEMU | each release stopped while Proxmox copied ("bb-box waits for that task, and makes the copy a template once it ends well"); at the sweep the same copies, 3181 and 3186, became the held copies, one attempt each, with no second clone and nothing restored as a box; forks from both read the file from before the take, `boot=reset` |
+
+At the end that BB had no snapshot, box or unsettled operation, and the
+lead's `leftovers` listed no guest in 3170 to 3189.
+
+After these fixes, on this unit's three commits over main `cf84a20a`, in
+a copy on the same kind of box: `npx tsc` passes, and the reference is
+current; the node suite ran 3,258 tests, 2,970 passed, 0 failed, 288
+skipped; vitest ran 431, all passed.
+
 ### Conditions and open questions
 
 - **G16's node reboot** stays a condition before production's Keep is

@@ -587,6 +587,10 @@ export class BoxError extends Error {
   }
 }
 
+export class ReleaseWaits extends BoxError {}
+
+export const RELEASE_OR_DELETE_KEPT = "Release it again, or release it and delete what you kept.";
+
 /** #choose finding no offer for a box, with the backends that had no room: only their spares give room (#282). */
 /** What `on` named (044): the offers to try, in acquire order; why each named provider that is off was passed over; and every provider named. */
 interface Named {
@@ -2581,7 +2585,8 @@ export class Boxes {
       } catch (error) {
         const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
         failed(words, null);
-        return this.update(box, () => ({ error: `${words} bb-box tries again in a few minutes. Release it again, or release it and delete what you kept.` }));
+        const next = error instanceof ReleaseWaits ? "bb-box tries again in a few minutes." : `bb-box tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
+        return this.update(box, () => ({ error: `${words} ${next}` }));
       }
     }
     // A thread's own box (role "machine") has a BB machine that BB owns and removes itself; deleting it

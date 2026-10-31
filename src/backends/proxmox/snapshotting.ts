@@ -601,35 +601,46 @@ export class ProxmoxSnapshotting {
     const guests = [...(await this.#guests.guests(api, signal)).map((each) => ({ ...each, where: "current" as const })), ...kept.filter((copy) => copy.where === "earlier").map((copy) => ({ guest: copy.guest, owner: copy.owner, where: "earlier" as const }))];
     for (const { guest, owner, where } of guests) {
       signal?.throwIfAborted();
-      const vmid = this.#guests.vmid(guest);
-      let listed: ProxmoxSnapshot[];
-      try {
-        listed = await api.snapshots(vmid, signal);
-      } catch (error) {
-        if (error instanceof ProxmoxError && error.gone) continue;
-        throw error;
-      }
-      let busy: Busy | null = null;
-      for (const snapshot of listed) {
-        const label = parseSnapshotLabel(snapshot.description);
-        if (!label || label.install !== this.#guests.installId || snapshot.name !== snapshotName(label.snapshot)) continue;
-        if (snapshot.snapstate && busy === null) busy = await this.#busy(api, vmid, signal);
-        held.push({
-          id: label.snapshot,
-          ref: snapshot.name,
-          box: label.box,
-          owner,
-          guest,
-          where,
-          state: snapshot.snapstate ? (busy?.is === "idle" ? "incomplete" : "in-progress") : "complete",
-          words: snapshot.snapstate ? `${snapstateWords(snapshot.snapstate)}.` : null,
-          holds: snapshot.vmstate ? "disk-and-memory" : "disk",
-          takenAt: snapshot.snaptime !== null ? snapshot.snaptime * 1000 : null,
-          keptUntil: keptUntilOf(label.kept),
-          storage: null,
-          forkSafe: label.reset ?? null,
-        });
-      }
+      held.push(...(await this.#listedOn(api, guest, owner, where, signal)));
+    }
+    return held;
+  }
+
+  async on(guest: Guest, signal?: AbortSignal): Promise<HeldSnapshot[]> {
+    const api = await this.#guests.client();
+    return this.#listedOn(api, guest, null, "current", signal);
+  }
+
+  async #listedOn(api: Proxmox, guest: Guest, owner: BoxOwner | null, where: "current" | "earlier", signal?: AbortSignal): Promise<HeldSnapshot[]> {
+    const vmid = this.#guests.vmid(guest);
+    let listed: ProxmoxSnapshot[];
+    try {
+      listed = await api.snapshots(vmid, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.gone) return [];
+      throw error;
+    }
+    const held: HeldSnapshot[] = [];
+    let busy: Busy | null = null;
+    for (const snapshot of listed) {
+      const label = parseSnapshotLabel(snapshot.description);
+      if (!label || label.install !== this.#guests.installId || snapshot.name !== snapshotName(label.snapshot)) continue;
+      if (snapshot.snapstate && busy === null) busy = await this.#busy(api, vmid, signal);
+      held.push({
+        id: label.snapshot,
+        ref: snapshot.name,
+        box: label.box,
+        owner,
+        guest,
+        where,
+        state: snapshot.snapstate ? (busy?.is === "idle" ? "incomplete" : "in-progress") : "complete",
+        words: snapshot.snapstate ? `${snapstateWords(snapshot.snapstate)}.` : null,
+        holds: snapshot.vmstate ? "disk-and-memory" : "disk",
+        takenAt: snapshot.snaptime !== null ? snapshot.snaptime * 1000 : null,
+        keptUntil: keptUntilOf(label.kept),
+        storage: null,
+        forkSafe: label.reset ?? null,
+      });
     }
     return held;
   }

@@ -176,7 +176,8 @@ test("a VM's held copy cut short before its own labels still carries its source'
     call.method === "PUT" && /\/qemu\/\d+\/config$/.test(call.path) && !call.path.endsWith(`/qemu/${vmid}/config`)
       ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cut short" }) }
       : undefined;
-  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { box, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async () => {} }).catch((caught: unknown) => caught);
+  let claimed: Guest | null = null;
+  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { box, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async (made) => void (claimed = made) }).catch((caught: unknown) => caught);
   state.proxmox.intercept = undefined;
   assert.ok(cut instanceof Error);
   const part = [...state.proxmox.guests.values()].find((each) => each.vmid !== vmid && each.name.startsWith("bb-box-copy-"))!;
@@ -184,6 +185,11 @@ test("a VM's held copy cut short before its own labels still carries its source'
   const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
   assert.ok(listed, "the sweep sees it");
   assert.equal(listed.owner, null, "as a guest that names no box");
+  await state.backend.labelCopy(claimed!, { box, snapshot: SNAPSHOT, kept: "2026-11-30", forkSafe: 7, kind: "linux" });
+  for (const tag of ["held-copy", `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7"]) assert.match(part.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), `labelled once its clone ends well: ${tag}`);
+  assert.equal(part.config.onboot, "0");
+  assert.equal((await state.backend.held()).some((each) => each.ref === String(part.vmid)), false);
+  assert.deepEqual((await state.backend.snapshotsOn(guest)).map((held) => held.id), [SNAPSHOT], "one guest's own snapshots, for a release's label check");
 });
 
 test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed first, with new MAC addresses, a new SMBIOS UUID and the address of its own VMID, then armed in two late steps; a Windows VM forks none", async () => {
