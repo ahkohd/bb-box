@@ -2,7 +2,7 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=2
+readonly VERSION=3
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
@@ -29,13 +29,11 @@ marker_source=
 marker_value=
 marker_macs=()
 found_macs=
-found_count=0
 
 say() { echo "bb-box-identity: $*"; }
 fail() { echo "bb-box-identity: $*" >&2; exit "${2:-1}"; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 lower() { tr 'A-F' 'a-f'; }
-count_lines() { if [ -n "$1" ]; then printf '%s\n' "$1" | wc -l; else echo 0; fi; }
 one_line() { printf '%s' "$1" | tr '\n' ' ' | sed 's/ $//'; }
 flush() { sync "$@" 2>/dev/null || sync; }
 make_folder() { [ -d "$1" ] || install -d -m "$2" "$1"; }
@@ -68,8 +66,6 @@ live_macs() {
     lower <"$path/address"
   done | sort -u
 }
-
-counted_source() { if [ "$1" = device ]; then echo device; else echo any; fi; }
 
 write_atomically() {
   local file=$1 text=$2 mode=$3
@@ -118,7 +114,7 @@ devices_settled() {
 
 new_backend_macs() {
   local mac
-  for mac in $(live_macs "$(counted_source "$marker_source")"); do
+  for mac in $(live_macs "$marker_source"); do
     listed "$mac" "${marker_macs[@]}" || printf '%s\n' "$mac"
   done
 }
@@ -128,7 +124,6 @@ look_for_marker_macs() {
   devices_settled && settled=yes
   while :; do
     found_macs=$(live_macs any)
-    found_count=$(count_lines "$(live_macs "$(counted_source "$marker_source")")")
     marker_mac_present && return 0
     [ "$settled" = no ] || [ -z "$(new_backend_macs)" ] || return 1
     [ "$loop" -lt "$loops" ] || return 2

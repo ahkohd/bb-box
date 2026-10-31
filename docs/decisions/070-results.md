@@ -699,7 +699,8 @@ be undone on its own.
    and the desktop; a plain clone that resets; three restarts with Docker
    containers and Tailscale; a spare claimed, renamed and restarted; a card
    added, booted, then the first removed; and a card that comes late. The
-   G14 runs above were of version 1 of the program.
+   G14 runs above were of version 1 of the program. Step 3 ran on 31
+   October: see "Rollout step 3" below; LXC needs version 3 in its template.
 4. **A box made before** keeps working as it does: it has no marker, so it
    never resets, and its snapshots say "not fork-safe". bb-box arms a box
    only at its first ready, so turning a backend on arms no running box.
@@ -906,6 +907,85 @@ addresses (02:42:ac:11:00:aa) is on this box's interfaces
 "BB machine host_systemd_source went with this box's identity reset, so its
 daemon does not start". `multi-user.target` waits while SSH does, as it
 wants SSH; logins do not.
+
+### Rollout step 3, on the rebuilt templates
+
+On 31 October 2026 the lead rebuilt production's templates from main with
+version 2 of the program: Proxmox LXC 9800 (`build.20261031-015802-ee19`)
+and Proxmox QEMU 9806 (`build.20261031-015944-13b3`). A separate BB (a
+fresh `npx bb-app` 0.48.1 with no account, bb-box from main `b8088de6`) had
+a backend on each, with their own VMIDs and addresses. Each template's
+program was main's file, byte for byte, with both units enabled and 16
+drop-ins.
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| Unarmed: boot and order | pass: `boot=unarmed`; the check `@159ms +17ms`, then `network-pre.target @177ms`, networkd, ssh and `user@1000` | pass: the check after udev's coldplug, `@505ms +25ms`, then `network-pre.target @627ms`, networkd, ssh and `user@1000` |
+| Unarmed: requirements | pass: networkd, ssh, `ssh.socket`, `user@1000`, Docker, `docker.socket`, containerd and `bb-box-docker-containers` each require the check and start after it; ssh the settle unit too | pass, the same |
+| Unarmed: three restarts with Docker and tailscaled (no login) | pass: `unarmed`, nothing changed | pass |
+| Unarmed: a take | pass: "not fork-safe: lxc-u had no working identity reset when it was taken" | |
+| Naming both backends arms no running box | pass: the unarmed box restarted `unarmed` | |
+| Armed: the marker at first ready | pass: `identity 41 ms`, `source eth` | pass: `identity 44 ms`, `source device` |
+| Armed: the order | pass: `kept` in 36 ms, before `network-pre`, networkd, ssh, `user@1000`, containerd, tailscaled and Docker; settle before ssh and tailscaled | pass: after udev's coldplug, 84 ms with `udevadm settle`, then the same order |
+| Armed: three restarts with Docker and a tailnet node logged in with a single-use ephemeral key | pass: `kept` each time; host ID, credentials, machine ID, SSH key, Tailscale state and node key, access file unchanged; Tailscale `Running` | pass |
+| Armed: a stop and start through bb-box | pass, the same | no boot: bb-box's stop suspends a VM to disk, so its start resumes the same boot and no check runs |
+| A take | pass: `forkSafe: 2` | pass: `forkSafe: 2` |
+| A plain clone, by the lead, `link_down=1` | pass: reset at its first start, before networkd, ssh, `user@1000` and tailscaled; host ID, credentials, daemon unit and access file gone; new machine ID and SSH key; Tailscale state `{}`; threads' folder and containers kept; after a reboot `kept`, one reset | pass, the same |
+| The source after its clone | pass: unchanged, BB machine connected, Tailscale `Running` | pass |
+| A spare claimed, renamed and restarted | pass: claimed in 12 ms with the same box ID, marker and host ID; its access file rewritten for its owner; after a restart `kept`, its renamed BB machine connected | not run: one VMID |
+| A card added and booted, then the first removed, then put back | pass: the marker gained `eth1`'s MAC; `kept` with only `eth1`; `kept` with `eth0` back | pass, with `qm reboot`, a cold start each time |
+| A late card: started with no card, then its own card put back | **fail**: a false reset | pass: `boot=unknown` at 55 s, the host ID kept, ssh and tailscaled waiting; once the card was back, `kept`, ssh, tailscaled and BB's daemon started |
+
+**The failure.** With no card, the LXC box's check waited 30 s and ended
+`unknown`, as it should. Its network and Docker then started, and Docker made
+`docker0`, a bridge and two `veth` interfaces. The settle unit counted every
+Ethernet-type interface as a card of the backend's for an `eth` marker, so it
+took those four as new cards with none of the marker's, and reset the box:
+"none of the marker's MAC addresses (bc:24:11:87:90:2f bc:24:11:af:12:b9) is
+on this box's interfaces (52:dd:31:2b:7a:db 62:01:bc:70:20:83
+da:35:57:32:58:35 fe:63:50:f4:f1:cd)". On a VM only cards with a device
+count, so Docker's interfaces never did. The unit tests' no-card settle, and
+the systemd container's, never added Docker's interfaces.
+
+**What bb-box did.** As built: it logged `identity-reset`, removed
+`host_eai95mipb8` from BB, waited for BB to confirm, and enrolled the box
+again as `host_dvmjmz6nbv` 2 s after it found the reset (`enrolled-again`).
+It wrote the box's marker again, so the box is armed, and the doctor names it
+under Identity resets. It kept the box. The reset cost its tailnet node.
+
+**The fix, version 3.** A new card shows a copy only if it is a card of the
+marker's own source: one named `eth` and a number on LXC, one with a device on
+a VM. This holds at boot, in settle and in `status`. A copy whose card was
+renamed, which version 2 reset and unarmed, is now held as unknown, with
+nothing removed. The version goes to 3, so a take's `forkSafe` says whether
+its box had the fix.
+
+**Tests.** `identity-reset.test.ts`: on LXC and on a VM, a box with no card
+past the wait is held while Docker's and Tailscale's interfaces appear, both
+at boot and in settle; nothing is removed, SSH and BB's daemon still wait,
+`status` says `incomplete`, and it is kept once its card is back. A copy whose
+card has no `eth` name is held; one whose marker is gone and has no `eth` card
+still resets and unarms. Both fail on version 2, the first with the live
+message.
+
+**Live again, with version 3** installed by hand in the same two boxes
+(sha256 `621241f5...`), both restarted `kept`, and a new take of the LXC box
+(`forkSafe: 3`):
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| A plain clone, by the lead | pass: reset at its first start, `host_dvmjmz6nbv` removed, before networkd, ssh, `user@1000` and tailscaled | |
+| A copy whose new card comes late: a clone started with no card, given a new one after 45 s | pass: at 45 s `boot=unknown`, the host ID still there, Docker up with its bridge and veths, ssh and tailscaled waiting, BB's daemon waiting; once the card came, `settle` reset it and refused the copied machine's daemon; after a reboot `kept` | |
+| A late card on the box itself | pass: `boot=unknown` at 45 s with Docker up, ssh and tailscaled waiting, the host ID unchanged; once its own card was back, `kept`, then ssh, tailscaled and BB's daemon started | pass: the same at 55 s |
+
+The templates still hold version 2, so neither backend goes into
+`identityResetBackends` until 9800 and 9806 are rebuilt with version 3, and
+the doctor's image record or `bb-box-identity version` says 3.
+
+Afterwards the snapshots, boxes and both backends were removed from the
+separate BB, its box released, and the lead destroyed the clones. One
+spare was released before it was claimed, by setting the spares to 0
+first; the claim was done again in the right order.
 
 ### Choices and deviations
 

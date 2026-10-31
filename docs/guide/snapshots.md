@@ -65,7 +65,7 @@ When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/
 At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's daemon start, the box compares the marker with what it has:
 
 - if any of the marker's MAC addresses is on any of its cards, whatever the card's name, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
-- if its cards are all known, and it has a new one of the backend's but none of the marker's, it is a copy, and it resets
+- if its cards are all known, and it has a new card of the backend's but none of the marker's, it is a copy, and it resets. A card of the backend's is one named `eth` and a number on Proxmox LXC, and one with a device on a VM; interfaces the box makes itself, such as Docker's and Tailscale's, never count
 - if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above
 
 A reset removes what made the box its source:

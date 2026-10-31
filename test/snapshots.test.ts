@@ -945,8 +945,8 @@ test("a box is first ready with its identity marker, written with its backend's 
   assert.equal(typeof box.identityMarkedAt, "number", "bb-box records that it armed the box, so only armed boxes are checked for a reset");
   assert.deepEqual(state.boxLogs.filter((line) => line.includes("identity marker")), []);
   const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
-  assert.equal(taken.forkSafe, 2);
-  assert.equal(state.store.record(taken.id)?.forkSafe, 2, "kept on the record, so a restart keeps it");
+  assert.equal(taken.forkSafe, 3);
+  assert.equal(state.store.record(taken.id)?.forkSafe, 3, "kept on the record, so a restart keeps it");
   assert.doesNotMatch(snapshotLine(taken), /identity reset/);
 });
 
@@ -1003,7 +1003,7 @@ test("a Docker box's marker holds the value its start saw, and a box whose start
   withIdentitySource(state, "value");
   const box = await readyBox(state);
   assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource value\nvalue bxpending\n`);
-  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 2);
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 3);
 
   const before = identityGuest();
   const old = world({ identityTool: before.tool });

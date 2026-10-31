@@ -165,7 +165,7 @@ test("a box made before the change, with the reset in its image but no marker, k
     assert.match(ran.out, /kept: bb-box has written no identity marker here/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
+  assert.deepEqual(status(root), { version: "3", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
 });
 
 test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
@@ -194,7 +194,7 @@ test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Do
     assert.match(ran.out, /kept: the identity marker of box bxsource1 matches/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
+  assert.deepEqual(status(root), { version: "3", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
@@ -242,19 +242,31 @@ test("a copy with new MAC addresses, as any Proxmox clone gets, resets every ite
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:5e:77:01\nreset \d{4}-\d\d-\d\dT[\d:]+Z\n$/);
   assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
-  assert.deepEqual(status(root), { version: "2", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
+  assert.deepEqual(status(root), { version: "3", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
   const once = identityOf(root);
   assert.match(boot(root).out, /kept: the identity marker of box none matches/);
   assert.deepEqual(identityOf(root), once, "the next boot does not reset again");
 });
 
-test("a copy whose card has no eth name resets, then unarms itself rather than resetting at every boot", () => {
+test("only a new card of the backend's shows a copy: one whose card has no eth name is held, removing nothing; one whose marker is gone and has no eth card resets, then unarms itself", () => {
+  const renamed = guest([LOOP, LXC_ETH0]);
+  boot(renamed);
+  written(renamed, "bxsource1", "eth");
+  setNics(renamed, [LOOP, { name: "lan0", mac: "bc:24:11:5e:77:01" }]);
+  const kept = identityOf(renamed);
+  const held = boot(renamed);
+  assert.equal(held.code, 0, held.err);
+  assert.match(held.out, /not knowing yet whether this box is a copy/);
+  assert.deepEqual(identityOf(renamed), kept);
+  assert.equal(status(renamed).boot, "unknown");
+
   const root = guest([LOOP, LXC_ETH0]);
   boot(root);
-  written(root, "bxsource1", "eth");
+  written(root, "bxsource2", "eth");
+  rmSync(join(root, "etc/bb-box/identity"));
   setNics(root, [LOOP, { name: "lan0", mac: "bc:24:11:5e:77:01" }]);
   const ran = boot(root);
-  assert.match(ran.out, /resets its identity/);
+  assert.match(ran.out, /resets its identity: its identity marker is missing or unreadable/);
   assert.match(ran.out, /found no interface of the backend's to write a marker for, so it unarms this box/);
   assert.equal(existsSync(join(root, "etc/bb-box/identity")), false);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-armed")), false);
@@ -617,6 +629,37 @@ test("a box with no card at all still boots: nothing is removed, and only what u
   daemon.kill();
   assert.deepEqual(identityOf(root), before);
   assert.equal(status(root).boot, "unknown");
+});
+
+test("a box with no card past the wait stays held while its network, Docker and Tailscale add their own interfaces, on LXC as on a VM, and is kept once its card is back", async () => {
+  const ens18: Nic = { name: "ens18", mac: "bc:24:11:00:00:18", device: true };
+  for (const [card, source] of [[LXC_ETH0, "eth"], [ens18, "device"]] as const) {
+    const root = guest([LOOP, card]);
+    boot(root);
+    written(root, "bxsource1", source);
+    const before = identityOf(root);
+    setNics(root, [LOOP, ...BOX_MADE]);
+    assert.match(boot(root).out, /not knowing yet whether this box is a copy/, `${source}: interfaces the box made are no card of the backend's`);
+    setNics(root, [LOOP]);
+    assert.match(boot(root).out, /not knowing yet whether this box is a copy/);
+    const settling = settle(root);
+    const settled = ended(settling);
+    const daemon = waitFor(root, DAEMON_UNIT);
+    const daemonDone = ended(daemon);
+    setNics(root, [LOOP, ...BOX_MADE]);
+    assert.equal(await stillRunning(settling, 600), true, `${source}: SSH and Tailscale still wait`);
+    assert.equal(await stillRunning(daemon, 10), true, `${source}: BB's daemon still waits`);
+    assert.deepEqual(identityOf(root), before, `${source}: nothing removed`);
+    assert.equal(status(root).boot, "unknown");
+    assert.equal(status(root).marker, "incomplete");
+    setNics(root, [LOOP, card, ...BOX_MADE]);
+    const done = await settled;
+    assert.equal(done.code, 0);
+    assert.match(done.out, /kept, now that its cards are here/);
+    assert.deepEqual(identityOf(root), before);
+    assert.equal((await daemonDone).code, 0, `${source}: BB's daemon starts`);
+    assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
+  }
 });
 
 test("wait lets BB's daemon start once the identity is known, unless its machine went with a reset", async () => {
