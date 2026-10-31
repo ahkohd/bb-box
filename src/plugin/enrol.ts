@@ -46,6 +46,7 @@ import { daemonStarting, endThreadProcesses, hideBbConsoles, runWindowsCommand, 
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../core/identity.ts";
+import { JOIN_TRIES, backendVerdict, dueToJoin, gaveUpWords, joinProblem, nextTry, plainJoinFailure, tryWords, waitWords, waitingToJoin } from "../core/join-tries.ts";
 
 type ResetFound = { readonly found: "reset"; readonly reset: IdentityReset } | { readonly found: "none" } | { readonly found: "unread"; readonly why: string };
 
@@ -215,6 +216,7 @@ export interface EnrolmentDeps {
   readonly providerRetryMs?: number;
   /** How long a release waits for BB to finish removing a Windows box's manual machine (#539). */
   readonly manualRemoveMs?: number;
+  readonly joinWaitsMs?: readonly number[];
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
@@ -255,12 +257,7 @@ function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-const CANNOT_REACH_BB = /curl: \((6|7|28)\)|Could not resolve host|Failed to connect|Connection timed out|Connection refused/i;
-
-export function withReachHint(message: string, backendLabel: string): string {
-  if (!CANNOT_REACH_BB.test(message)) return message;
-  return `BB's server is not reachable from ${backendLabel}: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). ${message}`;
-}
+const RETIRE_AGAIN_MS = 60_000;
 
 /** Runs BB's installer commands in the box, as the box user, through its command transport. */
 export function executor(transport: CommandTransport, phases?: Phases, environment: Readonly<Record<string, string>> = {}): MachineExecutor {
@@ -329,13 +326,14 @@ const STEPS: readonly Step[] = [
  * resuming the enrolment after a restart, or bb-box finding a box the sweep
  * restored running and answering.
  */
-export type EnrolSince = "ready" | "resumed" | "restored" | "reset";
+export type EnrolSince = "ready" | "resumed" | "restored" | "reset" | "retry";
 
 const SINCE: Record<EnrolSince, string> = {
   ready: "it was ready",
   resumed: "bb-box resumed following it",
   restored: "bb-box found the restored box answering",
   reset: "bb-box found its identity reset",
+  retry: "bb-box tried again",
 };
 
 /** When each step of one enrolment ended, counted from `origin`. */
@@ -416,6 +414,9 @@ export class Enrolment {
   /** Boxes whose BB daemon this process is starting again. */
   readonly #reconnecting = new Set<string>();
   readonly #recovering = new Set<string>();
+  readonly #trying = new Set<string>();
+  readonly #nextTries = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #joinWaitsMs: readonly number[] | undefined;
   readonly #identityTurns = new Map<string, Promise<unknown>>();
   /** The steps of each enrolment this process is following. */
   readonly #phases = new Map<string, Phases>();
@@ -432,10 +433,31 @@ export class Enrolment {
     this.#logonWaitMs = deps.logonWaitMs ?? 90_000;
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
     this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
+    this.#joinWaitsMs = deps.joinWaitsMs;
   }
 
   dispose(): void {
+    for (const timer of this.#nextTries.values()) clearTimeout(timer);
+    this.#nextTries.clear();
     this.#stopping.abort(new Error("bb-box stopped, as for a reload"));
+  }
+
+  #tryAt(boxId: string, at: number): void {
+    if (this.#stopping.signal.aborted) return;
+    clearTimeout(this.#nextTries.get(boxId));
+    const timer = setTimeout(() => {
+      this.#nextTries.delete(boxId);
+      void this.#tryWhenDue(boxId);
+    }, Math.max(0, at - Date.now()));
+    timer.unref?.();
+    this.#nextTries.set(boxId, timer);
+  }
+
+  async #tryWhenDue(boxId: string): Promise<void> {
+    const box = await this.#deps.boxes.find(boxId).catch(() => null);
+    if (!box || box.state !== "ready") return;
+    if (recoveryPending(box)) await this.#recover(boxId);
+    else await this.#tryAgain(boxId);
   }
 
   #isStopping(error: unknown): boolean {
@@ -478,7 +500,9 @@ export class Enrolment {
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
           if (this.#isStopping(error) || signal.aborted) return { status: "failed", message: `bb-box stopped while it installed BB in box ${box.name}; its next run installs it again.` };
-          const message = withReachHint(describeError(error, `Enrolling box ${box.name}`), box.backendLabel);
+          const described = describeError(error, `Enrolling box ${box.name}`);
+          const message = plainJoinFailure(described);
+          if (message !== described) this.#deps.log?.(described);
           // Kept on the box, so its row says why: BB removes the machine next, and that removal must not leave the box looking fine.
           await boxes.update(box, (current) => ({ enrol: { state: "failed", hostId: current.enrol.hostId, error: message } })).catch(() => null);
           return { status: "failed", message };
@@ -696,6 +720,9 @@ export class Enrolment {
       this.#phases.delete(box.id);
       this.#following.delete(box.id);
     }
+    await this.#afterTry(box.id).catch((error) => {
+      if (!this.#isStopping(error)) this.#deps.logError("plan the next try to add a box to BB", error);
+    });
     if (resetFound) {
       const found = resetFound;
       await this.#identityTurn(box.id, async () => {
@@ -770,12 +797,14 @@ export class Enrolment {
             ? {}
             : {
                 enrol: { state: "enrolled", hostId, error: null },
-                ...(phases.since === "resumed" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
+                joinTries: null,
+                ...(phases.since === "resumed" || phases.since === "retry" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
               },
         );
         if (enrolled?.enrol.hostId !== hostId) return;
         phases.mark("enrolled");
         this.#deps.log?.(phases.line(enrolled.name));
+        if (current.joinTries) this.#deps.log?.(`Box ${enrolled.name} joined BB at its ${tryWords(current.joinTries.failed)}.`);
         return;
       }
       if (phases.since === "resumed" && phase === "removing") {
@@ -1100,6 +1129,7 @@ export class Enrolment {
       if (box.state !== "ready") continue;
       if (box.identityReset && box.identityReset.enrolledAgainAt === null) void this.#recover(box.id);
       else if (box.removedMachineToCheck) void this.#checkRemovedMachine(box);
+      else if (dueToJoin(box, Date.now())) void this.#tryAgain(box.id);
     }
     const enrolled = all.filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
     await Promise.all(
@@ -1208,6 +1238,12 @@ export class Enrolment {
         box = await this.#deps.boxes.identityResetRetired(boxId);
         if (!box?.identityReset) return;
       }
+      if (waitingToJoin(box)) {
+        if (!dueToJoin(box, Date.now())) return;
+        await this.#tryAgain(boxId, "reset");
+        await this.#deps.boxes.enrolledAgainAfterReset(boxId);
+        return;
+      }
       if (box.enrol.state === "failed" || (box.enrol.state === "enrolling" && box.enrol.hostId === box.identityReset.machine)) {
         box = await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
         if (!box) return;
@@ -1236,6 +1272,88 @@ export class Enrolment {
     return false;
   }
 
+  async #afterTry(boxId: string): Promise<void> {
+    const box = await this.#deps.boxes.find(boxId);
+    if (!box || box.state !== "ready" || box.enrol.state !== "failed" || box.role === "machine") return;
+    const found = joinProblem(box.enrol.error ?? "");
+    if (!found) {
+      if (box.joinTries) await this.#deps.boxes.update(box, () => ({ joinTries: null }));
+      return;
+    }
+    const failed = (box.joinTries?.failed ?? 0) + 1;
+    const verdict = backendVerdict(box, await this.#deps.boxes.all());
+    const planned = nextTry({ failed, problem: found.problem, verdict, now: Date.now(), waits: this.#joinWaitsMs });
+    const settled = await this.#deps.boxes.update(box, (current) =>
+      current.enrol.state !== "failed"
+        ? {}
+        : {
+            joinTries: { failed, next: planned.next, words: found.sentence, problem: found.problem, setup: planned.setup, machine: current.enrol.hostId },
+            enrol: planned.gaveUp
+              ? { state: "failed", hostId: null, error: gaveUpWords({ sentence: found.sentence, failed, verdict, backendLabel: current.backendLabel, setup: planned.setup }) }
+              : { state: "enrolling", hostId: null, error: null },
+          },
+    );
+    if (!settled?.joinTries) return;
+    this.#tryAt(boxId, planned.next);
+    const when = waitWords(planned.next - Date.now());
+    this.#deps.log?.(
+      planned.gaveUp
+        ? `Box ${settled.name} did not join BB after ${failed} ${failed === 1 ? "try" : "tries"}${planned.setup ? `, and no box on ${settled.backendLabel} reaches BB` : verdict === "others joined" ? `, while other boxes on ${settled.backendLabel} joined` : ""}: ${found.sentence} bb-box tries again in ${when}.`
+        : `Box ${settled.name} did not join BB at try ${failed} of ${JOIN_TRIES}: ${found.sentence} bb-box tries again in ${when}.`,
+    );
+  }
+
+  async tryNow(box: BoxRecord): Promise<BoxRecord | null> {
+    if (box.state !== "ready" || box.role === "machine" || !box.capabilities.enrol) return null;
+    if (this.#following.has(box.id) || this.#trying.has(box.id)) return null;
+    const now = Date.now();
+    const marked = await this.#deps.boxes.update(box, (current) => {
+      if (current.enrol.state !== "failed" && !waitingToJoin(current)) return {};
+      const tries = current.joinTries;
+      const gaveUp = current.enrol.state === "failed";
+      return {
+        enrol: { state: "enrolling", hostId: null, error: null },
+        joinTries: {
+          failed: gaveUp ? 0 : (tries?.failed ?? 0),
+          next: now,
+          words: tries?.words ?? current.enrol.error ?? "",
+          problem: tries?.problem ?? null,
+          setup: tries?.setup ?? false,
+          machine: tries?.machine ?? current.enrol.hostId,
+        },
+      };
+    });
+    if (!marked?.joinTries || marked.joinTries.next !== now) return null;
+    void this.#tryAgain(marked.id, recoveryPending(marked) ? "reset" : "retry");
+    return marked;
+  }
+
+  async #tryAgain(boxId: string, since: EnrolSince = "retry"): Promise<void> {
+    if (this.#trying.has(boxId) || this.#following.has(boxId)) return;
+    this.#trying.add(boxId);
+    try {
+      const box = await this.#deps.boxes.find(boxId);
+      if (!box || box.role === "machine" || !dueToJoin(box, Date.now())) return;
+      const left = box.joinTries!.machine ?? (box.enrol.state === "failed" ? box.enrol.hostId : null);
+      if (left && !(await this.#retire(left))) {
+        const at = Date.now() + RETIRE_AGAIN_MS;
+        await this.#deps.boxes.update(box, (current) => (current.joinTries ? { joinTries: { ...current.joinTries, next: at } } : {}));
+        this.#tryAt(boxId, at);
+        return;
+      }
+      const trying = await this.#deps.boxes.update(box, (current) =>
+        !dueToJoin(current, Date.now()) ? {} : { enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { ...current.joinTries!, next: null, machine: null } },
+      );
+      if (!trying?.joinTries || trying.joinTries.next !== null) return;
+      this.#deps.log?.(`Adding box ${trying.name} to BB again, ${tryWords(trying.joinTries.failed)}.`);
+      await this.enrol(trying, { since });
+    } catch (error) {
+      if (!this.#isStopping(error)) this.#deps.logError("try again to add a box to BB", error);
+    } finally {
+      this.#trying.delete(boxId);
+    }
+  }
+
   async machineDeleted(hostId: string): Promise<void> {
     await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
     for (const box of await this.#deps.boxes.all()) {
@@ -1254,7 +1372,7 @@ export class Enrolment {
   /** Follows enrolments a restart interrupted. */
   async resume(): Promise<void> {
     for (const box of await this.#deps.boxes.all()) {
-      if (box.state !== "ready" || box.enrol.state !== "enrolling") continue;
+      if (box.state !== "ready" || box.enrol.state !== "enrolling" || waitingToJoin(box)) continue;
       void this.enrol(box, { since: "resumed" });
     }
   }

@@ -17,6 +17,7 @@
 // holds the thread ID, so a box can be found by its ID alone.
 
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
+import { waitingToJoin, type JoinTries } from "./join-tries.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { OfferedKind, WithheldOffer } from "../backends/index.ts";
 import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
@@ -191,6 +192,7 @@ export interface BoxRecord {
   readonly timings: Readonly<Record<string, number>>;
   readonly waitingOn?: string | null;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
+  readonly joinTries?: JoinTries | null;
   readonly identityReset?: IdentityResetFound | null;
   readonly removedMachineToCheck?: MachineToCheck | null;
   readonly identityMarkedAt?: number | null;
@@ -2256,6 +2258,7 @@ export class Boxes {
     if (!(await this.#enrols(box))) return;
     const enrolling = await this.update(box, (current) => ({
       enrol: { state: "enrolling", hostId: null, error: null },
+      joinTries: null,
       ...(current.restoredAt ? { restoredAt: null } : {}),
     }));
     if (enrolling) {
@@ -3106,7 +3109,7 @@ export class Boxes {
       await within(reconnect, deadline - this.#now(), signal);
       box = (await this.find(box.id)) ?? box;
     }
-    while (box.state === "ready" && box.enrol.state === "enrolling" && this.#now() < deadline && !signal?.aborted) {
+    while (box.state === "ready" && box.enrol.state === "enrolling" && !waitingToJoin(box) && this.#now() < deadline && !signal?.aborted) {
       await new Promise((resolve) => setTimeout(resolve, ENROL_POLL_MS));
       box = (await this.find(box.id)) ?? box;
     }

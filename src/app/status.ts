@@ -4,6 +4,7 @@
 import type { BoxView } from "../plugin/views.ts";
 import { seconds, type Tone } from "./common.tsx";
 import { releaseUnfinished } from "./box-words.ts";
+import { joiningWords, tryWords } from "../core/join-tries.ts";
 
 export interface StatusItem {
   readonly text: string;
@@ -96,7 +97,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
       const state: StatusItem = { text: box.timings.total !== undefined ? `Ready in ${seconds(box.timings.total)}` : "Ready" };
       switch (box.enrol.state) {
         case "enrolling":
-          return { tone: "ok", items: [state, ...alerts, { text: "Joining BB…" }, ...size] };
+          return { tone: "ok", items: [state, ...alerts, { text: box.joinTries ? `Joining BB, ${tryWords(box.joinTries.failed)}` : "Joining BB…" }, ...size] };
         case "enrolled":
           return { tone: "ok", items: [state, ...alerts, { text: machineWords(box) }, ...size] };
         case "failed":
@@ -129,7 +130,7 @@ export function enrolWords(box: BoxView): string {
     case "enrolled":
       return "enrolled";
     case "enrolling":
-      return "joining, which takes a few seconds";
+      return box.joinTries ? joiningWords(box.joinTries, Date.now()) : "joining, which takes a few seconds";
     case "failed":
       return `could not join: ${box.enrol.error ?? "no reason given"}`;
     default:

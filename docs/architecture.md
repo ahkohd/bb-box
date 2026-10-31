@@ -368,7 +368,11 @@ A box is a resource of its thread and gets what the thread's machine has.
   Images clear BB's daemon lock and PID file at boot
   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). An
   enrolment fails, rather than counting the box enrolled, when BB does not
-  show the machine connected within 30 s (#286).
+  show the machine connected within 30 s (#286). A join that failed for
+  something that can pass, such as a DNS lookup that timed out, is tried
+  again at the sweep after 30 s, 2 min, 10 min and 30 min, then every
+  30 minutes (`src/core/join-tries.ts`). Its words blame BB's setup only
+  when no box on the same backend reaches BB.
 - **Variables.** BB gives the thread's Git credentials and machine
   variables to its daemon in the box. Each command bb-box runs, and each
   SSH session through the box's `~/.bashrc` (`~/.zshenv` on macOS), takes

@@ -10,6 +10,7 @@ import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/a
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { Contract } from "../plugin/contract.ts";
+import type { BoxView } from "../plugin/views.ts";
 import { building, needsSignIn, restartWords, setupTarget, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
@@ -200,11 +201,15 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
 /** Where the guide says how boxes join BB, and what to do when they cannot. */
 export const JOIN_GUIDE = `${REPOSITORY_URL}/docs/guide/boxes.md#when-a-box-does-not-join-bb`;
 
+export function joinAdvice(box: Pick<BoxView, "joinTries">): boolean {
+  return !box.joinTries || box.joinTries.setup;
+}
+
 /**
  * What to do when boxes cannot join BB, from BB's words. A box joins BB through BB's machine access, and BB's desktop
  * app starts with bb connect, which needs a sign-in (the newcomer check): then the words say the two ways out.
  */
-export function JoinHelp({ words }: { words: string | null }) {
+export function JoinHelp({ words, advice = true }: { words: string | null; advice?: boolean }) {
   const guide = (
     <UrlLink href={JOIN_GUIDE} className="text-foreground underline underline-offset-2">
       How boxes join BB
@@ -219,7 +224,9 @@ export function JoinHelp({ words }: { words: string | null }) {
   }
   return (
     <>
-      {words ? `${words.replace(/\.?$/, ".")} ` : ""}See Machine access in BB's settings, under Machines. {guide}
+      {words ? `${words.replace(/\.?$/, ".")} ` : ""}
+      {advice ? "See Machine access in BB's settings, under Machines. " : ""}
+      {guide}
     </>
   );
 }
