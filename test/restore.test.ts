@@ -399,6 +399,12 @@ test("G4 in ZFS's order (the live-check switch): the newest only, after a held c
   assert.match((await rejection(state.snapshots.restore(COMMAND, after, standing(after), "one"))).message, /is on \S+'s earlier guest, so it cannot be restored there, only forked\./);
   await state.boxes.sweep();
   assert.equal(await state.backend.power(first), "stopped", "the sweep keeps the earlier guest, which is never started or released as a leftover");
+  const two = earlier.find((record) => record.name === "two")!;
+  state.store.updateRecord(two.id, { keptUntil: state.now + DAY, keptAt: state.now, owner: "person" });
+  state.tick(2 * DAY);
+  await state.snapshots.tidy();
+  assert.equal(state.store.record(two.id), null, "a kept snapshot on an earlier guest goes at its keep date");
+  assert.equal(await state.backend.power(first), "stopped", "and its earlier guest stays while a snapshot is on it");
   assert.ok(state.store.record(copy.id), "the held copy stays, as the undo it is");
   await state.boxes.release(THREAD, box.name, "done with it");
   await state.boxes.settled(box);

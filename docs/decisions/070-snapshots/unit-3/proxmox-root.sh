@@ -16,6 +16,10 @@ do), and on snapshots that install labelled.
   rollback <vmid> <snapshot>
       rolls <vmid> back to one of the install's snapshots, outside bb-box (gate G13);
       a running container shuts down first, which takes a while
+  outside-take <vmid>
+      takes a snapshot named byhand by hand, outside bb-box (gate G13)
+  outside-delete <vmid> <snapshot>
+      deletes one of the install's snapshots by hand, outside bb-box (gate G13)
   failing-rollback <vmid> <snapshot>
       locks <vmid> (backup), asks Proxmox for a rollback, whose task then fails
       on the lock, and unlocks it again (gate G13)
@@ -70,6 +74,16 @@ case $command in
     echo "rollback of $vmid to $3 began at $(date -u +%T)"
     $tool rollback "$vmid" "$3"
     echo "rollback of $vmid to $3 ended at $(date -u +%T)"
+    ;;
+  outside-take)
+    $tool snapshot "$vmid" byhand --description "taken by hand"
+    echo "took byhand on $vmid"
+    ;;
+  outside-delete)
+    [ $# -eq 3 ] || usage
+    ours "$3"
+    $tool delsnapshot "$vmid" "$3"
+    echo "deleted $3 on $vmid"
     ;;
   failing-rollback)
     [ $# -eq 3 ] || usage
