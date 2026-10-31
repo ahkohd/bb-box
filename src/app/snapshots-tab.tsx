@@ -337,8 +337,9 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
   const soonAttention = view.line.attention;
   return (
     <>
+      {all.length || soonAttention.length ? (
       <div className="space-y-1 text-xs leading-snug">
-        <p className="text-muted-foreground">{tabLineWords(view)}</p>
+        {all.length ? <p className="text-muted-foreground">{tabLineWords(view)}</p> : null}
         {soonAttention.length ? (
           <p className="flex items-start gap-1.5 text-warning-text">
             <StatusDot tone="warn" />
@@ -346,6 +347,7 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
           </p>
         ) : null}
       </div>
+      ) : null}
       {all.length ? (
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
           <form role="search" aria-label="Search snapshots" className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:flex-1" onSubmit={(event) => event.preventDefault()}>
@@ -422,10 +424,7 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
       {scroller(
         <>
           {!all.length ? (
-            <EmptyPanel>
-              No snapshots yet. An agent takes one before a risky change, or take one from a box's page.
-              {view.none.length ? <span className="mt-1 block text-subtle-foreground">{view.none.join(", ")} take none.</span> : null}
-            </EmptyPanel>
+            <EmptyPanel>No snapshots yet. Take one from a box's page.</EmptyPanel>
           ) : null}
           {narrowed && all.length && !shown.length ? <EmptyPanel>No snapshots match.</EmptyPanel> : null}
           {groups.map(({ group, rows }) => (

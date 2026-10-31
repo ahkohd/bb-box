@@ -2,9 +2,9 @@ import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { ThreadOnBox } from "../plugin/contract.ts";
-import { rowSpan } from "./box-words.ts";
 
 export const SHOWN_CHIPS = 3;
 export const SEARCH_FROM = 8;
@@ -37,21 +37,22 @@ export function WorkingMark() {
   return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label="Working" />;
 }
 
-const IDLE_WORDS_FROM_MS = 60_000;
-
-export function threadState(thread: ThreadOnBox | null | undefined, now: number): string | null {
-  if (!thread || thread.unchecked) return null;
-  if (thread.running) return "Working";
-  return thread.activeAt !== undefined && now - thread.activeAt >= IDLE_WORDS_FROM_MS ? `Idle ${rowSpan(now - thread.activeAt)}` : "Idle";
-}
-
-export function ThreadState({ thread, now }: { thread: ThreadOnBox | null | undefined; now: number }) {
-  const words = threadState(thread, now);
-  if (!words) return null;
+export function ThreadWorking({ thread }: { thread: ThreadOnBox | null | undefined }) {
+  const working = !!thread && !thread.unchecked && thread.running;
   return (
-    <span data-thread-state className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground">
-      {thread?.running ? <Icon name="Loading" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
-      {words}
+    <span data-thread-working={working || undefined} className="flex size-4 shrink-0 items-center justify-center">
+      {working ? (
+        <TooltipProvider delayDuration={250}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span role="img" aria-label="Working" className="flex size-4 items-center justify-center">
+                <Icon name="Loading" className="size-3 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Working</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
     </span>
   );
 }
