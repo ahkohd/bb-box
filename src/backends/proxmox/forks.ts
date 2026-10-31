@@ -1,5 +1,6 @@
-import type { AcquireHooks, BoxIdentity, BoxSize, Guest, SnapshotRef } from "../types.ts";
+import type { AcquireHooks, BoxIdentity, BoxSize, ForkArming, Guest, SnapshotRef } from "../types.ts";
 import { ProxmoxError, type Proxmox } from "./api.ts";
+import { netKeys, netWith } from "./copies.ts";
 import { describe, installFromDescription, ownerFromDescription } from "./owner.ts";
 import { storageOfVolume } from "./snapshotting.ts";
 
@@ -14,7 +15,7 @@ export interface ForkGuests {
   unreserve(vmid: number): void;
   forget(vmid: number): Promise<void>;
   guest(node: string, vmid: number, template: number | null, box: string, build: string | null): Guest;
-  rearm(api: Proxmox, vmid: number, made: Record<string, unknown>, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void>;
+  addressed(api: Proxmox, vmid: number, made: Record<string, unknown>, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void>;
   sizeOf(config: Record<string, unknown>): BoxSize | null;
   logError(operation: string, error: unknown): void;
 }
@@ -49,6 +50,24 @@ async function dropHalfMadeFork(guests: ForkGuests, api: Proxmox, previous: Gues
   }
 }
 
+export async function disarm(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
+  const made = await api.config(vmid, signal);
+  const nets = Object.fromEntries(netKeys(made).map((key) => [key, netWith(String(made[key]), { up: false })]));
+  await api.setNetwork(vmid, { ...nets, onboot: "0" }, signal);
+}
+
+export async function armFork(guests: Pick<ForkGuests, "client" | "vmid" | "ownConfig">, guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+  const api = await guests.client();
+  const vmid = guests.vmid(guest);
+  const config = await guests.ownConfig(api, guest, signal);
+  if (arming === "boot") {
+    await api.setNetwork(vmid, { onboot: "1" }, signal);
+    return;
+  }
+  const nets = Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { up: true })]));
+  await api.setNetwork(vmid, nets, signal);
+}
+
 export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
   const api = await guests.client();
   if (previous) await dropHalfMadeFork(guests, api, previous, box, signal);
@@ -76,15 +95,16 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
       throw error;
     }
     hooks.timing("copy", Math.round(performance.now() - began));
-    const rearming = performance.now();
-    await guests.rearm(api, vmid, await api.config(vmid, signal), box, template, signal);
-    hooks.timing("rearm", Math.round(performance.now() - rearming));
+    const addressing = performance.now();
+    await disarm(api, vmid, signal);
+    await guests.addressed(api, vmid, await api.config(vmid, signal), box, template, signal);
+    hooks.timing("address", Math.round(performance.now() - addressing));
     return { ...guest, size: guests.sizeOf(await api.config(vmid, signal)) };
   } catch (error) {
     const made = await configOrNull(api, vmid).catch(() => null);
     if (madeFor(made, box, guests.installId)) {
       await guests.forget(vmid);
-      await api.destroy(vmid).catch((cause) => guests.logError("release a fork that failed", cause));
+      await api.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));
     }
     throw error;
   } finally {

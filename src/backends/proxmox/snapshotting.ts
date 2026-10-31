@@ -31,6 +31,8 @@ const CLOCK_SLACK_S = 5;
 const MEMORY_ABOUT_MS_PER_GIB = 1_000;
 const COPY_ABOUT_MS_PER_GIB = 2_400;
 const CLONE_PRIVILEGE = "VM.Clone";
+const LXC_FORK_SAFE_FROM = 7;
+const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
@@ -170,7 +172,7 @@ export class ProxmoxSnapshotting {
   }
 
   offer(): Snapshotting {
-    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: this.#guests.type === "lxc" ? LXC_FORK_SAFE_FROM : QEMU_FORK_SAFE_FROM, keepsPastRelease: "no", lives: "host", price: null, excludes: null };
   }
 
   #tool(): string {

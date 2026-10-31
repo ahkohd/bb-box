@@ -15,6 +15,7 @@ import { Badge, IconButton, message, StatusDot } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
+import { isMachineName } from "../core/names.ts";
 import {
   aboutWords,
   agoWords,
@@ -420,6 +421,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: S
     nav.go({ page: "box", boxId: answer.box.id, origins: ["from-box"] });
   };
   const thread = check && !check.asMachine ? (threadTitles[check.threadId] ?? "this box's thread") : null;
+  const nameWhy = name.trim() && !isMachineName(name.trim()) ? 'A lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".' : null;
   const space = check?.bytes != null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
   return (
     <Shell
@@ -429,7 +431,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: S
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={sending || !check} onClick={() => void fork()}>
+          <Button type="button" disabled={sending || !check || !!nameWhy} onClick={() => void fork()}>
             {sending ? "Forking…" : `Fork ${box.name}`}
           </Button>
         </>
@@ -437,7 +439,8 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: S
     >
       <label className="block space-y-1">
         <span className="text-xs text-foreground">Name of the new box</span>
-        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className="h-8" data-first-focus aria-describedby={describedBy} />
+        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className="h-8" data-first-focus aria-invalid={!!nameWhy} aria-describedby={describedBy} />
+        {nameWhy ? <span className="block text-xs text-destructive-text">{nameWhy}</span> : null}
       </label>
       {check?.canBeMachine ? (
         <fieldset className="space-y-1">

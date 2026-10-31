@@ -84,7 +84,7 @@ At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's 
 
 - if any of the marker's MAC addresses is on any of its cards, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
 - if its cards are all known, and it has a new card but none of the marker's, it is a copy, and it resets
-- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above. On Proxmox LXC it also sets its network settings for `eth` cards aside meanwhile, so a card added later gets its settings from Proxmox, never the ones a copy brought from its source; once it decides, a copy drops them, and the box itself gets them back unless Proxmox wrote new ones
+- if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above. On Proxmox LXC, a box that starts with no `eth` card and none of the marker's MAC addresses on any interface also sets its network settings for `eth` cards aside at once, before it waits, in `/var/lib/bb-box/held-network`. A card added later then gets its settings from Proxmox, never the ones a copy brought from its source. Once it decides, at this boot or a later one, a copy drops them, and the box itself gets them back unless Proxmox wrote new ones. If it cannot set them aside, it deletes them, as Proxmox writes a card's settings again when it adds the card; if it cannot delete them either, the network and everything after it stay off until the next start
 
 A card is one the backend gave the box, as the kernel reports it. On Proxmox LXC it is a veth whose other end is outside the box, on no bridge, named `eth` and a number; on a VM, one with a device. Interfaces the box makes itself, such as Docker's and Tailscale's, bridges and tunnels, are never cards, whatever their names. An LXC card renamed from `eth` is no card either, so the box waits, as above, until it has its name again. Cards join the marker only as the box starts, before its own software makes interfaces again.
 
@@ -123,15 +123,15 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken. A snapshot without one says "not fork-safe", and never forks.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
 
 ## Forking a snapshot
 
 A fork is a new box made from a snapshot's disk: of the same kind, at the size the snapshot holds, on the same host, with a new name and box ID. It is for trying two things from one set-up state. On Proxmox it is a full copy of the snapshot, so it holds nothing of its source afterwards; either can be released alone.
 
-It never acts as its source. BB Box gives the copy new MAC addresses, so at its first boot its [identity reset](#a-copy-of-a-box-gives-up-its-identity) runs before its network, SSH, Tailscale and BB's daemon start, and removes its source's BB machine credentials and host ID, the thread's access file and the tailnet node, and makes new SSH host keys and a new machine ID. Then BB Box:
+It never acts as its source. BB Box makes the copy unable to start on its own: in its first request after the copy, it turns `onboot` off and takes every link down. It gives the copy its own address and new MAC addresses with its links still down, brings them up just before its first start, and turns `onboot` on only once the fork passes the check below. With new MAC addresses, so at its first boot its [identity reset](#a-copy-of-a-box-gives-up-its-identity) runs before its network, SSH, Tailscale and BB's daemon start, and removes its source's BB machine credentials and host ID, the thread's access file and the tailnet node, and makes new SSH host keys and a new machine ID. Then BB Box:
 
-1. checks, before it hands the fork over, that the reset ran: its boot says it reset, its identity marker names its own MAC addresses and no box, BB's credentials and the access file are gone, its Tailscale state holds no node, its machine ID and SSH host keys are not those the snapshot held, as BB Box read them at the take, and it does not hold its source's address. A fork whose first boot cannot tell yet whether it is a copy, as when its network card comes late, keeps SSH and BB's daemon off until it can; BB Box waits up to 3 minutes for its first start, on Proxmox LXC as on QEMU, and up to a minute more for the check, and never counts such a boot as a reset. A fork that fails the check is released, and says why
+1. checks, before it hands the fork over, that the reset ran: its boot says it reset, its identity marker names its own MAC addresses and no box, BB's credentials and the access file are gone, its Tailscale state holds no node, its machine ID and SSH host keys are not those the snapshot held, as BB Box read them at the take, and it holds its own address and no other box's. Every item must be read: one BB Box cannot read refuses the fork. A fork whose first boot cannot tell yet whether it is a copy, as when its network card comes late, keeps SSH and BB's daemon off until it can; BB Box waits up to 3 minutes for its first start, on Proxmox LXC as on QEMU, and up to a minute more for the check, and never counts such a boot as a reset. A fork that fails the check is released, and says why. If BB Box cannot delete its copy yet, it stops it, says so, and tries again at each sweep; it never hands such a fork over
 2. writes the fork's own identity marker
 3. enrols it as a new BB machine, and gives it its thread's access, or yours
 
@@ -142,11 +142,11 @@ Its page's facts say where it came from: "Forked from amber-fox, "before the mig
 Who forks:
 
 - **You**, from a box's page or the command line, into the box's thread, or as one of your machines. A fork of one of your machines is one of your machines.
-- **A thread's agent**, with `box_fork`, from its thread's own box into its own thread. Left without a snapshot, `box_fork` takes one of the box now, named "for a fork", and forks that. An agent does not fork a box threads run on, nor makes a fork one of your machines.
+- **A thread's agent**, with `box_fork`, from its thread's own box into its own thread. Left without a snapshot, `box_fork` checks first that the box could be forked now, then takes one of the box now, named "for a fork", and forks that. If the fork is still refused, BB Box deletes that snapshot and says so; if the take deleted an older snapshot of the agent's to make room, it says that too. An agent does not fork a box threads run on, nor makes a fork one of your machines.
 
-Only a snapshot that was taken with a working identity reset forks; others are refused with why, before anything is copied. Windows and macOS boxes have no reset yet, so they do not fork.
+Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows and macOS boxes have no reset yet, so they do not fork.
 
-The **Fork dialog** asks for the new box's name (one is made up if you leave it empty) and, for a thread's box, where it goes: in the box's thread, or as one of your machines. It says what the fork holds, its size, and at most how long the copy takes and how much space it uses on the host. **Fork** opens the new box's page, starting.
+The **Fork dialog** asks for the new box's name (one is made up if you leave it empty): a lower-case letter first, then lower-case letters, digits and hyphens, up to 32, not ending in a hyphen and, for a thread's box, where it goes: in the box's thread, or as one of your machines. It says what the fork holds, its size, and at most how long the copy takes and how much space it uses on the host. **Fork** opens the new box's page, starting.
 
 On the command line:
 

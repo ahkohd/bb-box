@@ -121,6 +121,7 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
   if (record.guest === "held-copy") return "it is a held copy, which bb-box does not fork yet";
   if (record.box.system !== "linux") return "bb-box forks Linux boxes only";
   if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
+  if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
   return null;
 }
 
@@ -282,7 +283,7 @@ export async function forkPreview(snapshots: Snapshots, box: BoxRecord, ref: str
         takenAt: check.snapshot.takenAt,
         threadId: check.threadId,
         asMachine: check.asMachine,
-        canBeMachine: box.threadId !== OPERATOR && box.capabilities.enrol,
+        canBeMachine: box.threadId !== OPERATOR && box.capabilities.enrol && !isKept(check.snapshot),
         size: describeSize(check.size),
         aboutMs: check.aboutMs,
         bytes: check.bytes,

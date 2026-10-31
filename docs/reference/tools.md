@@ -91,7 +91,7 @@ Make a new box of this thread from a snapshot of one of its boxes, or from the b
 | --- | --- | --- | --- |
 | `box` | string | yes | The box to fork, by its name or ID: one of this thread's boxes, not one it runs on. |
 | `snapshot` | string | no | The snapshot's name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that. |
-| `name` | string | no | The new box's name. One is made up when left out. |
+| `name` | string | no | The new box's name: a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". One is made up when left out. |
 
 ## box_grant
 

@@ -475,6 +475,7 @@ export class BackendError extends Error {
  * whose release was interrupted.
  */
 export type IdentitySource = "eth" | "device" | "value";
+export type ForkArming = "network" | "boot";
 
 export interface Backend {
   /** Unique among active backends, stable across restarts. Stored with each box. */
@@ -722,6 +723,8 @@ export interface Backend {
   retireGuest?(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest>;
   identitySource?(kind: string): IdentitySource | null;
   forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
+  armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
+  boxAddresses?(): readonly string[];
 
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
@@ -757,6 +760,7 @@ export interface Snapshotting {
   readonly lives: "host" | "provider";
   readonly price: Price | null;
   readonly excludes: string | null;
+  readonly forkSafeFrom?: number;
 }
 
 export interface SnapshotStorage {

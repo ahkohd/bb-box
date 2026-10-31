@@ -33,7 +33,7 @@ import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
-import { forkByFullClone } from "../proxmox/forks.ts";
+import { armFork, disarm, forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
@@ -105,6 +105,7 @@ import {
   type WarmShortfall,
   type WithheldKind,
   type IdentitySource,
+  type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
@@ -612,6 +613,7 @@ export class ProxmoxQemuBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false }, signal);
       return copy;
     } finally {
@@ -706,16 +708,16 @@ export class ProxmoxQemuBackend implements Backend {
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
         guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, build),
-        rearm: async (api, vmid, made, forked, template, signal) => {
+        addressed: async (api, vmid, made, forked, template, signal) => {
           const address = addressFor(this.#config, vmid);
           if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
           const { bridge, prefix, gateway } = this.#config.network;
           const nets: Record<string, string> = {};
-          for (const key of netKeys(made)) nets[key] = netWith(key === "net0" ? net0On(made[key], bridge) : String(made[key]), { mac: randomMac(), up: true });
+          for (const key of netKeys(made)) nets[key] = netWith(key === "net0" ? net0On(made[key], bridge) : String(made[key]), { mac: randomMac(), up: false });
           await api.setNetwork(vmid, nets, signal);
           await api.configure(
             vmid,
-            { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: true, smbios1: smbios1For(address, prefix, gateway, randomUUID()), delete: ["protection"] },
+            { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, smbios1: smbios1For(address, prefix, gateway, randomUUID()), delete: ["protection"] },
             signal,
           );
         },
@@ -728,6 +730,14 @@ export class ProxmoxQemuBackend implements Backend {
       hooks,
       signal,
     );
+  }
+
+  boxAddresses(): readonly string[] {
+    return this.#config.network.addresses;
+  }
+
+  armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

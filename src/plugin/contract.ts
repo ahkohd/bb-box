@@ -5,6 +5,7 @@ import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { isMachineName } from "../core/names.ts";
 import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
@@ -299,7 +300,7 @@ export const contract = defineRpcContract({
   "snapshot.picture": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<{ readonly jpeg: string; readonly width: number; readonly height: number } | null>() },
   "snapshot.settle": { input: z.object({ box: z.string().min(1) }), output: z.custom<SnapshotChange>() },
   "snapshot.forkCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), asMachine: z.boolean().optional() }), output: z.custom<ForkPreview>() },
-  "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).optional(), asMachine: z.boolean().optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
+  "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).refine((name) => name === "" || isMachineName(name)).optional(), asMachine: z.boolean().optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */

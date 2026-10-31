@@ -1,5 +1,5 @@
 import type { DoctorCheck, Guest } from "../backends/types.ts";
-import type { Actor } from "../core/box-log.ts";
+import { utf8Prefix, type Actor } from "../core/box-log.ts";
 import {
   BOX_GONE_HOW,
   OPERATION_KINDS,
@@ -114,6 +114,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
+const UNFLUSHED_BYTES = 1000;
 
 interface PictureRow {
   snapshot: string;
@@ -321,7 +322,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     undo_of: record.undoOf,
     fork_safe: record.forkSafe,
     identity: json(record.identity ?? null),
-    unflushed: record.unflushed?.slice(0, 500) ?? null,
+    unflushed: record.unflushed ? utf8Prefix(record.unflushed, UNFLUSHED_BYTES) : null,
     depends_on: JSON.stringify(record.dependsOn),
     picture: record.picture,
     ref: record.ref,

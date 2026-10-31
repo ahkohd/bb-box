@@ -42,3 +42,16 @@ test("070 unit 7: a flush that does not answer holds a take 15 s at most, and th
   assert.match(taken.unflushed ?? "", /15 s/);
   assert.ok(Date.now() - began < 20_000);
 });
+
+test("070 unit 7 reviews: a flush's words longer than the record keeps are cut on a UTF-8 boundary, and the take still goes ahead with its warning", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  const long = "sync: ".concat("défaillance d'entrée-sortie ✗ ".repeat(80));
+  flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: long }));
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "long" })).snapshot!;
+  assert.equal(taken.state, "ready");
+  const kept = state.store.record(taken.id)!.unflushed!;
+  assert.ok(new TextEncoder().encode(kept).length <= 1000, String(new TextEncoder().encode(kept).length));
+  assert.ok(long.startsWith(kept), "a prefix, whole characters only");
+  assert.equal(state.store.problem, null, "the record was written");
+});

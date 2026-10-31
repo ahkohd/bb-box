@@ -209,6 +209,9 @@ export function identityGuest(options: { readonly booted?: boolean; readonly on?
   writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
   writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
   writeFileSync(join(root, "ip-link.json"), JSON.stringify([{ ifindex: 2, link_index: 900, ifname: "eth0", link_type: "ether", address: "bc:24:11:aa:f1:b6", link_netnsid: 0, linkinfo: { info_kind: "veth" } }]));
+  mkdirSync(join(root, "etc/ssh"), { recursive: true });
+  writeFileSync(join(root, "etc/machine-id"), "0123456789abcdef0123456789abcdef\n");
+  writeFileSync(join(root, "etc/ssh/ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIguest guest\n");
   mkdirSync(join(dir, "bin"));
   writeFileSync(join(dir, "bin/ip"), `#!/bin/sh\nexec cat ${quote(join(root, "ip-link.json"))}\n`, { mode: 0o755 });
   const tool = join(dir, "bb-box-identity");
@@ -224,7 +227,7 @@ export function withIdentitySource(state: World, source: "eth" | "device" | "val
 
 export function armedWorld(): World {
   const guest = identityGuest();
-  const state = world({ identityTool: guest.tool });
+  const state = world({ identityTool: guest.tool, identityRoot: guest.root });
   withIdentitySource(state, "eth");
   return state;
 }

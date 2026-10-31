@@ -56,7 +56,7 @@ import type { GeneralConfig } from "./config.ts";
 import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
-import { generateName, isFriendlyName } from "./names.ts";
+import { generateName, isFriendlyName, isMachineName } from "./names.ts";
 import { MARKER_WRITE_MS, forkVerdict, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
 import {
   bestAnswer,
@@ -210,6 +210,7 @@ export interface BoxRecord {
   readonly resize?: ResizeRecord | null;
   readonly restoring?: RestoringMark | null;
   readonly fork?: ForkOrigin | null;
+  readonly forkFailure?: string | null;
   readonly endToldAt?: number | null;
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
@@ -376,10 +377,11 @@ export function ownedByThread(threadId: string): boolean {
 }
 
 /** A name for one of your machines: a hostname label, as it is also its BB machine's name (036). */
-const MACHINE_NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
-export function isMachineName(name: string): boolean {
-  return MACHINE_NAME.test(name);
+export { isMachineName };
+
+export function forkNameProblem(name: string): string | null {
+  return isMachineName(name) ? null : `Name a fork with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${name}" is not one.`;
 }
 
 /**
@@ -716,6 +718,19 @@ export interface ForkRequest {
   readonly size: BoxSize;
   readonly origin: ForkOrigin;
   readonly who: Actor;
+}
+
+function sentenceOf(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function forkReleasedWords(box: Pick<BoxRecord, "fork">): string {
+  return `bb-box released it, so nothing of it acts as ${box.fork?.source.name ?? "its source"}.`;
+}
+
+function forkCleanupWords(ref: string, why: string, stopped: boolean): string {
+  return `bb-box could not delete its guest ${ref} yet (${why.replace(/\.$/, "")})${stopped ? ", so it stopped it" : ", nor stop it"}. It tries again at each sweep, and never hands the fork over.`;
 }
 
 export function forkedFromWords(origin: ForkOrigin): string {
@@ -2209,23 +2224,59 @@ export class Boxes {
 
   async #forkGuest(box: BoxRecord, backend: Backend, hooks: AcquireHooks, timings: Record<string, number>, signal: AbortSignal): Promise<Guest> {
     const fork = box.fork!;
-    if (!backend.forkSnapshot || !backend.start || !backend.guestIdentity) throw new BoxError("unsupported", `${box.backendLabel} forks no snapshots.`);
+    if (!backend.forkSnapshot || !backend.armFork || !backend.start || !backend.guestIdentity) throw new BoxError("unsupported", `${box.backendLabel} forks no snapshots.`);
     const forkSnapshot = backend.forkSnapshot.bind(backend);
     const size = await this.#size(box);
     const made = await this.#chain(fork.source.id, () => forkSnapshot({ id: fork.snapshot.id, ref: fork.snapshot.ref, guest: fork.snapshot.livesOn }, identity(box, size), box.guest, hooks, signal));
-    try {
-      await hooks.claim(made);
-      await this.#deps.forkHold?.(box, signal);
-      await hooks.starting();
-      const booting = this.#now();
-      await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
-      timings.start = this.#now() - booting;
-      await this.#checkFork(box, made, backend, timings, signal);
-      return made;
-    } catch (error) {
-      await backend.release(made, QUIET).catch((cause) => this.#deps.logError("release a fork that failed", cause));
-      throw error;
+    await hooks.claim(made);
+    await this.#deps.forkHold?.(box, signal);
+    await backend.armFork(made, "network", signal);
+    await hooks.starting();
+    const booting = this.#now();
+    await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
+    timings.start = this.#now() - booting;
+    await this.#checkFork(box, made, backend, timings, signal);
+    await backend.armFork(made, "boot", signal);
+    return made;
+  }
+
+  async #forkFailed(box: BoxRecord, backend: Backend, error: unknown, timings: Record<string, number>): Promise<void> {
+    const left = (await this.#read(box.threadId, box.id))?.guest ?? null;
+    let cleanup: string | null = null;
+    let stopped = false;
+    if (left) {
+      try {
+        await backend.release(left, QUIET);
+      } catch (cause) {
+        cleanup = cause instanceof Error ? cause.message : String(cause);
+        stopped = backend.powerOff ? await backend.powerOff(left).then(() => true, () => false) : false;
+        this.#deps.logError(`delete guest ${left.ref} of fork ${box.name}`, cause);
+      }
     }
+    const why = sentenceOf(describeError(error, "Forking the box"));
+    const after = cleanup === null ? forkReleasedWords(box) : forkCleanupWords(left!.ref, cleanup, stopped);
+    const next = await this.update(box, (current) => {
+      if (current.state === "releasing") return cleanup === null ? { guest: null } : {};
+      return { state: "failed", guest: cleanup === null ? null : current.guest, error: `${why} ${after}`, forkFailure: why, timings: { ...timings }, waitingOn: null };
+    });
+    if (next?.state === "failed") this.#deps.logError("fork", error);
+  }
+
+  async #retryForkCleanup(box: BoxRecord): Promise<void> {
+    const current = await this.#read(box.threadId, box.id);
+    if (!current || current.state !== "failed" || !current.fork || !current.guest) return;
+    const backend = this.#deps.backends.get(current.backend);
+    if (!backend) return;
+    const guest = current.guest;
+    try {
+      await backend.release(guest, QUIET);
+    } catch (error) {
+      this.#deps.log?.(`Could not delete guest ${guest.ref} of fork ${current.name} yet: ${describeError(error, "Deleting it")} bb-box tries again at its next sweep.`);
+      return;
+    }
+    const updated = await this.update(current, (latest) => (latest.guest?.ref === guest.ref ? { guest: null, error: `${latest.forkFailure ?? "The fork failed."} ${forkReleasedWords(latest)}` } : {}));
+    this.#deps.log?.(`Deleted guest ${guest.ref} of fork ${current.name}, which bb-box could not delete when the fork failed.`);
+    if (updated) this.#deps.forked?.(updated);
   }
 
   async #checkFork(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
@@ -2239,7 +2290,10 @@ export class Boxes {
       sourceBox: fork.source.id,
       sourceName: fork.source.name,
       sourceAddress: fork.source.address ?? null,
+      ownAddress: guest.address,
+      boxAddresses: backend.boxAddresses?.() ?? [],
       held: fork.snapshot.identity,
+      safeFrom: backend.snapshotting?.(box.kind)?.forkSafeFrom ?? 1,
     };
     const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;
     for (let look = 1; ; look++) {
@@ -2247,7 +2301,7 @@ export class Boxes {
       if (verdict.is === "ready") break;
       if (verdict.is === "refused" || look >= FORK_LOOKS) {
         const waited = verdict.is === "wait" ? ` after ${Math.round(waitMs / 1000)} s` : "";
-        throw new BoxError("failed", `bb-box did not hand fork ${box.name} over${waited}: ${verdict.why}. bb-box released it, so nothing of it acts as ${fork.source.name}.`);
+        throw new BoxError("failed", `bb-box did not hand fork ${box.name} over${waited}: ${verdict.why}.`);
       }
       await new Promise((resolve) => setTimeout(resolve, waitMs / FORK_LOOKS));
       signal.throwIfAborted();
@@ -2294,6 +2348,10 @@ export class Boxes {
     try {
       guest = box.fork ? await this.#forkGuest(box, backend, hooks, timings, signal) : await backend.acquire(identity(box, await this.#size(box)), box.guest, hooks, signal);
     } catch (error) {
+      if (box.fork && !this.#disposed) {
+        await this.#forkFailed(box, backend, error, timings);
+        return;
+      }
       // The backend released whatever it claimed before it threw.
       const next = await this.update(box, (current) => {
         if (this.#disposed && current.state !== "releasing" && placedOnSharedHost(current)) return {};
@@ -3387,6 +3445,10 @@ export class Boxes {
         if (state === "ending") {
           waiting++;
           this.#deps.log?.(`Kept ${describeBox(box)}: BB says its thread ended, and the next sweep releases it if BB says so again. BB's answer: ${said}.`);
+        }
+        if (box.state === "failed" && box.fork && box.guest) {
+          await this.#chain(box.id, () => this.#retryForkCleanup(box));
+          continue;
         }
         if (isAcquiring(box) && box.readyAt === null) {
           resumed++;

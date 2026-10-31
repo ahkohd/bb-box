@@ -300,6 +300,9 @@ export class FakeSnapshots {
       await this.onForked?.(fresh, ref);
       return fresh;
     };
+    target.armFork = async (guest: Guest, arming: string) => {
+      this.order.push(`arm ${arming} ${guest.ref}`);
+    };
     target.retireGuest = async (guest: Guest) => {
       this.order.push(`retire ${guest.ref}`);
       this.earlier.add(guest.ref);

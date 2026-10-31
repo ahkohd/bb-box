@@ -75,6 +75,7 @@ rm -rf /home/*/.local/share/Mousepad /home/*/.config/dconf/user
 # PVE also truncates this on clone; an empty file avoids first-boot presets.
 : >/etc/machine-id
 rm -f /var/lib/dbus/machine-id
+rm -rf /var/lib/bb-box/held-network
 rm -f /etc/bb-box/identity /etc/bb-box/identity.new /var/lib/bb-box/identity-armed /var/lib/bb-box/identity-armed.new /var/lib/bb-box/identity-resets /var/lib/bb-box/identity-reset-pending /var/lib/bb-box/identity-reset-pending.new
 # The image's size in its record, now that it is clean. A Docker image's is
 # its layers', which Docker gives: in a container, as in a Docker build or a

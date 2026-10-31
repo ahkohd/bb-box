@@ -1438,6 +1438,35 @@ On 31 October 2026, during unit 7:
   card appears. The fix needs the LXC templates rebuilt with version 6;
   until then the check before ready refuses such a fork.
 
+After the two reviews of unit 7, the lead decided:
+
+- **A clone cannot start until bb-box arms it.** The first request after
+  the clone task sets `onboot` 0 and every link down. The copy gets its
+  own addresses with its links down. Its links come up just before its
+  first start, and `onboot` only once the check before ready passes. The
+  gap between the clone's lock going and that first request is accepted,
+  with no hookscript: the lock covers the copy, a reboot inside the gap
+  still resets on the new MAC address, and recovery deletes a half-made
+  fork.
+- **Version 7 holds from the first look.** On Proxmox LXC, a boot with no
+  `eth` card and none of the marker's MAC addresses on any interface holds
+  the copied network files before it waits, in `/var/lib/bb-box/`,
+  flushed, and settles them at the next decision. If it cannot hold them
+  it deletes them, and if it cannot delete them the boot fails closed.
+  This replaces version 6's hold after the wait.
+- **Each backend forks only from a version known safe**: Proxmox LXC from
+  7, QEMU from 5, before the copy and at first contact.
+- **The check before ready reads everything or refuses**: every probe must
+  finish and every item be read; the fork must hold its own address and
+  no other address of the box range; a shared MAC or another box's
+  address refuses at once, before any wait.
+- **A failed clean-up is kept, not hidden**: the guest stays on the record,
+  stopped, the operation unknown and pinned, and the sweep deletes it.
+- **`box_fork` checks before it takes**, deletes the snapshot it took if
+  the fork is still refused, and passes on the take's words.
+- **Names are checked before anything is recorded**, by the machine rule.
+- **A fork of a kept snapshot is one of the person's machines.**
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

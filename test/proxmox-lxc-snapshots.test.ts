@@ -59,9 +59,9 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
   assert.equal(parseSnapshotLabel(`bb-box install inst1 box bx1 snapshot notanid`), null);
 });
 
-test("a container offers disk snapshots taken while it runs, forks by a full copy, and nothing it cannot do yet", () => {
+test("a container offers disk snapshots taken while it runs, forks by a full copy from version 7 of the identity reset, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 7, keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -443,7 +443,7 @@ test("Opus 1: deleteCopy destroys only a held copy or an earlier guest, never th
   assert.ok(state.proxmox.guests.has(vmid));
 });
 
-test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, recorded before the clone, re-armed with onboot, its link up, a new MAC and its own address, labelled as its new box, and refused nothing the sweep could take", async () => {
+test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, recorded before the clone, disarmed in the first request after it, given a new MAC and its own address with its link still down, labelled as its new box, and armed only later: links before its start, onboot after its check", async () => {
   const state = world();
   const { guest, vmid, id } = await box(state);
   await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
@@ -467,9 +467,15 @@ test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, re
   const clone = [...state.proxmox.calls].reverse().find((call) => call.method === "POST" && /\/clone$/.test(call.path))!;
   assert.equal(clone.params.snapname, snapshotName(SNAPSHOT));
   assert.equal(clone.params.full, "1");
+  const cloneAt = state.proxmox.calls.lastIndexOf(clone);
+  const after = state.proxmox.calls.slice(cloneAt + 1).filter((call) => call.method !== "GET" && !/\/tasks\//.test(call.path));
+  assert.equal(after[0]?.method, "PUT", "the first change after the clone");
+  assert.match(after[0]!.path, new RegExp(`/lxc/${made.ref}/config$`));
+  assert.equal(after[0]!.params.onboot, "0", "disarmed: it would not start with its node");
+  assert.match(after[0]!.params.net0 ?? "", /link_down=1/, "and its link is down");
   const config = state.proxmox.guests.get(Number(made.ref))!.config;
-  assert.equal(config.onboot, "1", "re-armed: it starts with its node");
-  assert.doesNotMatch(config.net0 ?? "", /link_down/, "its link is up");
+  assert.equal(config.onboot, "0", "not armed yet");
+  assert.match(config.net0 ?? "", /link_down=1/, "its own address, with its link still down");
   assert.doesNotMatch(config.net0 ?? "", /BC:24:11:AA:BB:CC/i, "a MAC of its own, so its identity reset runs at its first boot");
   assert.match(config.net0 ?? "", /hwaddr=BC:24:11:/);
   assert.match(config.net0 ?? "", new RegExp(`ip=${made.address}/`), "the address of its own VMID");
@@ -478,8 +484,26 @@ test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, re
   assert.match(String(config.description), new RegExp(`box ${forked.boxId}`));
   assert.equal(config.hostname, id.name, "a fork may have its source's name");
   assert.equal(made.data?.box, forked.boxId);
-  assert.ok((await state.backend.held()).some((held) => held.ref === made.ref && held.owner?.boxId === forked.boxId), "once re-armed, the sweep sees it as its own box's guest");
+  assert.ok((await state.backend.held()).some((held) => held.ref === made.ref && held.owner?.boxId === forked.boxId), "once labelled, the sweep sees it as its own box's guest");
   assert.equal(state.proxmox.guests.get(vmid)!.config.net0, source.config.net0, "the source is untouched");
+  await state.backend.armFork(made, "network");
+  assert.doesNotMatch(state.proxmox.guests.get(Number(made.ref))!.config.net0 ?? "", /link_down/, "its link comes up before its first start");
+  assert.equal(state.proxmox.guests.get(Number(made.ref))!.config.onboot, "0", "onboot waits for the check");
+  await state.backend.armFork(made, "boot");
+  assert.equal(state.proxmox.guests.get(Number(made.ref))!.config.onboot, "1", "armed at the end");
+});
+
+test("070 unit 7 reviews: a held copy is disarmed in the first request after its clone, before its labels", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  await state.backend.powerOff(guest);
+  const copy = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async () => {} });
+  const clone = [...state.proxmox.calls].reverse().find((call) => call.method === "POST" && /\/clone$/.test(call.path))!;
+  const first = state.proxmox.calls.slice(state.proxmox.calls.lastIndexOf(clone) + 1).find((call) => call.method === "PUT");
+  assert.match(first!.path, new RegExp(`/lxc/${copy.ref}/config$`));
+  assert.equal(first!.params.onboot, "0");
+  assert.match(first!.params.net0 ?? "", /link_down=1/);
+  assert.equal(first!.params.tags, undefined, "its labels come after");
 });
 
 test("070 unit 7: a fork cut short is not left behind: a failed copy is deleted, and a half-made one from before a restart is deleted before the copy is made again", async () => {

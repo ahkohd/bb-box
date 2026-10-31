@@ -40,7 +40,7 @@ import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
-import { forkByFullClone } from "../proxmox/forks.ts";
+import { armFork, disarm, forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -110,6 +110,7 @@ import {
   type TaskRef,
   type WarmShortfall,
   type IdentitySource,
+  type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
@@ -798,6 +799,7 @@ export class ProxmoxLxcBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), storageOfVolume(config.rootfs), hooks, signal);
+      await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false }, signal);
       return copy;
     } finally {
@@ -891,11 +893,11 @@ export class ProxmoxLxcBackend implements Backend {
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
         guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build),
-        rearm: async (api, vmid, made, forked, template, signal) => {
-          const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()}` };
-          for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: true });
+        addressed: async (api, vmid, made, forked, template, signal) => {
+          const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()},link_down=1` };
+          for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: false });
           await api.setNetwork(vmid, nets, signal);
-          await api.configure(vmid, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: true, delete: ["protection"] }, signal);
+          await api.configure(vmid, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
         },
         sizeOf,
         logError: (operation, error) => this.#context.logError(operation, error),
@@ -906,6 +908,14 @@ export class ProxmoxLxcBackend implements Backend {
       hooks,
       signal,
     );
+  }
+
+  boxAddresses(): readonly string[] {
+    return this.#config.network.addresses;
+  }
+
+  armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

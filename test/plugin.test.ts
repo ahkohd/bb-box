@@ -23,7 +23,7 @@ import { devicePaths } from "../src/device/paths.ts";
 import { DeviceServer } from "../src/device/server.ts";
 import { TestDriver } from "../src/device/test-driver.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
-import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
+import { BoxError, OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { IDENTITY_STATE } from "../src/core/identity.ts";
 import { quote } from "../src/transports/process.ts";
@@ -6671,7 +6671,7 @@ test("box_snapshot, box_snapshots and box_snapshot_delete: an agent takes, lists
   assert.ok(app.snapshotStore.record(threeRecord!.id), "nothing of the thread's was touched");
 });
 
-test("box_fork and bb box snapshot fork: with no snapshot named, box_fork takes one \"for a fork\" first; a snapshot without a working identity reset is refused with why, by the tool and the command; another thread finds no box (070 unit 7)", async (t) => {
+test("box_fork and bb box snapshot fork: with no snapshot named, box_fork checks the box before it takes one, so a box without a working identity reset leaves nothing behind; a refusal after its take deletes that snapshot and passes on the take's words; another thread finds no box (070 unit 7)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   new FakeSnapshots().attach(world.backend!, Date.now);
@@ -6679,15 +6679,25 @@ test("box_fork and bb box snapshot fork: with no snapshot named, box_fork takes 
   const box = await only(app);
   const refused = await tool("box_fork", { box: box.name });
   assert.equal(typeof refused === "string" ? false : refused.isError, true);
-  assert.match(text(refused), new RegExp(`^${box.name} had no working identity reset when "for a fork" was taken, so bb-box does not fork it: a copy of it would not give up ${box.name}'s identity, and could act as ${box.name}\\.\\n\\nNext: Call box_status`));
-  assert.deepEqual(app.snapshotStore.records({ box: box.id }).map((record) => record.name), ["for a fork"], "it took one of the box now, as it was asked");
+  assert.match(text(refused), new RegExp(`^Box ${box.name} has no working identity reset now, so a copy of it would not give up its identity, and bb-box does not fork it\\.\\n\\nNext: Call box_status`));
+  assert.deepEqual(app.snapshotStore.records({ box: box.id }), [], "it took nothing");
   assert.equal((await app.boxes.list(THREAD)).length, 1, "and made no box");
-  const command = await harness.behavior.runCli(["snapshot", "fork", box.name, "for a fork", "--thread", THREAD, "--check"]);
+  await tool("box_snapshot", { box: box.name, name: "plain" });
+  const command = await harness.behavior.runCli(["snapshot", "fork", box.name, "plain", "--thread", THREAD, "--check"]);
   assert.equal(command.exitCode, 1);
-  assert.match(command.stderr ?? "", /had no working identity reset when "for a fork" was taken/);
+  assert.match(command.stderr ?? "", /had no working identity reset when "plain" was taken/);
+  const snapshots = app.snapshots as unknown as Record<string, unknown>;
+  snapshots.checkForkOfBox = async () => {};
+  snapshots.fork = async () => {
+    throw new BoxError("unsupported", "The Proxmox token lacks VM.Clone on /pool/bbbox.");
+  };
+  const after = text(await tool("box_fork", { box: box.name }));
+  assert.match(after, /^The Proxmox token lacks VM\.Clone on \/pool\/bbbox\.\nTook snapshot "for a fork" \(sn[a-z2-7]{12}\) of box \S+ in [0-9.]+ s: it holds its disk\./);
+  assert.match(after, /bb-box deleted the snapshot "for a fork" it took for this, as the fork was refused\./);
+  assert.deepEqual(app.snapshotStore.records({ box: box.id }).map((record) => record.name), ["plain"], "the snapshot it took is gone");
   const OTHER = "thr_other";
   world.threads.set(OTHER, makeThreadResponse({ id: OTHER, projectId: PROJECT, environmentId: "env_two", providerId: "claude-code" }));
-  assert.match(text(await tool("box_fork", { box: box.name, snapshot: "for a fork" }, OTHER)), /no box|No box|not found|has no box/i);
+  assert.match(text(await tool("box_fork", { box: box.name, snapshot: "plain" }, OTHER)), /no box|No box|not found|has no box/i);
 });
 
 test("box_restore restores the agent's own box at once with an undo; with agents' restores off it asks for a yes through a form, and a cancel, a wrong answer and a changed plan restore nothing (070 unit 5, G11)", async (t) => {

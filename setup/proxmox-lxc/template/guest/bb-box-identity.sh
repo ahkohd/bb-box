@@ -2,7 +2,7 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=6
+readonly VERSION=7
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
@@ -20,7 +20,7 @@ user_units=$root/etc/systemd/user
 run=$root/run/bb-box-identity
 boot_result=$run/boot
 boot_value=$run/value
-held_network=$run/held-network
+held_network=$root/var/lib/bb-box/held-network
 network_dir=$root/etc/systemd/network
 net=$root/sys/class/net
 nic_wait_seconds=${BBBOX_IDENTITY_NIC_WAIT_SECONDS:-30}
@@ -199,16 +199,40 @@ grow_anchors() {
   if write_atomically "$marker" "$text" 0644; then say "added this boot's interfaces ($added ) to the marker, as the box proved itself"; else say "could not add this boot's interfaces to the marker"; fi
 }
 
+marker_mac_anywhere() {
+  local mac
+  [ "${#marker_macs[@]}" -gt 0 ] || return 1
+  for mac in $(ip -j link show 2>/dev/null | jq -r '.[]? | .address // empty' 2>/dev/null | lower); do
+    listed "$mac" "${marker_macs[@]}" && return 0
+  done
+  return 1
+}
+
 hold_copied_network() {
   local file held=
-  [ "$marker_source" = eth ] || return 0
   for file in "$network_dir"/eth[0-9]*.network; do
     [ -f "$file" ] || continue
     make_folder "$held_network" 0700 || return 1
-    mv -f "$file" "$held_network/" || return 1
+    mv -f "$file" "$held_network/${file##*/}" || return 1
     held="$held ${file##*/}"
   done
-  [ -z "$held" ] || say "held its network settings ($held ) aside while it cannot tell whether it is a copy, so a card added later gets its own from its backend, never a copy's"
+  [ -n "$held" ] || return 0
+  flush "$held_network" "$network_dir"
+  say "held its network settings ($held ) aside in $held_network, as it started with no card of its own, so a card added later gets its settings from its backend, never a copy's"
+}
+
+hold_if_no_card() {
+  local file
+  [ "$(source_seen_now)" = eth ] || return 0
+  [ -z "$(live_macs eth)" ] || return 0
+  ! marker_mac_anywhere || return 0
+  hold_copied_network && return 0
+  say "could not hold its network settings aside in $held_network, so it deletes them instead: its backend writes a card's settings again when it adds the card"
+  for file in "$network_dir"/eth[0-9]*.network; do
+    [ -f "$file" ] || continue
+    rm -f "$file" || return 1
+  done
+  flush "$network_dir"
 }
 
 settle_held_network() {
@@ -218,12 +242,14 @@ settle_held_network() {
     [ -f "$file" ] || continue
     name=${file##*/}
     if [ "$decided" = kept ] && [ ! -e "$network_dir/$name" ]; then
-      mv -f "$file" "$network_dir/$name" && restored="$restored $name"
+      mv -f "$file" "$network_dir/$name" || return 1
+      restored="$restored $name"
     else
-      rm -f "$file"
+      rm -f "$file" || return 1
     fi
   done
   rmdir "$held_network" 2>/dev/null || :
+  flush "$network_dir" "${held_network%/*}"
   [ -n "$restored" ] || return 0
   say "put back its network settings ($restored ), as it is the box itself"
   [ -n "$root" ] || timeout 15 networkctl reload >/dev/null 2>&1 || :
@@ -363,29 +389,37 @@ boot() {
     reason="its identity marker is missing or unreadable"
     say "this box is a copy, so it resets its identity: $reason"
   else
+    hold_if_no_card || { network_hold_failed; return 1; }
     reason=$(compare_with_marker)
     outcome=$?
     if [ "$outcome" -eq 0 ]; then
       note_boot kept
       say "kept: the identity marker of box ${marker_box:-none} matches"
       grow_anchors
+      settle_held_network kept || say "could not put back or drop its held network settings in $held_network"
       return 0
     fi
     if [ "$outcome" -eq 2 ]; then
       note_boot unknown
       say "not knowing yet whether this box is a copy: $reason. It removes nothing; SSH, Tailscale and BB's daemon wait while it looks again"
-      hold_copied_network || say "could not hold its network settings aside, so a card added later may come up with them"
       return 0
     fi
     say "this box is a copy, so it resets its identity: $reason"
   fi
+  hold_if_no_card || { network_hold_failed; return 1; }
   if ! reset_identity "$reason" "${at:-$(now)}"; then
     note_boot failed
     say "the reset failed, so the network, SSH, Tailscale, Docker, the desktop and the box user's services stay off; the next boot resumes it"
     return 1
   fi
   note_boot reset
+  settle_held_network reset || say "could not drop the network settings it copied, held in $held_network"
   return 0
+}
+
+network_hold_failed() {
+  note_boot failed
+  say "could neither hold nor delete its network settings while it has no card of its own, so the network, SSH, Tailscale, Docker, the desktop and the box user's services stay off; the next boot tries again"
 }
 
 settle() {
@@ -404,14 +438,14 @@ settle() {
       if [ "$outcome" -eq 0 ]; then
         note_boot kept
         say "kept, now that its cards are here: the identity marker of box ${marker_box:-none} matches"
-        settle_held_network kept
+        settle_held_network kept || say "could not put back or drop its held network settings in $held_network"
         return 0
       fi
       if [ "$outcome" -eq 1 ]; then
         say "this box is a copy, as its cards show now that they are here, so it resets its identity: $reason"
-        settle_held_network reset
         if reset_identity "$reason" "$(now)"; then
           note_boot reset
+          settle_held_network reset || say "could not drop the network settings it copied, held in $held_network"
           return 0
         fi
         note_boot failed

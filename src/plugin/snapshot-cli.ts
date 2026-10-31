@@ -229,7 +229,7 @@ export function snapshotCommands(app: BbBox) {
                 type: "enum",
                 values: HOLD_STEPS,
                 description:
-                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; forked: once a fork's copy is made and re-armed, before its first start.",
+                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; forked: once a fork's copy is made, given its own addresses and disarmed, before its links come up and its first start.",
               },
               seconds: { type: "integer", min: 1, max: 3600, description: "Hold for this many seconds, then go on. Without it, the hold lasts until bb-box restarts." },
               off: { type: "boolean", description: "Hold nothing." },
