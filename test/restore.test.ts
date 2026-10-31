@@ -425,6 +425,7 @@ test("G6 and G16 in ZFS's order: a copy cut short before it is a template is del
   assert.equal(state.provider.copies.get(undo.ref!)?.state, "template");
   assert.equal(read(state, box, "work.txt"), "one");
   assert.equal(state.store.pins().size, 0);
+  await state.snapshots.delete(COMMAND, standing(box), "one");
   state.holds.step = "adopted";
   const swapping = state.snapshots.restore(COMMAND, box, standing(box), undo.id, { undo: false }).catch((error: unknown) => error);
   await untilHeld(state, swapping);
@@ -436,5 +437,6 @@ test("G6 and G16 in ZFS's order: a copy cut short before it is a template is del
   assert.equal(after.state, "ready");
   assert.equal(read(state, after, "work.txt"), "before");
   assert.equal(state.store.pins().size, 0);
-  assert.equal([...state.provider.earlier].length, 1, "the old guest was disarmed as the earlier guest");
+  assert.equal([...state.provider.earlier].length, 0, "the old guest, disarmed, held no snapshot, so it is deleted");
+  assert.match(state.log.events(box.id).at(-1)!.words!, /a new guest made from its held copy runs the box now, and its old guest g\d+, which held no snapshot, is deleted\.$/);
 });

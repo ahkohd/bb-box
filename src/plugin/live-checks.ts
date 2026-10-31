@@ -74,3 +74,16 @@ export class FakeSnapshotPrices {
     return daily === undefined ? offer : { ...offer, price: { amount: daily, currency: "USD", per: "day", known: true } };
   }
 }
+
+export class ZfsOrder {
+  readonly #backends = new Set<string>();
+
+  set(backend: string, on: boolean): void {
+    if (on) this.#backends.add(backend);
+    else this.#backends.delete(backend);
+  }
+
+  has(backend: string): boolean {
+    return this.#backends.has(backend);
+  }
+}

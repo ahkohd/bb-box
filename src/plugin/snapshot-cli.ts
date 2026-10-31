@@ -198,6 +198,24 @@ export function snapshotCommands(app: BbBox) {
           }),
         }
       : {}),
+    ...(app.zfsOrder
+      ? {
+          "snapshot zfs-order": cliCommand({
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: restores on a backend from now on run ZFS's order where its storage is not ZFS, until bb-box restarts. Such a restore takes a held copy of the stopped box as its undo and restores only the newest snapshot, and undoing it swaps the box to a new guest made from the copy.`,
+            positionals: [
+              { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
+              { name: "switch", description: "on or off.", required: true },
+            ],
+            async run({ positionals }) {
+              const backend = positionals.backend!;
+              if (!app.backends.get(backend)) throw new PluginCliError(`There is no backend "${backend}".`, { code: "not_found", hint: "bb box config show lists the backends' IDs." });
+              if (positionals.switch !== "on" && positionals.switch !== "off") throw new PluginCliError(`Give on or off, not "${positionals.switch}".`, { code: "invalid_value" });
+              app.zfsOrder!.set(backend, positionals.switch === "on");
+              return out(positionals.switch === "on" ? `Restores on ${backend} run ZFS's order from now on, for live checks, until bb-box restarts.` : `Restores on ${backend} run in its storage's own order again.`);
+            },
+          }),
+        }
+      : {}),
     ...(prices
       ? {
           "snapshot fake-price": cliCommand({

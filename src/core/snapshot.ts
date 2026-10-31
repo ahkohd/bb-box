@@ -459,6 +459,8 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.keptUntil !== null ? [`kept until ${dayWords(snapshot.keptUntil).slice(0, 10)}`] : []),
     ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
+    ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
+    ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),
     ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),
   ];
   return parts.join(" · ");

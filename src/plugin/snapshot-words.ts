@@ -26,7 +26,7 @@ export function deletedText(answer: DeleteAnswer, boxName: string): string {
   const snapshot = answer.snapshot;
   if (!snapshot) return answer.operation?.state === "done" ? `Snapshot ${answer.operation.snapshots[0] ?? ""} of box ${boxName} was deleted already, with that request.` : `The delete asked for with that request ended ${answer.operation?.state ?? "already"}.`;
   if (answer.repeated) return `Snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName} was asked to be deleted with that request already. It is ${stateWords(snapshot)}.`;
-  return `Deleted snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}: ${freedWords(snapshot)}.`;
+  return `Deleted snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}: ${snapshot.guest === "held-copy" ? `its held copy, guest ${snapshot.livesOn.ref}, is deleted` : freedWords(snapshot)}.`;
 }
 
 export function restoredText(answer: RestoreAnswer, boxName: string): string {
@@ -37,8 +37,10 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
     const how = operation.state === "done" ? "It is done" : operation.state === "failed" ? `It failed: ${operation.error ?? "no reason given"}` : operation.state === "unknown" ? `bb-box could not confirm how it ended: ${operation.error ?? "no reason given"}` : "It is still running";
     return `The restore of box ${boxName} to ${named} was asked for with that request already. ${how}`;
   }
-  const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. Everything on its disk since then went, and every process in it ended.`];
-  lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id}): restore that to undo this.` : "No undo was taken.");
+  const processes = snapshot?.holds === "disk-and-memory" ? `It came back running, as it was then, with the credentials its apps held then; what ran since ended.` : "Every process in it ended.";
+  const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. Everything on its disk since then went. ${processes}`];
+  if (typeof answer.earlier === "number") lines.push(`It runs on a new guest made from that held copy, with the box's own identity. ${answer.earlier === 1 ? "1 snapshot stays" : `${answer.earlier} snapshots stay`} on its earlier guest, which bb-box never starts: fork only.`);
+  lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id})${answer.undo.guest === "held-copy" ? `, a held copy of the stopped box, guest ${answer.undo.livesOn.ref}` : ""}: restore that to undo this.` : "No undo was taken.");
   if (answer.anyway.length) lines.push(`Restored anyway, though ${answer.anyway.join(", and ")}.`);
   if (answer.from && answer.to && describeSize(answer.from) !== describeSize(answer.to)) lines.push(`Its size went back from ${describeSize(answer.from)} to ${describeSize(answer.to)}, as it was then.`);
   if (answer.replaced.length) lines.push(`A box keeps two undos, so bb-box deleted the oldest: ${answer.replaced.map((name) => `"${name}"`).join(", ")}.`);

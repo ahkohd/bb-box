@@ -25,6 +25,9 @@ do), and on snapshots that install labelled.
       after about 10 s: a rollback still running at a sweep (gate G13)
   config <vmid>
       prints <vmid>'s onboot, template, lock, tags and network lines (gate G16)
+  destroy-kept <vmid>
+      destroys a held copy or an earlier guest that bb-box no longer records,
+      for the clean-up; it refuses a guest without either tag
   tasks <vmid>
       prints <vmid>'s last 20 tasks: type, start, end, status and user
   start-by-hand <vmid>
@@ -91,6 +94,11 @@ case $command in
     ;;
   config)
     $tool config "$vmid" | grep -E '^(onboot|template|lock|tags|net[0-9]+|smbios1|parent|description):' || true
+    ;;
+  destroy-kept)
+    [[ ";$tags;" == *";held-copy;"* || ";$tags;" == *";earlier-guest;"* ]] || { echo "guest $vmid is neither a held copy nor an earlier guest: $tags" >&2; exit 2; }
+    $tool destroy "$vmid" --purge
+    echo "destroyed $vmid"
     ;;
   tasks)
     pvesh get "/nodes/$node/tasks" --vmid "$vmid" --source all --limit 20 --output-format json |

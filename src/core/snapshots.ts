@@ -103,6 +103,7 @@ export interface RestoreAnswer {
   readonly to: BoxSize | null;
   readonly anyway: readonly string[];
   readonly replaced: readonly string[];
+  readonly earlier?: number | null;
   readonly repeated: boolean;
 }
 
@@ -1333,10 +1334,27 @@ export class Snapshots {
       box = await this.#moved(box, { restoring: null, state: "ready" });
       undo = undo ? ledger.record(undo.id) : null;
       const sized = sizeChangeWords(context.from, to);
-      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${sized}.`);
+      const left = context.swap ? ledger.records({ box: box.id }).filter((record) => record.guest === "earlier" && record.livesOn.ref === ledger.operation(operation.id)?.guests?.old?.ref).length : 0;
+      const old = context.swap ? (ledger.operation(operation.id)?.guests?.old ?? null) : null;
+      let gone = false;
+      if (old && left === 0 && backend.deleteCopy) {
+        gone = await backend.deleteCopy(old, signal).then(
+          () => true,
+          (error: unknown) => {
+            this.#deps.log?.(`Could not delete box ${box!.name}'s earlier guest ${old.ref}, which holds no snapshot: ${message(error)}`);
+            return false;
+          },
+        );
+      }
+      const swapped = context.swap
+        ? gone
+          ? `; a new guest made from its held copy runs the box now, and its old guest ${old!.ref}, which held no snapshot, is deleted`
+          : `; a new guest made from its held copy runs the box now, and ${left === 1 ? "1 snapshot stays" : `${left} snapshots stay`} on its earlier guest: fork only`
+        : "";
+      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${swapped}${sized}.`);
       replaced.push(...(await this.#replaceUndos(box.id, target.id)));
       this.#notify(box.threadId);
-      return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, repeated: false };
+      return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, earlier: context.swap ? left : null, repeated: false };
     } finally {
       this.#running.delete(operation.id);
     }
