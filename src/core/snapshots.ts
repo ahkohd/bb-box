@@ -877,6 +877,10 @@ export class Snapshots {
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.undo === false) throw new BoxError("not_owner", `An agent's restore always takes an undo first. ${NOT_THE_AGENTS}`);
     if (caller.is === "agent" && input.force) throw new BoxError("not_owner", `Restoring past what a box would lose is the person's to do. ${NOT_THE_AGENTS}`);
+    if (caller.is === "agent" && !this.settings.agentsRestore) throw new BoxError("not_owner", `Settings turn agents' restores off, so only the person restores box ${box.name}. ${NOT_THE_AGENTS}`);
+    if (caller.is === "agent" && target.holds === "disk-and-memory" && !this.settings.agentsMemory) {
+      throw new BoxError("not_owner", `Settings let only the person restore a snapshot that holds memory, as ${quoted(target)} does. ${NOT_THE_AGENTS}`);
+    }
     this.#requireStore("restores");
     const digest = input.request ? requestDigest("restore", box.id, { snapshot: target.id, undo: input.undo !== false, force: input.force === true }) : null;
     if (input.request) {
@@ -1935,8 +1939,12 @@ export class Snapshots {
         this.#deps.log?.(`Could not delete guest ${first.livesOn.ref}, ${first.guest === "held-copy" ? "a held copy" : "the earlier guest"} of released box ${first.box.name}: ${message(error)} The next sweep tries again.`);
         continue;
       }
+      const now = this.#now();
       ledger.transaction(() => {
-        for (const record of all) ledger.removeRecord(record.id);
+        for (const record of all) {
+          ledger.removeRecord(record.id);
+          ledger.insertOperation(this.#settled(record, byBbBox("its box was released"), now));
+        }
       });
       for (const record of all) this.#event(record, "snapshot-deleted", byBbBox("its box was released"), `"${record.name}" (${record.id}): it went with ${record.guest === "held-copy" ? "its held copy" : "its box's earlier guest"}, guest ${record.livesOn.ref}.`);
     }
