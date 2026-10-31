@@ -16,6 +16,8 @@ import { myViewers } from "./box-row.tsx";
 import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
 import { boxPage, viewFromPage, type BoxPageRoute } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
+import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
+import { useWakeAt } from "./row-status.tsx";
 import { Activity } from "./activity.tsx";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
@@ -33,6 +35,7 @@ import {
   NOT_HERE_TITLE,
   NOT_HERE_WORDS,
   backendNotice,
+  busyWords,
   notInSettings,
   reachNotice,
   releaseUnfinished,
@@ -67,7 +70,7 @@ export function useBoxPage(boxId: string, { recheckThreads = false }: { recheckT
   const thread = useRef<string | null>(null);
   const live = useLive<BoxPageState>(
     boxPageKey(boxId),
-    () => rpc.call("boxPage", { box: boxId }),
+    () => rpc.call("boxPage", { box: boxId }).then((state) => ({ ...state, busy: busyUntil(state.busy, Date.now()) })),
     (payload) => {
       const changed = (payload as { threadId?: unknown } | null)?.threadId;
       return changed === null || changed === undefined || thread.current === null || changed === thread.current || changed === OPERATOR;
@@ -171,6 +174,29 @@ function ThreadLine({ page, now }: { page: BoxPageState; now: number }) {
   );
 }
 
+function showProcesses(): void {
+  const processes = document.getElementById("processes");
+  processes?.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  document.getElementById("processes-heading")?.focus({ preventScroll: true });
+}
+
+function BusyWords({ words, toProcesses }: { words: string; toProcesses: boolean }) {
+  return (
+    <span data-busy className="text-warning-text">
+      <span aria-hidden className="text-muted-foreground">
+        ·{" "}
+      </span>
+      {toProcesses ? (
+        <button type="button" className={cn("cursor-pointer rounded-sm underline-offset-2 hover:underline", FOCUS)} onClick={showProcesses}>
+          {words}
+        </button>
+      ) : (
+        words
+      )}
+    </span>
+  );
+}
+
 function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: ViewChoice; describedBy: string }) {
   const nav = useBoxesNav();
   if (view.why) {
@@ -218,6 +244,8 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
     heading.current?.focus({ preventScroll: true });
   }, []);
   const head = headline(box, now, titles);
+  const woken = useWakeAt((page.busy as ShownBusy | null | undefined)?.until ?? null);
+  const busy = busyNow(page.busy, Math.max(now, woken));
   const unreachable = unreachableWhy(box);
   const stops = (box.canStopStart || notInSettings(box)) && box.state !== "releasing";
   const views = boxViews(box);
@@ -251,6 +279,7 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
                   · {detail}
                 </span>
               ))}
+              {busy && box.state === "ready" ? <BusyWords words={busyWords(busy)} toProcesses={page.monitor.is === "read"} /> : null}
             </p>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground">
               <CopyValue value={box.id} label="Box ID" />

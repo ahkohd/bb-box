@@ -209,24 +209,22 @@ export function joinAdvice(box: Pick<BoxView, "joinTries">): boolean {
  * What to do when boxes cannot join BB, from BB's words. A box joins BB through BB's machine access, and BB's desktop
  * app starts with bb connect, which needs a sign-in (the newcomer check): then the words say the two ways out.
  */
+const SIGN_IN_WORDS =
+  "BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0.";
+
+export function joinWords(words: string | null, advice = true): string {
+  if (needsSignIn(words)) return SIGN_IN_WORDS;
+  return [words ? words.replace(/\.?$/, ".") : "", advice ? "See Machine access in BB's settings, under Machines." : ""].filter(Boolean).join(" ");
+}
+
 export function JoinHelp({ words, advice = true }: { words: string | null; advice?: boolean }) {
-  const guide = (
-    <UrlLink href={JOIN_GUIDE} className="text-foreground underline underline-offset-2">
-      How boxes join BB
-    </UrlLink>
-  );
-  if (needsSignIn(words)) {
-    return (
-      <>
-        BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0. {guide}
-      </>
-    );
-  }
+  const said = joinWords(words, advice);
   return (
     <>
-      {words ? `${words.replace(/\.?$/, ".")} ` : ""}
-      {advice ? "See Machine access in BB's settings, under Machines. " : ""}
-      {guide}
+      {said ? `${said} ` : ""}
+      <UrlLink href={JOIN_GUIDE} className="text-foreground underline underline-offset-2">
+        How boxes join BB
+      </UrlLink>
     </>
   );
 }

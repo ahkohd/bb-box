@@ -10,7 +10,8 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
-import { contract, type BoxPageState, type BoxResult, type DeviceBoot, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
+import { contract, type BoxEntry, type BoxPageState, type BoxResult, type DeviceBoot, type MachineEntry, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
+import { lastActiveAt, startedAt } from "./thread-on-box.ts";
 import { sizeView } from "./views.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
@@ -289,19 +290,31 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         await app.desktops.control.handBack(box.id);
         return box;
       }),
-    async allBoxes() {
-      const all = await boxes.all();
-      return all
-        .filter((box) => listed(box))
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .map((box) => ({ threadId: box.threadId, box: app.view(box), owner: box.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) }));
+    async allBoxes(): Promise<BoxEntry[]> {
+      const all = (await boxes.all()).filter((box) => listed(box)).sort((a, b) => a.createdAt - b.createdAt);
+      const holders = new Map<string, Promise<ThreadOnBox | null>>();
+      const holderOf = (box: BoxRecord) => {
+        if (!holders.has(box.threadId)) holders.set(box.threadId, app.holderOf(box).catch((): ThreadOnBox => ({ id: box.threadId, title: null, running: false, unchecked: true })));
+        return holders.get(box.threadId)!;
+      };
+      const now = Date.now();
+      return Promise.all(
+        all.map(async (box): Promise<BoxEntry> => {
+          const view = app.view(box);
+          const yours = box.threadId === OPERATOR;
+          const thread = yours ? null : await holderOf(box);
+          const threads = yours ? await app.threadsOn(box).catch(() => []) : thread && !thread.unchecked ? [thread] : [];
+          const started = startedAt(view);
+          return { threadId: box.threadId, box: view, owner: yours ? "yours" : "thread", thread, ...(yours ? { threads } : {}), busy: app.history.busy(box), startedAt: started, activeAt: lastActiveAt(threads, started, now) };
+        }),
+      );
     },
     async boxPage({ box: boxId }): Promise<BoxPageState> {
       const found = await boxes.find(boxId);
       if (!found || !listed(found)) return { ...NOT_HERE, ended: app.boxLog.ended(boxId) };
       const yours = found.threadId === OPERATOR;
       const [thread, threads, monitor, snapshotsView] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found), snapshotsOf(found)]);
-      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null, snapshots: snapshotsView };
+      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null, snapshots: snapshotsView, busy: app.history.busy(found) };
     },
     async "snapshot.takeCheck"({ box: boxId, memory }) {
       try {
@@ -349,7 +362,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async "machines.list"() {
       const records = (await boxes.list(OPERATOR)).sort((a, b) => a.createdAt - b.createdAt);
       const [machines, kinds, desktopOnDemand, access] = await Promise.all([
-        Promise.all(records.map(async (box) => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
+        Promise.all(records.map(async (box): Promise<MachineEntry> => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
         app.kinds(),
         app.desktopOnDemand().catch(() => null),
         app.machineAccess().catch(() => null),

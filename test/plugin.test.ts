@@ -6810,3 +6810,32 @@ test("when bb-box cannot tell where the thread runs, the snapshot tools count it
   assert.doesNotMatch(listed, /the person's/);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /the person's/);
 });
+
+test("allBoxes says each box's thread and whether it works, when it was last started and last active, and no busy flag without history (069 unit 4)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const before = Date.now();
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
+  await app.boxes.idle();
+  const box = await only(app);
+  const [entry] = (await harness.behavior.callRpc("allBoxes", null)) as { box: { id: string }; thread: { id: string; running: boolean } | null; busy: unknown; startedAt: number; activeAt: number }[];
+  assert.equal(entry!.box.id, box.id);
+  assert.equal(entry!.thread?.id, THREAD);
+  assert.equal(typeof entry!.thread?.running, "boolean");
+  assert.equal(entry!.busy, null);
+  assert.ok(entry!.startedAt >= before - 1000);
+  assert.ok(entry!.activeAt >= entry!.startedAt);
+  const page = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { busy: unknown };
+  assert.equal(page.busy, null);
+
+  const machine = await addMachine(harness, app, { kind: "linux", name: "mine" });
+  world.onHost.set(machine.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const asked = Date.now();
+  const mine = ((await harness.behavior.callRpc("allBoxes", null)) as { box: { id: string }; owner: string; activeAt: number; busy: unknown; threads: { id: string; running: boolean }[] }[]).find((each) => each.box.id === machine.id)!;
+  assert.equal(mine.owner, "yours");
+  assert.deepEqual(mine.threads.map((thread) => [thread.id, thread.running]), [["thr_worker", true]], "allBoxes gives a machine its threads, so the list needs no second answer for them");
+  assert.ok(mine.activeAt >= asked, "a thread working on it now makes it active now");
+  assert.equal(mine.busy, null);
+  const listed = (await harness.behavior.callRpc("machines.list", null)) as { machines: Record<string, unknown>[] };
+  assert.equal(listed.machines[0]!.busy, undefined, "machines.list no longer reads box history");
+});

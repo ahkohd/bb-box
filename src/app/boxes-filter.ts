@@ -79,18 +79,43 @@ export function tagsOf(box: BoxView): Readonly<Record<TagGroup, readonly string[
   };
 }
 
-export type SortKey = "name" | "created";
+export type SortKey = "name" | "created" | "active";
 
 export interface Sort {
   readonly key: SortKey;
   readonly ascending: boolean;
 }
 
-export const SORT_WORDS: Readonly<Record<SortKey, string>> = { name: "Name", created: "Created" };
+export const SORT_WORDS: Readonly<Record<SortKey, string>> = { name: "Name", created: "Created", active: "Last active" };
+
+export function sortDirectionWords(sort: Sort): string {
+  if (sort.key === "active") return sort.ascending ? "least recent first" : "most recent first";
+  return sort.ascending ? "ascending" : "descending";
+}
+
+export function firstSort(key: SortKey): Sort {
+  return { key, ascending: key !== "active" };
+}
 
 export interface Listed {
   readonly box: BoxView;
   readonly words: readonly string[];
+  readonly activeAt?: number;
+}
+
+function activeOf(row: Listed): number {
+  return row.activeAt ?? row.box.readyAt ?? row.box.createdAt;
+}
+
+function sortOrder<T extends Listed>(key: SortKey): (a: T, b: T) => number {
+  switch (key) {
+    case "name":
+      return (a, b) => a.box.name.localeCompare(b.box.name);
+    case "created":
+      return (a, b) => a.box.createdAt - b.box.createdAt;
+    case "active":
+      return (a, b) => activeOf(a) - activeOf(b);
+  }
 }
 
 export function choices(boxes: readonly BoxView[]): Filters {
@@ -120,7 +145,8 @@ export function shown<T extends Listed>(rows: readonly T[], search: string, filt
     const tags = tagsOf(row.box);
     return TAG_GROUPS.every((group) => matchesGroup(tags, filters, group)) && matchesSearch(row, terms);
   });
-  const order = (a: T, b: T) => (sort.key === "name" ? a.box.name.localeCompare(b.box.name) : a.box.createdAt - b.box.createdAt) || a.box.id.localeCompare(b.box.id);
+  const byKey = sortOrder<T>(sort.key);
+  const order = (a: T, b: T) => byKey(a, b) || a.box.id.localeCompare(b.box.id);
   return kept.sort((a, b) => (sort.ascending ? order(a, b) : order(b, a)));
 }
 

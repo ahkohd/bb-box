@@ -1,5 +1,6 @@
 // The panel's RPC contract. The panel imports only its type.
 
+import type { Busy } from "../monitor/busy.ts";
 import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
@@ -118,6 +119,11 @@ export interface BoxEntry {
   readonly box: BoxView;
   /** "yours" for one of your machines (036). */
   readonly owner: "thread" | "yours";
+  readonly thread?: ThreadOnBox | null;
+  readonly threads?: readonly ThreadOnBox[];
+  readonly busy?: Busy | null;
+  readonly startedAt?: number;
+  readonly activeAt?: number;
 }
 
 /** One of your machines (036), and the threads on its BB machine. */
@@ -194,6 +200,7 @@ export interface BoxPageState {
   readonly deviceFailed: DeviceBoot | null;
   readonly ended: EndedBox | null;
   readonly snapshots?: BoxSnapshotsView | null;
+  readonly busy?: Busy | null;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */

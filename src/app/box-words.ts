@@ -1,5 +1,6 @@
 import type { Actor, EndedBox, LastFailed, Observation } from "../core/box-log.ts";
 import type { BoxView } from "../plugin/views.ts";
+import type { Busy } from "../monitor/busy.ts";
 import type { Tone } from "./common.tsx";
 
 const SECOND = 1000;
@@ -17,6 +18,18 @@ export function span(ms: number): string {
   if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
   const days = Math.floor(hours / 24);
   return hours % 24 ? `${days} d ${hours % 24} h` : `${days} d`;
+}
+
+export function rowSpan(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / SECOND));
+  if (seconds < 60) return `${seconds} s`;
+  if (ms < HOUR) return `${Math.floor(seconds / 60)} min`;
+  if (ms < DAY) return `${Math.floor(ms / HOUR)} h`;
+  return `${Math.floor(ms / DAY)} d`;
+}
+
+export function rowAgo(at: number, now: number): string {
+  return now - at < JUST_NOW_MS ? "just now" : `${rowSpan(now - at)} ago`;
 }
 
 export function ago(at: number, now: number): string {
@@ -113,7 +126,27 @@ export function releaseUnfinished(box: Pick<BoxView, "state" | "log" | "error">)
   return releaseFailure(box) !== null;
 }
 
-function upSince(box: Pick<BoxView, "log" | "readyAt" | "createdAt">): number {
+function wholePercent(value: number | null): string {
+  return value === null ? "" : ` ${Math.round(value)}%`;
+}
+
+export function busyWords(busy: Busy, measure: (ms: number) => string = span): string {
+  const lasting = `for ${measure(busy.at - busy.since)}`;
+  switch (busy.reason) {
+    case "cpu":
+    case "cpuPressure":
+      return busy.slot ? `Busy:${wholePercent(busy.value)} of its share ${lasting}` : `Busy: CPU${wholePercent(busy.value)} ${lasting}`;
+    case "memory":
+    case "memoryPressure":
+      return busy.slot ? `Busy: memory${wholePercent(busy.value)} of its share ${lasting}` : `Busy: memory${wholePercent(busy.value)} ${lasting}`;
+    case "load":
+      return `Busy: load${busy.value === null ? "" : ` ${busy.value.toFixed(1)}`}${busy.cores ? ` on ${busy.cores} ${busy.cores === 1 ? "core" : "cores"}` : ""} ${lasting}`;
+    case "disk":
+      return busy.value === null ? "Disk nearly full" : `Disk${wholePercent(busy.value)} full`;
+  }
+}
+
+export function upSince(box: Pick<BoxView, "log" | "readyAt" | "createdAt">): number {
   return box.log?.lastStart?.readyAt ?? box.readyAt ?? box.createdAt;
 }
 

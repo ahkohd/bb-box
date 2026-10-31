@@ -6,12 +6,15 @@ import type { DoctorCheck } from "../backends/types.ts";
 import { BoxHistory, NO_TALLY, READING_TIMEOUT_MS, macKey, type HistoryBox, type Tally } from "../monitor/box-history.ts";
 import { historyShape, historyWindow, type HistoryRange, type HistoryShape } from "../monitor/history-view.ts";
 import { lightScript, parseLightOutput, type LightOs, type LightReading, type LightRequest } from "../monitor/light.ts";
+import { busyOf, countedFrom, reachesBack, type Busy } from "../monitor/busy.ts";
+import { POINTS_JOIN_MS } from "../monitor/busy-times.ts";
 import { TransportError } from "../transports/types.ts";
 import type { BoxLogStore } from "./box-log-store.ts";
-import type { BoxHistoryStore } from "./box-history-store.ts";
+import { MINUTES_KEPT_MS, type BoxHistoryStore } from "./box-history-store.ts";
 
 const ROUTE_OUTPUT_BYTES = 512 * 1024;
 const HOUR_MS = 60 * 60_000;
+const BUSY_LOOK_MS = 70 * 60_000;
 
 export interface BoxHistoryView extends HistoryShape {
   readonly kept: boolean;
@@ -153,6 +156,14 @@ export function retainedKeys(records: readonly BoxRecord[], ended: (boxId: strin
   return (key) => (key.startsWith("mac:") ? macs.has(key) : ids.has(key) || ended(key) !== null);
 }
 
+function lastStartOf(boxLog: BoxLogStore, boxId: string): { readonly askedAt: number } | null {
+  try {
+    return boxLog.view(boxId).lastStart;
+  } catch {
+    return null;
+  }
+}
+
 export function createBoxHistory(deps: BoxHistoryAppDeps) {
   const now = deps.now ?? Date.now;
   let records = new Map<string, BoxRecord>();
@@ -221,6 +232,22 @@ export function createBoxHistory(deps: BoxHistoryAppDeps) {
       const quiet = [...(keptSince !== null && keptSince > window.from ? [{ from: 0, to: keptSince }] : []), ...deps.store.quiet(window.from, window.to)];
       const shape = historyShape({ range, now: at, createdAt: box.createdAt, state: box.state, minutes, hours, host, events, quiet });
       return { ...shape, kept: config.boxHistory, monitor: config.enabled, full: deps.store.fullWords(), slot: slot ? { host: slot.host } : null, newest: deps.store.newest(box.id), now: at };
+    },
+    busy(box: BoxRecord): Busy | null {
+      const config = deps.config();
+      if (!config.enabled || !config.boxHistory || box.state !== "ready") return null;
+      const at = now();
+      const newest = deps.store.newest(box.id);
+      if (newest !== null && newest > at + POINTS_JOIN_MS) return null;
+      const quiet = deps.store.quiet(at - MINUTES_KEPT_MS, at);
+      if (quiet.some((each) => each.to === null)) return null;
+      const lastStart = lastStartOf(deps.boxLog, box.id);
+      const from = countedFrom(lastStart?.askedAt ?? box.readyAt ?? box.createdAt, quiet.map((each) => each.to!));
+      const slot = slotOf(box) !== null;
+      const recent = deps.store.minutes(box.id, Math.max(at - BUSY_LOOK_MS, from - POINTS_JOIN_MS), at);
+      const busy = busyOf(recent, at, slot, from);
+      if (!busy || !reachesBack(busy, recent) || busy.since <= from + POINTS_JOIN_MS) return busy;
+      return busyOf(deps.store.minutes(box.id, Math.max(at - MINUTES_KEPT_MS, from - POINTS_JOIN_MS), at), at, slot, from);
     },
     stateWords(): string {
       const status = reader.status();

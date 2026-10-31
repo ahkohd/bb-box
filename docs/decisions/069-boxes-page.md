@@ -1026,6 +1026,43 @@ After the independent review of unit 3:
   local clock shows twice carries its time zone, such as 1:00 AM EDT and
   1:00 AM EST.
 
+## Decided during unit 4
+
+On 31 October 2026, during unit 4:
+
+- **A long reason sits behind a warning mark: the lead's decision, from
+  the owner.** A row whose box could not join BB showed the whole error as
+  an amber paragraph under it. Now the second line says "Could not join
+  BB" with a warning mark after it, and the full reason is in the line's
+  tooltip and in the name's accessible description. The tooltip also
+  opens while the name has the keyboard's focus, so a sighted keyboard
+  user reads it with no extra Tab stop (the lead's decision). The same goes for
+  every long reason on a row: a failed stop, start or resize, an
+  unexpected stop, a failed start's error, a release that did not finish,
+  and why a backend or host does not answer. So section 9's "Today's lines
+  under a row stay" no longer holds: no paragraph sits under a row on the
+  Boxes page, and How boxes join BB is on the box's page. The Box panel
+  keeps its lines.
+- **Five minutes, with a reading's lateness.** A streak counts when its
+  points cover 5 minutes less 10 s, the most a reading may start late
+  (gate G11), so 5 readings a few seconds apart from a minute count. Two
+  points join when one ends within 2 s of the next's start, as times are
+  kept in whole seconds. A container's pressure and its CPU or memory use
+  are separate reasons, each judged by the Monitor's rules; the order the
+  words choose from is CPU, CPU pressure, memory, memory pressure, load,
+  then disk.
+- **Rows keep one unit of time.** "up 2 h", "3 h ago", "Idle 3 h",
+  "Busy: CPU 96% for 9 min". The page keeps two ("up 2 h 14 min").
+- **The list asks again every 15 s while it is shown**, as the page asks
+  for its threads, since BB sends no signal when a thread starts or
+  finishes and the busy flag changes each minute. A thread card's title
+  comes with `allBoxes`, so it is there in the first frame.
+- **Last active puts the most recent first** when chosen, and its
+  direction says so: "most recent first" or "least recent first". A thread
+  working now counts as active now.
+- **A thread's working state sits at the card's right, beside its
+  arrow**, so a long title is cut before the state is.
+
 ## Decided during unit 5
 
 On 30 October 2026, during unit 5:

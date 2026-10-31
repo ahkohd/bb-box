@@ -9,8 +9,11 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxEntry, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
+import type { Busy } from "../src/monitor/busy.ts";
+import { busyNow, busyUntil, rowLine, rowReasons, rowWords } from "../src/app/row-line.ts";
+import { busyWords } from "../src/app/box-words.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DoctorReport, GpuRoom } from "../src/backends/types.ts";
@@ -36,7 +39,7 @@ type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" 
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf, timingWords } from "../src/app/status.ts";
-import { choices, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
+import { choices, firstSort, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
 import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
 import { terminalTitle } from "../src/app/terminal.tsx";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
@@ -534,7 +537,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null } } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null } } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -613,7 +616,7 @@ function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: 
       return null;
     },
     images: () => options.images ?? [],
-    allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
+    allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const, ...options.entries?.(found) })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
     "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol), desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null, access: options.access ?? null }),
     "machines.add": ({ kind, name }) => {
@@ -694,7 +697,7 @@ function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: 
       const found = boxes.find((candidate) => candidate.id === id);
       const mine = machines.find((entry) => entry.box.id === id);
       const blank = { monitor: options.monitor ?? NOT_READ, deviceFailed: options.deviceFailed ?? null, ended: null };
-      if (found) return { ...blank, box: found, threadId: THREAD, owner: "thread", thread: options.holder ?? { id: THREAD, title: "UI thread", running: false }, threads: options.inUse ?? [], snapshots: options.snapshots ?? null };
+      if (found) return { ...blank, box: found, threadId: THREAD, owner: "thread", thread: options.holder ?? { id: THREAD, title: "UI thread", running: false }, threads: options.inUse ?? [], snapshots: options.snapshots ?? null, busy: options.busy ?? null };
       if (mine) return { ...blank, box: mine.box, threadId: "operator", owner: "yours", thread: null, threads: mine.threads };
       return { ...blank, box: null, threadId: null, owner: null, thread: null, threads: [], ended: ended.get(id) ?? null };
     },
@@ -6066,7 +6069,7 @@ test("the Boxes page lists every box under its thread, servers as well as deskto
   expect(await list.findByText("bold-heron")).toBeTruthy();
   expect(list.getByText("calm-otter")).toBeTruthy(); // a server box, not only desktops
   expect(list.getByText("Desktop")).toBeTruthy();
-  expect(list.getByText("The agent has control")).toBeTruthy();
+  expect(list.queryByText("The agent has control")).toBeNull();
   // With no machines of yours, the page opens on Threads: one card for the thread, headed by its title, which opens it.
   expect(list.getByRole("tab", { name: "Threads 1" }).getAttribute("aria-selected")).toBe("true");
   await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(1));
@@ -6607,7 +6610,7 @@ test("on the Boxes page a row's click, its name and its chevron open the box's p
   expect(chevron.tabIndex).toBe(-1);
   expect(chevron.getAttribute("aria-hidden")).toBe("true");
   fireEvent.click(chevron);
-  fireEvent.click(row.querySelector("[data-status-line]")!);
+  fireEvent.click(row.querySelector("[data-row-line]")!);
   expect(list.inspection.navigateCalls).toEqual([toPage, toPage, toPage]);
   fireEvent.click(name, { metaKey: true });
   fireEvent.click(chevron, { ctrlKey: true });
@@ -9847,4 +9850,230 @@ test("070 unit 6 review: after a delete, focus goes to the next row, then the on
   const heading = await page.findByRole("heading", { name: "Pictures" });
   expect(heading.className).toContain("font-normal");
   expect(heading.className).not.toContain("font-medium");
+});
+
+const MIN = 60_000;
+
+function busyFor(reason: Busy["reason"], value: number | null, minutes: number, extra: Partial<Busy> = {}): Busy {
+  const readAt = Date.now();
+  const at = readAt - 20_000;
+  return { reason, value, cores: null, since: at - minutes * MIN, at, slot: false, readAt, ...extra };
+}
+
+function shownBusy(reason: Busy["reason"], value: number | null, minutes: number): Busy {
+  return busyUntil(busyFor(reason, value, minutes), Date.now())!;
+}
+
+test("a row's second line says how the box is now: the state, what needs attention in its order, how long, then cores and memory (069 unit 4)", () => {
+  const now = Date.now();
+  const ready = box({ readyAt: now - 2 * 60 * MIN - 5_000, log: null });
+  const words = (view: BoxView, facts: Partial<Parameters<typeof rowLine>[1]> = {}) => rowWords(rowLine(view, { now, ...facts }));
+  expect(words(ready)).toBe("Ready · up 2 h · 2 cores · 4 GiB memory");
+  expect(words(box({ size: "8 cores, 16 GiB memory, 64 GiB disk", readyAt: now - 46 * MIN }), { busy: shownBusy("cpu", 96.4, 9) })).toBe("Ready · Busy: CPU 96% for 9 min · up 46 min · 8 cores · 16 GiB memory");
+  const held = desktopBox({ control: { owner: "human", holder: "viewer-1" }, readyAt: now - 2 * 60 * MIN });
+  expect(words(held, { viewers: new Set(["viewer-1"]) })).toBe("Ready · You have control · up 2 h · 2 cores · 4 GiB memory");
+  expect(words(desktopBox({ readyAt: now - 2 * 60 * MIN })), "the agent's control is the normal case, so it says nothing").toBe("Ready · up 2 h · 2 cores · 4 GiB memory");
+  const failedStop = box({ readyAt: now - 2 * 60 * MIN, log: { lastStart: null, lastStop: null, lastFailed: { operation: "stop", at: now - 2 * MIN, words: "Timed out waiting for the container to stop", observed: { state: "running", at: now - MIN, from: "Fake host" }, parts: [] } } });
+  const stopLine = rowLine(failedStop, { now });
+  expect(rowWords(stopLine)).toBe("Ready · Stop failed · up 2 h · 2 cores · 4 GiB memory");
+  expect(rowReasons(stopLine)[0]).toMatch(/^Stop failed: Timed out waiting for the container to stop\. It is still running \(checked .+\)\.$/);
+  expect(words(box({ reach: { is: "not-in-settings", backend: "Proxmox LXC on pve-old", lastAnswered: now - 2 * 24 * 60 * MIN } }))).toBe("Last seen ready · Its backend is not in settings · 2 d ago");
+  expect(words(box({ reach: { is: "not-answering", since: now - 12 * MIN, lastAnswered: now - 12 * MIN, nextCheckAt: now + 4 * MIN, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" } }))).toBe("Last seen ready · pve-3 does not answer · 12 min ago");
+  const unjoined = rowLine(box({ readyAt: now - 12_000, enrol: { state: "failed", hostId: null, error: "BB's server is not reachable from Proxmox LXC: turn the tailnet on" } }), { now });
+  expect(rowWords(unjoined)).toBe("Ready · Could not join BB · up 12 s · 2 cores · 4 GiB memory");
+  expect(rowReasons(unjoined)).toEqual(["Could not join BB: BB's server is not reachable from Proxmox LXC: turn the tailnet on. See Machine access in BB's settings, under Machines."]);
+  const retrying = rowLine(box({ readyAt: now - 3 * MIN, enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 2, next: now + 10 * MIN, words: "This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out).", of: 5, setup: false } }), { now });
+  expect(rowWords(retrying)).toBe("Ready · Joining BB, try 3 of 5 · up 3 min · 2 cores · 4 GiB memory");
+  expect(rowReasons(retrying)).toEqual(["Joining BB, try 3 of 5: Joining BB: try 3 of 5 starts in 10 min. Try 2 failed: This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out)."]);
+  expect(words(box({ readyAt: now - 30_000, enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 0, next: null, words: "", of: 5, setup: false } }))).toBe("Ready · Joining BB, try 1 of 5 · up 30 s · 2 cores · 4 GiB memory");
+  const gaveUp = rowLine(box({ enrol: { state: "failed", hostId: null, error: "This box has no network route to BB's address (No route to host)." }, joinTries: { failed: 5, next: null, words: "", of: 5, setup: false } }), { now });
+  expect(rowReasons(gaveUp), "a problem that is not BB's setup gives no settings advice").toEqual(["Could not join BB: This box has no network route to BB's address (No route to host)."]);
+  expect(words(box({ state: "starting", createdAt: now - 7_000, log: null }))).toBe("Starting · 7 s");
+  expect(words(box({ state: "stopped", log: { lastStart: null, lastStop: { at: now - 3 * 60 * MIN - 5 * MIN, by: { is: "person" }, asked: true }, lastFailed: null } } as Partial<BoxView>))).toBe("Stopped · 3 h ago · 2 cores · 4 GiB memory");
+  const failed = rowLine(box({ state: "failed", error: "No GPU is left.", log: { lastStart: { askedAt: now - 53 * MIN, readyAt: null, failedAt: now - 52 * MIN, by: null, first: true }, lastStop: null, lastFailed: null } }), { now });
+  expect(rowWords(failed)).toBe("Failed · 52 min ago");
+  expect(rowReasons(failed)).toEqual(["Failed: No GPU is left."]);
+  const everything = rowLine(
+    desktopBox({ readyAt: now - 46 * MIN, control: { owner: "human", holder: "viewer-1" }, enrol: { state: "failed", hostId: null, error: "no route" }, log: failedStop.log }),
+    { now, busy: shownBusy("memory", 93, 6), viewers: new Set(["viewer-1"]) },
+  );
+  expect(everything.items.slice(1, 5).map((item) => item.text), "a failed operation, busy, a person's control, a failed join").toEqual(["Stop failed", "Busy: memory 93% for 6 min", "You have control", "Could not join BB"]);
+  const failedThenGone = rowLine(box({ readyAt: now - 2 * 60 * MIN, log: failedStop.log, reach: { is: "not-in-settings", backend: "Proxmox LXC on pve-old", lastAnswered: now - 2 * 24 * 60 * MIN } }), { now });
+  expect(rowWords(failedThenGone), "a failed stop, then its backend left settings: both, the failure first (review)").toBe("Last seen ready · Stop failed · Its backend is not in settings · 2 d ago");
+  expect(rowReasons(failedThenGone).map((reason) => reason.split(":")[0])).toEqual(["Stop failed", "Its backend is not in settings"]);
+  const failedThenSilent = rowLine(box({ readyAt: now - 2 * 60 * MIN, log: failedStop.log, reach: { is: "not-answering", since: now - 12 * MIN, lastAnswered: now - 12 * MIN, nextCheckAt: now + 4 * MIN, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" } }), { now });
+  expect(rowWords(failedThenSilent)).toBe("Last seen ready · Stop failed · pve-3 does not answer · 12 min ago");
+});
+
+test("a busy flag shows only until its point is 2 minutes old by the server's clock, however the client's clock and refreshes go (review)", () => {
+  const now = Date.now();
+  const read = busyFor("cpu", 96, 9);
+  expect(busyNow(read, now), "an answer the client did not stamp shows nothing").toBeNull();
+  const stamped = busyUntil({ ...read, readAt: read.at + 100_000 }, now)!;
+  expect(stamped.until, "20 s left by the server's clock, whatever the client's says").toBe(now + 20_000);
+  expect(busyNow(stamped, now + 19_000)).not.toBeNull();
+  expect(busyNow(stamped, now + 20_000)).toBeNull();
+  expect(rowWords(rowLine(box({ readyAt: now - 46 * MIN }), { now: now + 20_000, busy: stamped }))).toBe("Ready · up 46 min · 2 cores · 4 GiB memory");
+});
+
+test("busy words give the reason in the measure a person reads first: CPU, memory, load on its cores, a slot's share, or a full disk (069 unit 4)", () => {
+  expect(busyWords(busyFor("cpu", 96.4, 9))).toBe("Busy: CPU 96% for 9 min");
+  expect(busyWords(busyFor("cpuPressure", 71, 7)), "a container is judged by its pressure; the words give its use").toBe("Busy: CPU 71% for 7 min");
+  expect(busyWords(busyFor("memoryPressure", 93.2, 6))).toBe("Busy: memory 93% for 6 min");
+  expect(busyWords(busyFor("load", 7.94, 6, { cores: 4 }))).toBe("Busy: load 7.9 on 4 cores for 6 min");
+  expect(busyWords(busyFor("cpu", 95, 7, { slot: true }))).toBe("Busy: 95% of its share for 7 min");
+  expect(busyWords(busyFor("disk", 97.2, 30))).toBe("Disk 97% full");
+  expect(busyWords(busyFor("cpu", 99, 74))).toBe("Busy: CPU 99% for 1 h 14 min");
+});
+
+test("a long reason sits behind a warning mark on the second line, in its tooltip and the name's description, not as a paragraph under the row (069 unit 4)", async () => {
+  const reason = "BB's server is not reachable from Proxmox LXC: turn the tailnet on, or set Machine access to Manual. curl: (28) Resolving timed out after 5000 milliseconds";
+  const { handlers } = server([box({ enrol: { state: "failed", hostId: null, error: reason } })]);
+  const list = boxesPage(handlers);
+  const name = await list.findByRole("link", { name: "calm-otter" });
+  const row = rowOf(list, "calm-otter");
+  expect(row.querySelectorAll("p")).toHaveLength(0);
+  expect(within(row).queryByRole("link", { name: "How boxes join BB" })).toBeNull();
+  const line = row.querySelector<HTMLElement>("[data-row-line]")!;
+  expect(line.className).toContain("max-h-[2.75em]");
+  expect(line.textContent).toContain("Could not join BB");
+  expect(line.querySelector("[data-reason-mark]")).not.toBeNull();
+  const described = (name.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+  expect(described).toContain("Could not join BB");
+  expect(described).toContain("curl: (28) Resolving timed out");
+  fireEvent.pointerMove(line);
+  expect((await screen.findByRole("tooltip")).textContent).toContain("curl: (28) Resolving timed out");
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  act(() => name.focus());
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(screen.queryByRole("tooltip"), "a focus from the pointer, without :focus-visible, opens nothing").toBeNull();
+  act(() => name.blur());
+  const matches = name.matches.bind(name);
+  vi.spyOn(name, "matches").mockImplementation((selector: string) => selector === ":focus-visible" || matches(selector));
+  act(() => name.focus());
+  expect((await screen.findByRole("tooltip")).textContent, "a sighted keyboard user reads it while the name has focus").toContain("curl: (28) Resolving timed out");
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  act(() => name.blur());
+  act(() => name.focus());
+  expect(await screen.findByRole("tooltip")).toBeTruthy();
+  act(() => name.blur());
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+});
+
+test("a thread's card says whether it works, a row says when its box is busy, and the list asks again every 15 s while shown (069 unit 4)", async () => {
+  const now = Date.now();
+  const { handlers } = server([box(), box({ id: "box_6", name: "swift-fox" })], {
+    entries: (found) => (found.id === "box_1" ? { thread: { id: THREAD, title: "Fix the sign-in flow", running: true }, busy: busyFor("cpu", 96, 9) } : { thread: { id: THREAD, title: "Fix the sign-in flow", running: true } }),
+  });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let asked = 0;
+    const counted: typeof handlers = { ...handlers, allBoxes: (input) => (asked++, handlers.allBoxes!(input)) };
+    const list = boxesPage(counted);
+    await list.findByRole("link", { name: "calm-otter" });
+    const card = list.getByRole("region", { name: "Fix the sign-in flow" });
+    expect(card.querySelector("[data-thread-state]")!.textContent).toBe("Working");
+    expect(rowOf(list, "calm-otter").querySelector("[data-row-line]")!.textContent).toContain("Busy: CPU 96% for 9 min");
+    expect(rowOf(list, "swift-fox").querySelector("[data-row-line]")!.textContent).not.toContain("Busy");
+    const before = asked;
+    await act(async () => void vi.advanceTimersByTime(15_000));
+    expect(asked).toBeGreaterThan(before);
+  } finally {
+    vi.useRealTimers();
+  }
+  cleanup();
+  const idle = server([box()], { entries: () => ({ thread: { id: THREAD, title: "Fix the sign-in flow", running: false, activeAt: now - 3 * 60 * MIN - 60_000 } }) });
+  const quiet = boxesPage(idle.handlers);
+  await quiet.findByRole("link", { name: "calm-otter" });
+  expect(quiet.getByRole("region", { name: "Fix the sign-in flow" }).querySelector("[data-thread-state]")!.textContent).toBe("Idle 3 h");
+});
+
+test("Last active sorts the boxes used most recently first, and boxes nobody used for days last (069 unit 4)", () => {
+  const now = Date.now();
+  const rows = [
+    { box: box({ id: "a", name: "amber-fox" }), words: [], activeAt: now - 3 * 24 * 60 * MIN },
+    { box: box({ id: "b", name: "brisk-lake" }), words: [], activeAt: now },
+    { box: box({ id: "c", name: "calm-otter" }), words: [], activeAt: now - 60 * MIN },
+  ];
+  expect(firstSort("active")).toEqual({ key: "active", ascending: false });
+  expect(firstSort("name")).toEqual({ key: "name", ascending: true });
+  expect(shown(rows, "", NO_FILTERS, firstSort("active")).map((row) => row.box.name)).toEqual(["brisk-lake", "calm-otter", "amber-fox"]);
+});
+
+test("the box's page says busy in its header, as a link to its processes when it reads them, and nothing when it is not busy (069 unit 4)", async () => {
+  const { handlers } = server([box()], { busy: busyFor("cpu", 96, 9) });
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: handlers, pluginId: "bb-box" });
+  expect((await slot.findByText("Busy: CPU 96% for 9 min")).closest("[data-busy]")).not.toBeNull();
+  cleanup();
+  const calm = server([box()]);
+  const page = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: calm.handlers, pluginId: "bb-box" });
+  await page.findByRole("heading", { level: 1 });
+  expect(page.container.querySelector("[data-busy]")).toBeNull();
+});
+
+test("a row's and a page's busy words go at their deadline when refreshes fail, and on a cached page (review)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let failing = false;
+    const { handlers } = server([box()], { busy: busyFor("cpu", 96, 9), entries: () => ({ busy: busyFor("cpu", 96, 9) }) });
+    const flaky: typeof handlers = {
+      ...handlers,
+      allBoxes: (input) => (failing ? Promise.reject(new Error("BB is restarting")) : handlers.allBoxes!(input)),
+      boxPage: (input) => (failing ? Promise.reject(new Error("BB is restarting")) : handlers.boxPage!(input)),
+    };
+    const list = boxesPage(flaky);
+    await list.findByRole("link", { name: "calm-otter" });
+    expect(rowOf(list, "calm-otter").querySelector("[data-row-line]")!.textContent).toContain("Busy");
+    failing = true;
+    await act(async () => void vi.advanceTimersByTime(101_000));
+    expect(rowOf(list, "calm-otter").querySelector("[data-row-line]")!.textContent).not.toContain("Busy");
+    cleanup();
+
+    failing = false;
+    const page = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: flaky, pluginId: "bb-box" });
+    await page.findByText("Busy: CPU 96% for 9 min");
+    cleanup();
+    failing = true;
+    await act(async () => void vi.advanceTimersByTime(101_000));
+    const again = renderSlot(app.navPanels[0]!, { subPath: "box/box_1" }, { rpc: flaky, pluginId: "bb-box" });
+    await again.findByRole("heading", { level: 1 });
+    await act(async () => void vi.advanceTimersByTime(1000));
+    expect(again.container.querySelector("[data-busy]"), "the page kept from before says nothing past the deadline").toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("the list asks once at a time: a slow answer is applied, and a recheck that came meanwhile asks once more after it (review)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { handlers } = server([box()]);
+    const pending: (() => void)[] = [];
+    let asked = 0;
+    let slow = false;
+    const slowAnswer: typeof handlers = {
+      ...handlers,
+      allBoxes: (input) => {
+        asked++;
+        const answer = handlers.allBoxes!(input);
+        if (!slow) return answer;
+        return new Promise((resolve) => pending.push(() => resolve(answer)));
+      },
+    };
+    const list = boxesPage(slowAnswer);
+    await list.findByRole("link", { name: "calm-otter" });
+    slow = true;
+    const before = asked;
+    await act(async () => void vi.advanceTimersByTime(15_000));
+    expect(asked).toBe(before + 1);
+    await act(async () => void vi.advanceTimersByTime(30_000));
+    expect(asked, "no second request while one is pending").toBe(before + 1);
+    slow = false;
+    await act(async () => pending.shift()!());
+    await waitFor(() => expect(asked, "one more after it, for the rechecks that came meanwhile").toBe(before + 2));
+  } finally {
+    vi.useRealTimers();
+  }
 });

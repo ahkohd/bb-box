@@ -1790,3 +1790,235 @@ then Take control and the menu.
 - The thread's own Terminal tab has no other view in its bar, so there
   Ctrl+Shift+Up moves focus to the first control in the bar, if any, or
   leaves the terminal.
+
+## Unit 4: the list says how a box is now
+
+Built on 31 October 2026, on main `b1bf22db`, and rebased onto `e625d2e3`
+and then `aa192bdf` the same day. A row on the Boxes page now says how its box is now, a box
+busy for 5 minutes says so, a thread's card says whether it works, and the
+list sorts by Last active.
+
+### What it adds
+
+- **The busy rule** (`src/monitor/busy.ts`). From a box's minute points
+  in box history: a streak of points, each high for the same reason by the
+  Monitor's own rules, joined end to start within 2 s, reaching the newest
+  point, covering 5 minutes less 10 s (a reading may start up to 10 s
+  late, gate G11), with the newest point under 2 minutes old. Reasons are
+  tried in the order CPU, CPU pressure, memory, memory pressure, load,
+  disk. A slot's points are its own processes' against its share, so its
+  neighbours never make it busy.
+- **`busy(box)` on box history** (`src/plugin/box-history.ts`). Nothing
+  with the Monitor or box history off, or for a box that is not ready. It
+  reads the last 70 minutes, and the last 24 hours only when a streak
+  fills them, so a box busy for hours says so.
+- **`allBoxes`, `machines.list` and `boxPage`** (`src/plugin/rpc.ts`).
+  Each box gains its busy flag, when it was last started (the box log's
+  last start, else when it was ready or made) and when it was last active
+  (the latest of that, and its thread's last activity, or for a machine any
+  thread on it; a thread working now counts as now). `allBoxes` also gives
+  each thread's box its thread, with whether it works, asked of BB once per
+  thread for each call.
+- **The row's second line** (`rowLine` in `src/app/row-line.ts`,
+  `RowStatus` in `src/app/row-status.tsx`), on both tabs of the Boxes page:
+  the state, then what needs attention in 069's order (a failed operation,
+  a backend not in settings, a host that does not answer, busy, a person's
+  control, a failed join), then how long and the cores and memory. A box
+  joining BB again after a failed try says "Joining BB, try 3 of 5" in
+  amber, with when the next try starts and why the last failed as its
+  reason, from main's join retries. Rows
+  keep one unit of time. The line wraps to 2 lines at most; what needs
+  attention may wrap within itself, the time and size stay whole and go
+  first. "The agent has control" is gone.
+- **Long reasons behind a warning mark**, by the lead's decision from the
+  owner's note: a failed join, a failed stop, start or resize, an
+  unexpected stop, a failed start's error, a release that did not finish,
+  and why a backend or host does not answer. The words stay on the line in
+  amber or red with a small triangle after them; the reason is in the
+  line's tooltip, which also opens while the row's name has the keyboard's
+  focus (`:focus-visible`), and, through `aria-describedby`, in the row
+  name's description. No paragraph sits under a row on the Boxes page. The Box
+  panel keeps its lines and details.
+- **Thread cards say Working or Idle** (`ThreadState` in
+  `src/app/thread-chips.tsx`), beside the card's arrow: a spinner and
+  "Working", "Idle" in its first minute, then "Idle 3 h". The card's title
+  comes with `allBoxes`, so it is there in the first frame.
+- **The list asks again every 15 s while the window is shown**, both tabs'
+  answers, as BB sends no signal when a thread starts or finishes.
+- **Last active** in Sort (`src/app/boxes-filter.ts`), most recent first
+  when chosen; the sort's label says "most recent first" or "least recent
+  first".
+- **The box's page says busy** after "up 46 min": "Busy: CPU 96% for 9
+  min", in amber, a button that scrolls to Top processes and moves focus to
+  its heading while the page reads the box; plain words otherwise.
+- **Docs**: [the guide](../guide/boxes.md#what-a-row-says-on-the-boxes-page)
+  gains what a row says, busy, the thread's state and Last active; 069
+  gains "Decided during unit 4".
+
+### Checked
+
+On a Linux box, 8 cores, on main `aa192bdf`, with the review's fixes:
+`tsc` clean; the node suite 3,178 tests, 2,890 passed, 288 skipped, 0
+failed, the docs, site and frontend-build tests among them; vitest 420
+tests passed in 5 files; `scripts/reference.ts` leaves the reference
+unchanged; the site builds, its 21,277 links none broken. The commit
+delivered differs from that run only in the row tooltip's side and these
+docs: on it `tsc`, vitest's 420 and the frontend-build and docs tests
+passed again. The same suite passed on the two bases before. New tests:
+
+| Where | What |
+| --- | --- |
+| `test/box-history.test.ts` | G15 against a real `box-history.db` with a set clock: 6 minutes of load 7.9 on 4 cores is busy by load, since its start; 4 minutes is not; a box high for CPU and load says CPU; a full disk says disk; a stopped box, history off and the Monitor off say nothing; a newest point 3 minutes old says nothing; a missed minute starts the streak again; 90 minutes reaches back past the first 70; a loaded slot is busy and its calm neighbour is not. `busyOf` alone: 5 readings of 59 s count, 5 of 55 s do not, a load that ended a minute ago does not |
+| `test/app.test.tsx` | The line's tooltip on the name's keyboard focus, closed by Escape and on blur; each row of section 9's table in `rowLine`'s words, with the reasons; a join's retries and a given-up join without settings advice; the attention order with four at once; the busy words for CPU, CPU pressure, memory pressure, load, a slot's share, disk, and over an hour; a failed join on the list: no paragraph, the mark, the name's description and the tooltip; a card's Working and Idle 3 h, a row's busy words, and the 15 s recheck; Last active's order and first direction; the page's busy words, and none when calm |
+| `test/plugin.test.ts` | `allBoxes` gives a box its thread, whether it works, its last start and last activity and no busy flag without history; `boxPage` too; `machines.list` makes a machine with a working thread active now |
+
+### Live check on a separate BB
+
+A Linux box of 8 cores and 16 GiB on Proxmox LXC, its disk grown to
+64 GiB, ran a fresh `npx bb-app` with no account, set up by
+[`live-setup.sh`](069-boxes-page/unit-4/live-setup.sh), with bb-box
+installed from a clone of this branch, and Docker on the box. The agent's
+`box_acquire` made lively-plover, a Linux box of 2 cores and 4 GiB, and
+lively-maple, a Linux desktop (CPU) of 2 cores and 4 GiB, after the
+desktop image was built; own-linux is a machine of the person's own.
+[`live-check.mjs`](069-boxes-page/unit-4/live-check.mjs) drives headless
+Chromium and loads a box with `yes` through `docker exec`.
+
+Run 1 ([report](069-boxes-page/unit-4/run-1.md),
+[history off](069-boxes-page/unit-4/run-1-history-off.md)) ran on the
+commit before the rebase onto `e625d2e3`, which said "Idle 0 s" in a
+thread's first idle minute; run 2 ([report](069-boxes-page/unit-4/run-2.md))
+ran on the commit rebased onto `e625d2e3`, after that was fixed; run 3
+([report](069-boxes-page/unit-4/run-3.md)) ran the shorter checks on the
+commit delivered, on `aa192bdf`, whose join retries changed only the
+row's joining words. Every run passed every check it ran.
+
+| Check | Run 1 | Run 2 |
+| --- | --- | --- |
+| The list's rows and height do not move as data arrives: from a fresh load, each row's top and height and the list's height sampled every animation frame for 5 s from the first frame with a row | Threads 303 frames, Machines 302, one shape each | 302 and 302, one shape each |
+| G15: 2 `yes` on lively-plover's 2 cores for 8 minutes, `allBoxes` read every 5 s. A box's first history reading is a baseline, so the streak starts at the first point after it | Busy 5.0 min after the load began ("Busy: CPU 99% for 5 min"); calm 63 s after it ended. An earlier try, whose first point came a minute after the load began, said busy after 5.9 min and was calm after 52 s | Busy 5.2 min after; calm 14 s after |
+| The row while busy, at 1440 px | "Ready · Busy: CPU 99% for 5 min · up 30 min · 2 cores · 4 GiB memory" | the same, up 44 min |
+| At 390 px, the busy words whole inside the row's clipped line | Shown whole on 2 lines: "Ready", then "Busy: CPU 99% for 5 min" | the same |
+| The page's header while busy | "Ready · up 30 min · Busy: CPU 99% for 5 min"; Tab reached the busy words and Enter moved focus to Top processes | the same |
+| G15: box history turned off with `bb box option set monitor.boxHistory=false` while busy | The row lost its busy words 0.7 s after the switch (the setting's change signal refreshed it); the page said nothing | not run again |
+| A thread works: the agent's `box_run` of `sleep 45` on lively-plover | Its card said Working 0.4 s after the call and Idle as its result came, both from bb-box's own change signals | Working 14.9 s after the call and "Idle" 14.5 s after its result, from the 15 s recheck |
+| A person takes control of lively-maple's desktop from the page, then goes back to the list | "Ready · You have control · up 2 min · 2 cores · 4 GiB memory"; nothing once handed back | the same, up 15 min |
+
+Run 3, on the commit delivered: the first frame held one shape for 301
+frames on each tab; the thread said Working 14.9 s after the call and
+"Idle" 14.5 s after its result; the control check and the keyboard pass
+gave the same words as before.
+
+### Gates
+
+| Gate | How | Result |
+| --- | --- | --- |
+| G15 busy-truth | Live: a box under 2 `yes` on its 2 cores said busy after 5 minutes and stopped after the load ended; box history turned off removed the row's busy words and the page's. Tests: load on a box with its own kernel, a stale newest point, history and the Monitor off, a slot against its neighbour | Passed |
+
+### Keyboard
+
+From the search field, Tab reached the first row's name; its description,
+from `aria-describedby`, was the line, such as "lively-plover: Ready ·
+Busy: CPU 100% for 5 min · up 20 min · 2 cores · 4 GiB memory". Enter
+opened the page, with focus on the box's name. From there Tab reached
+"Busy: CPU 99% for 5 min", and Enter scrolled to Top processes and put
+focus on its heading. The warning mark is not a stop of its own, by the
+lead's decision: while a row's name has the keyboard's focus, the line's
+tooltip shows its reasons, and they are in the name's description and in
+full on the box's page. That tooltip on focus came after the live runs and
+is under test.
+
+### Screenshots
+
+From run 2, on the commit delivered, at 1440, 760 and 390 px, light and
+dark: the list while lively-plover was busy
+([1440](069-boxes-page/unit-4/busy-list-1440-light.png),
+[dark](069-boxes-page/unit-4/busy-list-1440-dark.png),
+[760](069-boxes-page/unit-4/busy-list-760-light.png),
+[390](069-boxes-page/unit-4/busy-list-390-light.png),
+[390 dark](069-boxes-page/unit-4/busy-list-390-dark.png)); its page
+([1440](069-boxes-page/unit-4/busy-page-1440-light.png),
+[1440 dark](069-boxes-page/unit-4/busy-page-1440-dark.png),
+[390](069-boxes-page/unit-4/busy-page-390-light.png)); a person's control
+([760](069-boxes-page/unit-4/control-760-light.png),
+[390 dark](069-boxes-page/unit-4/control-390-dark.png)); and both tabs,
+calm ([Threads](069-boxes-page/unit-4/list-threads-1440-light.png),
+[Machines 760 dark](069-boxes-page/unit-4/list-machines-760-dark.png)).
+The others of each set are in the same folder. At 390 px a row's line
+wraps to 2 lines: "Ready", then the busy words, with the time and size
+gone; a calm row keeps its time and cores on the first line and its
+memory on the second.
+
+### After the independent review
+
+Astra reviewed the commit before these fixes and asked for five, each now
+with a test that fails on the code before it:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| A streak could reach back past a restart, past a time box history or the Monitor was off, or use old points as fresh after the clock moved back | A streak counts only points from the box's last start and from the end of the last time history or the Monitor was off; while either is off, nothing is busy; a newest point later than now says nothing | A 10-minute streak says nothing 1 s after a restart, counts from the start 4 minutes in, says nothing with history off and after it is on again with no new reading, and says nothing with the clock moved back |
+| The browser kept a busy flag while refreshes failed | Each answer is stamped when it arrives with how long its newest point stays fresh by the server's own clock (`readAt`), and the row and page hide the words at that moment, woken by a timer, whatever the refreshes do | A flag shows until its deadline by the server's clock and not after; a row and a page kept from before both lose it after failed refreshes |
+| A poll started while another was pending, and each new one threw the last away | `useLive` asks once at a time: a refresh or change signal during a request asks once more after it, and that answer is applied. The 15 s recheck asks for `allBoxes` only; it now gives a machine its threads, busy flag and last activity, and `machines.list` no longer reads box history | With a slow answer, two rechecks make no second request, and one follows the answer |
+| A sighted keyboard user could not read a row's reason | The line's tooltip opens while the name has the keyboard's focus, by the lead's decision | Focus by keyboard shows it, a pointer's focus does not, Escape hides it, blur clears it |
+| A failed operation was dropped when the backend or host also did not answer | The line says both, the failure first: "Last seen ready · Stop failed · Its backend is not in settings · 2 d ago" | Both combinations, with both reasons |
+
+Run 4, on the commit delivered, on a second separate BB set up the same
+way with one Linux box, rosy-river ([report](069-boxes-page/unit-4/run-4.md),
+[focus](069-boxes-page/unit-4/run-4-focus.md)): the first frame held one
+shape for 302 frames; the thread said Working 14.9 s after the agent's
+call and "Idle" 14.5 s after its result; Tab reached the name with its
+line as its description. Then rosy-river's container was stopped with
+`docker stop`: its line said "Stopped · Unexpected stop · 4 min ago · 2
+cores · 4 GiB memory" with the mark, and keyboard focus on its name showed
+"Unexpected stop: It stopped without a request from bb-box at … Its
+backend does not record why." below the line
+([light](069-boxes-page/unit-4/focus-tooltip-1440-light.png),
+[dark](069-boxes-page/unit-4/focus-tooltip-1440-dark.png)); Escape hid it,
+Tab on hid it, Shift+Tab back showed it again; a click and a resting
+pointer elsewhere showed none. The tooltip first opened above the line,
+over the focused name, and now opens below it.
+
+The full suite also caught that the app imported a value from a file that
+leads to server-only modules, which BB's frontend build cannot bundle: the
+busy timings are now in `src/monitor/busy-times.ts`, which imports
+nothing.
+
+### Not checked live, and why
+
+- Busy by load on a VM, and a slot against its loaded neighbour: the
+  separate BB has Docker only, and a Docker box has no kernel of its own;
+  no Mac slot was free to borrow. Both are under test against a real
+  history file; 066 and unit 2 checked a slot's own numbers live.
+- A failed join and a failed stop on the list: each is a row's words and
+  reasons, under test; the live boxes all joined BB. An unexpected stop
+  was checked live in run 4.
+- A busy flag expiring after failed refreshes, and overlapping polls: under
+  test with a set clock; the live runs had no failed refresh or slow answer.
+- VoiceOver and NVDA reading a row's description: checked in the DOM and
+  in tests only.
+- A look in production in the owner's browser waits for the lead's
+  deploy.
+
+### Deviations from 069
+
+- Long reasons sit behind a warning mark, not in lines under the row, by
+  the lead's decision from the owner (above). Section 9's "Today's lines
+  under a row stay" no longer holds on the Boxes page.
+- The busy streak allows a reading's 10 s lateness; rows keep one unit of
+  time; the list asks again every 15 s; Last active starts most recent
+  first; the thread's state sits beside the card's arrow. All are in
+  "Decided during unit 4".
+- A box's own error with no failed operation in the box log says "Error"
+  with the error as its reason, as the paragraph it replaces did.
+- An unexpected stop says "Unexpected stop" on the line, with bb-box's
+  words as its reason.
+
+### Open questions
+
+- None.
+
+### Follow-ups
+
+- On a narrow window a ready row without attention can take 2 lines, its
+  memory on the second. The decision allows it; a shorter size on narrow
+  rows ("2 cores · 4 GiB") would keep them to one.

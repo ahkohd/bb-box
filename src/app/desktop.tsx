@@ -52,7 +52,10 @@ import type { BoxAction } from "./box-menu.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
 import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from "./box-nav.tsx";
-import { BoxPage, Loading, NotHere, useBoxPage } from "./box-page.tsx";
+import { BoxPage, Loading, NotHere, THREADS_RECHECK_MS, useBoxPage } from "./box-page.tsx";
+import { busyUntil, type ShownBusy } from "./row-line.ts";
+import { useWakeAt } from "./row-status.tsx";
+import { threadTitle, ThreadState } from "./thread-chips.tsx";
 import { BarNumbers, OtherViews, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
@@ -2291,16 +2294,42 @@ function rowWays(nav: BoxesNav, opens: BoxOpens, leave: (boxId: string) => void)
   };
 }
 
+const LIST_CLOCK_MS = 30_000;
+
+const LIST_KEY = "allBoxes:list";
+
+function withBusyUntil(entries: readonly BoxEntry[], receivedAt: number): BoxEntry[] {
+  return entries.map((entry) => ({ ...entry, busy: busyUntil(entry.busy, receivedAt) }));
+}
+
+function soonestUntil(entries: readonly BoxEntry[]): number | null {
+  const untils = entries.flatMap((entry) => ((entry.busy as ShownBusy | null | undefined)?.until !== undefined ? [(entry.busy as ShownBusy).until] : []));
+  return untils.length ? Math.min(...untils) : null;
+}
+
+function useRecheckWhileShown(recheck: () => unknown): void {
+  const latest = useRef(recheck);
+  latest.current = recheck;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void latest.current();
+    }, THREADS_RECHECK_MS);
+    return () => clearInterval(timer);
+  }, []);
+}
+
 function BoxList({ opening }: { opening?: BoxesTab }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
-  const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
+  const { value: all, error, refresh } = useLive<BoxEntry[]>(LIST_KEY, () => rpc.call("allBoxes").then((answer) => withBusyUntil(answer, Date.now())), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
   const { value: machinesState, refresh: refreshMachines } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const kinds = machinesState?.kinds ?? [];
-  const machines = machinesState?.machines ?? [];
+  const mineNow = new Map((all ?? []).filter((entry) => entry.owner === "yours").map((entry) => [entry.box.id, entry]));
+  const machines = (machinesState?.machines ?? []).map((entry) => ({ ...entry, box: mineNow.get(entry.box.id)?.box ?? entry.box, threads: mineNow.get(entry.box.id)?.threads ?? entry.threads }));
   const refreshBoth = () => Promise.all([refresh(), refreshMachines()]);
+  useRecheckWhileShown(refresh);
   const machineActions = useMachineActions(refreshBoth);
   const [problem, setProblem] = useState<string | null>(null);
   const onDemand = useDesktopOnDemand(machinesState?.desktopOnDemand, OPERATOR, refreshBoth);
@@ -2353,10 +2382,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const threads = entries.filter((entry) => entry.owner !== "yours");
   const threadIds = [...new Set(threads.map((entry) => entry.threadId))];
   const titles = useThreadTitles(threadIds);
-  const now = useNow(
-    entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
-    1000,
-  );
+  const moving = entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting");
+  const ticked = useNow(true, moving ? 1000 : LIST_CLOCK_MS);
+  const woken = useWakeAt(soonestUntil(entries));
+  const now = Math.max(ticked, woken);
   const shownProblem = problem ?? threadActions.problem ?? machineActions.problem;
   const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
   const loaded = !!all && !!machinesState;
@@ -2364,8 +2393,13 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const tabBoxes = tab === "machines" ? machines.map((entry) => entry.box) : threads.map((entry) => entry.box);
   const offered = choices(tabBoxes);
   const kept = Object.fromEntries(TAG_GROUPS.map((group) => [group, filters[group].filter((value) => offered[group].includes(value))])) as unknown as Filters;
-  const machineListed = machines.map((entry) => ({ box: entry.box, entry, words: entry.threads.map((thread) => thread.title ?? "") }));
-  const threadListed = threads.map(({ threadId, box }) => ({ box, threadId, words: [titles[threadId] ?? ""] }));
+  const threadOf = new Map(threads.flatMap((entry) => (entry.thread ? [[entry.threadId, entry.thread] as const] : [])));
+  const titleOf = (threadId: string) => {
+    const thread = threadOf.get(threadId);
+    return thread?.title ? threadTitle(thread) : titles[threadId];
+  };
+  const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => thread.title ?? ""), activeAt: mineNow.get(entry.box.id)?.activeAt }));
+  const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [titleOf(threadId) ?? ""], activeAt }));
   const machineRows = shown(machineListed, search, kept, sort);
   const threadRows = shown(threadListed, search, kept, sort);
   const counts = tagCounts(tab === "machines" ? machineListed : threadListed, search, kept);
@@ -2375,7 +2409,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   for (const row of threadRows) groups.set(row.threadId, [...(groups.get(row.threadId) ?? []), row]);
   const narrowed = !!search.trim() || filtering(kept);
   const listed = tab === "machines" ? machines.length : threads.length;
-  const titlesKnown = threadIds.every((threadId) => titles[threadId] !== undefined);
+  const titlesKnown = threadIds.every((threadId) => titleOf(threadId) !== undefined);
   const settled = loaded && (!search.trim() || titlesKnown);
   useReturnToPlace(scroller, tab, settled, all, machinesState);
   const ways = rowWays(nav, listOpens, (boxId) => leaveRow(scroller.current, tab, boxId));
@@ -2421,10 +2455,11 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             {tab === "machines" && machineRows.length ? (
               <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
                 <div className="divide-y divide-border">
-                  {machineRows.map(({ entry }) => (
+                  {machineRows.map(({ entry, busy: busyFlag }) => (
                     <MachineRow
                       key={entry.box.id}
                       entry={entry}
+                      busyFlag={busyFlag}
                       now={now}
                       busy={machineActions.busy}
                       opens={ways.opens}
@@ -2444,26 +2479,17 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                   // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page. The
                   // title and its boxes read as one group (the operator, 10 October 2026): no line under the title, which sits 16 px from
                   // the card's top as the last row does from its bottom, and 8 px above the first row; the rows keep their dividers.
-                  <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
+                  <section key={threadId} aria-label={titleOf(threadId) ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
                     <div className="flex items-center gap-3 pl-4 pr-3 pt-3">
                       <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
-                        {titles[threadId] ?? threadId}
+                        {titleOf(threadId) ?? threadId}
                       </button>
+                      <ThreadState thread={threadOf.get(threadId)} now={now} />
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
                     </div>
                     <div className="divide-y divide-border px-4 pb-1 [&>*:first-child]:pt-1">
-                      {rows.map(({ box }) => (
-                        <BoxRow
-                          key={box.id}
-                          box={box}
-                          threadId={threadId}
-                          opening={{ page: ways.page(box.id) }}
-                          act={actOn(threadId)}
-                          now={now}
-                          opens={ways.opens}
-                          meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
-                          threading={false}
-                        />
+                      {rows.map(({ box, busy }) => (
+                        <BoxRow key={box.id} box={box} threadId={threadId} opening={{ page: ways.page(box.id) }} act={actOn(threadId)} now={now} opens={ways.opens} busy={busy} threading={false} />
                       ))}
                     </div>
                   </section>

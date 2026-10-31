@@ -302,3 +302,12 @@ export function CameraGlyph(props: Props) {
     </Stroked>
   );
 }
+
+export function WarningGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M10.3 4.2 2.6 17.6A2 2 0 0 0 4.3 20.6h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9.5v4.2M12 17h.01" />
+    </Stroked>
+  );
+}

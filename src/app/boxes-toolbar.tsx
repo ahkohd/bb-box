@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filtering, SORT_WORDS, TAG_LIST_GROUPS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
+import { filtering, firstSort, sortDirectionWords, SORT_WORDS, TAG_LIST_GROUPS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
 
 export interface TabSpec<T extends string> {
   readonly id: T;
@@ -98,7 +98,7 @@ export function SearchRow({
     section(TAG_GROUP_LABELS.providers, ["providers"], true),
     section(TAG_GROUP_LABELS.states, ["states"], split.has("states") || ticked("states")),
   ].filter(Boolean);
-  const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sort.ascending ? "ascending" : "descending"}`;
+  const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sortDirectionWords(sort)}`;
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
       <form role="search" aria-label="Search boxes" className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:flex-1" onSubmit={(event) => event.preventDefault()}>
@@ -149,7 +149,7 @@ export function SearchRow({
           <DropdownMenuContent align="end" className="min-w-40" mobileTitle="Sort">
             <DropdownMenuLabel className="font-normal text-subtle-foreground">Sort</DropdownMenuLabel>
             {(Object.keys(SORT_WORDS) as SortKey[]).map((key) => (
-              <DropdownMenuItem key={key} className="justify-between gap-4" onSelect={() => onSort(key === sort.key ? { key, ascending: !sort.ascending } : { key, ascending: true })}>
+              <DropdownMenuItem key={key} className="justify-between gap-4" onSelect={() => onSort(key === sort.key ? { key, ascending: !sort.ascending } : firstSort(key))}>
                 {SORT_WORDS[key]}
                 {key === sort.key ? <Icon name={sort.ascending ? "ArrowUp" : "ArrowDown"} className="size-3.5 text-muted-foreground" aria-hidden /> : null}
               </DropdownMenuItem>

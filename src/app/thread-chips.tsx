@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { ThreadOnBox } from "../plugin/contract.ts";
+import { rowSpan } from "./box-words.ts";
 
 export const SHOWN_CHIPS = 3;
 export const SEARCH_FROM = 8;
@@ -34,6 +35,25 @@ const CHIP = "inline-flex h-6 min-w-0 max-w-56 items-center gap-1 whitespace-now
 
 export function WorkingMark() {
   return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label="Working" />;
+}
+
+const IDLE_WORDS_FROM_MS = 60_000;
+
+export function threadState(thread: ThreadOnBox | null | undefined, now: number): string | null {
+  if (!thread || thread.unchecked) return null;
+  if (thread.running) return "Working";
+  return thread.activeAt !== undefined && now - thread.activeAt >= IDLE_WORDS_FROM_MS ? `Idle ${rowSpan(now - thread.activeAt)}` : "Idle";
+}
+
+export function ThreadState({ thread, now }: { thread: ThreadOnBox | null | undefined; now: number }) {
+  const words = threadState(thread, now);
+  if (!words) return null;
+  return (
+    <span data-thread-state className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground">
+      {thread?.running ? <Icon name="Loading" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+      {words}
+    </span>
+  );
 }
 
 function ThreadChip({ thread, onOpen }: { thread: ThreadOnBox; onOpen: (id: string) => void }) {
