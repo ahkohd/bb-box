@@ -3,7 +3,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { BackendConfig } from "../core/document.ts";
+import { snapshotConfig, type BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
 import { message, relativeTime } from "./common.tsx";
@@ -22,11 +22,11 @@ import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from 
 import { Card, Chevron, FOCUS_RING, Group, NavRow, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
 import { sharedIosFieldOf } from "./settings-kinds.tsx";
-import { backendFieldPath } from "./settings-paths.ts";
+import { backendFieldPath, snapshotPath } from "./settings-paths.ts";
 import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { NetworkOptions } from "./settings-tailnet.tsx";
 import { FindSettings } from "./settings-find.tsx";
-import { SnapshotsOptions } from "./settings-snapshots.tsx";
+import { AGENTS_MEMORY_LABEL, AGENTS_RESTORE_LABEL, SnapshotsOptions } from "./settings-snapshots.tsx";
 
 function AtOnceSwitch({ label, description, settingKey, path, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; path: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const { instant } = useSettings();
@@ -93,6 +93,31 @@ function BoxesOptions() {
       <SaveBar draft={draft} unplaced={unplacedProblems(draft, ["general/boxesPerThread"])} />
       <BoxFilesSection />
     </div>
+  );
+}
+
+function AgentsSnapshotSwitches() {
+  const { state, instant, writes } = useSettings();
+  const stored = snapshotConfig(state.document);
+  return (
+    <>
+      <AtOnceSwitch
+        label={AGENTS_RESTORE_LABEL}
+        description="An agent restores its thread's own boxes without asking, always taking an undo first. Off, it asks for a yes in its thread through a form. A box threads run on, or one of your machines, always needs that yes."
+        settingKey={switchKey.snapshots("agentsRestore")}
+        path={snapshotPath("agentsRestore")}
+        value={stored.agentsRestore}
+        onChange={(on) => void instant.run(writes.snapshots(state, "agentsRestore", on, AGENTS_RESTORE_LABEL))}
+      />
+      <AtOnceSwitch
+        label={AGENTS_MEMORY_LABEL}
+        description="A memory snapshot brings back the box's running apps, with the credentials they held then. Off, only you restore one."
+        settingKey={switchKey.snapshots("agentsMemory")}
+        path={snapshotPath("agentsMemory")}
+        value={stored.agentsMemory}
+        onChange={(on) => void instant.run(writes.snapshots(state, "agentsMemory", on, AGENTS_MEMORY_LABEL))}
+      />
+    </>
   );
 }
 
@@ -274,7 +299,7 @@ export function OptionPage({ id }: { id: string }) {
       <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "snapshots" || id === "network" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
       {id === "boxes" ? <BoxesOptions /> : null}
       {id === "images" ? <ImagesOptions /> : null}
-      {id === "snapshots" ? <SnapshotsOptions /> : null}
+      {id === "snapshots" ? <SnapshotsOptions agents={<AgentsSnapshotSwitches />} /> : null}
       {id === "devices" ? <DevicesOptions /> : null}
       {id === "network" ? <NetworkOptions /> : null}
       {id === "monitor" ? <MonitorOptions /> : null}

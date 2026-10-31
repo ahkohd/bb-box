@@ -73,13 +73,16 @@ import { connectScript, deviceServerFiles } from "../core/device-delivery.ts";
 import { startMonitor, type Monitor, type MonitoredBox } from "./monitor.ts";
 import { inSlot, placementOf, slotHostName } from "../core/device-host.ts";
 import { monitorConfig, snapshotConfig } from "../core/document.ts";
+import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
 import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
 import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-files.ts";
 import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
 import { Snapshots } from "../core/snapshots.ts";
-import { FakeSnapshotPrices, SnapshotHolds, ZfsOrder } from "./live-checks.ts";
+import { FakeSnapshotPrices, MachineRestores, SnapshotHolds, ZfsOrder } from "./live-checks.ts";
+import { registerSnapshotTools } from "./snapshot-tools.ts";
+import { TurnHold } from "./turn-hold.ts";
 import { ReachCheck } from "../core/reach.ts";
 import type { Actor } from "../core/box-log.ts";
 
@@ -211,6 +214,8 @@ export interface BbBox {
   readonly snapshotHolds: SnapshotHolds | null;
   readonly snapshotPrices: FakeSnapshotPrices | null;
   readonly zfsOrder: ZfsOrder | null;
+  readonly machineRestores: MachineRestores | null;
+  readonly turnHold: TurnHold;
   readonly reach: ReachCheck;
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
@@ -452,6 +457,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const snapshotHolds = (options.liveChecks ?? liveChecksOn()) ? new SnapshotHolds() : null;
   const snapshotPrices = snapshotHolds ? new FakeSnapshotPrices() : null;
   const zfsOrder = snapshotHolds ? new ZfsOrder() : null;
+  const machineRestores = snapshotHolds ? new MachineRestores() : null;
 
   // bb-box's host entry on BB machines (src/host/entry.ts).
   const host = bb.hosts.experimental_client({ contract: hostContract });
@@ -858,6 +864,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     settings: () => snapshotConfig(configuration.document),
     ...(snapshotPrices ? { priced: (backend, offer) => snapshotPrices.priced(backend, offer) } : {}),
     ...(zfsOrder ? { undoByCopy: (backendId) => zfsOrder.has(backendId) } : {}),
+    machineRestores: () => machineRestores?.on ?? MACHINE_RESTORES_SHIP,
+    marksChanged: () => void turnHold.refresh(),
     ...(snapshotHolds ? { hold: (operation, step, signal) => snapshotHolds.hold(operation, step, signal, (message) => bb.log.info(message)) } : {}),
     guard: async (box) => {
       let threads: { id: string; title: string; running: boolean }[] | null = null;
@@ -872,6 +880,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { threads, threadsUnread, control, terminals };
     },
   });
+  const turnHold = new TurnHold({
+    boxes: () => boxes.all(),
+    unconfirmed: (operation) => snapshotStore.operation(operation)?.state === "unknown",
+    recheck: () => void bb.experimental_hooks.recheck("message.dispatch").catch((error: unknown) => logError("ask BB to send the messages held while a box was restored", error)),
+    logError,
+  });
+  bb.experimental_hooks.on("message.dispatch", (context) => turnHold.decide(context));
+  void turnHold.refresh();
   snapshotsHeld = () => {
     const held = new Map<string, { count: number; words: string }>();
     try {
@@ -1414,6 +1430,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     snapshotHolds,
     snapshotPrices,
     zfsOrder,
+    machineRestores,
+    turnHold,
     reach,
     backendInSettings,
     async forget(threadId, ref, who) {
@@ -1787,6 +1805,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   registerTools(bb, api, { drainMs: options.drainMs, runWaitMs: options.runWaitMs });
+  registerSnapshotTools(bb, api);
   registerComputerTools(bb, api);
   registerDeviceTools(bb, api);
   registerRpc(bb, api);

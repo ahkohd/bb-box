@@ -3,7 +3,7 @@ import type { BackendConfig, ConfigDocument, ImageBake, Problem } from "../core/
 import type { ApplyResult, ConfigState } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { submittedWrite, type InstantWrite, type Operation } from "./settings-drafts.ts";
-import { backendPath, candidateOf, fileIsStored, filePath, hostPath, imageBakePath, imagePath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import { backendPath, candidateOf, fileIsStored, filePath, hostPath, imageBakePath, imagePath, plain, snapshotPath, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
 import type { Instant } from "./settings-saving.tsx";
 import type { SettingsNav } from "./settings-nav.ts";
 import { machineHostId } from "./settings-status.ts";
@@ -33,6 +33,7 @@ export function useSettings(): SettingsContextValue {
 
 export type GeneralAtOnce = "enrol" | "video" | "nightlyImages" | "defaultKind" | "iosEncoder" | "encoderLedger" | "testDevice";
 export type MonitorAtOnce = "enabled" | "backgroundMonitoring" | "pressureNotifications";
+export type SnapshotsAtOnce = "agentsRestore" | "agentsMemory";
 
 export interface SettingsWrites {
   backendOn(state: ConfigState, config: BackendConfig, on: boolean, what: string): InstantWrite;
@@ -42,6 +43,7 @@ export interface SettingsWrites {
   kindOn(state: ConfigState, id: string, on: boolean, what: string): InstantWrite;
   general(state: ConfigState, key: GeneralAtOnce, value: boolean | string, what: string, say?: (value: PlainValue) => string): InstantWrite;
   monitor(state: ConfigState, key: MonitorAtOnce, value: boolean, what: string): InstantWrite;
+  snapshots(state: ConfigState, key: SnapshotsAtOnce, value: boolean, what: string): InstantWrite;
   dockerHost(host: DockerHostView, on: boolean): InstantWrite;
   removeFile(state: ConfigState, path: string): InstantWrite;
   imageBake(state: ConfigState, name: string, bake: ImageBake, say: (value: PlainValue) => string): InstantWrite;
@@ -56,6 +58,7 @@ export const switchKey = {
   kind: (id: string) => `kind:${id}`,
   general: (key: string) => `general:${key}`,
   monitor: (key: string) => `monitor:${key}`,
+  snapshots: (key: string) => `snapshots:${key}`,
   dockerHost: (hostId: string) => `docker-host:${hostId}`,
   removeFile: (path: string) => `remove-file:${path}`,
   imageBake: (name: string) => `image-bake:${name}`,
@@ -121,6 +124,10 @@ export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknow
     monitor(state, key, value, what) {
       const path = `monitor/${key}`;
       return pathWrite(state, switchKey.monitor(key), what, path, plain(value), value, settingWords(path, onOff));
+    },
+    snapshots(state, key, value, what) {
+      const path = snapshotPath(key);
+      return pathWrite(state, switchKey.snapshots(key), what, path, plain(value), value, settingWords(path, onOff));
     },
     dockerHost(host, on) {
       return {

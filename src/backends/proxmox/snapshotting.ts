@@ -280,12 +280,14 @@ export class ProxmoxSnapshotting {
     }
     let locked: SnapshotPlan["locked"] = null;
     let lockWhy: string | null = null;
+    let busy: string | null = null;
     if (lock === "suspended") reasons.push("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
     else if (lock) {
       const words = await this.#lockWords(api, vmid, lock, signal);
       if (words.running) {
         reasons.push(words.running);
         lockWhy = words.running;
+        busy = words.running;
       } else if (words.fix) locked = { lock, fix: words.fix };
       else {
         reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so bb-box takes no snapshot of it.`);
@@ -318,6 +320,7 @@ export class ProxmoxSnapshotting {
       keep: { way: "no", why: "bb-box does not keep snapshots past a release yet.", aboutMs: null, bytes: null, price: null },
       fork: { ok: false, why: "bb-box does not fork snapshots yet.", aboutMs: 0, bytes: null },
       locked,
+      busy,
     };
   }
 

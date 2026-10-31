@@ -131,7 +131,7 @@ test("the undo is admitted before the box stops: room and the ceiling refuse it 
   state.provider.order.length = 0;
   state.provider.percentFull = 90;
   const room = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.equal(room.code, "no_capacity");
+  assert.equal(room.code, "try_again", "room is refused only for now");
   assert.match(room.message, /^bb-box would take an undo of box \S+ before restoring it, and (\S+ )?storage fast is 90% full, and your settings take no snapshot past 85%: .* Or restore without an undo, with --no-undo\.$/);
   const agentRoom = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
   assert.doesNotMatch(agentRoom.message, /--no-undo/);
@@ -178,10 +178,12 @@ test("G5: the guard refuses a box threads run on for everyone, and while a perso
   assert.match(state.log.events(box.id).find((event) => event.kind === "restore-asked")!.words!, /restored anyway, though a person holds control of its desktop, and a BB terminal is open on it\.$/);
   state.guard = { threads: [], threadsUnread: null, control: false, terminals: 0 };
   state.settings = { agentsRestore: false };
-  assert.match((await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"))).message, /^Settings turn agents' restores off, so only the person restores box \S+\./);
+  const asks = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
+  assert.equal(asks.code, "needs_yes", "with agents' restores off, the agent asks for a yes in the thread");
+  assert.match(asks.message, /^Settings turn agents' own restores off, so an agent restores box \S+ only on a yes given in the thread\.$/);
   state.settings = { agentsMemory: false };
   await state.snapshots.take(COMMAND, box, standing(box), { name: "with memory", memory: true });
-  assert.match((await rejection(state.snapshots.restore(AGENT, box, standing(box), "with memory"))).message, /^Settings let only the person restore a snapshot that holds memory, as "with memory" does\./);
+  assert.match((await rejection(state.snapshots.restore(AGENT, box, standing(box), "with memory"))).message, /^Settings let only the person restore a snapshot that holds memory\./);
   state.settings = {};
   const runsOn = await rejection(state.snapshots.restore(AGENT, box, { box: { id: box.id, threadId: box.threadId }, runsOn: true }, "one"));
   assert.equal(runsOn.code, "not_found", "an agent on the box it runs on sees no snapshot it did not take");
@@ -476,7 +478,7 @@ test("a check says what a restore would do, refuses what it would refuse, and ch
   assert.deepEqual(check.anyway, ["a BB terminal is open on it"]);
   assert.match((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), "one"))).message, /a BB terminal is open on it\. Restore anyway with --force\./);
   state.provider.percentFull = 90;
-  assert.equal((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true }))).code, "no_capacity");
+  assert.equal((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true }))).code, "try_again");
   assert.equal((await state.snapshots.checkRestore(COMMAND, box, standing(box), "one", { force: true, undo: false })).undo, null);
   assert.deepEqual(state.provider.order, [], "nothing stopped");
   assert.equal(state.store.unsettled().length, 0);

@@ -35,6 +35,8 @@ import {
   gbWords,
   heldByProvider,
   holdsWords,
+  limitVictim,
+  MACHINE_RESTORES_SHIP,
   mayAct,
   nameProblem,
   newOperationId,
@@ -43,6 +45,7 @@ import {
   NOT_THE_AGENTS,
   operationWords,
   priceWords,
+  restoreRoute,
   roomCandidates,
   roomThresholds,
   stateWords,
@@ -64,7 +67,7 @@ const ROOM_DELETES_PER_SWEEP = 5;
 const OUTSIDE_LOOK_BACK_MS = 24 * 60 * 60_000;
 const OUTSIDE_SLACK_MS = 60_000;
 
-export type HoldStep = "planned" | "task" | "stopped" | "copied" | "undo" | "rolled-back" | "adopted" | "started";
+export type HoldStep = "planned" | "task" | "checked" | "stopped" | "copied" | "undo" | "rolled-back" | "adopted" | "started";
 
 export interface SnapshotBoxes {
   find(boxId: string): Promise<BoxRecord | null>;
@@ -88,10 +91,18 @@ export interface RestoreGuard {
   readonly terminals: number | null;
 }
 
+export interface YesInTheThread {
+  readonly thread: string;
+  readonly title: string | null;
+  readonly plan: string;
+  readonly at: number;
+}
+
 export interface RestoreInput {
   readonly undo?: boolean;
   readonly force?: boolean;
   readonly request?: string;
+  readonly yes?: YesInTheThread;
 }
 
 export interface RestoreAnswer {
@@ -117,6 +128,8 @@ export interface SnapshotsDeps {
   log?(message: string): void;
   hold?(operation: SnapshotOperation, step: HoldStep, signal: AbortSignal): Promise<void>;
   guard?(box: BoxRecord): Promise<RestoreGuard>;
+  machineRestores?(): boolean;
+  marksChanged?(): void;
   undoByCopy?(backendId: string): boolean;
   settings?(): SnapshotConfig;
   priced?(backend: Backend, offer: Snapshotting): Snapshotting;
@@ -146,6 +159,8 @@ export interface TakeAnswer {
   readonly operation: SnapshotOperation;
   readonly counted: number;
   readonly repeated: boolean;
+  readonly evicted?: { readonly name: string; readonly id: string } | null;
+  readonly evictionRefused?: string | null;
 }
 
 export interface DeleteAnswer {
@@ -291,9 +306,55 @@ function accessFailedWords(error: unknown): string {
   return `It was restored and started, but ${sentence(message(error)).replace(/^./, (first) => first.toLowerCase())} bb-box did not start its BB machine again; its next command writes the access file first, as every command does. What the box itself started at boot may have read the access file the snapshot held, as it can after any restore.`;
 }
 
-function consentOf(operation: SnapshotOperation): { readonly force: boolean; readonly anyway: readonly string[] } {
-  const consent = operation.consent as { force?: unknown; anyway?: unknown } | null;
-  return { force: consent?.force === true, anyway: Array.isArray(consent?.anyway) ? consent.anyway.filter((each): each is string => typeof each === "string") : [] };
+function texts(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
+}
+
+function consentOf(operation: SnapshotOperation): { readonly force: boolean; readonly anyway: readonly string[]; readonly agreed: readonly string[]; readonly yes: YesInTheThread | null; readonly evicts: string | null } {
+  const consent = operation.consent as { force?: unknown; anyway?: unknown; agreed?: unknown; yes?: YesInTheThread; evicts?: unknown } | null;
+  const anyway = texts(consent?.anyway);
+  return {
+    force: consent?.force === true,
+    anyway,
+    agreed: Array.isArray(consent?.agreed) ? texts(consent.agreed) : anyway,
+    yes: consent?.yes && typeof consent.yes.thread === "string" ? consent.yes : null,
+    evicts: typeof consent?.evicts === "string" ? consent.evicts : null,
+  };
+}
+
+interface Loss {
+  readonly key: string;
+  readonly words: string;
+}
+
+export function yesWords(yes: Pick<YesInTheThread, "thread" | "title">): string {
+  return `on a yes given in ${yes.title ? `"${yes.title}" (${yes.thread})` : `thread ${yes.thread}`}`;
+}
+
+export function planDigest(box: Pick<BoxRecord, "id"> & { readonly guest: Guest | null }, target: Pick<SnapshotRecord, "id" | "ref">, undo: "snapshot" | "held-copy" | null, losses: readonly string[], snapshots: readonly string[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ box: box.id, guest: box.guest?.ref ?? null, target: target.id, ref: target.ref, undo, losses: [...losses].sort(), snapshots: [...snapshots].sort() }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+export class YesNeeded extends BoxError {
+  readonly check: RestoreCheck;
+  readonly asks: "machine" | "settings";
+  readonly changed: boolean;
+  constructor(check: RestoreCheck, asks: "machine" | "settings", changed: boolean) {
+    super(
+      "needs_yes",
+      changed
+        ? `What restoring box ${check.box.name} would do changed after the yes was asked for, so bb-box restored nothing and asks again.`
+        : asks === "machine"
+          ? `Box ${check.box.name} is a box threads run on, so an agent restores it only on a yes given in the thread.`
+          : `Settings turn agents' own restores off, so an agent restores box ${check.box.name} only on a yes given in the thread.`,
+    );
+    this.check = check;
+    this.asks = asks;
+    this.changed = changed;
+  }
 }
 
 function threadsWords(threads: readonly ThreadOnTheBox[]): string {
@@ -317,11 +378,23 @@ interface Prepared {
   readonly swap: boolean;
   readonly anyway: readonly string[];
   readonly forkSafe: number | null;
+  readonly through: "restore" | "form";
+  readonly onAMachine: boolean;
+  readonly losses: readonly Loss[];
+}
+
+interface Look {
+  readonly refusal: string | null;
+  readonly onAMachine: boolean;
+  readonly working: readonly ThreadOnTheBox[];
+  readonly losses: readonly Loss[];
 }
 
 export interface RestoreCheck {
   readonly snapshot: SnapshotRecord;
   readonly box: BoxRecord;
+  readonly onAMachine: boolean;
+  readonly plan: string;
   readonly swap: boolean;
   readonly undo: { readonly kind: "snapshot" | "held-copy"; readonly name: string; readonly aboutMs: number; readonly bytes: number | null } | null;
   readonly from: BoxSize | null;
@@ -481,6 +554,7 @@ export class Snapshots {
     this.#requireStore("takes");
     const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
     if (plan.locked) throw new BoxError("locked", `${backend.label} left box ${box.name} locked (${plan.locked.lock}), so it takes no snapshot. ${plan.locked.fix}`);
+    if (plan.busy) throw new BoxError("try_again", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.busy}`);
     if (!plan.take.ok) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} now: ${plan.take.why ?? `${backend.label} refused it.`}`);
     if (memory && !plan.take.memory) throw new BoxError("unsupported", `bb-box cannot take a snapshot of box ${box.name} with its memory: ${plan.take.memoryWhy ?? "its backend did not say where the memory would go."}`);
     const forkSafe = await this.#forkSafe(box, backend);
@@ -491,26 +565,28 @@ export class Snapshots {
     const settings = this.settings;
     const id = newSnapshotId(this.#random);
     const operationId = newOperationId(this.#random);
-    const admitted = ledger.transaction((): { refused: BoxError } | { repeat: SnapshotOperation } | { record: SnapshotRecord; operation: SnapshotOperation; counted: number } => {
+    const admitted = ledger.transaction((): { refused: BoxError } | { repeat: SnapshotOperation } | { record: SnapshotRecord; operation: SnapshotOperation; counted: number; evicts: SnapshotRecord | null } => {
       if (input.request) {
         const raced = ledger.byRequest(requestKey(by, input.request));
         if (raced) return raced.requestDigest === digest ? { repeat: raced } : { refused: reusedRequest(input.request) };
       }
       const ofBox = ledger.records({ box: box.id });
       const counted = ofBox.filter(countsAgainstLimit);
-      if (counted.length >= settings.perBox) {
+      const evicts = counted.length >= settings.perBox && caller.is === "agent" ? limitVictim(ofBox, caller.threadId, ledger.pins(), now) : null;
+      if (counted.length >= settings.perBox && !evicts) {
         const seen = counted.filter((record) => mayAct(caller, "see", standing, record).ok);
+        const none = caller.is === "agent" ? " None of them is one an agent of this thread took and nobody kept, which bb-box would delete for a new one." : "";
         return {
           refused: new BoxError(
             "limit_reached",
-            `Box ${box.name} holds ${counted.length} snapshots, and your settings allow ${settings.perBox} a box. Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
+            `Box ${box.name} holds ${counted.length} snapshots, and your settings allow ${settings.perBox} a box.${none} Delete one first: ${namesWords(seen.map((record) => record.name), counted.length - seen.length)}.`,
           ),
         };
       }
       for (const spend of spends) {
         const adds = spends.filter((other) => other.storage.key === spend.storage.key).reduce((sum, other) => sum + other.adds, 0);
         const room = this.#roomProblem(box, spend.storage, ledger.reservedBytes(spend.storage.key) + adds, memory, settings.roomPercent);
-        if (room) return { refused: new BoxError("no_capacity", room) };
+        if (room) return { refused: new BoxError("try_again", room) };
       }
       const paid = ceilingVerdict({
         change: "take",
@@ -566,7 +642,7 @@ export class Snapshots {
         guest: box.guest!.ref,
         snapshots: [id],
         by,
-        consent: null,
+        consent: evicts ? { evicts: evicts.id } : null,
         undo: null,
         guests: null,
         step: "planned",
@@ -580,12 +656,37 @@ export class Snapshots {
       };
       ledger.insertRecord(record);
       ledger.insertOperation(operation);
-      return { record, operation, counted: counted.length + 1 };
+      return { record, operation, counted: counted.length + 1, evicts };
     });
     if ("refused" in admitted) throw admitted.refused;
     if ("repeat" in admitted) return this.#repeat(admitted.repeat);
     this.#notify(box.threadId);
-    return this.#runTake(admitted.record, admitted.operation, box, backend, admitted.counted);
+    const taken = await this.#runTake(admitted.record, admitted.operation, box, backend, admitted.counted);
+    if (!admitted.evicts) return taken;
+    const evicted = await this.#finishEviction(admitted.operation.id, taken.snapshot ?? admitted.record, settings.perBox);
+    const counted = ledger.records({ box: box.id }).filter(countsAgainstLimit).length;
+    return { ...taken, counted, ...evicted, operation: ledger.operation(admitted.operation.id) ?? taken.operation };
+  }
+
+  async #finishEviction(operationId: string, record: SnapshotRecord, perBox: number): Promise<{ readonly evicted: { readonly name: string; readonly id: string } | null; readonly evictionRefused: string | null }> {
+    const ledger = this.#deps.ledger;
+    const operation = ledger.operation(operationId);
+    const victim = operation ? ledger.record(consentOf(operation).evicts ?? "") : null;
+    let answer: { readonly evicted: { readonly name: string; readonly id: string } | null; readonly evictionRefused: string | null } = { evicted: null, evictionRefused: null };
+    if (victim) {
+      const why = byBbBox(`the limit of ${perBox} snapshots a box: the agent's new snapshot "${record.name}" took its place`);
+      try {
+        await this.#delete(victim.id, why, "evict-limit", null);
+        answer = { evicted: { name: victim.name, id: victim.id }, evictionRefused: null };
+      } catch (error) {
+        if (this.#stopping.signal.aborted) throw error;
+        const words = sentence(message(error));
+        this.#deps.log?.(`Kept snapshot ${victim.id} of box ${victim.box.name} past the limit after an agent's take: ${words}`);
+        answer = { evicted: null, evictionRefused: `bb-box could not delete "${victim.name}" to keep box ${victim.box.name} within its ${perBox}: ${words}` };
+      }
+    }
+    ledger.updateOperation(operationId, { state: "done", step: "done", endedAt: this.#now(), error: null });
+    return answer;
   }
 
   async #forkSafe(box: BoxRecord, backend: Backend): Promise<number | null> {
@@ -640,9 +741,10 @@ export class Snapshots {
         throw this.#takeFailed(record, operation, error);
       }
       const now = this.#now();
+      const evicting = consentOf(operation).evicts !== null;
       const ready = ledger.transaction(() => {
         const updated = ledger.updateRecord(record.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - began, stateAt: now, error: null });
-        const done = ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null });
+        const done = ledger.updateOperation(operation.id, evicting ? { step: "evicting", error: null } : { state: "done", step: "done", endedAt: now, error: null });
         return { updated, done };
       });
       const snapshot = ready.updated ?? record;
@@ -915,17 +1017,26 @@ export class Snapshots {
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.undo === false) throw new BoxError("not_owner", `An agent's restore always takes an undo first. ${NOT_THE_AGENTS}`);
     if (caller.is === "agent" && input.force) throw new BoxError("not_owner", `Restoring past what a box would lose is the person's to do. ${NOT_THE_AGENTS}`);
-    if (caller.is === "agent" && !this.settings.agentsRestore) throw new BoxError("not_owner", `Settings turn agents' restores off, so only the person restores box ${box.name}. ${NOT_THE_AGENTS}`);
-    if (caller.is === "agent" && target.holds === "disk-and-memory" && !this.settings.agentsMemory) {
-      throw new BoxError("not_owner", `Settings let only the person restore a snapshot that holds memory, as ${quoted(target)} does. ${NOT_THE_AGENTS}`);
-    }
+    if (caller.is !== "agent" && input.yes) throw new BoxError("not_owner", "A yes given in a thread answers an agent's restore only.");
     this.#requireStore("restores");
     const digest = input.request ? requestDigest("restore", box.id, { snapshot: target.id, undo: input.undo !== false, force: input.force === true }) : null;
     if (input.request) {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#restoredBefore(earlier);
     }
-    return this.#deps.boxes.inTurn(box.id, () => this.#restore(caller, standing, box.id, target.id, input, by, digest));
+    try {
+      return await this.#deps.boxes.inTurn(box.id, () => this.#restore(caller, standing, box.id, target.id, input, by, digest));
+    } finally {
+      this.#marksChanged();
+    }
+  }
+
+  #marksChanged(): void {
+    try {
+      this.#deps.marksChanged?.();
+    } catch (error) {
+      this.#deps.logError("tell who holds turns that restores changed", error);
+    }
   }
 
   #restoredBefore(operation: SnapshotOperation): RestoreAnswer {
@@ -949,7 +1060,14 @@ export class Snapshots {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#restoredBefore(earlier);
     }
-    const { box, target, backend, offer, plan, byCopy, swap, anyway, forkSafe } = await this.#prepare(caller, standing, boxId, targetId, input);
+    const prepared = await this.#prepare(caller, standing, boxId, targetId, input);
+    const { box, target, backend, offer, plan, byCopy, swap, anyway, forkSafe } = prepared;
+    if (prepared.through === "form" || input.yes) {
+      const check = this.#checkOf(caller, prepared, input);
+      const stale = input.yes !== undefined && input.yes.plan !== check.plan;
+      if (prepared.through === "form" && (!input.yes || stale)) throw new YesNeeded(check, prepared.onAMachine ? "machine" : "settings", input.yes !== undefined);
+      if (stale) throw new BoxError("in_use", `What restoring box ${box.name} would do changed after the yes was asked for, so bb-box restored nothing. Ask again with box_restore if it is still wanted.`);
+    }
     const wantsUndo = input.undo !== false;
     const now = this.#now();
     const operationId = newOperationId(this.#random);
@@ -1009,7 +1127,7 @@ export class Snapshots {
         guest: box.guest!.ref,
         snapshots: undo ? [target.id, undo.id] : [target.id],
         by,
-        consent: { force: input.force === true, anyway },
+        consent: { force: input.force === true, anyway, agreed: prepared.losses.filter((loss) => anyway.includes(loss.words)).map((loss) => loss.key), ...(input.yes ? { yes: input.yes } : {}) },
         undo: undo?.id ?? null,
         guests: null,
         step: "planned",
@@ -1029,11 +1147,17 @@ export class Snapshots {
     if ("repeat" in admitted) return this.#restoredBefore(admitted.repeat);
     const { undo, operation } = admitted;
     const past = anyway.length ? `; restored anyway, though ${anyway.join(", and ")}` : "";
-    this.#event(target, "restore-asked", by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}; ${undo ? `an undo first, "${undo.name}"` : "no undo"}${past}.`);
+    this.#event(target, "restore-asked", by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}; ${undo ? `an undo first, "${undo.name}"` : "no undo"}${past}${input.yes ? `; ${yesWords(input.yes)}` : ""}.`);
     this.#notify(box.threadId);
     const mark: RestoringMark = { operation: operation.id, snapshot: target.id, name: target.name, at: now, ran: box.state === "ready" };
     await this.#deps.boxes.update(box, (current) => (current.state === "releasing" ? {} : { restoring: mark }));
+    this.#marksChanged();
     return this.#runRestore({ swap, operation, target, undo, backend, anyway, from: box.guest!.size, after: "" }, "planned");
+  }
+
+  #rules() {
+    const settings = this.settings;
+    return { agentsRestore: settings.agentsRestore, agentsMemory: settings.agentsMemory, machineRestores: this.#deps.machineRestores?.() ?? MACHINE_RESTORES_SHIP };
   }
 
   async #prepare(caller: Caller, standing: Standing, boxId: string, targetId: string, input: RestoreInput): Promise<Prepared> {
@@ -1057,8 +1181,14 @@ export class Snapshots {
     this.#requireStore("restores");
     const swap = target.guest === "held-copy";
     const plan = await backend.planSnapshots(box.guest, box.kind, swap ? null : { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
+    if (plan.busy) throw new BoxError("try_again", `bb-box cannot restore box ${box.name} now: ${plan.busy}`);
     const byCopy = this.#restoreOrder(box, backend, plan, target, swap) === "copy";
-    const anyway = await this.#guarded(caller, standing, box, target, input.force === true);
+    const seen = await this.#lookOn(box, standing.runsOn);
+    if (seen.refusal) throw new BoxError("in_use", `${seen.refusal} bb-box changed nothing.`);
+    const route = restoreRoute(caller, this.#rules(), { onAMachine: seen.onAMachine, memory: target.holds === "disk-and-memory" });
+    if (!route.ok) throw new BoxError(seen.onAMachine ? "in_use" : "not_owner", `${route.why} bb-box changed nothing.`);
+    if (seen.onAMachine && input.undo === false) throw new BoxError("not_owner", `bb-box always takes an undo before it restores a box threads run on, as box ${box.name} is. bb-box changed nothing.`);
+    const anyway = this.#consented(caller, route.through, seen.onAMachine, box, target, seen.losses, input);
     const forkSafe = input.undo === false ? null : await this.#forkSafe(box, backend);
     if (byCopy && input.undo !== false && forkSafe === null) {
       throw new BoxError(
@@ -1066,7 +1196,7 @@ export class Snapshots {
         `bb-box would copy box ${box.name} in full as the undo of this restore, and it makes such a copy only of a box whose identity reset works now, so that a copy that started before it is disarmed gives up the box's identity. Box ${box.name} has none that bb-box could read${box.state === "ready" ? "" : ", as it is stopped"}.${caller.is === "agent" ? "" : " Restore without an undo, with --no-undo, or start the box first."}`,
       );
     }
-    return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway, forkSafe };
+    return { box: { ...box, guest: box.guest }, target, backend, offer, plan, byCopy, swap, anyway, forkSafe, through: route.through, onAMachine: seen.onAMachine, losses: seen.losses };
   }
 
   #restoreHolding(box: BoxRecord): BoxError | null {
@@ -1086,7 +1216,7 @@ export class Snapshots {
     const settings = this.settings;
     const instead = caller.is === "agent" ? "" : " Or restore without an undo, with --no-undo.";
     const room = this.#roomProblem(box, plan.storage, ledger.reservedBytes(plan.storage.key) + undoBytes, false, settings.roomPercent);
-    if (room) return new BoxError("no_capacity", `bb-box would take an undo of box ${box.name} before restoring it, and ${room.charAt(0).toLowerCase()}${room.slice(1)}${instead}`);
+    if (room) return new BoxError("try_again", `bb-box would take an undo of box ${box.name} before restoring it, and ${room.charAt(0).toLowerCase()}${room.slice(1)}${instead}`);
     const paid = ceilingVerdict({
       change: "undo",
       backend: backend.label,
@@ -1103,28 +1233,34 @@ export class Snapshots {
     const target = this.find(caller, standing, ref);
     const allowed = mayAct(caller, "restore", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
-    const prepared = await this.#prepare(caller, standing, box.id, target.id, input);
+    return this.#checkOf(caller, await this.#prepare(caller, standing, box.id, target.id, input), input);
+  }
+
+  #checkOf(caller: Caller, prepared: Prepared, input: RestoreInput): RestoreCheck {
     const undoBytes = this.#undoBytes(prepared.box, prepared.plan, prepared.byCopy);
     const refused = input.undo === false ? null : this.#undoRefused(caller, prepared.box, prepared.backend, prepared.offer, prepared.plan, undoBytes);
     if (refused) throw refused;
     const restore = prepared.plan.restore;
-    const ofBox = this.#deps.ledger.records({ box: box.id });
+    const ofBox = this.#deps.ledger.records({ box: prepared.box.id });
     const onGuest = prepared.swap ? ofBox.filter((record) => record.guest === "current" && record.livesOn.ref === prepared.box.guest?.ref).length : 0;
     const undos = ofBox.filter((record) => record.undoOf !== null && record.keptUntil === null && heldByProvider(record));
     const replaces = input.undo !== false && undos.length + 1 > UNDOS_PER_BOX ? (undoToReplace(ofBox.filter((record) => record.id !== prepared.target.id), this.#deps.ledger.pins(), this.#now())?.name ?? null) : null;
+    const undo: RestoreCheck["undo"] =
+      input.undo === false
+        ? null
+        : prepared.byCopy
+          ? { kind: "held-copy", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.copyAboutMs ?? restore.undoAboutMs, bytes: undoBytes || null }
+          : { kind: "snapshot", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.undoAboutMs, bytes: restore.undoBytes };
     return {
       snapshot: prepared.target,
       box: prepared.box,
+      onAMachine: prepared.onAMachine,
+      plan: planDigest(prepared.box, prepared.target, undo?.kind ?? null, prepared.losses.map((loss) => loss.key), ofBox.map((record) => record.id)),
       swap: prepared.swap,
-      undo:
-        input.undo === false
-          ? null
-          : prepared.byCopy
-            ? { kind: "held-copy", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.copyAboutMs ?? restore.undoAboutMs, bytes: undoBytes || null }
-            : { kind: "snapshot", name: undoName(this.#now(), this.#deps.timeZone), aboutMs: restore.undoAboutMs, bytes: restore.undoBytes },
+      undo,
       from: prepared.box.guest?.size ?? null,
       to: prepared.swap ? null : restore.sizeBack,
-      anyway: prepared.anyway,
+      anyway: prepared.losses.map((loss) => loss.words),
       leavesOnEarlierGuest: onGuest,
       replaces,
       storage: prepared.plan.storage.name,
@@ -1166,43 +1302,52 @@ export class Snapshots {
     if (restore.way !== "rollback") throw new BoxError("unsupported", `${backend.label} restores no snapshots of its ${box.kind} boxes in place.`);
   }
 
-  async #lookOn(box: BoxRecord, runsOn: boolean): Promise<{ readonly refusal: string | null; readonly losses: readonly string[] }> {
+  async #lookOn(box: BoxRecord, runsOn: boolean): Promise<Look> {
     const guard: RestoreGuard = this.#deps.guard ? await this.#deps.guard(box) : { threads: [], threadsUnread: null, control: false, terminals: 0 };
     if (guard.threads === null) {
-      return { refusal: `bb-box could not tell which threads run on box ${box.name} (${(guard.threadsUnread ?? "BB did not answer").replace(/\.$/, "")}), so it restores nothing: a restore would take their work with it.`, losses: [] };
-    }
-    if (runsOn || guard.threads.length) {
-      const who = guard.threads.length ? `${threadsWords(guard.threads)} ${guard.threads.length === 1 ? "runs" : "run"} on it` : "the thread asking runs on it";
       return {
-        refusal: `Box ${box.name} is a box threads run on: ${who}. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first.`,
+        refusal: `bb-box could not tell which threads run on box ${box.name} (${(guard.threadsUnread ?? "BB did not answer").replace(/\.$/, "")}), so it restores nothing: a restore would take their work with it.`,
+        onAMachine: true,
+        working: [],
         losses: [],
       };
     }
-    const losses: string[] = [];
-    if (guard.control) losses.push("a person holds control of its desktop");
-    if (guard.terminals === null) losses.push("bb-box could not tell whether a BB terminal is open on it");
-    else if (guard.terminals > 0) losses.push(guard.terminals === 1 ? "a BB terminal is open on it" : `${guard.terminals} BB terminals are open on it`);
-    return { refusal: null, losses };
+    const onAMachine = runsOn || guard.threads.length > 0;
+    if (onAMachine && !this.#rules().machineRestores) {
+      const who = guard.threads.length ? `${threadsWords(guard.threads)} ${guard.threads.length === 1 ? "runs" : "run"} on it` : "the thread asking runs on it";
+      return {
+        refusal: `Box ${box.name} is a box threads run on: ${who}. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first.`,
+        onAMachine,
+        working: [],
+        losses: [],
+      };
+    }
+    const losses: Loss[] = guard.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `"${thread.title}" runs on it: its worktree, uncommitted files and session there go` }));
+    if (runsOn && !guard.threads.length) losses.push({ key: "thread:asking", words: "the thread asking runs on it: its worktree, uncommitted files and session there go" });
+    if (guard.control) losses.push({ key: "control", words: "a person holds control of its desktop" });
+    if (guard.terminals === null) losses.push({ key: "terminals:unknown", words: "bb-box could not tell whether a BB terminal is open on it" });
+    else if (guard.terminals > 0) losses.push({ key: `terminals:${guard.terminals}`, words: guard.terminals === 1 ? "a BB terminal is open on it" : `${guard.terminals} BB terminals are open on it` });
+    return { refusal: null, onAMachine, working: guard.threads.filter((thread) => thread.running), losses };
   }
 
-  async #guarded(caller: Caller, standing: Standing, box: BoxRecord, target: SnapshotRecord, force: boolean): Promise<string[]> {
-    const seen = await this.#lookOn(box, standing.runsOn);
-    if (seen.refusal) throw new BoxError("in_use", `${seen.refusal} bb-box changed nothing.`);
-    const losses = [...seen.losses];
-    if (losses.length && (caller.is === "agent" || !force)) {
-      const fix = caller.is === "agent" ? "Ask the person to end it first, or to restore the box themselves." : "Restore anyway with --force.";
-      throw new BoxError("in_use", `Restoring box ${box.name} to ${quoted(target)} would end what is on it now: ${losses.join("; ")}. ${fix} bb-box changed nothing.`);
-    }
-    return losses;
+  #consented(caller: Caller, through: "restore" | "form", onAMachine: boolean, box: BoxRecord, target: SnapshotRecord, losses: readonly Loss[], input: RestoreInput): string[] {
+    if (!losses.length) return [];
+    if (caller.is === "agent" && through === "form" && onAMachine) return losses.map((loss) => loss.words);
+    if (caller.is !== "agent" && input.force) return losses.map((loss) => loss.words);
+    const fix = caller.is === "agent" ? "Ask the person to end it first, or to restore the box themselves." : "Restore anyway with --force.";
+    throw new BoxError("in_use", `Restoring box ${box.name} to ${quoted(target)} would end what is on it now: ${losses.map((loss) => loss.words).join("; ")}. ${fix} bb-box changed nothing.`);
   }
 
   async #stillAdmitted(context: Restoring, box: BoxRecord): Promise<string | null> {
     const seen = await this.#lookOn(box, false);
     if (seen.refusal) return `Since the restore was asked: ${seen.refusal.charAt(0).toLowerCase()}${seen.refusal.slice(1)}`;
-    const consented = new Set(consentOf(context.operation).anyway);
-    const fresh = seen.losses.filter((loss) => !consented.has(loss));
+    if (seen.working.length) {
+      return `a turn runs on it now: ${threadsWords(seen.working)} ${seen.working.length === 1 ? "is" : "are"} working there, and bb-box changes a box threads run on only while no turn runs on it. Ask again once ${seen.working.length === 1 ? "it is" : "they are"} idle.`;
+    }
+    const consented = new Set(consentOf(context.operation).agreed);
+    const fresh = seen.losses.filter((loss) => !consented.has(loss.key) && !consented.has(loss.words));
     if (!fresh.length) return null;
-    return `Since the restore was asked, something more would go with box ${box.name}'s disk: ${fresh.join("; ")}.${context.operation.by.is === "agent" ? "" : " Ask again, with --force if you mean it."}`;
+    return `Since the restore was asked, something more would go with box ${box.name}'s disk: ${fresh.map((loss) => loss.words).join("; ")}.${context.operation.by.is === "agent" ? "" : " Ask again, with --force if you mean it."}`;
   }
 
   #stepHooks(operation: SnapshotOperation, part: "undo" | "rollback"): SnapshotHooks {
@@ -1265,6 +1410,7 @@ export class Snapshots {
       if (ahead("stopping")) {
         if (from === "planned") await this.#deps.hold?.(operation, "planned", signal);
         await admitted(box, "planned");
+        await this.#deps.hold?.(operation, "checked", signal);
         at("stopping");
         box = await this.#moved(box, box.state === "ready" ? { state: "stopping", error: null } : { error: null });
         try {
@@ -1276,6 +1422,7 @@ export class Snapshots {
         box = await this.#moved(box, { state: "stopped", stoppedAt: this.#now() });
         at("stopped");
         await this.#deps.hold?.(operation, "stopped", signal);
+        await admitted(box, "stopped");
       }
       if (undo && undo.guest === "current" && reach < stepAt("undo-ready")) {
         at("undo-submitting");
@@ -1490,7 +1637,8 @@ export class Snapshots {
           ? `; a new guest made from its held copy runs the box now, and its old guest ${old!.ref}, which held no snapshot, is deleted`
           : `; a new guest made from its held copy runs the box now, and ${left === 1 ? "1 snapshot stays" : `${left} snapshots stay`} on its earlier guest: fork only`
         : "";
-      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${swapped}${sized}.`);
+      const yes = consentOf(operation).yes;
+      this.#event(target, "restored", operation.by, `To ${quoted(target)} (${target.id}), taken ${dayWords(target.takenAt)}, in ${seconds(now - operation.startedAt)}${stepsWords(took)}${context.after}; ${undo ? `its undo is "${undo.name}"` : "no undo"}${swapped}${sized}${yes ? `; ${yesWords(yes)}` : ""}.`);
       replaced.push(...(await this.#replaceUndos(box.id, target.id)));
       this.#notify(box.threadId);
       return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, earlier: context.swap ? left : null, repeated: false };
@@ -1775,6 +1923,7 @@ export class Snapshots {
     const waiting = ledger.unsettled().filter((operation) => !this.#running.has(operation.id));
     const settledHere = waiting.length ? await this.#recoverWaiting(waiting, signal) : 0;
     await this.#clearStaleMarks();
+    this.#marksChanged();
     return settledHere;
   }
 
@@ -1870,6 +2019,11 @@ export class Snapshots {
       ledger.updateOperation(operation.id, { state: "failed", endedAt: now, error: "Its snapshot's record is gone." });
       return true;
     }
+    if (operation.kind === "take" && operation.step === "evicting" && record.state === "ready") {
+      await this.#finishEviction(operation.id, record, this.settings.perBox);
+      this.#notify(record.box.thread);
+      return true;
+    }
     const found = byId.get(record.id) ?? null;
     const box = await this.#deps.boxes.find(record.box.id);
     const task = await this.#taskOf(operation, backend, this.#guestOf(record, box), signal);
@@ -1882,12 +2036,14 @@ export class Snapshots {
     const after = "after bb-box restarted";
     if (operation.kind === "take") {
       if (found?.state === "complete" && task?.state === "ok") {
+        const evicting = consentOf(operation).evicts !== null;
         const updated = ledger.transaction(() => {
           const ready = ledger.updateRecord(record.id, { state: "ready", ref: found.ref, holds: found.holds, capturedAt: found.takenAt ?? record.takenAt, stateAt: now, error: null });
-          ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null });
+          ledger.updateOperation(operation.id, evicting ? { step: "evicting", error: null } : { state: "done", step: "done", endedAt: now, error: null });
           return ready;
         });
         this.#event(updated ?? record, "snapshot-taken", record.by, `"${record.name}" (${record.id}): ${holdsWords({ holds: found.holds, scope: record.scope })}, confirmed ${after}.`);
+        if (evicting) await this.#finishEviction(operation.id, updated ?? record, this.settings.perBox);
         this.#notify(record.box.thread);
         return true;
       }

@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-For now you take, list, delete and restore snapshots from the command line, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
+You take, list, delete and restore snapshots from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Forking a new box from one and keeping one after its box is released come later: see [decision 070](../decisions/070-snapshots.md).
 
 ## What each backend offers
 
@@ -52,7 +52,7 @@ bb box snapshot delete <box> <snapshot>
 
 Give the snapshot's name or ID. The command waits until the backend confirms it is gone.
 
-If a task such as a backup is running on the box's guest, a take or a delete is refused until it ends. If Proxmox left the guest locked with no task running, as when a task on it was stopped part way, it is refused with the command to run on the host, such as `pct unlock 214`. Only root on the host can unlock a guest.
+If a task such as a backup is running on the box's guest, a take or a delete is refused until it ends: an agent is told to try again later. If Proxmox left the guest locked with no task running, as when a task on it was stopped part way, it is refused with the command to run on the host, such as `pct unlock 214`. Only root on the host can unlock a guest.
 
 ## A copy of a box gives up its identity
 
@@ -106,6 +106,46 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 ### Snapshots and forks
 
 Each snapshot records whether its box had a working reset when it was taken. A snapshot without one says "not fork-safe". Forks, which come later, will start only from snapshots that had it.
+
+## Agents' snapshots
+
+A thread's agent has four tools:
+
+| Tool | Does |
+| --- | --- |
+| `box_snapshot` | takes one of a box, with a name and a note, and with its memory where its backend can |
+| `box_snapshots` | lists a box's, or every box's of the thread and of the machine it runs on, that the thread may see |
+| `box_snapshot_delete` | deletes one that an agent of the thread took and nobody kept |
+| `box_restore` | restores a box, always taking an undo first |
+
+Its skill tells it to take one before a change it cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when you ask; never on a schedule of its own; to restore when an attempt went wrong rather than undo it by hand; and to delete its own when they are no longer needed.
+
+What an agent may do follows the box:
+
+- **Its thread's own box**, one no thread runs on: it takes snapshots, sees and restores all of the box's, and deletes those an agent of its thread took. It restores without asking you, always with an undo; it cannot restore without one, nor past a person holding the desktop or a BB terminal open on the box, whether it asks through the form or not.
+- **A box threads run on**: the box its thread runs on, another thread's box it runs on, or one of your machines. It takes snapshots there, and sees and deletes only what it took there. It restores the box only on a yes given in the thread, through a form (below), and only once such restores are on.
+- **A kept snapshot** is yours: an agent sees it while its box lives, and nothing more.
+
+No thread sees another thread's snapshots. A refusal for the limit names only the snapshots the agent may see, and says how many others there are.
+
+When an agent's take would pass the limit per box, BB Box deletes the oldest snapshot an agent of the same thread took and nobody kept, once the new one is ready. On a box threads share, it never deletes another thread's. When none qualifies, the take is refused, naming what to delete. Your own take past the limit is always refused.
+
+A take or a restore refused only for now, as for a host's storage too full or a backup holding the guest, tells the agent to try again later.
+
+### The form: a yes given in the thread
+
+`box_restore` opens a form in the thread instead of restoring when the box is one threads run on, or when Settings turn "Agents may restore their own boxes" off. The agent gets a notice at once and ends its turn. The form says what the restore replaces, what else goes (each thread on the box, with its worktree, uncommitted files and session there; your control of its desktop; open terminals), the size the box goes back to, and the undo, which is always taken. On a box the asking thread runs on, it says that thread's session goes back too.
+
+- **Restore** runs the restore as BB Box's own work, not under the agent's call. It first holds every new turn on the box, waits up to a minute for turns there to end, then checks again what the restore would do. If anything changed since the form, such as a new thread, a terminal or a new snapshot of the box, it restores nothing and asks again with the new list. The result, a refusal included, reaches the thread as a message, which starts its next turn.
+- **Cancel**, no answer within 10 minutes, a stop of the thread and a restart of BB's server each restore nothing.
+
+BB Box cannot tell who answers a form: BB's command line can answer one too (`bb thread interactions respond`), and any agent of the thread can run it. So the form, its answer and the box's log say "on a yes given in (thread)", never that you said yes. The skill tells agents never to answer BB Box's forms.
+
+### Restores of a box threads run on stay off
+
+A restore of a box threads run on replaces their working disk, so no turn may start on it while it runs. BB Box holds every turn for a thread on the box, with BB's `message.dispatch` hook, from the yes until the box is ready, and asks BB to send them after. It checks for a running turn before the stop, again just after it, and before the rollback, and stops the restore with nothing on the disk changed if it finds one.
+
+BB's "Send now" passes that hold, and a check is not at the same instant as the step after it. A live check found that a turn sent between BB Box's last check and its stop does start, and the stop interrupts it; BB Box then finds it, starts the box again and restores nothing. So these restores stay off, by the form, by the page and on the command line, until BB can hold a machine against "Send now". Until then, move the threads off a box, or archive them, before you restore it.
 
 ## Restoring a box
 
@@ -163,10 +203,12 @@ BB Box's settings have a Snapshots page, under Options. Its fields wait for Save
 | Snapshots per box | 5 | 1 to 50 | A take past it is refused, naming the snapshots to delete. Kept ones count; undos are counted apart, 2 a box. |
 | Refuse new snapshots when a host's storage is past | 85% full | 50 to 90 | A take is refused past it, and past 5 points below it of a thin pool's metadata. 7 points above it, BB Box deletes agents' snapshots on that storage that nobody kept, oldest first, and logs why. |
 | A ceiling on paid snapshots, one per backend that charges | 5 a month, in the provider's currency | 0 to 1,000 | A take that would bring the monthly rate held on that backend past it is refused. |
+| Agents may restore their own boxes | on | | Off, an agent asks for a yes in its thread through the form before it restores any box. A box threads run on always needs that yes. A switch, saved at once. |
+| Agents may restore memory snapshots | on | | Off, only you restore a snapshot that holds a box's memory. A switch, saved at once. |
 
 The page also says what each backend's snapshots hold and cost, and what its last check found of its storage.
 
-From a terminal, `bb box option set general.snapshots.perBox=3` and `general.snapshots.roomPercent` change the first two.
+From a terminal, `bb box option set` changes each of them: `general.snapshots.perBox=3`, `general.snapshots.roomPercent=80`, `general.snapshots.agentsRestore=false`, `general.snapshots.agentsMemory=false`, and a backend's ceiling as `general.snapshots.ceilings.<backend>=7.50`, with the backend's ID from `bb box config show`. `bb box option unset` gives each back its default.
 
 ### Paid snapshots
 

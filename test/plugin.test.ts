@@ -13,7 +13,7 @@ import { Duplex } from "node:stream";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
-import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeHostResponse, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import { BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
 import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, stillsRequestText, testDeviceOffer, type OfferedDevices } from "../src/core/device.ts";
@@ -33,6 +33,7 @@ import { Phases, removeStaleApp, setAsideOtherMachines, withReachHint } from "..
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
+import { heldWords } from "../src/plugin/turn-hold.ts";
 import { boxPath, ownProcessHint, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
@@ -80,7 +81,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number; liveChecks?: boolean } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -411,6 +412,7 @@ async function start(
     controlStaleMs: options.controlStaleMs,
     drainMs: options.drainMs,
     runWaitMs: options.runWaitMs,
+    ...(options.liveChecks !== undefined ? { liveChecks: options.liveChecks } : {}),
   };
   await bb.storage.kv.set(INSTALL_ID_KEY, newInstallId());
   const app = await setup(bb, setupOptions);
@@ -6414,4 +6416,198 @@ test("BB's removal of a machine after its box's reset returns at once, while BB 
   world.hosts.delete(machine);
   const again = await enrolledAgain(app, box.id);
   assert.notEqual(again.enrol.hostId, machine);
+});
+
+const formsSeen = new WeakMap<object, Set<string>>();
+
+async function untilForm(harness: Awaited<ReturnType<typeof start>>["harness"], count: number) {
+  const seen = formsSeen.get(harness) ?? new Set<string>();
+  formsSeen.set(harness, seen);
+  const form = await until(`form ${count}`, async () => harness.inspection.pendingInteractions.find((each) => !seen.has(each.id)) ?? null);
+  seen.add(form.id);
+  return form;
+}
+
+test("box_snapshot, box_snapshots and box_snapshot_delete: an agent takes, lists and deletes its own, its take past the limit replaces its oldest, and another thread can list, see, restore and delete none of them (070 unit 5, G12)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  new FakeSnapshots().attach(world.backend!, Date.now);
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const one = text(await tool("box_snapshot", { box: box.name, name: "one", note: "before the migration" }));
+  assert.match(one, new RegExp(`^Took snapshot "one" \\(sn[a-z2-7]{12}\\) of box ${box.name} in [0-9.]+ s: it holds its disk\\.\\nSize: size unknown\\. Price: no charge\\.\\nBox ${box.name} holds 1 of 5 snapshots\\.\\n\\nNext: Restore it with box_restore`));
+  assert.equal((await harness.behavior.runCli(["option", "set", "general.snapshots.perBox=2"])).exitCode, 0);
+  await tool("box_snapshot", { box: box.name, name: "two" });
+  const three = text(await tool("box_snapshot", { box: box.name, name: "three" }));
+  assert.match(three, /holds 2 of 2 snapshots\.\nThe box was at its limit of 2, so bb-box deleted the oldest snapshot an agent of this thread took and nobody kept: "one"\./);
+  const listed = text(await tool("box_snapshots", {}));
+  assert.match(listed, new RegExp(`^Box ${box.name} \\(${box.id}\\), [^:]+: snapshots of its disk, or its disk and memory, while it runs\\.\\n  "two" \\(sn`));
+  assert.match(listed, /\n  2 of 2 for this box\.\n\nNext: /);
+  const [two, threeRecord] = app.snapshotStore.records({ box: box.id }).sort((a, b) => a.takenAt - b.takenAt);
+  const deleted = text(await tool("box_snapshot_delete", { box: box.name, snapshot: two!.id }));
+  assert.match(deleted, new RegExp(`^Deleted snapshot "two" \\(${two!.id}\\) of box ${box.name}: .*\\nBox ${box.name} holds 1 of 2 snapshots\\.`));
+
+  const OTHER = "thr_other";
+  world.threads.set(OTHER, makeThreadResponse({ id: OTHER, projectId: PROJECT, environmentId: "env_two", providerId: "claude-code" }));
+  for (const [name, input] of [
+    ["box_snapshots", { box: box.name }],
+    ["box_snapshot", { box: box.name }],
+    ["box_snapshot_delete", { box: box.name, snapshot: threeRecord!.id }],
+    ["box_restore", { box: box.name, snapshot: threeRecord!.id, replace: true }],
+  ] as const) {
+    const refused = await tool(name, input, OTHER);
+    assert.equal(typeof refused === "string" ? false : refused.isError, true, name);
+    assert.match(text(refused), /no box|No box|not found|has no box/i, name);
+  }
+  await tool("box_acquire", {}, OTHER);
+  const theirs = (await app.boxes.list(OTHER))[0]!;
+  assert.match(text(await tool("box_snapshots", { box: theirs.name }, OTHER)), /\n  No snapshots\./);
+  for (const [name, input] of [
+    ["box_snapshot_delete", { box: theirs.name, snapshot: threeRecord!.id }],
+    ["box_restore", { box: theirs.name, snapshot: threeRecord!.id, replace: true }],
+    ["box_snapshot_delete", { box: theirs.name, snapshot: "three" }],
+  ] as const) {
+    assert.match(text(await tool(name, input, OTHER)), new RegExp(`That box has no snapshot "${input.snapshot}"`), `${name} with a guessed ID or name`);
+  }
+  assert.ok(app.snapshotStore.record(threeRecord!.id), "nothing of the thread's was touched");
+});
+
+test("box_restore restores the agent's own box at once with an undo; with agents' restores off it asks for a yes through a form, and a cancel, a wrong answer and a changed plan restore nothing (070 unit 5, G11)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.attach(world.backend!, Date.now);
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  await tool("box_snapshot", { box: box.name, name: "one" });
+  assert.match(text(await tool("box_restore", { box: box.name, snapshot: "one", replace: false })), /bb-box changed nothing\.\n\nNext: Call box_restore with replace true if you mean it\./);
+  const direct = text(await tool("box_restore", { box: box.name, snapshot: "one", replace: true }));
+  assert.match(direct, new RegExp(`^Restored box ${box.name} to "one" \\(sn`));
+  assert.match(direct, /Its undo is "before the restore at \d\d:\d\d" \(sn[a-z2-7]{12}\): restore that to undo this\./);
+  assert.equal(harness.inspection.pendingInteractions.length, 0, "no form for its own box");
+
+  assert.equal((await harness.behavior.runCli(["option", "set", "general.snapshots.agentsRestore=false"])).exitCode, 0);
+  provider.order.length = 0;
+  const cancelled = tool("box_restore", { box: box.name, snapshot: "one", replace: true });
+  const form = await untilForm(harness, 1);
+  assert.equal(form.rendererId, "restore");
+  assert.equal(form.title, `Restore ${box.name} to "one"?`);
+  const payload = form.payload as { asks: string; losses: string[]; undo: { name: string }; runsOnIt: boolean; plan: string; changed: boolean };
+  assert.equal(payload.asks, "settings");
+  assert.deepEqual(payload.losses, []);
+  assert.equal(payload.runsOnIt, false);
+  assert.equal(payload.changed, false);
+  harness.behavior.cancelInteraction(form.id);
+  assert.match(text(await cancelled), new RegExp(`^bb-box did not restore box ${box.name}: the form was cancelled in the thread\\. Nothing changed\\.`));
+
+  const wrong = tool("box_restore", { box: box.name, snapshot: "one", replace: true });
+  const second = await untilForm(harness, 2);
+  harness.behavior.submitInteraction(second.id, { restore: true, plan: "not this plan" });
+  assert.match(text(await wrong), /the form's answer was not a yes to this restore\. Nothing changed\./);
+
+  world.terminals.set("term_x", { id: "term_x", hostId: box.enrol.hostId!, title: "shell", command: "bash", status: "running", createdAt: Date.now() });
+  assert.match(text(await tool("box_restore", { box: box.name, snapshot: "one", replace: true })), /would end what is on it now: a BB terminal is open on it\. Ask the person to end it first/, "the form does not take an agent past a terminal");
+  world.terminals.delete("term_x");
+  const changing = tool("box_restore", { box: box.name, snapshot: "one", replace: true });
+  const third = await untilForm(harness, 3);
+  const thirdPayload = third.payload as { plan: string; losses: string[] };
+  assert.equal((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "taken meanwhile"])).exitCode, 0);
+  harness.behavior.submitInteraction(third.id, { restore: true, plan: thirdPayload.plan });
+  const fourth = await untilForm(harness, 4);
+  const fourthPayload = fourth.payload as { plan: string; losses: string[]; changed: boolean };
+  assert.equal(fourthPayload.changed, true, "a snapshot taken meanwhile: it asks again");
+  assert.notEqual(fourthPayload.plan, thirdPayload.plan);
+  assert.ok(!provider.order.includes("power-off"), "nothing stopped while it asked");
+  harness.behavior.submitInteraction(fourth.id, { restore: true, plan: fourthPayload.plan });
+  const yes = text(await changing);
+  assert.match(yes, /It was restored on a yes given in this thread\./);
+  assert.ok(provider.order.includes("power-off"));
+  const asked = app.boxLog.events(box.id).filter((event) => event.kind === "restore-asked").at(-1)!;
+  assert.match(asked.words!, /; on a yes given in thread thr_one\.$|; on a yes given in ".*" \(thr_one\)\.$/);
+});
+
+test("a box threads run on: box_restore is refused until machine restores are on; then it asks through the form even with agents' restores on, holds every turn on the machine from the yes until the box is ready, and asks BB to send them after (070 unit 5, G17's hold)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { liveChecks: true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.attach(world.backend!, Date.now);
+  const machine = await addMachine(harness, app, { kind: "linux", name: "dev-desk" });
+  const hostId = machine.enrol.hostId!;
+  world.workspaceHost = hostId;
+  world.onHost.set(hostId, [{ id: THREAD, title: "Asks", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  assert.match(text(await tool("box_snapshot", { box: "dev-desk", name: "before the upgrade" })), /^Took snapshot "before the upgrade"/);
+  assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "off"])).stdout ?? "", /^Restores of boxes threads run on are off, for live checks/);
+  const off = text(await tool("box_restore", { box: "dev-desk", snapshot: "before the upgrade", replace: true }));
+  assert.match(off, /bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores/);
+  assert.equal(harness.inspection.pendingInteractions.length, 0);
+
+  assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "on"])).stdout ?? "", /^Restores of boxes threads run on are on until bb-box restarts/);
+  const noUndo = await harness.behavior.runCli(["snapshot", "restore", "dev-desk", "before the upgrade", "--machine", "--replace", "--no-undo", "--force"]);
+  assert.match(noUndo.stderr ?? "", /always takes an undo before it restores a box threads run on/);
+  const hook = harness.inspection.registrations.hooks["message.dispatch"]!;
+  const onIt = makeMessageDispatchHookContext({ host: { id: hostId } });
+  assert.deepEqual(await hook(onIt), { action: "proceed" });
+  provider.order.length = 0;
+  const restoring = tool("box_restore", { box: "dev-desk", snapshot: "before the upgrade", replace: true });
+  const form = await untilForm(harness, 1);
+  const payload = form.payload as { asks: string; losses: string[]; runsOnIt: boolean; plan: string };
+  assert.equal(payload.asks, "machine");
+  assert.equal(payload.runsOnIt, true);
+  assert.deepEqual(payload.losses, ['"Asks" runs on it: its worktree, uncommitted files and session there go']);
+  assert.deepEqual(await hook(onIt), { action: "proceed" }, "nothing is held before the yes");
+  app.snapshotHolds!.arm("stopped", 300);
+  const rechecks = harness.inspection.recheckCount;
+  harness.behavior.submitInteraction(form.id, { restore: true, plan: payload.plan });
+  await until("the restore's stop", async () => provider.order.includes("power-off"));
+  const asked = Date.now();
+  const held = await hook(onIt);
+  assert.equal(held.action, "wait");
+  const again = (held as { sendAt: number }).sendAt;
+  assert.ok(again >= asked + 15_000 && again <= Date.now() + 15_000, "BB asks again within 15 s, whether or not a recheck reaches the row");
+  assert.equal((held as { reason: string }).reason, "bb-box is restoring box dev-desk, the machine this thread runs on. This message waits until the box is ready again.");
+  assert.ok(heldWords({ name: "x".repeat(200) }).length <= 200, "BB refuses a wait reason over 200 characters");
+  assert.ok(heldWords({ name: "a".repeat(63) }).includes("a".repeat(63)));
+  assert.deepEqual(await hook(makeMessageDispatchHookContext({ host: { id: "host_elsewhere" } })), { action: "proceed" }, "other machines' turns go on");
+  const said = text(await restoring);
+  assert.match(said, /^Restored box dev-desk to "before the upgrade"/);
+  assert.match(said, /It was restored on a yes given in this thread\./);
+  await until("the hold to end", async () => (await hook(onIt)).action === "proceed");
+  assert.ok(harness.inspection.recheckCount > rechecks, "bb-box asked BB to send the held messages");
+  const events = app.boxLog.events(machine.id).filter((event) => event.kind === "restore-asked" || event.kind === "restored");
+  assert.equal(events.length, 2);
+  for (const event of events) assert.match(event.words!, /on a yes given in/);
+  assert.ok(app.snapshotStore.records({ box: machine.id }).some((record) => record.undoOf !== null), "an undo was taken");
+});
+
+test("bb box option sets each backend's ceiling on paid snapshots and the agents' two switches, and refuses a backend that is not there (070 unit 5)", async (t) => {
+  const { harness, app } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const set = await harness.behavior.runCli(["option", "set", "general.snapshots.ceilings.fake=7.50", "general.snapshots.agentsRestore=false", "general.snapshots.agentsMemory=false"]);
+  assert.equal(set.exitCode, 0, set.stderr);
+  assert.deepEqual(app.configuration.exported().general.snapshots, { agentsRestore: false, agentsMemory: false, ceilings: { fake: 7.5 } });
+  assert.match((await harness.behavior.runCli(["option", "get", "general.snapshots.ceilings.fake"])).stdout ?? "", /^general\.snapshots\.ceilings\.fake = 7\.5: The most a month/);
+  assert.match((await harness.behavior.runCli(["option", "list"])).stdout ?? "", /\ngeneral\.snapshots\.ceilings\.fake = 7\.5: /);
+  const cents = await harness.behavior.runCli(["option", "set", "general.snapshots.ceilings.fake=7.555"]);
+  assert.notEqual(cents.exitCode, 0);
+  assert.match(cents.stderr ?? "", /in whole cents, such as 5 or 7\.50/);
+  const nowhere = await harness.behavior.runCli(["option", "set", "general.snapshots.ceilings.nowhere=3"]);
+  assert.notEqual(nowhere.exitCode, 0);
+  assert.match(nowhere.stderr ?? "", /There is no backend "nowhere"/);
+  assert.equal((await harness.behavior.runCli(["option", "unset", "general.snapshots.ceilings.fake", "general.snapshots.agentsRestore", "general.snapshots.agentsMemory"])).exitCode, 0);
+  assert.equal(app.configuration.exported().general.snapshots, undefined);
+});
+
+test("when bb-box cannot tell where the thread runs, the snapshot tools count its own box as one it runs on, and show only what it took there (070 unit 5)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  new FakeSnapshots().attach(world.backend!, Date.now);
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  assert.equal((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "the person's"])).exitCode, 0);
+  assert.match(text(await tool("box_snapshots", { box: box.name })), /\n  "the person's" \(sn/);
+  world.threadsError = new Error("BB is restarting");
+  const listed = text(await tool("box_snapshots", { box: box.name }));
+  assert.match(listed, /\n  No snapshots, and one you cannot see\./);
+  assert.doesNotMatch(listed, /the person's/);
+  assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /the person's/);
 });

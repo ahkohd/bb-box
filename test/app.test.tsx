@@ -9357,8 +9357,7 @@ test("070 unit 4: Settings' Snapshots page saves the limit, the room and each pa
   expect(slot.getByText("Its disk, or its disk and memory, while it runs · $0.056 a day each")).toBeTruthy();
   expect(slot.getByText("fast (LVM-thin) restores any snapshot.")).toBeTruthy();
   expect(slot.getByText("Fix: Watch the pool's metadata on the host.").className).toContain("text-warning-text");
-  expect(slot.queryByRole("switch")).toBeNull();
-  expect(slot.queryByText(/Keep keeps a snapshot for|Agents may restore|picture of the screen/)).toBeNull();
+  expect(slot.queryByText(/Keep keeps a snapshot for|picture of the screen/)).toBeNull();
 
   fireEvent.change(room, { target: { value: "60" } });
   expect(slot.getByText(/or past 55% of a thin pool's metadata\. Past 67%/)).toBeTruthy();
@@ -9399,7 +9398,7 @@ test("070 unit 4: Find finds each snapshot setting with its value, and a refused
   expect(labelsFor(entries, "snapshot limit")[0]).toBe("Snapshots per box | Options › Snapshots");
   expect(labelsFor(entries, "snapshot ceiling")[0]).toBe("Paid snapshots on Fake host | Options › Snapshots");
   expect(labelsFor(entries, "storage full")).toContain("Refuse new snapshots when a host's storage is past | Options › Snapshots");
-  expect(entries.some((entry) => /Keep keeps|Agents may restore|picture of the screen/.test(entry.label))).toBe(false);
+  expect(entries.some((entry) => /Keep keeps|picture of the screen/.test(entry.label))).toBe(false);
   const free = settingsIndex(stateOf(snapshotServer(null).handlers));
   expect(free.find((entry) => entry.key === "option snapshots ceiling")).toMatchObject({ label: "Paid snapshots", value: "None of your backends charges" });
   expect(problemPath("general.snapshots.ceilings.fake:pc-1", {})).toBe("snapshots/ceilings/fake:pc-1");
@@ -9424,4 +9423,61 @@ test("070 unit 4: two backends of one type are told apart in What each backend o
   const listed = (name: string) => overview.getAllByRole("button", { name: new RegExp(`^${name}$`) }).filter((row) => row.dataset.rowKey?.startsWith("backend-"));
   expect(listed("Docker").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
   expect(listed("microsandbox").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
+});
+
+test("070 unit 5: the agents' two switches are on the Snapshots page and save at once, and Find finds them with their values", async () => {
+  const { handlers, changes } = snapshotServer(null);
+  const slot = settings(handlers, "#option/snapshots");
+  const restores = await slot.findByRole("switch", { name: "Agents may restore their own boxes" });
+  const memory = slot.getByRole("switch", { name: "Agents may restore memory snapshots" });
+  expect([restores.getAttribute("aria-checked"), memory.getAttribute("aria-checked")]).toEqual(["true", "true"]);
+  expect(slot.getByText(/Off, it asks for a yes in its thread through a form\. A box threads run on, or one of your machines, always needs that yes\./)).toBeTruthy();
+  fireEvent.click(restores);
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general.snapshots).toEqual({ agentsRestore: false });
+  fireEvent.click(memory);
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general.snapshots).toEqual({ agentsRestore: false, agentsMemory: false });
+  const entries = settingsIndex(stateOf(snapshotServer(null).handlers));
+  expect(foundBy(entries, "snapshots/agentsRestore")).toMatchObject({ label: "Agents may restore their own boxes", where: "Options › Snapshots", value: "On" });
+  expect(foundBy(entries, "snapshots/agentsMemory")).toMatchObject({ label: "Agents may restore memory snapshots", value: "On" });
+  expect(labelsFor(entries, "agent restore")).toContain("Agents may restore their own boxes | Options › Snapshots");
+});
+
+test("070 unit 5: the restore form says what goes, that an undo is always taken and that an answer is a yes given in the thread, and submits its plan", async () => {
+  const { RestoreForm, restoreFormWords } = await import("../src/app/restore-form.tsx");
+  const payload = {
+    box: { id: "bxdevdesk", name: "dev-desk" },
+    snapshot: { id: "sn1", name: "before the upgrade", takenAt: Date.now() - 2 * 3_600_000, holds: "disk" },
+    undo: { name: "before the restore at 11:02", aboutSeconds: 1, heldCopy: false },
+    asks: "machine" as const,
+    losses: ['"Fix the sign-in flow" runs on it: its worktree, uncommitted files and session there go'],
+    sizeBack: null,
+    excludes: null,
+    runsOnIt: true,
+    changed: false,
+    plan: "abc123",
+  };
+  const words = restoreFormWords(payload, Date.now());
+  expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken .*, 2 hours ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
+  expect(words.button).toBe("Restore dev-desk anyway");
+  const submitted: unknown[] = [];
+  let cancelled = 0;
+  render(
+    <RestoreForm
+      interaction={{ id: "int_1", threadId: "thr_one", title: "Restore dev-desk to \"before the upgrade\"?", payload, createdAt: Date.now(), expiresAt: null }}
+      submit={async (value) => void submitted.push(value)}
+      cancel={async () => void cancelled++}
+    />,
+  );
+  expect(screen.getByRole("alertdialog", { name: 'Restore dev-desk to "before the upgrade"?' })).toBeTruthy();
+  expect(screen.getByText(/Everything on its disk since then goes: files, installed apps and settings\. dev-desk restarts, so every process in it ends\./)).toBeTruthy();
+  expect(screen.getByText(payload.losses[0]!)).toBeTruthy();
+  expect(screen.getByText("This thread runs on dev-desk: its session there goes back too, and its next turn starts on the restored box.")).toBeTruthy();
+  expect(screen.getByText(/bb-box always takes an undo first: a snapshot of dev-desk once stopped, named "before the restore at 11:02"/)).toBeTruthy();
+  expect(screen.getByText("bb-box records an answer here as a yes given in this thread: it cannot tell who gives it.")).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restore dev-desk anyway" }));
+  await waitFor(() => expect(submitted).toEqual([{ restore: true, plan: "abc123" }]));
+  expect(cancelled).toBe(0);
 });

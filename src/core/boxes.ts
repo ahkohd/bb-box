@@ -550,7 +550,9 @@ export type BoxErrorCode =
   | "reconnecting"
   | "locked"
   | "failed"
-  | "reused_request";
+  | "reused_request"
+  | "try_again"
+  | "needs_yes";
 
 /** A job a box_run command left running when bb-box restarted (#405). */
 export type JobResult =

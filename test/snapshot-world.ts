@@ -48,6 +48,8 @@ export function world(options: { readonly identityTool?: string; readonly marker
     price: null as Price | null,
     guard: { threads: [], threadsUnread: null, control: false, terminals: 0 } as RestoreGuard,
     undoByCopy: false,
+    machineRestores: false,
+    marksChanged: 0,
     backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
@@ -124,6 +126,10 @@ export function world(options: { readonly identityTool?: string; readonly marker
       priced: (_backend, offer) => (state.price ? { ...offer, price: state.price } : offer),
       guard: async () => state.guard,
       undoByCopy: () => state.undoByCopy,
+      machineRestores: () => state.machineRestores,
+      marksChanged: () => {
+        state.marksChanged++;
+      },
       now,
       timeZone: "UTC",
     });

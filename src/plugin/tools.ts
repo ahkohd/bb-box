@@ -65,7 +65,9 @@ const HINTS: Record<BoxErrorCode, string> = {
   reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
   locked: "Ask the user to run the command this names on the host: bb-box cannot unlock a guest itself.",
   failed: "Call box_status to see the box, then try again.",
-  reused_request: "Make a new request ID for a new take or delete; repeat one only to repeat the same call.",
+  reused_request: "Make a new request ID for a new take, delete or restore; repeat one only to repeat the same call.",
+  try_again: "This holds only for now, not for good: try again in a few minutes, or once what it names has changed.",
+  needs_yes: "Call box_restore again: it asks for a yes in the thread with a form. Then end your turn.",
 };
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {
@@ -80,6 +82,15 @@ function restarted(box: BoxRecord, job: string, sure: boolean, jobless: boolean)
       ? `bb-box restarted, as for an update, while the command ran in box ${box.name}. A Windows command in the desktop session ends with bb-box's connection, so it stopped.${next("Run it again.")}`
       : `bb-box restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`)}`;
   return { content: [{ type: "text", text }], isError: true };
+}
+
+export async function runsOnBox(app: Pick<BbBox, "workspace">, threadId: string, box: Pick<BoxRecord, "enrol">, signal?: AbortSignal): Promise<boolean> {
+  if (!box.enrol.hostId) return false;
+  try {
+    return (await app.workspace(threadId, signal)).hostId === box.enrol.hostId;
+  } catch {
+    return true;
+  }
 }
 
 export function thread(threadId: string | undefined): string {
@@ -541,7 +552,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        const { owner, box: found, runsOn } = await app.resolve(thread(threadId), ref, signal);
+        const { owner, box: found, runsOn: theirs } = await app.resolve(thread(threadId), ref, signal);
+        const runsOn = theirs || (await runsOnBox(app, thread(threadId), found, signal));
         const box = await boxes.refresh(owner, found.id, signal).catch(async (error) => {
           if (error instanceof BoxError && error.code === "backend_off") return boxes.get(owner, found.id);
           throw error;

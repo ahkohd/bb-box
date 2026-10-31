@@ -18,7 +18,11 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_record`](#box_record) | Record a desktop box's screen, to show your work in the thread as a short video (059). |
 | [`box_release`](#box_release) | Release a box you no longer need. |
 | [`box_resize`](#box_resize) | Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. |
+| [`box_restore`](#box_restore) | Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. |
 | [`box_run`](#box_run) | Run a shell script in a box, as its user, and wait for it. |
+| [`box_snapshot`](#box_snapshot) | Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. |
+| [`box_snapshot_delete`](#box_snapshot_delete) | Delete a snapshot of a box that an agent of this thread took and nobody kept. |
+| [`box_snapshots`](#box_snapshots) | List the snapshots of a box, or of every box of this thread and the machine it runs on: per box, what its snapshots hold or that it has none; per snapshot, its name, ID, when, by whom, what it holds, its size, its price, whether it is kept, and where it is. |
 | [`box_start`](#box_start) | Start a stopped box again, with its disk as it was, and wait up to 20 s more while it reconnects as a BB machine. |
 | [`box_status`](#box_status) | Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start and to become one. |
 | [`box_stop`](#box_stop) | Stop a box to free its memory and CPU while keeping its disk. |
@@ -176,6 +180,17 @@ Change a box's size: its cores, memory or disk, by a preset or by parts, where i
 | `restart` | boolean | no | Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so. |
 | `check` | boolean | no | Only say what the resize would change, how, and whether there is room. Defaults to false. |
 
+## box_restore
+
+Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. bb-box always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where bb-box allows it; this says so when it does not.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `snapshot` | string | yes | The snapshot's name or ID, from box_snapshots. |
+| `replace` | boolean | yes | Must be true: you mean to replace the box's disk with the snapshot's. |
+| `request` | string | no | An ID you make, so a repeat of this call is the same restore, not a second one. |
+
 ## box_run
 
 Run a shell script in a box, as its user, and wait for it. You get the exit code, stdout and stderr. box_status says whether the box user can use sudo.
@@ -188,6 +203,34 @@ Run a shell script in a box, as its user, and wait for it. You get the exit code
 | `timeout_seconds` | integer | no | Seconds before the command, and everything it started, is stopped. Defaults to 600. box_run returns when the script's shell exits, or after 270 s, as BB ends a tool call at about five minutes: a command still running then goes on as a job for box_job, except a Windows one in the desktop session, which is stopped then. Start a server in the background with its output redirected, so it keeps working after that: nohup &lt;cmd> >server.log 2>&1 &, or on Windows Start-Detached { &lt;cmd> } server.log |
 | `stdin` | string | no | Text to send to the command's standard input. |
 | `desktop` | boolean | no | Run in the box's desktop session so it can open windows. Desktop boxes only. |
+
+## box_snapshot
+
+Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `name` | string | no | Its name, at most 60 characters, unique on the box, such as "before the migration". The time, such as Thu 10:42, when left out. |
+| `note` | string | no | A note, at most 1 KB: what the box held, or why you took it. |
+| `memory` | boolean | no | Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false. A macOS box on Tart holds its memory in every snapshot, so pass true there. |
+
+## box_snapshot_delete
+
+Delete a snapshot of a box that an agent of this thread took and nobody kept. A kept snapshot, the person's and another thread's are the person's to delete.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `snapshot` | string | yes | The snapshot's name or ID, from box_snapshots. |
+
+## box_snapshots
+
+List the snapshots of a box, or of every box of this thread and the machine it runs on: per box, what its snapshots hold or that it has none; per snapshot, its name, ID, when, by whom, what it holds, its size, its price, whether it is kept, and where it is.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | no | The box's name or ID. Every box of this thread, and the machine it runs on, when left out. |
 
 ## box_start
 

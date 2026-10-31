@@ -1,4 +1,5 @@
 import type { Snapshotting } from "../backends/types.ts";
+import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
 
 export const LIVE_CHECKS_VARIABLE = "BB_BOX_LIVE_CHECKS";
 export const DROPPED_REPLY_MESSAGE = "BB Box saved this and dropped its reply, as a live check asked.";
@@ -25,12 +26,13 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task", "stopped", "copied", "undo", "rolled-back", "adopted", "started"] as const;
+export const HOLD_STEPS = ["planned", "task", "checked", "stopped", "copied", "undo", "rolled-back", "adopted", "started"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
 
 export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
   planned: "its record",
   task: "its provider's task began",
+  checked: "a restore's last check for running turns, before its stop",
   stopped: "a restore's stop",
   copied: "a restore's held copy was cloned, before it is a template",
   undo: "a restore's undo",
@@ -41,23 +43,48 @@ export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
 
 export class SnapshotHolds {
   #armed: HoldStepName | null = null;
+  #forMs: number | null = null;
 
   get armed(): HoldStepName | null {
     return this.#armed;
   }
 
-  arm(step: HoldStepName | null): void {
+  arm(step: HoldStepName | null, forMs: number | null = null): void {
     this.#armed = step;
+    this.#forMs = step ? forMs : null;
   }
 
   async hold(operation: { readonly id: string; readonly kind: string }, step: HoldStepName, signal: AbortSignal, log: (message: string) => void): Promise<void> {
     if (this.#armed !== step) return;
+    const forMs = this.#forMs;
     this.#armed = null;
-    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, until bb-box stops.`);
-    await new Promise<never>((_, reject) => {
+    this.#forMs = null;
+    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, ${forMs === null ? "until bb-box stops" : `for ${forMs / 1000} s`}.`);
+    await new Promise<void>((resolve, reject) => {
       if (signal.aborted) return reject(signal.reason);
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      const timer = forMs === null ? null : setTimeout(resolve, forMs);
+      signal.addEventListener(
+        "abort",
+        () => {
+          if (timer) clearTimeout(timer);
+          reject(signal.reason);
+        },
+        { once: true },
+      );
     });
+    if (forMs !== null) log(`Snapshot operation ${operation.id} goes on after its hold of ${forMs / 1000} s.`);
+  }
+}
+
+export class MachineRestores {
+  #on = MACHINE_RESTORES_SHIP;
+
+  get on(): boolean {
+    return this.#on;
+  }
+
+  set(on: boolean): void {
+    this.#on = on;
   }
 }
 

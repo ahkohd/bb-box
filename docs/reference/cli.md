@@ -51,12 +51,12 @@
 | [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only. |
 | [`bb box option list`](#bb-box-option-list) | List the general and Monitor options: each one's value now, its default, and what it does. |
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
-| [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them. |
+| [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.&lt;backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them. |
 | [`bb box option unset`](#bb-box-option-unset) | Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client. |
 | [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set. |
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
-| [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace. |
+| [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
@@ -876,7 +876,7 @@ Options:
 
 ## bb box option set
 
-Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them.
+Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.<backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them.
 
 ```text
 Usage:
@@ -979,7 +979,7 @@ Options:
 
 ## bb box snapshot restore
 
-Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace.
+Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace.
 
 ```text
 Usage:

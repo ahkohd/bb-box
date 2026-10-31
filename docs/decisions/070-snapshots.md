@@ -1336,6 +1336,43 @@ On 30 October 2026, during unit 4, the lead decided:
   charges for snapshots". A made-up price, only with `BB_BOX_LIVE_CHECKS=1`,
   checks the ceiling where none charges.
 
+## Decided during unit 5
+
+On 31 October 2026, during unit 5:
+
+- **Restores of boxes threads run on ship off: G17 did not pass.** BB's
+  "Send now" sent a message held by bb-box's `message.dispatch` hook after
+  bb-box's last check for a running turn and before its stop; the turn
+  started on the box, and the stop interrupted it. bb-box's check just after
+  the stop then found it, started the box again and restored nothing, so no
+  disk was replaced under a turn; but a turn ran on a box bb-box was
+  stopping. A check cannot be made at the same moment as the step after it
+  from a plugin, so this stays off until BB can hold a machine against "Send
+  now" ([request 39](../bb-requests.md#39-let-a-plugin-hold-a-machine-against-send-now)).
+  The lead decided that had G17 passed, these restores would have shipped
+  on, with no switch; a switch for live checks only,
+  `bb box snapshot machine-restores on|off`, lasts until bb-box restarts.
+- **The form's yes is the asking agent's restore, with the yes on its
+  operation.** The operation records the yes (thread, title, time and the
+  plan it was given for), and `restore-asked` and `restored` say "on a yes
+  given in (thread)". The undo's record names the agent, as an actor of
+  its own for a yes would need new rows in `snapshots.db` and `box-log.db`.
+- **Before a form's restore, bb-box holds every new turn on the box and
+  waits up to a minute for turns there to end**, so the asking agent can
+  end its own; then it checks as section 5 says. It checks for a running
+  turn before the stop, just after the stop, and before the rollback.
+- **The yes is bound to the plan the form showed**: the box, its guest, the
+  target and its reference, the undo's kind, and what else goes. A
+  different plan asks again, at most three times.
+- **A memory snapshot with "Agents may restore memory snapshots" off is
+  refused, not asked for through the form**: section 5 names the form's two
+  cases, and this is not one.
+- **A refusal that holds only for now answers `try_again`**: a host's
+  storage too full, for a take or a restore's undo, and a task such as a
+  backup holding the guest's lock.
+- **`box_snapshots` has no `pictures` parameter yet**; pictures come with
+  unit 6, and `box_fork` with unit 7.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order
