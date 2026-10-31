@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SnapshotFailed, type Backend, type TaskRef } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { keptUntilAfter, utcDay, type Caller } from "../src/core/snapshot.ts";
 import { COMMAND, DAY, THREAD, armedWorld, readIn, readyBox, rejection, standing, untilHeld, world, writeIn, type World } from "./snapshot-world.ts";
+import { bulkApply, bulkCheck } from "../src/plugin/snapshots-tab.ts";
 
 const AGENT: Caller = { is: "agent", threadId: THREAD };
+
+function provider(state: World): Required<Pick<Backend, "labelKept" | "heldSnapshots" | "planSnapshots" | "copySnapshot">> {
+  return state.backend as unknown as Required<Pick<Backend, "labelKept" | "heldSnapshots" | "planSnapshots" | "copySnapshot">>;
+}
 const START = Date.UTC(2026, 9, 30, 10, 42);
 
 async function keptBox(state: World, name = "kept one", options: { readonly memory?: boolean } = {}) {
@@ -64,7 +70,7 @@ test("Keep is refused for a snapshot no fork could use after a release: taken be
   assert.deepEqual([...state.provider.labels, ...other.provider.labels], []);
 });
 
-test("a keep date: days from 1 to 365 or a date, never in the past, never past a year; a renewal by default never shortens it", async () => {
+test("a keep date: days from 1 to 365 or a date, never in the past, never past a year; a renewal by default adds the days to the keep date, and never shortens it", async () => {
   const state = armedWorld();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
@@ -77,20 +83,28 @@ test("a keep date: days from 1 to 365 or a date, never in the past, never past a
   assert.equal(state.store.records()[0]!.keptUntil, Date.UTC(2027, 0, 15, 23, 59, 59, 999));
   const renewal = await state.snapshots.checkKeep(COMMAND, standing(box), "one");
   assert.equal(renewal.renews, true);
-  assert.equal(renewal.keptUntil, Date.UTC(2027, 0, 15, 23, 59, 59, 999), "30 days from today would shorten it, so the default keeps the later date");
+  assert.equal(renewal.keptUntil, Date.UTC(2027, 1, 14, 23, 59, 59, 999), "Keep 30 more days: 30 days from its keep date, not from today");
   const asked = await state.snapshots.checkKeep(COMMAND, standing(box), "one", { days: 10 });
   assert.equal(asked.shortens, true, "a date the person gives may shorten it, and the check says so");
   state.tick(70 * DAY);
   const renewed = await state.snapshots.keep(COMMAND, standing(box), "one");
-  assert.equal(renewed.snapshot.keptUntil, keptUntilAfter(START + 70 * DAY, 30));
+  assert.equal(renewed.snapshot.keptUntil, Date.UTC(2027, 1, 14, 23, 59, 59, 999));
   assert.equal(state.log.events(box.id).at(-1)?.words?.includes("renewed from 2027-01-15"), true);
+  state.tick(60 * DAY);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(renewed.snapshot.id), null, "past its date, it went");
+  const capped = armedWorld();
+  const longBox = await readyBox(capped);
+  await capped.snapshots.take(COMMAND, longBox, standing(longBox), { name: "long" });
+  await capped.snapshots.keep(COMMAND, standing(longBox), "long", { days: 350 });
+  assert.equal((await capped.snapshots.checkKeep(COMMAND, standing(longBox), "long")).keptUntil, keptUntilAfter(START, 365), "never past a year from today");
 });
 
 test("Keep writes nothing when the provider refuses its label, and Stop keeping takes the date off the label and the record", async () => {
   const state = armedWorld();
   const box = await readyBox(state);
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
-  state.provider.labelFault = new Error("Proxmox PUT failed (403): Permission check failed");
+  state.provider.labelFault = new SnapshotFailed("Proxmox PUT failed (403): Permission check failed");
   const refused = await rejection(state.snapshots.keep(COMMAND, standing(box), "one"));
   assert.match(refused.message, /could not write the keep date on .*, so it did not keep "one": Proxmox PUT failed \(403\)/);
   assert.equal(state.store.record(taken.id)?.keptUntil, null);
@@ -210,7 +224,7 @@ test("G16: a held copy whose clone finished as a template before a restart is co
   await state.snapshots.sweep();
   assert.equal(state.store.record(taken.id)?.livesOn.ref, copy);
   assert.equal([...state.provider.copies.keys()].length, 1);
-  assert.match(state.log.events(box.id).at(-1)?.words ?? "", /confirmed after bb-box restarted\.$/);
+  assert.match(state.log.events(box.id).at(-1)?.words ?? "", /confirmed after it was cut short\.$/);
 });
 
 test("expiry: a released box's kept snapshot goes at its date with its held copy, and not while a fork uses it", async () => {
@@ -303,4 +317,303 @@ test("G3 with Keep: with snapshots.db's records gone, a released box's kept held
   assert.equal(found.box.system, "linux");
   const check = await state.snapshots.checkForkGone(found, {});
   assert.equal(check.asMachine, true);
+});
+
+test("review 1: a renewal cut short after its label is written is recorded at the next sweep, so the copy is not deleted at the old date", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 1 });
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const copy = state.store.record(taken.id)!.livesOn.ref;
+  const update = state.store.updateRecord.bind(state.store);
+  state.store.updateRecord = (id, patch) => {
+    if (patch.keptUntil) throw new Error("bb-box stopped after the label, before the record");
+    return update(id, patch);
+  };
+  await assert.rejects(state.snapshots.keepGone(state.store.record(taken.id)!, BY_COMMAND, { days: 30 }), /bb-box stopped after the label/);
+  assert.equal(state.provider.copies.get(copy)!.kept, utcDay(keptUntilAfter(START, 30)), "the label says the new date");
+  const cut = state.store.unsettled().find((operation) => operation.kind === "keep")!;
+  assert.equal(cut.step, "labelled", "the keep was recorded before its label, and is unsettled");
+  assert.equal(state.store.pins().get(taken.id)?.kind, "keep", "it holds its snapshot until it is settled");
+  await state.restart();
+  state.tick(2 * DAY);
+  await state.snapshots.sweep();
+  assert.equal(state.provider.copies.has(copy), true, "not deleted at the old date");
+  assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 30));
+  assert.equal(state.store.operation(cut.id)?.state, "done");
+  assert.match(state.log.events(box.id).at(-1)?.words ?? "", /confirmed from its label after bb-box restarted/);
+});
+
+test("review 1: a keep whose label answer is lost is checked against the label: written, it is recorded; not written, nothing changes; meanwhile nothing deletes it", async () => {
+  const state = armedWorld();
+  const box = await readyBox(state);
+  const one = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+  const two = (await state.snapshots.take(COMMAND, box, standing(box), { name: "two" })).snapshot!;
+  const lost = new Error("cannot reach the provider: timed out");
+  const labelKept = provider(state).labelKept.bind(state.backend);
+  provider(state).labelKept = async (ref, kept, signal) => {
+    if (ref.id === one.id) await labelKept(ref, kept, signal);
+    throw lost;
+  };
+  for (const id of [one.id, two.id]) assert.equal((await rejection(state.snapshots.keep(COMMAND, standing(box), id))).code, "unreachable");
+  assert.equal(state.store.record(one.id)?.keptUntil, null);
+  assert.match((await rejection(state.snapshots.delete(COMMAND, standing(box), "one"))).message, /is in use by the keep that began/);
+  provider(state).labelKept = labelKept;
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(one.id)?.keptUntil, keptUntilAfter(START, 30), "its label had the date, so it is kept");
+  assert.equal(state.store.record(two.id)?.keptUntil, null, "its label did not, so nothing changed");
+  assert.equal(state.store.unsettled().filter((operation) => operation.kind === "keep").length, 0);
+});
+
+test("review 1: the reconcile takes a later keep date from a label, and never an earlier one", async () => {
+  const state = armedWorld();
+  const { taken } = await keptBox(state);
+  state.provider.held.get(taken.id)!.keptUntil = keptUntilAfter(START, 90);
+  state.tick(60_000);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 90));
+  state.provider.held.get(taken.id)!.keptUntil = keptUntilAfter(START, 5);
+  state.tick(60_000);
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 90), "an earlier label never shortens a keep");
+});
+
+test("review 2: with records lost while a held copy was not a template, the snapshot is recorded on its source, the untrusted copy is deleted, and the release copies again before it deletes the guest", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  state.holds.step = "copied";
+  const releasing = state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  await untilHeld(state, releasing);
+  const partial = state.store.unsettled().find((operation) => operation.kind === "hold-copy")!.guests!.new!.ref;
+  await state.restart();
+  await releasing.catch(() => null);
+  state.forgetRecords();
+  const listing = provider(state).heldSnapshots.bind(state.backend);
+  provider(state).heldSnapshots = async (signal) => [...(await listing(signal))].sort((a, b) => Number(b.where === "held-copy") - Number(a.where === "held-copy"));
+  state.tick(1);
+  await state.snapshots.reconcile();
+  const found = state.store.record(taken.id)!;
+  assert.equal(found.guest, "current", "the source is trusted over a copy that is not a template");
+  assert.equal(found.keptUntil, keptUntilAfter(START, 30));
+  assert.equal(found.forkSafe !== null, true, "and its label's reset version");
+  assert.equal(state.provider.copies.has(partial), false, "the untrusted copy is deleted");
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(box.guest!), null);
+  const kept = state.store.record(taken.id)!;
+  assert.equal(kept.guest, "held-copy");
+  assert.equal(state.provider.copies.get(kept.livesOn.ref)?.state, "template");
+});
+
+test("review 2: a release refuses while a kept snapshot's held copy is not a template, and deletes nothing", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const untrusted = { ref: "copy9", host: null, address: null, size: null, data: { box: box.id } };
+  state.store.updateRecord(taken.id, { guest: "held-copy", livesOn: untrusted, ref: "copy9", state: "incomplete", error: "Its copy is not a template yet, so bb-box does not trust it." });
+  const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(left?.error ?? "", /The held copy of "kept one", which you kept, guest copy9, is incomplete.*so bb-box does not trust it, and deleted nothing\./);
+  assert.notEqual(await state.backend.power(box.guest!), null);
+});
+
+test("review 3: held copies share the room rule with takes: each reserves its room while it is made, a second one past the limit is refused, and an unreadable plan refuses the release", async () => {
+  const state = armedWorld();
+  const first = await keptBox(state, "first");
+  const second = await keptBox(state, "second");
+  state.provider.percentFull = 82;
+  let unblock!: () => void;
+  state.provider.copyGate = new Promise((resolve) => (unblock = resolve));
+  const releasing = state.boxes.release(THREAD, first.box.id, "done", BY_COMMAND);
+  for (let tries = 0; tries < 1000 && !state.provider.copies.size; tries++) await new Promise((resolve) => setTimeout(resolve, 1));
+  const copying = state.store.unsettled().find((operation) => operation.kind === "hold-copy")!;
+  assert.deepEqual(copying.reserved, { storage: state.provider.storageKey, bytes: 2 * 2 ** 30, price: null });
+  assert.equal(state.store.reservedBytes(state.provider.storageKey), 2 * 2 ** 30);
+  const refused = await state.boxes.release(THREAD, second.box.id, "done", BY_COMMAND);
+  assert.match(refused?.error ?? "", /has \d+ GB free, beside 2\.1 GB that snapshots and copies being made there hold, and with the held copy, about 2\.1 GB, it would be 86% full, past your settings' 85%/);
+  assert.notEqual(await state.backend.power(second.box.guest!), null);
+  unblock();
+  await releasing;
+  assert.equal(state.store.reservedBytes(state.provider.storageKey), 0, "the reservation ends with its copy");
+  const unread = armedWorld();
+  const third = await keptBox(unread, "third");
+  provider(unread).planSnapshots = async () => {
+    throw new Error("storage status is unreadable");
+  };
+  const stopped = await unread.boxes.release(THREAD, third.box.id, "done", BY_COMMAND);
+  assert.match(stopped?.error ?? "", /could not read where it would be copied, so it deleted nothing: storage status is unreadable/);
+  assert.notEqual(await unread.backend.power(third.box.guest!), null);
+});
+
+test("a release leaves BB's machine list only once its kept snapshots are copied, so one that stops for a copy is still a BB machine", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  await state.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: "host-kept", error: null } }));
+  state.provider.percentFull = 90;
+  const stopped = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(stopped?.error ?? "", /^Release did not finish: bb-box could not copy "kept one"/);
+  assert.deepEqual(state.unenrolled, [], "a release that stopped for a copy keeps the machine in BB");
+  state.provider.percentFull = 30;
+  const copySnapshot = provider(state).copySnapshot.bind(state.backend);
+  provider(state).copySnapshot = async (ref, label, hooks, signal) => {
+    assert.deepEqual(state.unenrolled, [], "the copy is made while the machine is still in BB");
+    return copySnapshot(ref, label, hooks, signal);
+  };
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.deepEqual(state.unenrolled, [box.id], "once the copy is made, the machine leaves BB");
+});
+
+test("a held copy refused just past the room limit says by how much, not a whole percent equal to the limit", async () => {
+  const state = armedWorld();
+  const { box } = await keptBox(state);
+  state.provider.percentFull = 83.04;
+  const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(left?.error ?? "", /it would be 85\.1% full, past your settings' 85%\./);
+  assert.notEqual(await state.backend.power(box.guest!), null);
+});
+
+test("review 4: a living box's kept snapshot found again after records loss keeps its reset version from its label, so its held copy forks; one found without a version stops the release", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  state.forgetRecords();
+  await state.restart();
+  await state.snapshots.sweep();
+  assert.notEqual(state.store.record(taken.id)?.forkSafe, null);
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const kept = state.store.record(taken.id)!;
+  assert.equal(kept.guest, "held-copy");
+  assert.equal((await state.snapshots.checkForkGone(kept, {})).asMachine, true);
+  const old = armedWorld();
+  const second = await keptBox(old, "old label");
+  old.provider.held.get(second.taken.id)!.forkSafe = null;
+  old.forgetRecords();
+  await old.restart();
+  await old.snapshots.sweep();
+  const left = await old.boxes.release(THREAD, second.box.id, "done", BY_COMMAND);
+  assert.match(left?.error ?? "", /cannot tell whether a fork could use "[^"]+", which you kept: its record was found again without its identity reset's version\. So it deleted nothing\./);
+  assert.notEqual(await old.backend.power(second.box.guest!), null);
+});
+
+test("review 5: bulk Keep with no date chosen never shortens a longer keep; a date chosen may, and its row says so", async () => {
+  const state = armedWorld();
+  const { taken } = await keptBox(state);
+  await state.snapshots.keep(COMMAND, standing((await state.boxes.find(taken.box.id))!), taken.id, { days: 90 });
+  const untouched = await bulkCheck(state.snapshots, [taken.id], "keep", {}, state.now);
+  assert.match(untouched.allowed[0]!.words, new RegExp(`^Until ${utcDay(keptUntilAfter(START, 120))}\\. It is kept until ${utcDay(keptUntilAfter(START, 90))} now\\.`));
+  await bulkApply(state.snapshots, [taken.id], "keep", {});
+  assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 120), "30 more days from its keep date");
+  const chosen = { until: utcDay(keptUntilAfter(START, 30)) };
+  const shorter = await bulkCheck(state.snapshots, [taken.id], "keep", chosen, state.now);
+  assert.match(shorter.allowed[0]!.words, new RegExp(`^Until ${chosen.until}\\. This shortens its keep, from ${utcDay(keptUntilAfter(START, 120))}\\.`));
+});
+
+test("review: a release copies only keeps whose date has not passed; one past its date goes with the box", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  state.store.updateRecord(taken.id, { keptUntil: START - 1 });
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.equal(state.provider.copies.size, 0);
+  assert.equal(await state.backend.power(box.guest!), null);
+});
+
+test("review: a leftover guest of an ended thread whose label says kept, with no kept record, stays until the records agree", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  await state.forgetBox(box);
+  state.store.updateRecord(taken.id, { keptUntil: null, keptAt: null });
+  state.threadState = "ended";
+  provider(state).heldSnapshots = async () => {
+    throw new Error("the listing failed");
+  };
+  for (let sweep = 0; sweep < 2; sweep++) {
+    await state.boxes.sweep();
+    state.tick(3 * 60_000);
+  }
+  assert.notEqual(await state.backend.power(box.guest!), null, "a failed listing keeps the guest");
+  assert.ok(state.boxLogs.some((line) => line.includes("could not read its snapshots' labels (the listing failed), so it keeps the guest until it can")), state.boxLogs.join("\n"));
+  await state.restart();
+  state.threadState = "ended";
+  await state.boxes.sweep();
+  state.tick(3 * 60_000);
+  await state.boxes.sweep();
+  assert.notEqual(await state.backend.power(box.guest!), null, "a label that says kept keeps the guest");
+  assert.ok(state.boxLogs.some((line) => line.includes(`its label says snapshot ${taken.id} is kept until`)), state.boxLogs.join("\n"));
+  await state.snapshots.sweep();
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(box.guest!), null, "once the reconcile takes the label's date, the copy is made and the guest goes");
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+});
+
+test("review: a restart while the copy's task still runs leaves it unsettled and pinned, and the next sweep finishes it once the task ends", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  state.holds.step = "task";
+  const releasing = state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  await untilHeld(state, releasing);
+  const cut = state.store.unsettled().find((operation) => operation.kind === "hold-copy")!;
+  assert.equal(cut.step, "copy-task");
+  await state.restart();
+  await releasing.catch(() => null);
+  state.provider.tasks.set(cut.task!.ref, { state: "running" });
+  await state.snapshots.recover();
+  assert.equal(state.store.operation(cut.id)?.state, "unknown", "a running clone is waited for, not trusted");
+  assert.equal(state.store.pins().get(taken.id)?.id, cut.id);
+  assert.notEqual(await state.backend.power(box.guest!), null);
+  state.provider.tasks.set(cut.task!.ref, { state: "ok" });
+  await state.snapshots.sweep();
+  await state.boxes.sweep();
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.equal(await state.backend.power(box.guest!), null);
+  assert.equal(state.provider.copies.size, 1, "the copy that was not a template went, and one template is left");
+});
+
+test("a release whose copy outlasts its wait while the provider still makes it leaves the copy's operation unsettled, deletes nothing, and the sweep deletes that copy only once its task ends", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const copySnapshot = provider(state).copySnapshot.bind(state.backend);
+  let task: TaskRef | null = null;
+  provider(state).copySnapshot = async (ref, label, hooks, signal) => {
+    await copySnapshot(ref, label, { ...hooks, task: async (made) => { task = made; await hooks.task(made); } }, signal);
+    state.provider.tasks.set(task!.ref, { state: "running" });
+    throw new Error("Proxmox TASK vzclone failed (504): task did not finish in time.");
+  };
+  const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.match(left?.error ?? "", /task did not finish in time\. .* may still be making its copy, guest (copy\d+), so bb-box deletes that copy only once the task ends, at a later sweep\./);
+  const made = /guest (copy\d+), so/.exec(left!.error!)![1]!;
+  const cut = state.store.operations({ box: box.id, kind: "hold-copy" })[0]!;
+  assert.equal(cut.state, "unknown");
+  assert.equal(state.store.pins().get(taken.id)?.id, cut.id, "the snapshot stays pinned while its copy is made");
+  assert.ok(state.provider.copies.has(made), "a copy still being made is not counted deleted");
+  assert.notEqual(await state.backend.power(box.guest!), null);
+  provider(state).copySnapshot = copySnapshot;
+  await state.snapshots.sweep();
+  assert.equal(state.store.operation(cut.id)?.state, "unknown", "while the task runs, the sweep waits for it");
+  assert.ok(state.provider.copies.has(made));
+  state.provider.tasks.set(task!.ref, { state: "ok" });
+  await state.snapshots.sweep();
+  assert.equal(state.provider.copies.has(made), false, "once the task ended, the copy that was not a template went");
+  state.tick(3 * 60_000);
+  await state.boxes.sweep();
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.equal(await state.backend.power(box.guest!), null);
+  assert.equal(state.provider.copies.size, 1);
+});
+
+test("review: a restart after the record moved to its held copy, before the guest went, finishes the release with no second copy", async () => {
+  const state = armedWorld();
+  const { box, taken } = await keptBox(state);
+  const release = state.backend.release.bind(state.backend);
+  let stopped = false;
+  state.backend.release = async (guest, hooks) => {
+    if (!stopped && guest.ref === box.guest!.ref) {
+      stopped = true;
+      throw new Error("bb-box stopped");
+    }
+    return release(guest, hooks);
+  };
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  assert.equal(state.store.record(taken.id)?.guest, "held-copy");
+  assert.notEqual(await state.backend.power(box.guest!), null);
+  await state.restart();
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(box.guest!), null);
+  assert.equal(state.provider.copies.size, 1);
 });

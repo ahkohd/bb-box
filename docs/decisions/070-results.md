@@ -2942,7 +2942,8 @@ not in the repository: they show the test node's name.
 - **A held copy's room** uses a take's rule and the box's disk use now
   (containers) or the snapshot's disk size (VMs), not the snapshot's own
   use, which the token cannot read. The ceiling is not checked at release,
-  as the copy replaces its snapshot in the rate.
+  as the copy replaces its snapshot in the rate. After the reviews it also
+  counts and makes reservations, and fails closed.
 - **Expiry is a delete by bb-box** ("its keep ended"), not an operation
   of kind `expire`, so it shares the delete's recovery.
 - **A released box's kept snapshot is not unkept**: kept longer or deleted.
@@ -2954,17 +2955,80 @@ not in the repository: they show the test node's name.
 
 ### Known limits
 
-- **A living box's snapshot found again** after `snapshots.db` is lost has
-  no reset version (its Proxmox label carries IDs and the keep date only),
-  so it cannot be kept anew, and its held copy at a release would not
-  fork. Its keep date survives. Carrying the version in the label would
-  close this.
+- **A snapshot labelled before this unit's reviews**, found again after
+  `snapshots.db` is lost, has no reset version, as its label has none. It
+  cannot be kept anew, and a release stops rather than copy it if it was
+  kept. Labels written from now on carry the version, so a living box's
+  snapshot found again forks.
 - **Expiry was not run live**: its date cannot be brought forward on a live
   BB; the tests run it on a set clock.
 - **The leftover guest of an ended thread with a kept snapshot** was run in
   the tests only: it needs a box record lost while its thread ends.
 - **Thin metadata** is still not read (unit 1a's limit), so a held copy's
   room checks the pool's data only.
+
+### After the reviews
+
+Two independent reviews read the bundle at `fe5f91ee`: Astra (merge after
+fixes, four P1 and three P2) and Opus (merge after fixes 1 to 4, with five
+more). Astra reproduced six of its findings with scratch tests. The lead
+asked for every finding, the stricter fix where the two overlapped, and a
+regression test for each.
+
+| Finding | From | Fix | Tests |
+| --- | --- | --- | --- |
+| A Keep or renewal cut short between the label and the record was lost: a held copy labelled 29 November was deleted on 1 November | Astra 1 | Keep, renewal and Stop keeping are operations of kind `keep` (a new migration lets the table take it), recorded before the label is written. Recovery reads the label and records what it says before any expiry or release; the reconcile takes a label's later keep date, never an earlier one | "review 1: a renewal cut short ...", "a keep whose label answer is lost ...", "the reconcile takes a later keep date" |
+| After records loss, Proxmox lists a copy first, so a non-template copy was recorded over its source, and the release deleted the source | Astra 2 | Each snapshot ID prefers a trusted listing: the source over a copy that is not a template. The untrusted copy is deleted, and a release stops while a kept snapshot's copy is not a template | "review 2: with records lost while a held copy was not a template ...", "a release refuses while a kept snapshot's held copy is not a template" |
+| Held copies bypassed the room admission: no reservation, others' reservations ignored, an unreadable plan admitted | Astra 3, Opus 2 | The take's transactional admission: it counts `reservedBytes` on the storage, reserves the copy's bytes on its `hold-copy` operation until it is made, and refuses when the plan or the storage's totals cannot be read. The words name what others hold, and show a decimal when a whole percent would equal the limit | "review 3: held copies share the room rule ...", "a held copy refused just past the room limit says by how much" |
+| A living box's snapshot found again lost its reset version, so its held copy could never fork | Astra 4, Opus 5 | The snapshot's label carries `reset <n>`, read back on recovery. A release stops for a kept snapshot whose version is unknown, and copies only keeps whose date has not passed | "review 4: a living box's kept snapshot found again ...", "a release copies only keeps whose date has not passed" |
+| Bulk Keep's untouched date shortened longer keeps | Astra 5 | Untouched, bulk Keep sends no date, so each row is kept for the days in Settings from today, or that many days more if kept already. A chosen date may shorten one, and its row says so | "review 5: bulk Keep with no date chosen never shortens ...", and the app's bulk test |
+| The 120 s template wait counted sleeps, not time: 2,525 s with slow reads | Astra 6, Opus 6 | A monotonic deadline over reads and sleeps, which stops when cancelled | "review 6: the wait for a held copy's template is bounded by 120 s of elapsed time" |
+| A held copy found with no thread showed a button to thread "unknown" | Astra 7 | Plain text: "Found again on its host; its thread is not known" | "070 unit 8 review 7" |
+| The clone waited at most 180 s, so a disk over about 75 GiB never copied, and each retry cloned again | Opus 1 | The clone's wait is 3 times the plan's estimate, at least 180 s (`cloneWaitMs`), for every full clone, held copies and forks of them included; `waitTask` waits that long in the same run | "review: a clone's wait grows with its disk ..." |
+| The bulk dialog checked again on every render, and sent `[]` once the selection emptied | Opus 3 | The IDs are frozen when the dialog opens | "the bulk dialog checks the snapshots chosen when it opened, once ..." |
+| "Release anyway" and "Remove anyway" dropped "delete what you kept" | Opus 4 | The in-use state keeps `deleteKept` and passes it on | "Release and delete what you kept, then Release anyway ..." |
+| The machine left BB before the copies were made | Opus 7 | The release makes the copies first, then takes the machine out of BB | "a release leaves BB's machine list only once its kept snapshots are copied" |
+| A leftover guest of an ended thread was judged by the records alone | Opus 8 | It is kept while a snapshot's label says kept and the records do not, or while the labels cannot be read; a backend that takes no snapshots has none to read | "a leftover guest of an ended thread whose label says kept ...", and plugin.test's restored-box test |
+| "Keep 30 more days…" counted from today; Select changed its name while pressed; the tab was blank while loading or after an error | Opus 9 | Renewal adds the days to the keep date; Select keeps its name with `aria-pressed`; the tab says "Reading the snapshots…" and shows the error | "a keep date: ... a renewal by default adds the days to the keep date", the app's bulk test, "the Snapshots tab says it is reading them until its answer comes" |
+| Test gaps: a restart while the clone task runs, after the record moved, inside `holdKeptOn` | Opus | Tests for each | "a restart while the copy's task still runs ...", "a restart after the record moved to its held copy ...", "a leftover guest ... stays until the records agree" |
+
+**Found in the live recheck.** With the wait cut to 1 s in a test build,
+the release tried to delete the part-made copy while Proxmox was still
+cloning it. The copy's config did not exist yet, so the delete counted as
+done and the operation was settled. The clone then finished with its
+source box's tags, and after the box's release the sweep restored it as a
+box, `bb-box-copy-3171`. Two fixes, each with tests that fail without
+them:
+
+- A copy that fails while its task may still run stays unsettled, and the
+  sweep deletes the part-made copy only once the task ends.
+- A guest named `bb-box-copy-<vmid>` is listed as naming no box, so it is
+  released as a leftover once no operation uses it, never restored.
+
+The tests are "a release whose copy outlasts its wait while the provider
+still makes it ...", and on each Proxmox backend, "a held copy cut short
+before its own labels ... never one to restore".
+
+**Live, after the fixes**, on a new separate BB set up as before, with the
+same backends and VMIDs, armed on that BB only:
+
+| Check | Result |
+| --- | --- |
+| Clone wait, test build (no 180 s floor, least wait 1 s), estimate factor 0 | LXC and QEMU releases stopped and deleted nothing: "Proxmox TASK vzclone ... failed (504): task did not finish in time." |
+| The same, factor 3 (3 × 16 GiB × 2.4 s = 115 s) | both releases finished, held copies made in 9.5 s and 6.4 s; a fork from the LXC copy was ready in 8.9 s, with the file from before the take and `boot=reset` |
+| The same, factor 0, after the fix above | each release stopped: "Proxmox LXC on pve-1 may still be making its copy, guest 3175, so bb-box deletes that copy only once the task ends, at a later sweep."; the operations stayed unknown with their reservations; the sweep deleted each part-made copy once its task ended; nothing was restored as a box. With factor 3, the sweep finished both releases |
+| Room: "Refuse new snapshots when a host's storage is past" lowered to 55 on the test BB, with the pool about 54.7% full; two LXC boxes of 40 GiB, each with a 12 GiB file made by `fallocate`, so each copy is about 16 GB | the first release, held after its record (`hold-next --at planned`), reserved 15,716,274,176 bytes on its `hold-copy` operation; the second was refused: "pve-1's storage local-lvm has 3536 GB free, beside 16 GB that snapshots and copies being made there hold, and with the held copy, about 16 GB, it would be 55.1% full, past your settings' 55%."; the first then finished, and its reservation ended |
+| Proxmox's API cut (`iptables` on the test BB), the setting back at 85 | the release stopped: "bb-box could not read where it would be copied, so it deleted nothing: ... cannot reach the Proxmox API"; the rule was then removed |
+| The machine while a release stopped for a copy | still listed by `bb host list` as connected; gone once the copy was made |
+
+The threshold was lowered on the test BB only, rather than filling the
+shared pool. At the end the BB had no snapshot, box or unsettled
+operation, and the lead's `leftovers` listed no guest in 3170 to 3189.
+
+After the fixes, on this unit's two commits over main `cf84a20a`, in a
+copy on the same kind of box: `npx tsc` passes, and the reference is
+current; the node suite ran 3,254 tests, 2,966 passed, 0 failed, 288
+skipped; vitest ran 431, all passed.
 
 ### Conditions and open questions
 

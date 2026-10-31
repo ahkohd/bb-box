@@ -117,9 +117,11 @@ function FilterMenu({ filters, offered, counts, onChange }: { filters: SnapshotF
   );
 }
 
-function BulkDialog({ ids, change, keepDays, now, onClose, onDone }: { ids: readonly string[]; change: "keep" | "delete"; keepDays: number; now: number; onClose: () => void; onDone: () => void }) {
+function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { ids: readonly string[]; change: "keep" | "delete"; keepDays: number; now: number; onClose: () => void; onDone: () => void }) {
   const rpc = useRpc<Contract>();
+  const [ids] = useState(() => [...chosen]);
   const [until, setUntil] = useState(() => utcDate(now + keepDays * DAY_MS));
+  const [edited, setEdited] = useState(false);
   const [check, setCheck] = useState<(BulkCheck & { readonly until: string }) | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -130,7 +132,7 @@ function BulkDialog({ ids, change, keepDays, now, onClose, onDone }: { ids: read
     if (change === "keep" && !dated) return;
     let cancelled = false;
     void rpc
-      .call("snapshots.bulkCheck", { snapshots: [...ids], change, ...(change === "keep" ? { until } : {}) })
+      .call("snapshots.bulkCheck", { snapshots: [...ids], change, ...(change === "keep" && edited ? { until } : {}) })
       .then((answer) => {
         if (!cancelled) setCheck({ ...answer, until });
       })
@@ -140,14 +142,14 @@ function BulkDialog({ ids, change, keepDays, now, onClose, onDone }: { ids: read
     return () => {
       cancelled = true;
     };
-  }, [rpc, ids, change, until, dated]);
+  }, [rpc, ids, change, until, dated, edited]);
   const current = check && check.until === until ? check : null;
   const count = current?.allowed.length ?? 0;
   const apply = async () => {
     if (!current) return;
     setSending(true);
     try {
-      const done = await rpc.call("snapshots.bulk", { snapshots: current.allowed.map((each) => each.id), change, ...(change === "keep" ? { until } : {}) });
+      const done = await rpc.call("snapshots.bulk", { snapshots: current.allowed.map((each) => each.id), change, ...(change === "keep" && edited ? { until } : {}) });
       onDone();
       if (done.refused.length) setResult(done);
       else onClose();
@@ -183,7 +185,7 @@ function BulkDialog({ ids, change, keepDays, now, onClose, onDone }: { ids: read
               Cancel
             </AlertDialogCancel>
             <Button type="button" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count} onClick={() => void apply()}>
-              {sending ? (change === "keep" ? "Keeping…" : "Deleting…") : change === "keep" ? `Keep ${count} until ${dated ? keepDay(Date.parse(`${until}T12:00:00Z`)) : "…"}` : `Delete ${count}`}
+              {sending ? (change === "keep" ? "Keeping…" : "Deleting…") : change === "keep" ? (edited ? `Keep ${count} until ${dated ? keepDay(Date.parse(`${until}T12:00:00Z`)) : "…"}` : `Keep ${count}`) : `Delete ${count}`}
             </Button>
           </>
         )
@@ -192,7 +194,18 @@ function BulkDialog({ ids, change, keepDays, now, onClose, onDone }: { ids: read
       {change === "keep" && !result ? (
         <label className="block space-y-1">
           <span className="text-xs text-foreground">Keep them until the end of</span>
-          <Input type="date" value={until} onChange={(event) => setUntil(event.target.value)} className="h-8 w-44" data-first-focus aria-describedby={describedBy} />
+          <Input
+            type="date"
+            value={until}
+            onChange={(event) => {
+              setEdited(true);
+              setUntil(event.target.value);
+            }}
+            className="h-8 w-44"
+            data-first-focus
+            aria-describedby={describedBy}
+          />
+          <span className="block text-xs text-subtle-foreground">{edited ? "Each is kept until this date, also one kept longer now: its row says so." : `${keepDays} days from today by default, or ${keepDays} more days for one kept already.`}</span>
         </label>
       ) : null}
       <AlertDialogDescription id={describedBy} asChild>
@@ -232,7 +245,7 @@ function systemWords(system: string): string {
   return system === "linux" ? "Linux" : system === "windows" ? "Windows" : system === "macos" ? "macOS" : system;
 }
 
-function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null; onThread: () => void }) {
+function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null; onThread: (threadId: string) => void }) {
   const nav = useBoxesNav();
   const box = group.box;
   const where = `${box.backend}`;
@@ -254,8 +267,10 @@ function GroupHead({ group, title, onThread }: { group: TabGroup; title: string 
       <span className="ml-auto flex shrink-0 items-center">
         {box.yours ? (
           <span className="text-xs text-muted-foreground">Your machine</span>
+        ) : box.threadId === null ? (
+          <span className="text-xs text-muted-foreground">Found again on its host; its thread is not known</span>
         ) : (
-          <button type="button" className="inline-flex max-w-56 items-center gap-1 truncate rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={onThread}>
+          <button type="button" className="inline-flex max-w-56 items-center gap-1 truncate rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onThread(box.threadId!)}>
             <span className="truncate">{title ?? box.threadId}</span>
             <Icon name="ArrowUpRight" className="size-3" aria-hidden />
           </button>
@@ -279,10 +294,11 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
     place.filters = filters;
     place.sort = sort;
   }, [search, filters, sort]);
-  const threadIds = [...new Set(view.groups.filter((group) => !group.box.yours).map((group) => group.box.threadId))];
+  const threadIds = [...new Set(view.groups.flatMap((group) => (!group.box.yours && group.box.threadId ? [group.box.threadId] : [])))];
   const titles = useThreadTitles(threadIds);
   const agentThreads = useThreadTitles([...new Set(view.groups.flatMap((group) => group.rows.flatMap((row) => (row.by.is === "agent" ? [row.by.threadId] : []))))]);
   const all = useMemo(() => view.groups.flatMap((group) => group.rows.map((row) => ({ row, group }))), [view]);
+  const titleOf = (group: TabGroup) => (group.box.yours || !group.box.threadId ? null : (titles[group.box.threadId] ?? null));
   const offered = useMemo(() => {
     const seen: Record<FilterGroup, Set<string>> = { where: new Set(), holds: new Set(), by: new Set(), kept: new Set(), undos: new Set(), soon: new Set() };
     for (const { row, group } of all) for (const key of FILTER_GROUPS) for (const value of valuesOf(row, group, now)[key]) seen[key].add(value);
@@ -290,11 +306,11 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
   }, [all, now]);
   const kept = Object.fromEntries(FILTER_GROUPS.map((key) => [key, filters[key].filter((value) => offered[key].includes(value))])) as unknown as SnapshotFilters;
   const shown = sortRows(
-    all.filter(({ row, group }) => matches(row, group, search, kept, group.box.yours ? null : (titles[group.box.threadId] ?? null), now)),
+    all.filter(({ row, group }) => matches(row, group, search, kept, titleOf(group), now)),
     sort,
   );
   const counts: Record<string, number> = {};
-  for (const { row, group } of all.filter(({ row, group }) => matches(row, group, search, NO_FILTERS, group.box.yours ? null : (titles[group.box.threadId] ?? null), now))) {
+  for (const { row, group } of all.filter(({ row, group }) => matches(row, group, search, NO_FILTERS, titleOf(group), now))) {
     for (const key of FILTER_GROUPS) for (const value of valuesOf(row, group, now)[key]) counts[`${key}:${value}`] = (counts[`${key}:${value}`] ?? 0) + 1;
   }
   const groups: { group: TabGroup; rows: TabRow[] }[] = [];
@@ -373,14 +389,14 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
               type="button"
               variant="outline"
               size="sm"
-              className="h-8"
+              className={cn("h-8", selecting && "bg-state-active text-foreground")}
               aria-pressed={selecting}
               onClick={() => {
                 setSelecting((on) => !on);
                 setSelected(new Set());
               }}
             >
-              {selecting ? "Done" : "Select"}
+              Select
             </Button>
           </div>
         </div>
@@ -414,7 +430,7 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
           {narrowed && all.length && !shown.length ? <EmptyPanel>No snapshots match.</EmptyPanel> : null}
           {groups.map(({ group, rows }) => (
             <section key={group.box.id} aria-label={`${group.box.name}'s snapshots`} className="overflow-hidden rounded-lg border border-border bg-card">
-              <GroupHead group={group} title={titles[group.box.threadId] ?? null} onThread={() => navigate.toThread(group.box.threadId)} />
+              <GroupHead group={group} title={titleOf(group)} onThread={(threadId) => navigate.toThread(threadId)} />
               <ul className="divide-y divide-border px-4">
                 {rows.map((row) => (
                   <SnapshotRow

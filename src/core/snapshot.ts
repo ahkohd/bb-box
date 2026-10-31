@@ -6,7 +6,7 @@ import type { HeldIdentity } from "./identity.ts";
 export const SNAPSHOT_STATES = ["taking", "ready", "failed", "incomplete", "deleting", "unavailable", "lost"] as const;
 export type SnapshotState = (typeof SNAPSHOT_STATES)[number];
 
-export const OPERATION_KINDS = ["take", "restore", "fork", "delete", "hold-copy", "adopt", "expire"] as const;
+export const OPERATION_KINDS = ["take", "restore", "fork", "delete", "hold-copy", "adopt", "expire", "keep"] as const;
 export type OperationKind = (typeof OPERATION_KINDS)[number];
 
 export const OPERATION_STATES = ["running", "done", "failed", "unknown"] as const;
@@ -268,6 +268,7 @@ const OPERATION_WORDS: Readonly<Record<OperationKind, string>> = {
   fork: "fork",
   delete: "delete",
   "hold-copy": "copy for Keep",
+  keep: "keep",
   adopt: "swap of guests",
   expire: "expiry",
 };

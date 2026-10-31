@@ -1,5 +1,5 @@
 import { OPERATOR, describeError, type BoxRecord } from "../core/boxes.ts";
-import { eligible, gbWords, heldByProvider, keepEndsWithin, KEEP_ENDS_WITHIN_DAYS, type SnapshotRecord } from "../core/snapshot.ts";
+import { eligible, gbWords, heldByProvider, keepEndsWithin, KEEP_ENDS_WITHIN_DAYS, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
 import { moneyWords } from "../core/snapshot-cost.ts";
 import { freedWords, standingOfRecord, type KeepInput, type Snapshots } from "../core/snapshots.ts";
 import { PERSON, rowOf, type SnapshotRowView } from "./snapshot-card.ts";
@@ -13,7 +13,7 @@ export interface TabBox {
   readonly system: string;
   readonly backend: string;
   readonly host: string | null;
-  readonly threadId: string;
+  readonly threadId: string | null;
   readonly yours: boolean;
   readonly state: BoxRecord["state"] | null;
   readonly gone: { readonly at: number; readonly how: string } | null;
@@ -47,6 +47,12 @@ export interface SnapshotsTabView {
   readonly line: TabLine;
   readonly keepDays: number;
   readonly none: readonly string[];
+}
+
+const UNKNOWN_THREAD = "unknown";
+
+function knownThread(threadId: string): string | null {
+  return threadId === UNKNOWN_THREAD || !threadId ? null : threadId;
 }
 
 function restoreWhyOf(record: SnapshotRecord, box: BoxRecord | null, restores: boolean, unsettled: boolean): string | null {
@@ -85,7 +91,7 @@ export function snapshotsTab(snapshots: Snapshots, boxes: readonly BoxRecord[], 
       system: box?.capabilities.os ?? first.box.system,
       backend: box?.backendLabel ?? first.backend.label,
       host: box?.guest?.host ?? first.host,
-      threadId: box?.threadId ?? first.box.thread,
+      threadId: knownThread(box?.threadId ?? first.box.thread),
       yours: (box?.threadId ?? first.box.thread) === OPERATOR,
       state: box?.state ?? null,
       gone: box ? null : (held.find((record) => record.boxGone)?.boxGone ?? { at: first.stateAt, how: "unknown" }),
@@ -189,7 +195,10 @@ export async function bulkCheck(snapshots: Snapshots, ids: readonly string[], ch
     }
     try {
       const check = await snapshots.checkKeep(PERSON, standingOfRecord(record), record.id, input);
-      allowed.push(item(record, `${check.renews ? `Kept until ${new Date(check.snapshot.keptUntil!).toISOString().slice(0, 10)} now. ` : ""}${keepCostWords(check)}${check.warning ? ` ${check.warning}` : ""}`));
+      const until = utcDay(check.keptUntil);
+      const now = check.renews ? (check.shortens ? ` This shortens its keep, from ${utcDay(check.snapshot.keptUntil!)}.` : check.keptUntil === check.snapshot.keptUntil ? " It is kept until then already." : ` It is kept until ${utcDay(check.snapshot.keptUntil!)} now.`) : "";
+      const unflushed = check.snapshot.unflushed ? " It may miss what its box wrote in the last seconds before it." : "";
+      allowed.push(item(record, `Until ${until}.${now} ${keepCostWords(check)}${check.warning ? ` ${check.warning}` : ""}${unflushed}`));
     } catch (error) {
       skipped.push(item(record, describeError(error, "Checking it")));
     }

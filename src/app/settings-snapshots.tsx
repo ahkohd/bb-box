@@ -153,7 +153,7 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
               label="Keep keeps a snapshot for"
               unit="days"
               unitWord="days"
-              description={`From the day you keep it, unless you choose a date. A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date. Only you keep one. Renewing never shortens a keep. ${SNAPSHOT_LIMITS.keepDays.least} to ${SNAPSHOT_LIMITS.keepDays.most}.`}
+              description={`From the day you keep it, unless you choose a date. A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date. Only you keep one. Keeping it again adds these days to its date. ${SNAPSHOT_LIMITS.keepDays.least} to ${SNAPSHOT_LIMITS.keepDays.most}.`}
             />
           </Rows>
         </Card>

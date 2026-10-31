@@ -32,9 +32,9 @@ import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
-import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
-import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
+import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -594,7 +594,7 @@ export class ProxmoxQemuBackend implements Backend {
     return vmid;
   }
 
-  async #fullClone(api: Proxmox, source: number, vmid: number, name: string, description: string, storage: string | null, hooks: CopyHooks, signal?: AbortSignal, snapshot?: string): Promise<void> {
+  async #fullClone(api: Proxmox, source: number, vmid: number, name: string, description: string, storage: string | null, hooks: CopyHooks, signal?: AbortSignal, snapshot?: string, diskGiB: number | null = null): Promise<void> {
     let upid: string;
     try {
       await hooks.submitting();
@@ -605,7 +605,7 @@ export class ProxmoxQemuBackend implements Backend {
     }
     await hooks.task({ ref: upid, host: api.node });
     try {
-      await api.waitTask(upid, signal);
+      await api.waitTask(upid, signal, cloneWaitMs(diskGiB));
     } catch (error) {
       if (error instanceof ProxmoxError && error.method === "TASK" && error.status === 500) throw new SnapshotFailed(`Proxmox's copy of guest ${source} failed: ${error.message}`);
       throw error;
@@ -624,7 +624,7 @@ export class ProxmoxQemuBackend implements Backend {
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
-      await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal, undefined, sizeOf(config)?.diskGiB ?? null);
       await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false }, signal);
       return copy;
@@ -643,7 +643,7 @@ export class ProxmoxQemuBackend implements Backend {
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
-      await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal, ref.ref);
+      await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal, ref.ref, sizeOf(config)?.diskGiB ?? null);
       await disarm(api, vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false, delete: ["protection"] }, signal);
       return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
@@ -668,7 +668,12 @@ export class ProxmoxQemuBackend implements Backend {
     if (!config) throw gone(vmid);
     const tags = parseTags(config.tags);
     const box = copyTags(tags).box ?? (typeof ref.guest.data?.box === "string" ? ref.guest.data.box : "");
-    await api.configure(vmid, { tags: withKeptTag(tags, kept), description: heldCopyDescription(this.#context.installId, { box, snapshot: ref.id, kept }) }, signal);
+    try {
+      await api.configure(vmid, { tags: withKeptTag(tags, kept), description: heldCopyDescription(this.#context.installId, { box, snapshot: ref.id, kept }) }, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to write the keep date on held copy ${vmid}: ${error.message}`);
+      throw error;
+    }
   }
 
   async #copyConfig(api: Proxmox, copy: Guest, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
@@ -727,7 +732,7 @@ export class ProxmoxQemuBackend implements Backend {
     try {
       const fresh = this.#guest(api.node, vmid, template, box.boxId);
       await hooks.claimed(fresh);
-      await this.#fullClone(api, from, vmid, box.name, describe(box, this.#context.installId), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      await this.#fullClone(api, from, vmid, box.name, describe(box, this.#context.installId), disk ? storageOfVolume(config[disk]) : null, hooks, signal, undefined, sizeOf(config)?.diskGiB ?? null);
       const made = (await api.config(vmid, signal)) ?? {};
       const address = addressFor(this.#config, vmid);
       if (!address) throw new SnapshotFailed(`VMID ${vmid} is outside the box range.`);
@@ -1366,6 +1371,7 @@ export class ProxmoxQemuBackend implements Backend {
         owner ??= ownerFromDescription(config.description);
       }
       if (install !== this.#context.installId) continue;
+      if (guest.name === copyName(guest.vmid)) owner = null;
       const found = this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner?.boxId ?? null, guest.size);
       held.push({ ...found, owner, power: powerOf(guest.status), ...(guest.tags.includes(START_TAG) ? { settling: true } : {}) });
     }

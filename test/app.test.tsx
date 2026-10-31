@@ -537,7 +537,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -9422,7 +9422,7 @@ test("070 unit 4: Settings' Snapshots page saves the limit, the room and each pa
   expect(slot.getByText("Fix: Watch the pool's metadata on the host.").className).toContain("text-warning-text");
   expect(slot.getAllByRole("switch").map((each) => each.getAttribute("aria-label"))).toEqual(["Agents may restore their own boxes", "Agents may restore memory snapshots", "Keep a picture of the screen with each snapshot"]);
   expect((slot.getByRole("textbox", { name: "Keep keeps a snapshot for, in days" }) as HTMLInputElement).value).toBe("30");
-  expect(slot.getByText(/A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date\. Only you keep one\. Renewing never shortens a keep\. 1 to 365\./)).toBeTruthy();
+  expect(slot.getByText(/A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date\. Only you keep one\. Keeping it again adds these days to its date\. 1 to 365\./)).toBeTruthy();
 
   fireEvent.change(room, { target: { value: "60" } });
   expect(slot.getByText(/or past 55% of a thin pool's metadata\. Past 67%/)).toBeTruthy();
@@ -10261,9 +10261,9 @@ test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card 
   const dialog = await list.findByRole("alertdialog", { name: "Keep 2 snapshots" });
   expect(await within(dialog).findByText(/is in use by the restore that began/)).toBeTruthy();
   expect(within(dialog).getByText("Skipped, and why:")).toBeTruthy();
-  const keep = within(dialog).getByRole("button", { name: /^Keep 1 until / });
+  const keep = within(dialog).getByRole("button", { name: "Keep 1" });
   fireEvent.click(keep);
-  await waitFor(() => expect(changes.find((change) => change.startsWith("snapshots.bulk "))).toMatch(/"snapshots":\["snreleasedaaaa"\],"change":"keep","until":"\d{4}-\d{2}-\d{2}"/));
+  await waitFor(() => expect(changes.find((change) => change.startsWith("snapshots.bulk "))).toBe('snapshots.bulk {"snapshots":["snreleasedaaaa"],"change":"keep"}'), { timeout: 2000 });
   expect(bulkAsked[0]).toBe("keep snlivingaaaaaa snreleasedaaaa");
 });
 
@@ -10277,4 +10277,78 @@ test("070 unit 8: a release that stopped for a snapshot you kept offers Release 
   expect(within(dialog).getByText(/could not copy a snapshot you kept/)).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Release and delete what you kept" }));
   await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "release")?.input).toEqual({ threadId: THREAD, box: "box_1", deleteKept: true }));
+});
+
+test("070 unit 8 review 7: a held copy found again with no known thread says so in plain words, with no button to a thread", async () => {
+  const base = tabView();
+  const found = base.groups[1]!;
+  const view: SnapshotsTabView = { ...base, groups: [{ ...found, box: { ...found.box, id: "box_found", name: "found-box", yours: false, threadId: null } }] };
+  const { handlers } = server([box()], { tab: () => view });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  const card = await list.findByRole("region", { name: "found-box's snapshots" });
+  expect(within(card).getByText("Found again on its host; its thread is not known")).toBeTruthy();
+  expect(within(card).queryByRole("button", { name: /unknown/ })).toBeNull();
+  expect(within(card).queryByText("Your machine")).toBeNull();
+});
+
+test("070 unit 8 review: the Snapshots tab says it is reading them until its answer comes, and says why when it fails", async () => {
+  let answer!: (view: SnapshotsTabView) => void;
+  const { handlers } = server([box()], { tab: () => new Promise<SnapshotsTabView>((resolve) => (answer = resolve)) });
+  const [page] = app.navPanels;
+  const reading = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect((await reading.findByText("Reading the snapshots…")).closest('[role="status"]')).toBeTruthy();
+  answer(tabView());
+  await waitFor(() => expect(reading.queryByText("Reading the snapshots…")).toBeNull());
+  expect(await reading.findByRole("button", { name: "Select" })).toBeTruthy();
+  reading.unmount();
+  forgetLive();
+  const { handlers: failing } = server([box()], {
+    tab: () => {
+      throw new Error("bb-box cannot read snapshots.db.");
+    },
+  });
+  const failed = renderSlot(page!, { subPath: "snapshots" }, { rpc: failing, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  await waitFor(() => expect(failed.getAllByRole("alert").some((each) => /bb-box cannot read snapshots\.db/.test(each.textContent ?? ""))).toBe(true));
+  expect(failed.queryByText("Reading the snapshots…")).toBeNull();
+});
+
+test("070 unit 8 review: Release and delete what you kept, then Release anyway for the threads on it, keeps the choice", async () => {
+  const stopped = box({ state: "releasing", error: "Release did not finish: bb-box could not copy \"kept one\", which you kept.", releaseHeldForKept: true });
+  const { handlers } = server([stopped], { inUse: [{ id: "thr_other", title: "Run the tests", running: true }] });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: /Release again/ }));
+  fireEvent.click(within(await slot.findByRole("alertdialog", { name: "Release calm-otter again?" })).getByRole("button", { name: "Release and delete what you kept" }));
+  const anyway = await slot.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  fireEvent.click(within(anyway).getByRole("button", { name: "Release anyway" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "release").map((call) => call.input)).toEqual([
+    { threadId: THREAD, box: "box_1", deleteKept: true },
+    { threadId: THREAD, box: "box_1", force: true, deleteKept: true },
+  ]));
+});
+
+test("070 unit 8 review: the bulk dialog checks the snapshots chosen when it opened, once, and keeps its answer after the selection empties", async () => {
+  const asked: string[] = [];
+  const { handlers } = server([box()], {
+    tab: tabView,
+    bulkCheck: (input) => {
+      asked.push(input.snapshots.join(" "));
+      return { allowed: [{ id: "snreleasedaaaa", name: "release candidate", box: "grey-ridge", words: "Until 2026-11-29." }], skipped: [] };
+    },
+  });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  fireEvent.click(await list.findByRole("button", { name: "Select" }));
+  expect(list.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(list.getByRole("checkbox", { name: "Select release candidate of grey-ridge" }));
+  fireEvent.click(list.getByRole("button", { name: "Keep…" }));
+  const dialog = await list.findByRole("alertdialog", { name: "Keep 1 snapshot" });
+  expect(await within(dialog).findByText(/Until 2026-11-29\./)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Keep 1" })).toBeTruthy();
+  expect(within(dialog).getByText(/30 days from today by default, or 30 more days for one kept already\./)).toBeTruthy();
+  fireEvent.click(list.getByRole("checkbox", { name: "Select release candidate of grey-ridge", hidden: true }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(asked).toEqual(["snreleasedaaaa"]);
+  expect(within(dialog).getByText(/Until 2026-11-29\./)).toBeTruthy();
 });

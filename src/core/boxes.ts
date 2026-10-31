@@ -2574,6 +2574,16 @@ export class Boxes {
       if (!this.#failedAgain(box, kinds, words)) this.#event(box, "release-failed", who, { words, observed, backend: box.backendLabel });
     };
     const backend = box.guest ? this.#deps.backends.get(box.backend) : null;
+    const guestGone = options.observeFirst && box.guest && backend ? (await this.#stamped(box).then((stamped) => backend.power(stamped.guest!)).catch(() => undefined)) === null : false;
+    if (!guestGone && box.guest && backend && this.#deps.beforeRelease) {
+      try {
+        await this.#deps.beforeRelease(box, who);
+      } catch (error) {
+        const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
+        failed(words, null);
+        return this.update(box, () => ({ error: `${words} bb-box tries again in a few minutes. Release it again, or release it and delete what you kept.` }));
+      }
+    }
     // A thread's own box (role "machine") has a BB machine that BB owns and removes itself; deleting it
     // from here would wait on BB's removal, which waits on this release.
     if (box.enrol.hostId && this.#deps.unenrol && box.role !== "machine") {
@@ -2584,16 +2594,11 @@ export class Boxes {
         this.#deps.logError("unenrol", error);
       }
     }
-    if (options.observeFirst && box.guest && backend) {
-      const power = await this.#stamped(box)
-        .then((stamped) => backend.power(stamped.guest!))
-        .catch(() => undefined);
-      if (power === null) {
-        this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
-        this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
-        await this.#forget(box);
-        return null;
-      }
+    if (guestGone) {
+      this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
+      this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
+      await this.#forget(box);
+      return null;
     }
     if (box.guest) {
       if (!backend) {
@@ -2609,15 +2614,6 @@ export class Boxes {
           timings[`release.${step}`] = ms;
         },
       };
-      if (this.#deps.beforeRelease) {
-        try {
-          await this.#deps.beforeRelease(box, who);
-        } catch (error) {
-          const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
-          failed(words, null);
-          return this.update(box, () => ({ error: `${words} bb-box tries again in a few minutes. Release it again, or release it and delete what you kept.` }));
-        }
-      }
       try {
         const { guest } = await this.#stamped(box);
         if (box.fork) await backend.disarmFork?.(guest!).catch((error) => this.#deps.logError(`disarm guest ${guest!.ref} of fork ${box.name} before deleting it`, error));

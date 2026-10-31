@@ -674,10 +674,10 @@ export class Proxmox {
   }
 
   /** Polls a task until it stops. "OK" and "WARNINGS: n" are success. */
-  async waitTask(upid: string, signal?: AbortSignal): Promise<void> {
+  async waitTask(upid: string, signal?: AbortSignal, timeoutMs: number = this.#taskTimeoutMs): Promise<void> {
     if (typeof upid !== "string" || !upid.startsWith("UPID:")) return;
     const node = upid.split(":")[1] || this.node;
-    const deadline = Date.now() + this.#taskTimeoutMs;
+    const deadline = Date.now() + Math.max(timeoutMs, this.#taskTimeoutMs);
     for (;;) {
       const data = await this.#request<{ status?: string; exitstatus?: string }>(
         "GET",

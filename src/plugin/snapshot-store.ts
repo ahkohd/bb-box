@@ -19,6 +19,33 @@ import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
 const ACTORS = ["person", "agent", "command", "bb-box", "outside", "unknown"] as const;
+const FIRST_OPERATION_KINDS = ["take", "restore", "fork", "delete", "hold-copy", "adopt", "expire"] as const;
+
+const operationsTable = (name: string) => `CREATE TABLE ${SCHEMA}.${name} (
+    id TEXT PRIMARY KEY,
+    request TEXT UNIQUE,
+    kind TEXT NOT NULL CHECK(kind IN (${listed(OPERATION_KINDS)})),
+    box TEXT NOT NULL,
+    guest TEXT,
+    snapshots TEXT NOT NULL DEFAULT '[]',
+    who TEXT NOT NULL CHECK(who IN (${listed(ACTORS)})),
+    agent TEXT,
+    why TEXT,
+    consent TEXT,
+    undo TEXT,
+    guests TEXT,
+    step TEXT NOT NULL,
+    task TEXT,
+    state TEXT NOT NULL CHECK(state IN (${listed(OPERATION_STATES)})),
+    reserved TEXT,
+    error TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    request_digest TEXT,
+    snapshots_gone_at INTEGER,
+    step_at INTEGER
+  )`;
 
 export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `CREATE TABLE ${SCHEMA}.snapshots (
@@ -70,7 +97,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `CREATE TABLE ${SCHEMA}.snapshot_operations (
     id TEXT PRIMARY KEY,
     request TEXT UNIQUE,
-    kind TEXT NOT NULL CHECK(kind IN (${listed(OPERATION_KINDS)})),
+    kind TEXT NOT NULL CHECK(kind IN (${listed(FIRST_OPERATION_KINDS)})),
     box TEXT NOT NULL,
     guest TEXT,
     snapshots TEXT NOT NULL DEFAULT '[]',
@@ -111,6 +138,13 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   )`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN identity TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN unflushed TEXT CHECK(unflushed IS NULL OR length(CAST(unflushed AS BLOB)) <= 1024)`,
+  [
+    operationsTable("snapshot_operations_keep"),
+    `INSERT INTO ${SCHEMA}.snapshot_operations_keep SELECT id, request, kind, box, guest, snapshots, who, agent, why, consent, undo, guests, step, task, state, reserved, error, started_at, ended_at, updated_at, request_digest, snapshots_gone_at, step_at FROM ${SCHEMA}.snapshot_operations`,
+    `DROP TABLE ${SCHEMA}.snapshot_operations`,
+    `ALTER TABLE ${SCHEMA}.snapshot_operations_keep RENAME TO snapshot_operations`,
+    `CREATE INDEX ${SCHEMA}.snapshot_operations_by_state ON snapshot_operations(state)`,
+  ].join(";\n"),
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;

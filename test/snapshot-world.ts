@@ -49,6 +49,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     guard: { threads: [], threadsUnread: null, control: false, terminals: 0 } as RestoreGuard,
     undoByCopy: false,
     machineRestores: false,
+    unenrolled: [] as string[],
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
     backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}), ...(options.identityRoot ? { identityRoot: options.identityRoot } : {}) }),
@@ -111,6 +112,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
       holdKeptOn: (backendId, guestRef) => state.snapshots.holdKeptOn(backendId, guestRef, BY_COMMAND),
       leftoverReleased: (backendId, guestRef, boxId, why) => state.snapshots.leftoverReleased(backendId, guestRef, boxId, why),
       beforeRelease: (box, who) => state.snapshots.holdKept(box, who),
+      unenrol: async (box) => void state.unenrolled.push(box.id),
       ...(options.forkWaitMs !== undefined ? { forkWaitMs: options.forkWaitMs } : {}),
       now,
     });

@@ -810,6 +810,7 @@ export interface SnapshotTake {
   readonly id: string;
   readonly box: string;
   readonly memory: boolean;
+  readonly forkSafe?: number | null;
 }
 
 export interface SnapshotSize {

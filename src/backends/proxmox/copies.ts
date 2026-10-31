@@ -29,6 +29,10 @@ export function withKeptTag(tags: readonly string[], kept: string | null): strin
   return [...tags.filter((tag) => !tag.startsWith(KEPT_TAG)), ...(kept ? [`${KEPT_TAG}${kept}`] : [])];
 }
 
+export function copyName(vmid: number): string {
+  return `bb-box-copy-${vmid}`;
+}
+
 export function heldCopyDescription(installId: string, label: HeldCopyLabel): string {
   return `bb-box install ${installId} box ${label.box} held copy of snapshot ${label.snapshot}${label.kept ? ` kept ${label.kept}` : ""}`;
 }
@@ -92,12 +96,21 @@ export function netWith(value: string, change: { readonly mac?: string; readonly
 
 export const TEMPLATE_WAIT_MS = 120_000;
 
-export async function untilTemplate(read: () => Promise<Record<string, unknown> | null>, isTemplate: (config: Record<string, unknown>) => boolean, pause: (ms: number) => Promise<void>, pollMs: number, vmid: number): Promise<void> {
-  for (let waited = 0; ; waited += pollMs) {
+export async function untilTemplate(
+  read: () => Promise<Record<string, unknown> | null>,
+  isTemplate: (config: Record<string, unknown>) => boolean,
+  pause: (ms: number) => Promise<void>,
+  pollMs: number,
+  vmid: number,
+  now: () => number = () => performance.now(),
+): Promise<void> {
+  const deadline = now() + TEMPLATE_WAIT_MS;
+  for (;;) {
     const config = await read();
     if (config && isTemplate(config)) return;
     if (!config) throw new Error(`Guest ${vmid} went before it was a template.`);
-    if (waited >= TEMPLATE_WAIT_MS) throw new Error(`Proxmox did not make guest ${vmid} a template within ${TEMPLATE_WAIT_MS / 1000} s.`);
-    await pause(pollMs);
+    const left = deadline - now();
+    if (left <= 0) throw new Error(`Proxmox did not make guest ${vmid} a template within ${TEMPLATE_WAIT_MS / 1000} s.`);
+    await pause(Math.min(pollMs, left));
   }
 }

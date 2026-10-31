@@ -2326,7 +2326,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const { value: all, error, refresh } = useLive<BoxEntry[]>(LIST_KEY, () => rpc.call("allBoxes").then((answer) => withBusyUntil(answer, Date.now())), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
   const { value: machinesState, refresh: refreshMachines } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
-  const { value: snapshotsView, refresh: refreshSnapshots } = useLive<SnapshotsTabView>("snapshots.tab", () => rpc.call("snapshots.tab", null), () => true);
+  const { value: snapshotsView, error: snapshotsError, refresh: refreshSnapshots } = useLive<SnapshotsTabView>("snapshots.tab", () => rpc.call("snapshots.tab", null), () => true);
   const kinds = machinesState?.kinds ?? [];
   const mineNow = new Map((all ?? []).filter((entry) => entry.owner === "yours").map((entry) => [entry.box.id, entry]));
   const machines = (machinesState?.machines ?? []).map((entry) => ({ ...entry, box: mineNow.get(entry.box.id)?.box ?? entry.box, threads: mineNow.get(entry.box.id)?.threads ?? entry.threads }));
@@ -2415,6 +2415,16 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const settled = loaded && (!search.trim() || titlesKnown);
   useReturnToPlace(scroller, tab, settled, all, machinesState);
   const ways = rowWays(nav, listOpens, (boxId) => leaveRow(scroller.current, tab, boxId));
+  const problemLine = (
+    <ProblemLine
+      problem={shownProblem}
+      onDismiss={() => {
+        setProblem(null);
+        threadActions.setProblem(null);
+        machineActions.setProblem(null);
+      }}
+    />
+  );
   return (
     <div className="h-full min-h-0">
       {/* BB's Automations page's frame and spacing (the operator, 8 October 2026): its width, a line under the title, the tabs
@@ -2441,6 +2451,8 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
           <SetupProgress empty={false} />
+          {tab === "snapshots" ? problemLine : null}
+          {tab === "snapshots" && !snapshotsView ? snapshotsError ? <EmptyPanel role="alert">{snapshotsError}</EmptyPanel> : <EmptyPanel role="status">Reading the snapshots…</EmptyPanel> : null}
           {tab === "snapshots" && snapshotsView ? (
             <SnapshotsTabPanel
               view={snapshotsView}
@@ -2454,15 +2466,8 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             />
           ) : null}
           {listed && tab !== "snapshots" ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} counts={counts} split={split} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
-          {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-          <ProblemLine
-            problem={shownProblem}
-            onDismiss={() => {
-              setProblem(null);
-              threadActions.setProblem(null);
-              machineActions.setProblem(null);
-            }}
-          />
+          {error && tab !== "snapshots" ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+          {tab === "snapshots" ? null : problemLine}
           {tab === "snapshots" ? null : (
           <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto" onScroll={(event) => noteListScroll({ tab, top: event.currentTarget.scrollTop })}>
             {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}

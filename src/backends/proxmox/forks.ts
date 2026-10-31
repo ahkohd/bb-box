@@ -2,7 +2,7 @@ import type { AcquireHooks, BoxIdentity, BoxSize, ForkArming, Guest, SnapshotRef
 import { ProxmoxError, type Proxmox } from "./api.ts";
 import { netKeys, netWith } from "./copies.ts";
 import { describe, installFromDescription, ownerFromDescription } from "./owner.ts";
-import { storageOfVolume } from "./snapshotting.ts";
+import { cloneWaitMs, storageOfVolume } from "./snapshotting.ts";
 
 export interface ForkGuests {
   readonly installId: string;
@@ -113,7 +113,7 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
       throw error;
     }
     try {
-      await api.waitTask(upid, signal);
+      await api.waitTask(upid, signal, cloneWaitMs(guests.sizeOf(source)?.diskGiB ?? null));
     } catch (error) {
       if (error instanceof ProxmoxError && error.method === "TASK" && error.status === 500) throw new Error(`Proxmox's copy of snapshot ${ref.ref} of guest ${from} failed: ${proxmoxWords(error)}`);
       throw error;

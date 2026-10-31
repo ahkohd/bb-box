@@ -266,6 +266,10 @@ function sentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+function percentPast(percent: number, past: number): string {
+  return Math.round(percent) > past ? `${Math.round(percent)}%` : `${(Math.ceil(percent * 10) / 10).toFixed(1)}%`;
+}
+
 function seconds(ms: number): string {
   return ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`;
 }
@@ -567,6 +571,33 @@ function namesWords(names: readonly string[], hidden: number): string {
 }
 
 const PERSON: Caller = { is: "person" };
+
+interface KeepConsent {
+  readonly from: number | null;
+  readonly to: number | null;
+  readonly why: string | null;
+}
+
+function keepConsentOf(operation: Pick<SnapshotOperation, "consent">): KeepConsent | null {
+  const keep = (operation.consent as { keep?: Partial<KeepConsent> } | null)?.keep;
+  if (!keep) return null;
+  const date = (value: unknown) => (typeof value === "number" ? value : null);
+  return { from: date(keep.from), to: date(keep.to), why: typeof keep.why === "string" ? keep.why : null };
+}
+
+function trust(held: HeldSnapshot): number {
+  if (held.where === "held-copy") return held.state === "complete" ? 3 : 0;
+  return held.state === "complete" ? 2 : 1;
+}
+
+export function preferredById(listing: readonly HeldSnapshot[]): Map<string, HeldSnapshot> {
+  const byId = new Map<string, HeldSnapshot>();
+  for (const held of listing) {
+    const seen = byId.get(held.id);
+    if (!seen || trust(held) > trust(seen)) byId.set(held.id, held);
+  }
+  return byId;
+}
 
 export function standingOfRecord(record: Pick<SnapshotRecord, "box">): Standing {
   return { box: { id: record.box.id, threadId: record.box.thread }, runsOn: false };
@@ -992,7 +1023,8 @@ export class Snapshots {
       const days = input.days ?? this.settings.keepDays;
       const { least, most: longest } = SNAPSHOT_LIMITS.keepDays;
       if (!Number.isInteger(days) || days < least || days > longest) throw new BoxError("invalid_value", `bb-box keeps a snapshot for ${least} to ${longest} days; ${days} is not.`);
-      until = keptUntilAfter(now, days);
+      const renewing = input.days === undefined && current.keptUntil !== null && current.keptUntil > now;
+      until = renewing ? Math.min(keptUntilAfter(current.keptUntil!, days), most) : keptUntilAfter(now, days);
     }
     if (until <= now) throw new BoxError("invalid_value", `${utcDay(until)} has passed already. Keep it until a day from tomorrow on.`);
     if (until > most) throw new BoxError("invalid_value", `bb-box keeps a snapshot at most ${SNAPSHOT_LIMITS.keepDays.most} days from today, so until ${utcDay(most)} at the latest.`);
@@ -1014,14 +1046,15 @@ export class Snapshots {
     }
   }
 
-  #copyRoom(host: string | null, storage: SnapshotStorage, bytes: number): string | null {
-    if (storage.totalBytes === null || storage.usedBytes === null || storage.totalBytes <= 0) return null;
-    const on = `${host ? `${host}'s ` : ""}storage ${storage.name}`;
-    const free = Math.max(0, storage.totalBytes - storage.usedBytes);
+  #copyRoom(host: string | null, storage: SnapshotStorage, bytes: number, reserved: number): string | null {
+    const on = `${host ? `${host}'s ` : ""}storage ${storage.name || "of its disk"}`;
+    if (storage.totalBytes === null || storage.usedBytes === null || storage.totalBytes <= 0) return `bb-box cannot read how full ${on} is, so it cannot tell whether the held copy fits`;
+    const free = Math.max(0, storage.totalBytes - storage.usedBytes - reserved);
+    const beside = reserved > 0 ? `, beside ${gbWords(reserved)} that snapshots and copies being made there hold` : "";
     const past = this.settings.roomPercent;
-    const after = ((storage.usedBytes + bytes) / storage.totalBytes) * 100;
-    if (bytes > free) return `${on} has ${gbWords(free)} free, and the held copy needs about ${gbWords(bytes)}`;
-    if (after > past) return `${on} has ${gbWords(free)} free, and with the held copy, about ${gbWords(bytes)}, it would be ${Math.round(after)}% full, past your settings' ${past}%`;
+    const after = ((storage.usedBytes + reserved + bytes) / storage.totalBytes) * 100;
+    if (bytes > free) return `${on} has ${gbWords(free)} free${beside}, and the held copy needs about ${gbWords(bytes)}`;
+    if (after > past) return `${on} has ${gbWords(free)} free${beside}, and with the held copy, about ${gbWords(bytes)}, it would be ${percentPast(after, past)} full, past your settings' ${past}%`;
     return null;
   }
 
@@ -1065,7 +1098,7 @@ export class Snapshots {
       bytes = plan.keep.bytes;
       usedBytes = plan.keep.usedBytes ?? null;
       storage = plan.storage.name;
-      const room = way === "held-copy" ? this.#copyRoom(guest.host, plan.storage, usedBytes ?? bytes ?? 0) : null;
+      const room = way === "held-copy" ? this.#copyRoom(guest.host, plan.storage, usedBytes ?? bytes ?? 0, ledger.reservedBytes(plan.storage.key)) : null;
       warning = plan.keep.why ?? (room ? `At today's size, a release would not finish: ${room}.` : null);
     }
     const renews = current.keptUntil !== null;
@@ -1102,28 +1135,123 @@ export class Snapshots {
     if (!record) throw new BoxError("not_found", `bb-box has no snapshot ${id}: it was deleted.`);
     const check = await this.#keepCheck(record, input);
     if (record.keptUntil === check.keptUntil) return { snapshot: record, check, repeated: true };
-    const backend = this.#deps.backends.get(record.backend.id)!;
+    const kept = await this.#writeKeep(record, by, check.keptUntil, null);
+    return { snapshot: kept, check, repeated: false };
+  }
+
+  async #writeKeep(record: SnapshotRecord, by: Actor, to: number | null, why: string | null): Promise<SnapshotRecord> {
+    const ledger = this.#deps.ledger;
+    const signal = this.#stopping.signal;
+    const backend = this.#deps.backends.get(record.backend.id);
+    if (!backend?.labelKept) throw new BoxError("backend_off", `bb-box cannot reach the ${record.backend.label} backend that holds ${quoted(record)}, so it cannot write its keep date there.`);
     const box = record.boxGone ? null : await this.#deps.boxes.find(record.box.id);
+    const now = this.#now();
+    const opened = ledger.transaction((): SnapshotOperation | string => {
+      const current = ledger.record(record.id);
+      if (!current) return `bb-box has no snapshot ${record.id}: it was deleted.`;
+      const verdict = eligible(current, to === null ? "unkeep" : "keep", { pin: ledger.pins().get(record.id) ?? null, now });
+      if (!verdict.ok) return verdict.why;
+      const operation: SnapshotOperation = {
+        id: newOperationId(this.#random),
+        request: null,
+        requestDigest: null,
+        kind: "keep",
+        box: current.box.id,
+        guest: current.livesOn.ref,
+        snapshots: [current.id],
+        by,
+        consent: { keep: { from: current.keptUntil, to, why } },
+        undo: null,
+        guests: null,
+        step: "labelling",
+        task: null,
+        state: "running",
+        reserved: null,
+        error: null,
+        startedAt: now,
+        endedAt: null,
+        snapshotsGoneAt: null,
+      };
+      ledger.insertOperation(operation);
+      return operation;
+    });
+    if (typeof opened === "string") throw new BoxError("in_use", opened);
+    this.#running.add(opened.id);
     try {
-      await backend.labelKept!(this.#refOf(record, box), keepLabel(check.keptUntil), this.#stopping.signal);
+      await this.#deps.hold?.(opened, "planned", signal);
+      try {
+        await backend.labelKept(this.#refOf(record, box), keepLabel(to), signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        const words = sentence(message(error));
+        if (error instanceof SnapshotFailed) {
+          ledger.updateOperation(opened.id, { state: "failed", endedAt: this.#now(), error: words });
+          throw new BoxError("failed", to === null ? `bb-box could not take the keep date off ${quoted(record)} on ${where(record)}, so it is still kept: ${words}` : `bb-box could not write the keep date on ${where(record)}, so it did not keep ${quoted(record)}: ${words}`);
+        }
+        ledger.updateOperation(opened.id, { state: "unknown", error: words });
+        throw new BoxError("unreachable", `bb-box could not confirm that ${where(record)} has the keep date of ${quoted(record)} now: ${words} It checks its label at its next sweep, and until then deletes nothing of it.`);
+      }
+      ledger.updateOperation(opened.id, { step: "labelled" });
+      return this.#keepRecorded(opened, record, to, "");
+    } finally {
+      this.#running.delete(opened.id);
+    }
+  }
+
+  #keepRecorded(operation: SnapshotOperation, record: SnapshotRecord, to: number | null, after: string): SnapshotRecord {
+    const ledger = this.#deps.ledger;
+    const now = this.#now();
+    const why = keepConsentOf(operation)?.why ?? null;
+    const done = ledger.transaction(() => {
+      const updated = ledger.updateRecord(record.id, to === null ? { keptUntil: null, keptAt: null } : { keptUntil: to, keptAt: now, owner: "person" });
+      ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null });
+      return updated;
+    });
+    const kept = done ?? record;
+    if (to === null) this.#event(kept, "snapshot-unkept", operation.by, `"${kept.name}" (${kept.id}): it goes with its box again${why ? `: ${why}` : ""}${after}.`);
+    else {
+      const from = record.keptUntil !== null ? `, renewed from ${utcDay(record.keptUntil)}` : "";
+      const last = record.unflushed ? " It may miss the box's last writes before it." : "";
+      this.#event(kept, "snapshot-kept", operation.by, `"${kept.name}" (${kept.id}): until ${utcDay(to)}${from}${after}.${last}`);
+    }
+    this.#notify(kept.box.thread);
+    return kept;
+  }
+
+  #recoverKeep(operation: SnapshotOperation, listing: readonly HeldSnapshot[]): boolean {
+    const ledger = this.#deps.ledger;
+    const record = ledger.record(operation.snapshots[0] ?? "");
+    const keep = keepConsentOf(operation);
+    const now = this.#now();
+    if (!record || !keep) {
+      ledger.updateOperation(operation.id, { state: "failed", endedAt: now, error: "Its snapshot's record is gone." });
+      return true;
+    }
+    const found = listing.find((held) => held.id === record.id && held.guest.ref === record.livesOn.ref) ?? null;
+    if (found && found.keptUntil === keep.to) {
+      this.#keepRecorded(operation, record, keep.to, ", confirmed from its label after bb-box restarted");
+      return true;
+    }
+    const words = found ? `Its label on ${where(record)} says ${found.keptUntil === null ? "no keep date" : `kept until ${utcDay(found.keptUntil)}`}, so the change did not reach it, and bb-box kept the record as it was.` : `${where(record)} no longer lists it, so bb-box changed nothing.`;
+    ledger.updateOperation(operation.id, { state: "failed", endedAt: now, error: words });
+    this.#notify(record.box.thread);
+    return true;
+  }
+
+  async #settleKeeps(backend: Backend, box: Pick<BoxRecord, "id" | "name">): Promise<void> {
+    const ledger = this.#deps.ledger;
+    const cut = ledger.unsettled().filter((operation) => operation.kind === "keep" && operation.box === box.id && !this.#running.has(operation.id));
+    if (!cut.length) return;
+    const cannot = (why: string) => new BoxError("unreachable", `bb-box could not confirm a change to the keep date of a snapshot of box ${box.name}, so it deleted nothing: ${why}`);
+    if (!backend.heldSnapshots) throw cannot(`${backend.label} cannot list its snapshots.`);
+    let listing: readonly HeldSnapshot[];
+    try {
+      listing = await backend.heldSnapshots(this.#stopping.signal);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
-      throw new BoxError("failed", `bb-box could not write the keep date on ${where(record)}, so it did not keep ${quoted(record)}: ${sentence(message(error))}`);
+      throw cannot(sentence(message(error)));
     }
-    const now = this.#now();
-    const kept = ledger.transaction((): SnapshotRecord | string => {
-      const current = ledger.record(id);
-      if (!current) return `bb-box has no snapshot ${id}: it was deleted.`;
-      const verdict = eligible(current, "keep", { pin: ledger.pins().get(id) ?? null, now });
-      if (!verdict.ok) return verdict.why;
-      return ledger.updateRecord(id, { keptUntil: check.keptUntil, keptAt: now, owner: "person" }) ?? current;
-    });
-    if (typeof kept === "string") throw new BoxError("in_use", kept);
-    const from = record.keptUntil !== null ? `, renewed from ${utcDay(record.keptUntil)}` : "";
-    const last = record.unflushed ? " It may miss the box's last writes before it." : "";
-    this.#event(kept, "snapshot-kept", by, `"${kept.name}" (${kept.id}): until ${utcDay(check.keptUntil)}${from}.${last}`);
-    this.#notify(kept.box.thread);
-    return { snapshot: kept, check, repeated: false };
+    for (const operation of cut) this.#recoverKeep(operation, listing);
   }
 
   async #unkeepNow(id: string, by: Actor, why: string | null): Promise<SnapshotRecord> {
@@ -1133,19 +1261,7 @@ export class Snapshots {
     const verdict = eligible(record, "unkeep", { pin: ledger.pins().get(id) ?? null, now: this.#now() });
     if (!verdict.ok) throw new BoxError("in_use", verdict.why);
     if (record.boxGone) throw new BoxError("unsupported", `Box ${record.box.name} is gone, and only its keep holds ${quoted(record)}. Delete it instead, or keep it longer.`);
-    const backend = this.#deps.backends.get(record.backend.id);
-    if (!backend?.labelKept) throw new BoxError("backend_off", `bb-box cannot reach the ${record.backend.label} backend that holds ${quoted(record)}, so it cannot take its keep date off there.`);
-    const box = await this.#deps.boxes.find(record.box.id);
-    try {
-      await backend.labelKept(this.#refOf(record, box), null, this.#stopping.signal);
-    } catch (error) {
-      if (this.#stopping.signal.aborted) throw error;
-      throw new BoxError("failed", `bb-box could not take the keep date off ${quoted(record)} on ${where(record)}, so it is still kept: ${sentence(message(error))}`);
-    }
-    const unkept = ledger.updateRecord(id, { keptUntil: null, keptAt: null }) ?? record;
-    this.#event(unkept, "snapshot-unkept", by, `"${unkept.name}" (${unkept.id}): it goes with its box again${why ? `: ${why}` : ""}.`);
-    this.#notify(unkept.box.thread);
-    return unkept;
+    return this.#writeKeep(record, by, null, why);
   }
 
   async holdKept(box: BoxRecord, by: Actor): Promise<void> {
@@ -1157,13 +1273,20 @@ export class Snapshots {
       await this.#noKeptLabelsOn(backend!, box);
       return;
     }
-    const waiting = ledger
-      .records({ box: box.id })
-      .filter((record) => record.keptUntil !== null && record.guest !== "held-copy" && heldByProvider(record))
-      .sort((a, b) => a.takenAt - b.takenAt || a.id.localeCompare(b.id));
+    await this.#settleKeeps(backend!, box);
+    const ofBox = ledger.records({ box: box.id });
+    const untrusted = ofBox.find((record) => record.guest === "held-copy" && record.keptUntil !== null && record.keptUntil > this.#now() && record.state !== "ready" && heldByProvider(record));
+    if (untrusted) {
+      throw new BoxError("failed", `The held copy of ${quoted(untrusted)}, which you kept, guest ${untrusted.livesOn.ref}, is ${stateWords(untrusted)}, so bb-box does not trust it, and deleted nothing. Delete that snapshot, or release the box and delete what you kept.`);
+    }
+    const now = this.#now();
+    const waiting = ofBox.filter((record) => record.keptUntil !== null && record.keptUntil > now && record.guest !== "held-copy" && heldByProvider(record)).sort((a, b) => a.takenAt - b.takenAt || a.id.localeCompare(b.id));
     for (const record of waiting) {
       if (record.state !== "ready") {
         throw new BoxError(record.state === "unavailable" ? "unreachable" : "failed", `bb-box cannot copy ${quoted(record)}, which you kept, while it is ${stateWords(record)}, so it deleted nothing.`);
+      }
+      if (record.forkSafe === null) {
+        throw new BoxError("unsupported", `bb-box cannot tell whether a fork could use ${quoted(record)}, which you kept: its record was found again without its identity reset's version. So it deleted nothing. Release the box and delete what you kept, or delete that snapshot first.`);
       }
       const cutShort = ledger.unsettled().find((operation) => operation.kind === "hold-copy" && operation.snapshots[0] === record.id) ?? null;
       await this.#holdCopy(record, box, by, cutShort);
@@ -1172,6 +1295,7 @@ export class Snapshots {
 
   async #noKeptLabelsOn(backend: Backend, box: BoxRecord): Promise<void> {
     const cannot = (why: string) => new BoxError("unreachable", `bb-box cannot read its snapshots' records, so it cannot tell whether box ${box.name} holds a snapshot you kept, and deleted nothing: ${why}`);
+    if (!backend.snapshot) return;
     if (!backend.heldSnapshots) throw cannot(`${backend.label} cannot list its snapshots.`);
     let listing: readonly HeldSnapshot[];
     try {
@@ -1187,9 +1311,25 @@ export class Snapshots {
   async holdKeptOn(backendId: string, guestRef: string, by: Actor): Promise<string | null> {
     const ledger = this.#deps.ledger;
     if (ledger.problem) return `bb-box cannot read its snapshots' records (${ledger.problem.replace(/\.$/, "")}), so it keeps every guest that may hold one`;
-    const waiting = ledger.records({ backend: backendId }).filter((record) => record.livesOn.ref === guestRef && record.guest !== "held-copy" && record.keptUntil !== null && heldByProvider(record));
+    const backend = this.#deps.backends.get(backendId);
+    if (backend && !backend.snapshot) return null;
+    if (!backend?.heldSnapshots) return "bb-box cannot read its snapshots' labels on its backend, so it keeps the guest";
+    let listing: readonly HeldSnapshot[];
+    try {
+      listing = await backend.heldSnapshots(this.#stopping.signal);
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      return `bb-box could not read its snapshots' labels (${sentence(message(error)).replace(/\.$/, "")}), so it keeps the guest until it can`;
+    }
+    const now = this.#now();
+    for (const held of listing.filter((each) => each.guest.ref === guestRef && each.where !== "held-copy" && each.keptUntil !== null && each.keptUntil > now)) {
+      const record = ledger.record(held.id);
+      if (!record || record.keptUntil === null) return `its label says snapshot ${held.id} is kept until ${utcDay(held.keptUntil!)}, and bb-box's records do not say so yet, so it keeps the guest until they do`;
+    }
+    const waiting = ledger.records({ backend: backendId }).filter((record) => record.livesOn.ref === guestRef && record.guest !== "held-copy" && record.keptUntil !== null && record.keptUntil > now && heldByProvider(record));
     for (const record of waiting) {
       if (record.state !== "ready") return `it holds ${quoted(record)}, which you kept, and which is ${stateWords(record)}`;
+      if (record.forkSafe === null) return `it holds ${quoted(record)}, which you kept, and bb-box cannot tell whether a fork could use it, as its record was found again without its identity reset's version`;
       try {
         const cutShort = ledger.unsettled().find((operation) => operation.kind === "hold-copy" && operation.snapshots[0] === record.id) ?? null;
         await this.#deps.boxes.inTurn(record.box.id, () => this.#holdCopy(record, null, by, cutShort));
@@ -1230,9 +1370,24 @@ export class Snapshots {
     const copier = backend?.copySnapshot && backend.disarmCopy && backend.templateCopy && backend.copyState && backend.deleteCopy ? backend : null;
     if (!copier) throw new BoxError("unsupported", `${record.backend.label} cannot make held copies, so bb-box cannot keep ${quoted(record)} past the release of box ${record.box.name}.`);
     const source = existing?.guests?.old ?? this.#guestOf(record, box);
-    let operation: SnapshotOperation =
-      existing ??
-      ((): SnapshotOperation => {
+    const refused = (words: string, code: BoxError["code"]) => new BoxError(code, `bb-box could not copy ${quoted(record)}, which you kept: ${words}`);
+    let operation: SnapshotOperation;
+    if (existing) operation = existing;
+    else {
+      if (!copier.planSnapshots) throw refused(`${copier.label} cannot say where it would be copied, so bb-box deleted nothing.`, "unsupported");
+      let plan: SnapshotPlan;
+      try {
+        plan = await copier.planSnapshots(source, record.box.kind, this.#refOf(record, box), signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw refused(`bb-box could not read where it would be copied, so it deleted nothing: ${sentence(message(error))}`, "unreachable");
+      }
+      if (plan.locked) throw refused(`${copier.label} left guest ${source.ref} locked (${plan.locked.lock}). ${plan.locked.fix}`, "locked");
+      if (plan.busy) throw refused(plan.busy, "try_again");
+      const bytes = plan.keep.usedBytes ?? plan.keep.bytes ?? 0;
+      const admitted = ledger.transaction((): SnapshotOperation | string => {
+        const room = this.#copyRoom(source.host, plan.storage, bytes, ledger.reservedBytes(plan.storage.key));
+        if (room) return `${room}.`;
         const made: SnapshotOperation = {
           id: newOperationId(this.#random),
           request: null,
@@ -1248,7 +1403,7 @@ export class Snapshots {
           step: "planned",
           task: null,
           state: "running",
-          reserved: null,
+          reserved: { storage: plan.storage.key, bytes, price: null },
           error: null,
           startedAt: this.#now(),
           endedAt: null,
@@ -1256,12 +1411,15 @@ export class Snapshots {
         };
         ledger.insertOperation(made);
         return made;
-      })();
+      });
+      if (typeof admitted === "string") throw refused(admitted, "try_again");
+      operation = admitted;
+    }
     this.#running.add(operation.id);
     const step = (change: Partial<SnapshotOperation>) => {
       operation = ledger.updateOperation(operation.id, change) ?? { ...operation, ...change };
     };
-    const after = existing ? " after bb-box restarted" : "";
+    const after = existing ? " after it was cut short" : "";
     const fail = (words: string, code: BoxError["code"] = "failed"): never => {
       step({ state: "failed", endedAt: this.#now(), error: words });
       throw new BoxError(code, `bb-box could not copy ${quoted(record)}, which you kept: ${words}`);
@@ -1271,16 +1429,6 @@ export class Snapshots {
         const made = await this.#resumeCopy(record, operation, copier, source, after);
         if (made) return made;
         step({ step: "planned", task: null, guests: { old: source, new: null }, state: "running", error: null });
-      }
-      if (copier.planSnapshots) {
-        const plan = await copier.planSnapshots(source, record.box.kind, this.#refOf(record, box), signal).catch((error: unknown) => {
-          if (signal.aborted) throw error;
-          return null;
-        });
-        if (plan?.locked) fail(`${copier.label} left guest ${source.ref} locked (${plan.locked.lock}). ${plan.locked.fix}`, "locked");
-        if (plan?.busy) fail(plan.busy, "try_again");
-        const room = plan ? this.#copyRoom(source.host, plan.storage, plan.keep.usedBytes ?? plan.keep.bytes ?? 0) : null;
-        if (room) fail(`${room}.`, "try_again");
       }
       await this.#deps.hold?.(operation, "planned", signal);
       const began = this.#now();
@@ -1310,6 +1458,11 @@ export class Snapshots {
         if (signal.aborted) throw error;
         const words = sentence(message(error));
         const partial = copy ?? operation.guests?.new ?? null;
+        if (partial && partial.ref !== source.ref && (await this.#copyTaskMayRun(operation, copier, source))) {
+          const still = `${words} ${copier.label} may still be making its copy, guest ${partial.ref}, so bb-box deletes that copy only once the task ends, at a later sweep.`;
+          step({ state: "unknown", error: still });
+          throw new BoxError("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${still}`);
+        }
         if (partial && partial.ref !== source.ref && !(await this.#dropCopy(copier, partial, record))) {
           step({ state: "unknown", error: `${words} Its part-made copy, guest ${partial.ref}, is not deleted yet; bb-box tries again at its next sweep.` });
           throw new BoxError("failed", `bb-box could not copy ${quoted(record)}, which you kept: ${words} Its part-made copy, guest ${partial.ref}, is not deleted yet; bb-box tries again at its next sweep.`);
@@ -1320,6 +1473,13 @@ export class Snapshots {
     } finally {
       this.#running.delete(operation.id);
     }
+  }
+
+  async #copyTaskMayRun(operation: SnapshotOperation, backend: Backend, source: Guest): Promise<boolean> {
+    const current = this.#deps.ledger.operation(operation.id) ?? operation;
+    if (current.step !== "copy-submitting" && current.step !== "copy-task") return false;
+    const task = await this.#taskOf(current, backend, source, this.#stopping.signal, "copy");
+    return task?.state === "running" || task?.state === "unreadable";
   }
 
   async #dropCopy(backend: Backend, copy: Guest, record: SnapshotRecord): Promise<boolean> {
@@ -1498,7 +1658,7 @@ export class Snapshots {
       const began = this.#now();
       let taken;
       try {
-        taken = await backend.snapshot!(box.guest!, { id: record.id, box: box.id, memory: record.holds === "disk-and-memory" }, this.#hooks(operation), this.#stopping.signal);
+        taken = await backend.snapshot!(box.guest!, { id: record.id, box: box.id, memory: record.holds === "disk-and-memory", forkSafe: record.forkSafe }, this.#hooks(operation), this.#stopping.signal);
       } catch (error) {
         if (this.#stopping.signal.aborted) throw error;
         throw this.#takeFailed(record, operation, error);
@@ -2449,7 +2609,7 @@ export class Snapshots {
         const takenAt = this.#now();
         let taken;
         try {
-          taken = await backend.snapshot!(guest, { id: undo.id, box: box.id, memory: false }, this.#stepHooks(operation, "undo"), signal);
+          taken = await backend.snapshot!(guest, { id: undo.id, box: box.id, memory: false, forkSafe: undo.forkSafe }, this.#stepHooks(operation, "undo"), signal);
         } catch (error) {
           if (signal.aborted) throw error;
           const words = sentence(message(error));
@@ -2994,10 +3154,10 @@ export class Snapshots {
         unknown(`bb-box could not list ${backend.label}'s snapshots: ${sentence(message(error))}`);
         continue;
       }
-      const byId = new Map(listing.map((held) => [held.id, held]));
+      const byId = preferredById(listing);
       for (const operation of operations) {
         try {
-          if (await this.#deps.boxes.inTurn(operation.box, () => this.#recoverOne(operation.id, backend, byId, signal))) settled++;
+          if (await this.#deps.boxes.inTurn(operation.box, () => this.#recoverOne(operation.id, backend, byId, listing, signal))) settled++;
         } catch (error) {
           if (signal?.aborted) throw error;
           this.#deps.logError(`settle snapshot operation ${operation.id}`, error);
@@ -3032,12 +3192,13 @@ export class Snapshots {
     }
   }
 
-  async #recoverOne(operationId: string, backend: Backend, byId: ReadonlyMap<string, HeldSnapshot>, signal?: AbortSignal): Promise<boolean> {
+  async #recoverOne(operationId: string, backend: Backend, byId: ReadonlyMap<string, HeldSnapshot>, listing: readonly HeldSnapshot[], signal?: AbortSignal): Promise<boolean> {
     const ledger = this.#deps.ledger;
     const operation = ledger.operation(operationId);
     if (!operation || (operation.state !== "running" && operation.state !== "unknown") || this.#running.has(operation.id)) return false;
     if (operation.kind === "restore") return this.#recoverRestore(operation, backend, byId, signal);
     if (operation.kind === "hold-copy") return this.#recoverHoldCopy(operation);
+    if (operation.kind === "keep") return this.#recoverKeep(operation, listing);
     const record = ledger.record(operation.snapshots[0] ?? "");
     const now = this.#now();
     if (!record) {
@@ -3146,7 +3307,8 @@ export class Snapshots {
         continue;
       }
       const boxes = new Map((await this.#deps.boxes.all()).map((box) => [box.id, box]));
-      this.#reconcileWith(backend, listing, listedAt, boxes);
+      const untrusted = this.#reconcileWith(backend, listing, listedAt, boxes);
+      for (const copy of untrusted) await this.#dropUntrusted(backend, copy, signal);
     }
     const now = this.#now();
     for (const record of ledger.records()) {
@@ -3166,23 +3328,37 @@ export class Snapshots {
     }
   }
 
-  #reconcileWith(backend: Backend, listing: readonly HeldSnapshot[], listedAt: number, boxes: ReadonlyMap<string, BoxRecord>): void {
+  async #dropUntrusted(backend: Backend, copy: HeldSnapshot, signal?: AbortSignal): Promise<void> {
+    if (!backend.deleteCopy) return;
+    try {
+      await backend.deleteCopy(copy.guest, signal);
+      this.#deps.log?.(`Deleted guest ${copy.guest.ref}, a held copy of snapshot ${copy.id} that is not a template, found beside the snapshot it copies: such a copy is never trusted, and a release makes it again.`);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#deps.log?.(`Could not delete guest ${copy.guest.ref}, a held copy of snapshot ${copy.id} that is not a template: ${message(error)} The next sweep tries again.`);
+    }
+  }
+
+  #reconcileWith(backend: Backend, listing: readonly HeldSnapshot[], listedAt: number, boxes: ReadonlyMap<string, BoxRecord>): HeldSnapshot[] {
     const ledger = this.#deps.ledger;
     const pins = ledger.pins();
     const now = this.#now();
-    const found = new Map(listing.map((held) => [held.id, held]));
+    const preferred = preferredById(listing);
     const touched = new Set<string>();
     for (const record of ledger.records({ backend: backend.id })) {
       if (pins.has(record.id) || record.stateAt >= listedAt || ledger.changedSince(record.id, listedAt)) continue;
-      const held = found.get(record.id);
+      const held = listing.find((each) => each.id === record.id && each.guest.ref === record.livesOn.ref) ?? preferred.get(record.id);
       if (held) {
         const state = held.state === "complete" ? "ready" : held.state === "incomplete" ? "incomplete" : record.state;
         const back = record.boxGone && boxes.has(record.box.id) ? { boxGone: null, foundAt: null } : {};
+        const later = held.keptUntil !== null && held.keptUntil > now && (record.keptUntil === null || held.keptUntil > record.keptUntil);
+        if (later) this.#deps.log?.(`Took the keep date of snapshot ${record.id} of box ${record.box.name}, ${utcDay(held.keptUntil!)}, from its label on ${where(record)}: it is later than bb-box's record${record.keptUntil === null ? ", which had none" : ` of ${utcDay(record.keptUntil)}`}.`);
         const change = {
           ...(state !== record.state ? { state, stateAt: now, error: held.state === "incomplete" ? (held.words ?? null) : null } : {}),
           ...(record.missingSince !== null ? { missingSince: null } : {}),
           ...(record.ref === null ? { ref: held.ref } : {}),
           ...(record.storage === null && held.storage ? { storage: held.storage } : {}),
+          ...(later ? { keptUntil: held.keptUntil, keptAt: record.keptAt ?? now, owner: "person" as const } : {}),
           ...back,
         };
         if (Object.keys(change).length) {
@@ -3208,7 +3384,7 @@ export class Snapshots {
         touched.add(record.box.thread);
       }
     }
-    for (const held of listing) {
+    for (const held of preferred.values()) {
       if (held.state === "in-progress" || ledger.record(held.id) || ledger.changedSince(held.id, listedAt)) continue;
       const restored = this.#recordAgain(backend, held, boxes.get(held.box) ?? null, now);
       ledger.insertRecord(restored);
@@ -3220,6 +3396,8 @@ export class Snapshots {
       );
     }
     for (const thread of touched) this.#notify(thread);
+    const copying = new Set(ledger.unsettled().flatMap((operation) => [operation.guests?.old?.ref, operation.guests?.new?.ref].filter((ref): ref is string => !!ref)));
+    return listing.filter((held) => held.where === "held-copy" && held.state !== "complete" && preferred.get(held.id) !== held && !copying.has(held.guest.ref) && ledger.record(held.id)?.livesOn.ref !== held.guest.ref);
   }
 
   #recordAgain(backend: Backend, held: HeldSnapshot, box: BoxRecord | null, now: number): SnapshotRecord {
@@ -3254,7 +3432,7 @@ export class Snapshots {
       keptUntil: kept ? held.keptUntil : null,
       keptAt: null,
       undoOf: null,
-      forkSafe: held.where === "held-copy" ? (held.forkSafe ?? null) : null,
+      forkSafe: held.forkSafe ?? null,
       dependsOn: [],
       picture: null,
       ref: held.ref,

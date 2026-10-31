@@ -43,6 +43,7 @@ export interface InUse<M extends string> {
   readonly method: M;
   readonly box: BoxView;
   readonly threads: readonly ThreadOnBox[];
+  readonly deleteKept?: boolean;
 }
 
 /** "Release calm-otter anyway?": who is working on the box, and the verb's "anyway" to go on. */
@@ -135,7 +136,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
       try {
         const answer = await call(method, box, force, deleteKept);
         refused = answer.error;
-        if ((method === "remove" || method === "stop") && answer.threads?.length) setInUse({ method, box, threads: answer.threads });
+        if ((method === "remove" || method === "stop") && answer.threads?.length) setInUse({ method, box, threads: answer.threads, deleteKept });
       } catch (caught) {
         refused = message(caught);
       }
@@ -148,7 +149,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   const dialogs = (
     <>
       <RemoveMachineDialog box={removing} onClose={() => setRemoving(null)} onRemove={(box, deleteKept) => void act("remove", box, false, deleteKept === true)} />
-      <InUseDialog inUse={inUse} words={{ remove: "Remove", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, true)} />
+      <InUseDialog inUse={inUse} words={{ remove: "Remove", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, true, found.deleteKept === true)} />
     </>
   );
   return { act, busy, problem, setProblem, askRemove: setRemoving, dialogs };
@@ -176,7 +177,7 @@ export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxA
     try {
       const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}), ...(method === "release" && deleteKept ? { deleteKept: true } : {}) });
       refused = answer.error;
-      if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId });
+      if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId, deleteKept });
     } catch (caught) {
       refused = message(caught);
     } finally {
@@ -185,6 +186,6 @@ export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxA
     await refresh();
     setProblem(refused);
   };
-  const dialogs = <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(inUse?.threadId ?? "", found.method, found.box, true)} />;
+  const dialogs = <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(inUse?.threadId ?? "", found.method, found.box, true, found.deleteKept === true)} />;
   return { act, busy, problem, setProblem, dialogs };
 }

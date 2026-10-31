@@ -168,6 +168,24 @@ test("a stopped VM's take is refused in words about the box, and its storage key
   assert.equal(plan.locked, null);
 });
 
+test("a VM's held copy cut short before its own labels still carries its source's tags, and the sweep sees it as a guest that names no box, never one to restore", async () => {
+  const state = world();
+  const { guest, vmid, box } = await linuxBox(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: false }, tasks().hooks);
+  state.proxmox.intercept = (call) =>
+    call.method === "PUT" && /\/qemu\/\d+\/config$/.test(call.path) && !call.path.endsWith(`/qemu/${vmid}/config`)
+      ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cut short" }) }
+      : undefined;
+  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { box, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async () => {} }).catch((caught: unknown) => caught);
+  state.proxmox.intercept = undefined;
+  assert.ok(cut instanceof Error);
+  const part = [...state.proxmox.guests.values()].find((each) => each.vmid !== vmid && each.name.startsWith("bb-box-copy-"))!;
+  assert.match(part.config.tags ?? "", new RegExp(`(^|;)box\\.${box}(;|$)`), "it still carries its source's tags");
+  const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
+  assert.ok(listed, "the sweep sees it");
+  assert.equal(listed.owner, null, "as a guest that names no box");
+});
+
 test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed first, with new MAC addresses, a new SMBIOS UUID and the address of its own VMID, then armed in two late steps; a Windows VM forks none", async () => {
   const state = world();
   const { guest, vmid, box } = await linuxBox(state);

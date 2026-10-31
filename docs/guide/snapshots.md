@@ -238,13 +238,13 @@ Each step is recorded before it runs, with Proxmox's task once it begins. When B
 
 ## Keeping a snapshot
 
-Keep makes a snapshot yours and keeps it past its box's release, for 30 days from the day you keep it unless Settings say otherwise, or until a date you choose. No agent can delete a kept snapshot, and BB Box deletes it after its date, whether its box lives or not; from 3 days before, its row says "goes in 3 days" in amber, and the Snapshots tab counts it. Keep it again to renew it: by default that never shortens its keep. Days are counted in UTC.
+Keep makes a snapshot yours and keeps it past its box's release, for 30 days from the day you keep it unless Settings say otherwise, or until a date you choose. No agent can delete a kept snapshot, and BB Box deletes it after its date, whether its box lives or not; from 3 days before, its row says "goes in 3 days" in amber, and the Snapshots tab counts it. Keep it again to renew it: **Keep 30 more days…** adds the days to its keep date, at most 365 days from today. A date you choose can shorten a keep, and the dialog says so first. Days are counted in UTC.
 
 After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
 
 The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then.
 
-The keep date is written on the provider first, in the snapshot's own label on Proxmox (`kept 2026-11-30` in its description), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
+The keep date is written on the provider first, in the snapshot's own label on Proxmox (`reset 7 kept 2026-11-30` in its description, with the version of the box's identity reset), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date and its version. Each change is recorded before the label is written; if BB Box stops between the two, its next sweep reads the label and settles the change before any expiry or release. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
 
 On the command line:
 
@@ -265,9 +265,11 @@ On Proxmox, a kept snapshot outlives its box as a **held copy**: when the box is
 
 The kept snapshot then lives on the copy: its row says "held copy on pve-1", and holds the disk only, also for a snapshot that held memory. It is listed under its box, marked released, on the Snapshots tab and in `bb box snapshot list --all`.
 
-A copy that is not a template yet is never trusted. If BB Box restarts in the middle of one, it deletes that copy when it starts again and makes it again from the snapshot, which the release has kept until then. A copy found running before it was a template, which should never happen, is logged `held-copy-started`.
+BB Box waits for the clone up to 3 times its estimate, and at least 3 minutes, so a large disk is not cut short.
 
-If a copy cannot be made, as for want of room (the same rule as a take's: the storage past your setting with the copy, about the box's disk use) or of a free VMID, the release stops and deletes nothing: "Release did not finish: bb-box could not copy "Thu 09:15", which you kept: pve-1's storage local-lvm has 6 GB free, and the held copy needs about 13 GB." The sweep tries again every few minutes. The box's menu then offers **Release again** and **Release and delete what you kept** (Remove, for your machines); on the command line, `bb box release --delete-kept` and `bb box machines remove --delete-kept`.
+A copy that is not a template yet is never trusted. If BB Box restarts in the middle of one, it deletes that copy when it starts again and makes it again from the snapshot, which the release has kept until then. If the wait runs out while Proxmox is still making the copy, BB Box leaves the copy alone until Proxmox's task ends, then deletes it and makes it again at a sweep. A part-made copy is never taken for a box. If `snapshots.db` was lost while a copy was being made, BB Box trusts the snapshot on the box, not the copy: it deletes the copy, and the release makes it again. A copy found running before it was a template, which should never happen, is logged `held-copy-started`.
+
+If a copy cannot be made, the release stops and deletes nothing, and the box stays a BB machine. This happens when there is not enough room, when no VMID is free, or when BB Box cannot read the storage. The room rule is the same as for a take: the storage would be past your setting with the copy, counting what snapshots and copies being made there hold already. A copy is sized at about the box's disk use, and it holds that room until it is made. For example: "Release did not finish: bb-box could not copy "Thu 09:15", which you kept: pve-1's storage local-lvm has 6 GB free, and the held copy needs about 13 GB." A release also stops for a kept snapshot whose identity reset version BB Box does not know, as its copy could never fork. The sweep tries again every few minutes. The box's menu then offers **Release again** and **Release and delete what you kept** (Remove, for your machines); on the command line, `bb box release --delete-kept` and `bb box machines remove --delete-kept`.
 
 A kept snapshot of a released box forks from its held copy, as one of your machines, from the Snapshots tab or with `bb box snapshot fork <box> <snapshot>`. The fork resets at its first boot and is checked as any fork is.
 
@@ -275,13 +277,13 @@ A kept snapshot of a released box forks from its held copy, as one of your machi
 
 A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one. Kept ones outlive it as held copies, above.
 
-A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for.
+A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for, in BB Box's records or in the snapshots' labels. If it cannot read the labels, it keeps the guest until it can.
 
 ## If BB Box restarts
 
 Each take, delete and restore is recorded before it starts, with the backend's task once it begins. A restore's own steps are above. If BB Box restarts in the middle of one, it reads the backend's task and the box's snapshots when it starts again, and finishes or settles it: a take is ready only if the backend shows it complete, and a take that never began is failed, never taken again.
 
-BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host until you delete it, or as kept until its date when it carries one. A held copy found again keeps its identity reset's version and its box's kind from its tags, so it still forks; a snapshot of a living box found again does not know its version, so it is not kept anew or forked.
+BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host until you delete it, or as kept until its date when it carries one. A snapshot found again keeps its identity reset's version from its label, and a held copy keeps it and its box's kind from its tags, so either still forks. One labelled before labels carried the version does not know it: it is not kept anew or forked, and a release stops rather than copy it, until you delete it or choose Release and delete what you kept.
 
 ## The Snapshots tab
 
@@ -291,7 +293,7 @@ Each box with snapshots has a card: its name, a link to its page while it lives;
 
 Search finds a snapshot by its name, its note, its box's name or its thread's title. Filters, with counts, choose by where it lives, what it holds, who took it, kept, undos and keeps that end within 7 days. Sort by newest, oldest, largest, price or box name.
 
-**Select** puts a checkbox on each row; with some ticked, the bar offers **Keep…** and **Delete…**. Each opens a dialog that checks every snapshot as a single Keep or Delete would, at the moment you open it and again at the moment of the change, and lists those it skips with why, such as a snapshot a restore uses, and what each of the others costs or frees on its own backend.
+**Select** puts a checkbox on each row; with some ticked, the bar offers **Keep…** and **Delete…**. Each opens a dialog that checks every snapshot as a single Keep or Delete would, at the moment you open it and again at the moment of the change, and lists those it skips with why, such as a snapshot a restore uses, and what each of the others costs or frees on its own backend. Keep… keeps each for the days in Settings from today, or that many days more for one kept already, so it never shortens a keep; if you choose a date, the dialog names each keep it would shorten.
 
 ## Settings
 

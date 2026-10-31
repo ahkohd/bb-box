@@ -68,7 +68,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const act = async (method: BoxAction, box: BoxView, options: { readonly force?: boolean; readonly deleteKept?: boolean } = {}) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && options.force ? { force: true } : {}), ...(method === "release" && options.deleteKept ? { deleteKept: true } : {}) };
-    setProblem(await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads }) : undefined));
+    setProblem(await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined));
   };
 
   if (error) {
@@ -147,7 +147,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
-      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, { force: true })} />
+      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
     </div>
   );
 }

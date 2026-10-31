@@ -35,6 +35,7 @@ export interface Held {
   holds: HeldSnapshot["holds"];
   takenAt: number;
   keptUntil: number | null;
+  forkSafe?: number | null;
 }
 
 export type Outcome = "ok" | "failed" | "incomplete" | "unknown" | "ok-task-failed";
@@ -152,7 +153,7 @@ export class FakeSnapshots {
       locked: this.locked,
       busy: this.busy,
     });
-    target.snapshot = async (guest: Guest, take: { id: string; box: string; memory: boolean }, hooks: SnapshotHooks) => {
+    target.snapshot = async (guest: Guest, take: { id: string; box: string; memory: boolean; forkSafe?: number | null }, hooks: SnapshotHooks) => {
       this.running++;
       this.most = Math.max(this.most, this.running);
       try {
@@ -162,7 +163,7 @@ export class FakeSnapshots {
         if (submit === "never-arrived") throw new Error("cannot reach the provider: connection reset before the request arrived");
         const outcome = this.take;
         this.take = "ok";
-        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null };
+        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null, forkSafe: take.forkSafe ?? null };
         if (outcome !== "failed") this.held.set(take.id, held);
         this.order.push(`take ${take.id}`);
         const home = homeOf(guest.ref);
@@ -379,6 +380,7 @@ export class FakeSnapshots {
         takenAt: held.takenAt,
         keptUntil: held.keptUntil,
         storage: { name: "fast", type: "lvmthin" },
+        forkSafe: held.forkSafe ?? null,
       }));
       const copied = [...this.copies.entries()].map(([ref, held]) => ({
         id: held.snapshot,

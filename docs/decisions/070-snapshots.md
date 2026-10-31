@@ -1505,8 +1505,9 @@ Built so:
 - **A keep date is the end of a UTC day**, the same day the label
   carries. Keep keeps from today for the days in Settings, or until the
   date given, at most 365 days from today. Keeping a kept snapshot again
-  renews it and, by default, never shortens it; a date the person gives
-  may, and the dialog and `--check` say so.
+  renews it: by default it adds the days to its keep date, so it never
+  shortens it; a date the person gives may, and the dialog and `--check`
+  say so.
 - **The keep date is written on the provider first.** If Proxmox refuses
   the snapshot's label, or the held copy's tags, nothing is kept. Stop
   keeping takes it off the label first too. A released box's kept
@@ -1536,6 +1537,35 @@ Built so:
   person's machines, by a full clone of the template.
 - **A fork's guest is disarmed before every attempt to delete it**, the
   sweep's retries of its release included (unit 7's follow-up).
+
+After the two reviews of unit 8, the lead asked for these, each with a
+regression test:
+
+- **Keep and its renewals are recorded operations** (`keep`), journalled
+  before the label changes. Recovery settles each from the label before any
+  expiry or release, and the reconcile takes a label's later keep date.
+- **A copy is never trusted over its source.** After records loss, a held
+  copy that is not a template, beside the snapshot it was made from, is
+  deleted and the source kept. A release stops while a kept snapshot's
+  copy is unfinished.
+- **A held copy goes through the storage admission takes use**: it counts
+  what snapshots and copies being made there reserve, reserves its own
+  bytes on its operation until it is made, and refuses when the plan or
+  the storage's totals cannot be read.
+- **The snapshot's label carries the identity reset's version** (`reset
+  <n>`), so a living box's snapshot found again still forks. A release
+  stops for a kept snapshot whose version is unknown, rather than copy
+  what could never fork.
+- **The clone's wait scales with the disk**: 3 times the plan's estimate,
+  at least 3 minutes, for held copies and for forks of them. If the wait
+  runs out while the provider still makes the copy, its operation stays
+  unsettled and the part-made copy is deleted only once the task ends. A
+  guest named as a part-made copy is never taken for a box (found live).
+- **The release copies before the machine leaves BB**, and a leftover guest
+  of an ended thread is judged by the snapshots' labels as well as the
+  records.
+- **Bulk Keep never shortens by default**, and names each keep a chosen
+  date would shorten.
 
 ## Alternatives considered
 

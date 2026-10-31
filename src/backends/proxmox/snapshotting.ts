@@ -36,6 +36,13 @@ const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
+const CLONE_WAIT_LEAST_MS = 180_000;
+const CLONE_WAIT_TIMES_ESTIMATE = 3;
+
+export function cloneWaitMs(diskGiB: number | null): number {
+  return Math.max(CLONE_WAIT_LEAST_MS, CLONE_WAIT_TIMES_ESTIMATE * Math.round((diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB));
+}
+
 export function snapshotName(id: string): string {
   return `bb${id}`;
 }
@@ -44,17 +51,19 @@ export interface SnapshotLabel {
   readonly install: string;
   readonly box: string;
   readonly snapshot: string;
+  readonly reset?: number | null;
   readonly kept: string | null;
 }
 
 export function snapshotLabel(label: SnapshotLabel): string {
-  return `bb-box install ${label.install} box ${label.box} snapshot ${label.snapshot}${label.kept ? ` kept ${label.kept}` : ""}`;
+  const reset = typeof label.reset === "number" ? ` reset ${label.reset}` : "";
+  return `bb-box install ${label.install} box ${label.box} snapshot ${label.snapshot}${reset}${label.kept ? ` kept ${label.kept}` : ""}`;
 }
 
 export function parseSnapshotLabel(text: string): SnapshotLabel | null {
-  const match = /^bb-box install (\S+) box (\S+) snapshot (sn[a-z2-7]{12})(?: kept (\d{4}-\d{2}-\d{2}))?\s*$/.exec(text.trim());
+  const match = /^bb-box install (\S+) box (\S+) snapshot (sn[a-z2-7]{12})(?: reset (\d{1,4}))?(?: kept (\d{4}-\d{2}-\d{2}))?\s*$/.exec(text.trim());
   if (!match) return null;
-  return { install: match[1]!, box: match[2]!, snapshot: match[3]!, kept: match[4] ?? null };
+  return { install: match[1]!, box: match[2]!, snapshot: match[3]!, reset: match[4] ? Number(match[4]) : null, kept: match[5] ?? null };
 }
 
 export function keptUntilOf(date: string | null): number | null {
@@ -471,7 +480,7 @@ export class ProxmoxSnapshotting {
       if (!(await this.#guests.still(api, guest, signal))) throw new SnapshotFailed(`Guest ${vmid} is no longer the box's.`);
       if (await this.#listed(api, vmid, name, signal)) throw new SnapshotFailed(`Guest ${vmid} has a snapshot named ${name} already.`);
       await hooks.submitting();
-      upid = await api.startSnapshot(vmid, { name, description: snapshotLabel({ install: this.#guests.installId, box: take.box, snapshot: take.id, kept: null }), memory: take.memory }, signal);
+      upid = await api.startSnapshot(vmid, { name, description: snapshotLabel({ install: this.#guests.installId, box: take.box, snapshot: take.id, reset: take.forkSafe ?? null, kept: null }), memory: take.memory }, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;
@@ -618,6 +627,7 @@ export class ProxmoxSnapshotting {
           takenAt: snapshot.snaptime !== null ? snapshot.snaptime * 1000 : null,
           keptUntil: keptUntilOf(label.kept),
           storage: null,
+          forkSafe: label.reset ?? null,
         });
       }
     }
