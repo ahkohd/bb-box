@@ -1,6 +1,7 @@
 import type { DoctorCheck } from "../backends/types.ts";
 import type { QuietWhy, Tally } from "../monitor/box-history.ts";
 import { lightReadingSchema, type Kept, type Point } from "../monitor/light.ts";
+import type { GpuHour, GpuMinute } from "../monitor/history-view.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 
 export const MINUTES_KEPT_MS = 24 * 60 * 60_000;
@@ -62,6 +63,32 @@ export const BOX_HISTORY_MIGRATIONS: readonly string[] = [
     workers INTEGER NOT NULL DEFAULT 0
   )`,
   `ALTER TABLE ${SCHEMA}.counters ADD COLUMN tick INTEGER`,
+  `ALTER TABLE ${SCHEMA}.minutes ADD COLUMN gpu INTEGER`,
+  `CREATE TABLE ${SCHEMA}.gpu_minutes (
+    n INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    card INTEGER NOT NULL,
+    usage INTEGER,
+    memory INTEGER,
+    shared INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (n, at, card)
+  ) WITHOUT ROWID`,
+  `CREATE INDEX ${SCHEMA}.gpu_minutes_by_time ON gpu_minutes(at)`,
+  `CREATE TABLE ${SCHEMA}.gpu_hours (
+    n INTEGER NOT NULL,
+    hour INTEGER NOT NULL,
+    card INTEGER NOT NULL,
+    covered INTEGER NOT NULL DEFAULT 0,
+    usage_sum INTEGER NOT NULL DEFAULT 0,
+    usage_covered INTEGER NOT NULL DEFAULT 0,
+    usage_busiest INTEGER,
+    memory_sum INTEGER NOT NULL DEFAULT 0,
+    memory_covered INTEGER NOT NULL DEFAULT 0,
+    memory_highest INTEGER,
+    shared INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (n, hour, card)
+  ) WITHOUT ROWID`,
+  `CREATE INDEX ${SCHEMA}.gpu_hours_by_time ON gpu_hours(hour)`,
 ];
 
 export interface Quiet {
@@ -71,6 +98,8 @@ export interface Quiet {
 }
 
 export interface MinuteRow {
+  readonly gpu: number | null;
+  readonly gpus: readonly GpuMinute[];
   readonly at: number;
   readonly covered: number;
   readonly cpu: number | null;
@@ -86,6 +115,7 @@ export interface MinuteRow {
 }
 
 export interface HourRow {
+  readonly gpus: readonly GpuHour[];
   readonly hour: number;
   readonly covered: number;
   readonly cpuCovered: number;
@@ -207,14 +237,20 @@ export class BoxHistoryStore {
 
   #underRowCap(): boolean {
     if (this.#file.attached) return true;
-    this.#minuteRows ??= (this.#file.db().prepare(`SELECT COUNT(*) AS count FROM ${this.#table("minutes")}`).get() as { count: number }).count;
+    this.#minuteRows ??= this.#countRows();
     if (this.#minuteRows < this.#sharedMinuteRows) return true;
-    this.#fill(`box history keeps at most ${this.#sharedMinuteRows} minute points in bb-box's database`);
+    this.#fill(`box history keeps at most ${this.#sharedMinuteRows} minute points, each GPU's counted as one, in bb-box's database`);
     return false;
   }
 
+  #countRows(): number {
+    const db = this.#file.db();
+    const count = (table: string) => (db.prepare(`SELECT COUNT(*) AS count FROM ${this.#table(table)}`).get() as { count: number }).count;
+    return count("minutes") + count("gpu_minutes");
+  }
+
   #keepCounters(key: string, kept: Kept): void {
-    const reading = JSON.stringify({ ...kept.reading, own: null });
+    const reading = JSON.stringify({ ...kept.reading, own: null, gpus: null });
     this.#file.db().prepare(`INSERT INTO ${this.#table("counters")} (key, at, tick, reading) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET at = excluded.at, tick = excluded.tick, reading = excluded.reading`).run(key, kept.at, kept.tick ?? null, reading);
   }
 
@@ -232,9 +268,10 @@ export class BoxHistoryStore {
       const up = whole(point.up);
       const inserted = db
         .prepare(
-          `INSERT INTO ${this.#table("minutes")} (n, at, covered, cpu, memory, disk, down, up, load, cores, cpu_stall, memory_stall, high) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(n, at) DO NOTHING`,
+          `INSERT INTO ${this.#table("minutes")} (n, at, covered, cpu, memory, disk, down, up, load, cores, cpu_stall, memory_stall, high, gpu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(n, at) DO NOTHING`,
         )
-        .run(n, at, covered, cpu, memory, disk, down, up, hundredths(point.load), point.cores, tenths(point.cpuStall), tenths(point.memoryStall), point.high).changes;
+        .run(n, at, covered, cpu, memory, disk, down, up, hundredths(point.load), point.cores, tenths(point.cpuStall), tenths(point.memoryStall), point.high, tenths(point.gpu ?? null)).changes;
+      if (inserted) this.#recordGpus(n, at, covered, point.gpus ?? []);
       const net = down !== null && up !== null;
       const add = db.prepare(
         `INSERT INTO ${this.#table("hours")} (n, hour, covered, cpu_sum, cpu_covered, cpu_busiest, memory_sum, memory_covered, memory_highest, disk_sum, disk_covered, down_sum, up_sum, net_covered, high)
@@ -275,8 +312,80 @@ export class BoxHistoryStore {
       }
       this.#keepCounters(key, kept);
     });
-    if (written && this.#minuteRows !== null) this.#minuteRows++;
+    if (written && this.#minuteRows !== null) this.#minuteRows += 1 + (point.gpus?.length ?? 0);
     return written;
+  }
+
+  #recordGpus(n: number, at: number, covered: number, gpus: readonly GpuMinute[]): void {
+    if (!gpus.length) return;
+    const db = this.#file.db();
+    const minute = db.prepare(`INSERT INTO ${this.#table("gpu_minutes")} (n, at, card, usage, memory, shared) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(n, at, card) DO NOTHING`);
+    const hour = db.prepare(
+      `INSERT INTO ${this.#table("gpu_hours")} (n, hour, card, covered, usage_sum, usage_covered, usage_busiest, memory_sum, memory_covered, memory_highest, shared)
+       VALUES (@n, @hour, @card, @covered, @usageSum, @usageCovered, @usage, @memorySum, @memoryCovered, @memory, @shared)
+       ON CONFLICT(n, hour, card) DO UPDATE SET
+         covered = covered + excluded.covered,
+         usage_sum = usage_sum + excluded.usage_sum,
+         usage_covered = usage_covered + excluded.usage_covered,
+         usage_busiest = CASE WHEN excluded.usage_busiest IS NULL THEN usage_busiest WHEN usage_busiest IS NULL THEN excluded.usage_busiest ELSE MAX(usage_busiest, excluded.usage_busiest) END,
+         memory_sum = memory_sum + excluded.memory_sum,
+         memory_covered = memory_covered + excluded.memory_covered,
+         memory_highest = CASE WHEN excluded.memory_highest IS NULL THEN memory_highest WHEN memory_highest IS NULL THEN excluded.memory_highest ELSE MAX(memory_highest, excluded.memory_highest) END,
+         shared = shared | excluded.shared`,
+    );
+    for (const gpu of gpus) {
+      const usage = tenths(gpu.usage);
+      const memory = tenths(gpu.memory);
+      const shared = gpu.shared ? 1 : 0;
+      minute.run(n, at, gpu.card, usage, memory, shared);
+      for (const part of hourParts(at - covered, at)) {
+        hour.run({
+          n,
+          hour: part.hour,
+          card: gpu.card,
+          covered: part.seconds,
+          usageSum: usage === null ? 0 : usage * part.seconds,
+          usageCovered: usage === null ? 0 : part.seconds,
+          usage,
+          memorySum: memory === null ? 0 : memory * part.seconds,
+          memoryCovered: memory === null ? 0 : part.seconds,
+          memory,
+          shared,
+        });
+      }
+    }
+  }
+
+  #gpuMinutes(n: number, from: number, to: number): Map<number, GpuMinute[]> {
+    const byAt = new Map<number, GpuMinute[]>();
+    const rows = this.#file.db().prepare(`SELECT at, card, usage, memory, shared FROM ${this.#table("gpu_minutes")} WHERE n = ? AND at > ? AND at <= ? ORDER BY at, card`).all(n, seconds(from), seconds(to)) as { at: number; card: number; usage: number | null; memory: number | null; shared: number }[];
+    for (const row of rows) {
+      const list = byAt.get(row.at) ?? [];
+      list.push({ card: row.card, usage: fromTenths(row.usage), memory: fromTenths(row.memory), shared: row.shared !== 0 });
+      byAt.set(row.at, list);
+    }
+    return byAt;
+  }
+
+  #gpuHours(n: number, from: number, to: number): Map<number, GpuHour[]> {
+    const byHour = new Map<number, GpuHour[]>();
+    const rows = this.#file.db().prepare(`SELECT * FROM ${this.#table("gpu_hours")} WHERE n = ? AND hour >= ? AND hour < ? ORDER BY hour, card`).all(n, from, to) as Record<string, number | null>[];
+    for (const row of rows) {
+      const list = byHour.get(row.hour!) ?? [];
+      list.push({
+        card: row.card!,
+        covered: row.covered ?? 0,
+        usageCovered: row.usage_covered ?? 0,
+        memoryCovered: row.memory_covered ?? 0,
+        usage: row.usage_covered ? row.usage_sum! / row.usage_covered / 10 : null,
+        usageBusiest: fromTenths(row.usage_busiest ?? null),
+        memory: row.memory_covered ? row.memory_sum! / row.memory_covered / 10 : null,
+        memoryHighest: fromTenths(row.memory_highest ?? null),
+        shared: (row.shared ?? 0) !== 0,
+      });
+      byHour.set(row.hour!, list);
+    }
+    return byHour;
   }
 
   keep(key: string, kept: Kept): boolean {
@@ -376,7 +485,10 @@ export class BoxHistoryStore {
     try {
       const n = this.#seriesOf(key, false);
       if (n === null) return [];
+      const gpus = this.#gpuMinutes(n, from, to);
       return (this.#file.db().prepare(`SELECT * FROM ${this.#table("minutes")} WHERE n = ? AND at > ? AND at <= ? ORDER BY at`).all(n, seconds(from), seconds(to)) as Record<string, number | null>[]).map((row) => ({
+        gpu: fromTenths(row.gpu ?? null),
+        gpus: gpus.get(row.at!) ?? [],
         at: row.at! * 1000,
         covered: row.covered!,
         cpu: fromTenths(row.cpu ?? null),
@@ -401,9 +513,12 @@ export class BoxHistoryStore {
     try {
       const n = this.#seriesOf(key, false);
       if (n === null) return [];
-      return (this.#file.db().prepare(`SELECT * FROM ${this.#table("hours")} WHERE n = ? AND hour >= ? AND hour < ? ORDER BY hour`).all(n, Math.floor(seconds(from) / 3600) * 3600, seconds(to)) as Record<string, number | null>[]).map((row) => {
+      const first = Math.floor(seconds(from) / 3600) * 3600;
+      const gpus = this.#gpuHours(n, first, seconds(to));
+      return (this.#file.db().prepare(`SELECT * FROM ${this.#table("hours")} WHERE n = ? AND hour >= ? AND hour < ? ORDER BY hour`).all(n, first, seconds(to)) as Record<string, number | null>[]).map((row) => {
         const mean = (sum: number | null | undefined, covered: number | null | undefined) => (covered ? sum! / covered / 10 : null);
         return {
+          gpus: gpus.get(row.hour!) ?? [],
           hour: row.hour! * 1000,
           covered: row.covered!,
           cpuCovered: row.cpu_covered ?? 0,
@@ -466,6 +581,8 @@ export class BoxHistoryStore {
       db.transaction(() => {
         removed += db.prepare(`DELETE FROM ${this.#table("minutes")} WHERE at <= ?`).run(seconds(now - MINUTES_KEPT_MS)).changes;
         removed += db.prepare(`DELETE FROM ${this.#table("hours")} WHERE hour < ?`).run(Math.floor(seconds(now - HOURS_KEPT_MS) / 3600) * 3600).changes;
+        removed += db.prepare(`DELETE FROM ${this.#table("gpu_minutes")} WHERE at <= ?`).run(seconds(now - MINUTES_KEPT_MS)).changes;
+        removed += db.prepare(`DELETE FROM ${this.#table("gpu_hours")} WHERE hour < ?`).run(Math.floor(seconds(now - HOURS_KEPT_MS) / 3600) * 3600).changes;
         removed += db.prepare(`DELETE FROM ${this.#table("quiet")} WHERE to_at IS NOT NULL AND to_at < ?`).run(now - HOURS_KEPT_MS).changes;
         removed += db.prepare(`DELETE FROM ${this.#table("tallies")} WHERE hour < ?`).run(seconds(now - HOURS_KEPT_MS)).changes;
         const series = db.prepare(`SELECT n, key FROM ${this.#table("series")}`).all() as { n: number; key: string }[];
@@ -473,6 +590,8 @@ export class BoxHistoryStore {
           if (keep(key)) continue;
           removed += db.prepare(`DELETE FROM ${this.#table("minutes")} WHERE n = ?`).run(n).changes;
           removed += db.prepare(`DELETE FROM ${this.#table("hours")} WHERE n = ?`).run(n).changes;
+          removed += db.prepare(`DELETE FROM ${this.#table("gpu_minutes")} WHERE n = ?`).run(n).changes;
+          removed += db.prepare(`DELETE FROM ${this.#table("gpu_hours")} WHERE n = ?`).run(n).changes;
           removed += db.prepare(`DELETE FROM ${this.#table("series")} WHERE n = ?`).run(n).changes;
           this.#series.delete(key);
         }
@@ -511,7 +630,7 @@ export class BoxHistoryStore {
 
   #roomMade(removed: number): boolean {
     if (this.#file.attached) return removed > 0;
-    return (this.#file.db().prepare(`SELECT COUNT(*) AS count FROM ${this.#table("minutes")}`).get() as { count: number }).count < this.#sharedMinuteRows;
+    return this.#countRows() < this.#sharedMinuteRows;
   }
 
   #fill(error: string): void {
@@ -547,7 +666,7 @@ export class BoxHistoryStore {
       cap = null;
     }
     const where = file.attached ? `${file.spec.file}, attached to bb-box's database` : `bb-box's database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
-    const size = file.attached && used !== null && cap !== null ? `${(used / 1024 / 1024).toFixed(1)} MB used of its cap of ${(cap / 1024 / 1024).toFixed(1)} MB` : `at most ${this.#sharedMinuteRows} minute points, in a database capped at ${cap !== null ? `${(cap / 1024 / 1024).toFixed(1)} MB` : "an unknown size"}`;
+    const size = file.attached && used !== null && cap !== null ? `${(used / 1024 / 1024).toFixed(1)} MB used of its cap of ${(cap / 1024 / 1024).toFixed(1)} MB` : `at most ${this.#sharedMinuteRows} minute points, each GPU's counted as one, in a database capped at ${cap !== null ? `${(cap / 1024 / 1024).toFixed(1)} MB` : "an unknown size"}`;
     const full = this.fullWords();
     if (full) return [{ id: "box-history", name: "Box history", status: "warn", detail: `${full} In ${where}, ${size}.`, fix: "Nothing else is affected. If it stays full, see bb box monitor history for what it keeps." }];
     if (this.#failed) return [{ id: "box-history", name: "Box history", status: "warn", detail: `${state} Its last write failed at ${new Date(this.#failed.at).toISOString()}: ${sentence(this.#failed.error)} In ${where}, ${size}.`, fix: "Check that BB's data folder has room and that bb-box's files in it are writable." }];

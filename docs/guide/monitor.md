@@ -22,18 +22,31 @@ The list has every running Linux or macOS box, whether or not it has joined BB a
 
 A row of labels at the top gives the machine's health, its system and architecture, its memory, its cores and how long it has been up. For BB's server, it also says how long BB has been running, as in 'bb up 2h 5m'. For a box, it says 'system up', how long its system has run since it booted, or 'host up' for a container or a shared box, whose clock is its host's. The box's own page counts 'up' from when the box last started, so the two can differ.
 
-Health is **Healthy**, **Warning** or **Critical**. Point at it to see why. It is a warning when CPU, memory or disk use reaches 85%, or when the five-minute load average reaches the number of cores. It is critical at 95%, or at a load of 1.5 times the cores.
+Health is **Healthy**, **Warning** or **Critical**. Point at it to see why. It is a warning when CPU, memory or disk use reaches 85%, or when the five-minute load average reaches the number of cores. It is critical at 95%, or at a load of 1.5 times the cores. GPU use never changes health: a card at full use is a training run doing its job. It can only make a box [busy](boxes.md#what-a-row-says-on-the-boxes-page).
 
 Below the labels are sections. Point at a section for its details.
 
 - **CPU**: how busy the CPU is, with a chart of the last few minutes and the one-minute load average. Its details give the cores, their speed, and the load over 1, 5 and 15 minutes. On a Mac, they also give its temperature and power.
-- **GPU**: on a Mac with Apple silicon, how busy its GPU is, with its temperature and power.
+- **GPU**: on a Mac with Apple silicon, how busy its GPU is, with its temperature and power. On a machine or box with [NVIDIA GPUs](#nvidia-gpus), one section for each card.
 - **Memory**: how much is used, marked **Normal**, **High** from 85% or **Critical** from 95%. Its details give what is used, available and cached, and the swap.
 - **Free space**: the main disk's free space, with what is used and free.
 - **Network**: download and upload speeds, with a chart of the last few minutes, and the totals received and sent.
 - **Battery**: on a machine with a battery, its charge and state.
 - **Tailscale**: on a machine in a tailnet, its name, MagicDNS name, address and tags, each with a button that copies it. The address shows IPv4 or IPv6; select its label to switch.
-- **Top processes**: the 5 using the most CPU, with their memory and share of a core.
+- **Top processes**: the 5 using the most CPU, with their memory and share of a core. On a machine with NVIDIA GPUs, a **GPU** column gives the card memory each uses, and a process using a GPU is always listed.
+
+### NVIDIA GPUs
+
+Wherever `nvidia-smi` answers, the Monitor shows each NVIDIA card: a Proxmox LXC or Docker box with a GPU, a BB machine with an NVIDIA card, or BB's server. It reads them in the reading it already takes, with no polling of its own: `nvidia-smi --query-gpu` for the cards, about 30 ms, then `nvidia-smi -q -d PIDS` for the processes using them. A machine with no NVIDIA device is not asked at all.
+
+- Each card's section gives how busy it is, a chart of the last few minutes, and its memory used of its total, with its temperature, or its power draw. Its details give the card's name, its power limit, and the processes using it, compute and graphics, by name and PID only, never arguments.
+- Its use is the card's at the moment of each reading, as `nvidia-smi` reports it, not a mean since the last reading.
+- Each `nvidia-smi` call has 2 seconds. One that does not answer is stopped, and only the GPU is missing from that reading: the CPU, memory, disk and network are kept. On BB's server or a BB machine, BB Box then does not ask again for 5 minutes, so a driver that hangs costs one stopped call, not one each reading. A card `nvidia-smi` cannot read is left out, and the others still show.
+- Once a machine or box has shown a GPU, or is of a GPU kind, its GPU sections, tiles, lines and process column stay. A reading without them says the card was not read, so nothing moves.
+
+A box in a container sees the whole card, but only its own processes on it, its desktop's Xorg and browser included. When the card's memory used is more than its own processes' by 512 MiB or more, other boxes or the host are using it, and the box **shares** it. The section is then called 'GPU, whole card' and marked 'shared card': its use, memory, temperature and power are every user's together, and its footnote gives this box's own memory of the card's, as in 'This box: 612 MiB of 14 GB'.
+
+A GPU at 85% or more for 5 minutes makes a box busy, but never changes its health. A shared card never makes a box busy: `nvidia-smi` gives each card's use, not each process's, so BB Box cannot tell how much of a shared card's use is the box's own.
 
 ### Boxes in containers
 
@@ -78,7 +91,7 @@ To see what a notification looks like, run `bb box monitor test-alert`. It shows
 
 ## Box history
 
-Box history is on by default. BB Box reads every running box once a minute and keeps what it read: each minute for 24 hours, and each hour for 7 days. A box's page shows it over [1 hour, 24 hours and 7 days](boxes.md#over-1-hour-24-hours-and-7-days).
+Box history is on by default. BB Box reads every running box once a minute and keeps what it read: each minute for 24 hours, and each hour for 7 days. For a box with NVIDIA GPUs, it keeps each card's use and memory too, and whether it was shared. A box's page shows it over [1 hour, 24 hours and 7 days](boxes.md#over-1-hour-24-hours-and-7-days).
 
 - A reading is light: CPU time, memory, the box's limits in a container, CPU and memory pressure, load, disk and network, with no processes. For a box that is not a BB machine it is one command, whose answer is under 1 KB; for a BB machine, one call to BB Box's host entry. A shared slot reads its own user's processes, and one slot a minute also reads its Mac for all of them. A slot's work that is shorter than a minute may not show on 24 hours and 7 days; Live shows it.
 - Each box has its own second in the minute, so readings spread out. Up to 8 run at once, as many as the minute's readings need. A reading that does not answer within 10 s fails. A box whose readings fail 3 times in a row is read again once BB Box finds it answers.

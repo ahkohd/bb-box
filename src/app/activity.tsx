@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowDataTransferVerticalIcon, ComputerIcon, CpuIcon, GpuIcon, HardDriveIcon, RamMemoryIcon, VideoReplayIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep, MonitorSnapshot } from "../plugin/contract.ts";
+import type { GpuCard } from "../monitor/snapshot.ts";
+import { MOST_CARDS } from "../monitor/nvidia.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { STALL_LIMITS } from "../monitor/health.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
@@ -12,7 +14,9 @@ import { HISTORY_RANGES, historyWindow } from "../monitor/history-view.ts";
 import { LoadingText, Pill } from "./monitor/metric-parts.tsx";
 import { MiddleTruncate } from "./monitor/middle-truncate.tsx";
 import { loadErrorCopy } from "./monitor/load-error-copy.ts";
-import { hasGpuReadings } from "./monitor/panel-shape.ts";
+import { gpuCardCount, hasGpuReadings, rememberGpuCards, rememberedGpuCards } from "./monitor/panel-shape.ts";
+import { SHARED_PILL, cardFoot, cardLabel, cardName, cardSlots, gpuMemoryOf, sharedCardWords } from "./gpu-words.ts";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SettingsLink } from "./settings-link.tsx";
 import { ago, dayAndClock } from "./box-words.ts";
 import { AXIS_WIDTH, HistoryChart, SeriesSample, type Band, type ChartSeries } from "./history-chart.tsx";
@@ -58,10 +62,11 @@ export const CHART_COLOURS = {
   up: "var(--chart-up)",
   host: "var(--chart-host)",
   gpu: "var(--chart-gpu)",
+  gpu2: "var(--chart-gpu-2)",
 } as const;
 
 export const CHART_TONES =
-  "[--chart-cpu:#15803d] [--chart-memory:#a16207] [--chart-down:#1d4ed8] [--chart-up:#6d28d9] [--chart-host:#525252] [--chart-gpu:#b45309] dark:[--chart-cpu:#22c55e] dark:[--chart-memory:#e5c07b] dark:[--chart-down:#5b8def] dark:[--chart-up:#a78bfa] dark:[--chart-host:#a3a3a3] dark:[--chart-gpu:#f59e0b]";
+  "[--chart-cpu:#15803d] [--chart-memory:#a16207] [--chart-down:#1d4ed8] [--chart-up:#6d28d9] [--chart-host:#525252] [--chart-gpu:#b45309] [--chart-gpu-2:#be123c] dark:[--chart-cpu:#22c55e] dark:[--chart-memory:#e5c07b] dark:[--chart-down:#5b8def] dark:[--chart-up:#a78bfa] dark:[--chart-host:#a3a3a3] dark:[--chart-gpu:#f59e0b] dark:[--chart-gpu-2:#fb7185]";
 
 const DASHES = { memory: "6 4", up: "6 4", host: "10 4", disk: "1 4" } as const;
 
@@ -73,7 +78,17 @@ export const PROCESS_ROWS = 6;
 
 const CARD = "overflow-hidden rounded-lg border border-border bg-card";
 
-const TILES = "grid grid-cols-2 border-b border-border [&>*]:border-border max-lg:[&>*:nth-child(odd)]:border-r max-lg:[&>*:not(:nth-last-child(-n+2))]:border-b lg:divide-x";
+const TILE_GRID = "-mb-px -mr-px grid grid-cols-2 [&>*]:border-b [&>*]:border-r [&>*]:border-border max-lg:[&>*:last-child:nth-child(odd)]:col-span-2";
+
+function TileGrid({ tiles, children }: { tiles: number; children: ReactNode }) {
+  return (
+    <div className="overflow-hidden">
+      <div data-tiles className={cn(TILE_GRID, tileColumns(tiles))}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const NETWORK_HEIGHT = 56;
 
@@ -85,9 +100,9 @@ function TileIcon({ icon, color }: { icon: IconData; color: string }) {
   return <HugeiconsIcon icon={icon} className="size-3.5 shrink-0" style={{ color }} aria-hidden="true" />;
 }
 
-function Tile({ label, icon, pill, value, unit, foot, loading, sample }: { label: string; icon: ReactNode; pill?: ReactNode; value: ReactNode; unit?: string; foot: ReactNode; loading: boolean; sample: string }) {
+function Tile({ label, name = label, icon, pill, value, unit, foot, loading, sample, children }: { label: string; name?: string; icon: ReactNode; pill?: ReactNode; value: ReactNode; unit?: string; foot: ReactNode; loading: boolean; sample: string; children?: ReactNode }) {
   return (
-    <section aria-label={label} className="min-w-0 space-y-1.5 px-4 py-3">
+    <section aria-label={name} className="min-w-0 space-y-1.5 px-4 py-3">
       <div className="flex min-h-5 items-center justify-between gap-2 text-xs">
         <span className="flex min-w-0 items-center gap-1.5 text-foreground">
           {icon}
@@ -100,6 +115,7 @@ function Tile({ label, icon, pill, value, unit, foot, loading, sample }: { label
         <span className="text-xs text-muted-foreground">{loading ? " " : unit}</span>
       </p>
       <p className="truncate text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>{loading ? <LoadingText sample={sample} /> : foot}</p>
+      {children}
     </section>
   );
 }
@@ -131,7 +147,46 @@ function splitWords(words: string): { value: string; unit: string } {
   return { value, unit: unit.join(" ") };
 }
 
-function NowTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+const TILE_COLUMNS: Readonly<Record<number, string>> = { 4: "lg:grid-cols-4", 5: "lg:grid-cols-5", 6: "lg:grid-cols-6" };
+
+function tileColumns(tiles: number): string {
+  return TILE_COLUMNS[tiles] ?? "lg:grid-cols-4";
+}
+
+function cardColour(card: number): string {
+  return card % 2 === 0 ? CHART_COLOURS.gpu : CHART_COLOURS.gpu2;
+}
+
+function SharedPill({ words }: { words: string }) {
+  const id = useId();
+  return (
+    <TooltipProvider delayDuration={250}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} aria-describedby={id} data-gpu-shared className="inline-flex rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring">
+            <Pill>{SHARED_PILL}</Pill>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="end" className="max-w-xs">
+          {words}
+        </TooltipContent>
+      </Tooltip>
+      <span id={id} className="sr-only" data-gpu-shared-words>
+        {words}
+      </span>
+    </TooltipProvider>
+  );
+}
+
+function CardTile({ card, cards, slot, read }: { card: GpuCard | null; cards: number; slot: number; read: boolean }) {
+  const label = cardName({ index: slot }, cards);
+  if (!card) return <Tile label={label} icon={<TileIcon icon={GpuIcon} color={cardColour(slot)} />} loading={!read} sample="8 of 24 GiB · 120 W" value="–" unit="not read" foot="No reading of this card this time" />;
+  const shared = card.shared ? sharedCardWords(card, cards, bytesWords) : null;
+  const pill = shared ? <SharedPill words={shared} /> : card.temperatureC === null ? null : <Pill tone={card.temperatureC >= 95 ? "bad" : card.temperatureC >= 85 ? "warn" : "neutral"}>{Math.round(card.temperatureC)}°C</Pill>;
+  return <Tile label={label} name={cardLabel(card, cards)} icon={<TileIcon icon={GpuIcon} color={cardColour(slot)} />} pill={pill} loading={false} sample="" value={wholePercent(card.usagePercent)} unit={shared ? "% whole card" : "%"} foot={cardFoot(card, bytesWords)} />;
+}
+
+function NowTiles({ snapshot, expectedCards = 0 }: { snapshot: MonitorSnapshot | null; expectedCards?: number }) {
   const loading = !snapshot;
   const cpu = snapshot?.cpu;
   const memory = snapshot?.memory;
@@ -139,16 +194,23 @@ function NowTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   const network = snapshot?.network ?? null;
   const percents = snapshot ? nowPercents(snapshot) : null;
   const pressure = memory ? memoryPressure(memory.usagePercent) : null;
-  const gpu = snapshot && hasGpuReadings(snapshot) ? snapshot.sensors! : null;
+  const cards = snapshot?.gpus?.cards ?? [];
+  const slots = cardSlots(cards.map((card) => card.index), expectedCards);
+  const gpu = !slots.length && snapshot && hasGpuReadings(snapshot) ? snapshot.sensors! : null;
   const free = disk ? splitWords(bytesWords(disk.freeBytes)) : null;
   const down = network?.rxBytesPerSecond == null ? null : splitWords(rateWords(network.rxBytesPerSecond));
   return (
-    <div data-tiles className={cn(TILES, gpu ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+    <div className="border-b border-border">
+    <TileGrid tiles={4 + (gpu ? 1 : slots.length)}>
       <Tile label="CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} pill={cpu ? <CpuPill cpu={cpu} /> : null} loading={loading} sample="normal · 4 cores" value={wholePercent(percents?.cpu)} unit="%" foot={cpu ? [cpuState(cpu.usagePercent), `${cpu.cores} ${cpu.cores === 1 ? "core" : "cores"}`].filter(Boolean).join(" · ") : null} />
       <Tile label="Memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} pill={pressure ? <Pill tone={pressure.tone}>{pressure.label}</Pill> : null} loading={loading} sample="4 GiB of 8 GiB" value={wholePercent(percents?.memory)} unit="%" foot={memory ? `${bytesWords(memory.usedBytes)} of ${bytesWords(memory.totalBytes)}` : null} />
       <Tile label="Disk" icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} pill={disk ? <Pill>{bytesWords(disk.totalBytes)}</Pill> : null} loading={loading} sample="12 GiB used · 40%" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `${bytesWords(disk.usedBytes)} used · ${Math.round(disk.usagePercent)}%` : "Its disk could not be read."} />
       <Tile label="Network" icon={<TileIcon icon={ArrowDataTransferVerticalIcon} color={CHART_COLOURS.down} />} pill={network ? <Pill>{network.interface}</Pill> : null} loading={loading} sample="10 KB/s up" value={down?.value ?? "–"} unit={down ? `${down.unit} down` : network ? "measuring" : "not read"} foot={network ? (network.txBytesPerSecond === null ? "Measuring…" : `${rateWords(network.txBytesPerSecond)} up`) : "Its network could not be read."} />
       {gpu ? <Tile label="GPU" icon={<TileIcon icon={GpuIcon} color={CHART_COLOURS.gpu} />} loading={false} sample="" value={wholePercent(gpu.gpuPercent)} unit="%" foot={[cpuState(gpu.gpuPercent), gpu.gpuTempC === null ? null : `${Math.round(gpu.gpuTempC)}°C`].filter(Boolean).join(" · ") || "Read"} /> : null}
+      {slots.map((slot) => (
+        <CardTile key={slot} card={cards.find((card) => card.index === slot) ?? null} cards={slots.length} slot={slot} read={!loading} />
+      ))}
+    </TileGrid>
     </div>
   );
 }
@@ -171,7 +233,7 @@ function SlotTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   const busy = snapshot ? hostBusy(snapshot) : false;
   return (
     <div className="border-b border-border">
-      <div data-tiles className={cn(TILES, "border-b-0", slot?.encoder ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+      <TileGrid tiles={slot?.encoder ? 5 : 4}>
         <Tile label="This slot's CPU" icon={<TileIcon icon={CpuIcon} color={CHART_COLOURS.cpu} />} loading={loading} sample="1.5 of its 4 cores, of mac-1's 12" value={wholePercent(percents?.cpu)} unit={own ? "% of its share" : "not read"} foot={share && snapshot ? slotCpuWords(own?.cpuCores ?? null, share, host, snapshot.cpu.cores) : null} />
         <Tile label="This slot's memory" icon={<TileIcon icon={RamMemoryIcon} color={CHART_COLOURS.memory} />} loading={loading} sample="of its 8 GiB · 20%" value={ownMemory?.value ?? "–"} unit={ownMemory?.unit ?? "not read"} foot={share ? `of its ${bytesWords(share.memoryBytes)}${own ? ` · ${wholePercent(percents?.memory)}%` : ""}` : null} />
         <Tile
@@ -188,7 +250,7 @@ function SlotTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
           <Tile label={`${hostAtStart(slot.host)}'s encoder`} icon={<TileIcon icon={VideoReplayIcon} color={CHART_COLOURS.host} />} loading={false} sample="" value={wholePercent(slot.encoder.usedPercent)} unit="% used" foot={<span title={slot.encoder.words}>{slot.encoder.words}</span>} />
         ) : null}
         <Tile label={`${owner} disk`} icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} loading={loading} sample="of 460 GiB, every slot's files" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `of ${bytesWords(disk.totalBytes)}, every slot's files together` : "Its disk could not be read."} />
-      </div>
+      </TileGrid>
       <p data-slot-line className="border-t border-border px-4 py-2 text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>
         {loading ? <LoadingText sample={slotLineWords("mac-1", SLOT_SHARE_GUESS.slots)} /> : slotLineWords(slot!.host, share!.slots)}
       </p>
@@ -196,15 +258,15 @@ function SlotTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   );
 }
 
-function TilesNow({ snapshot, shared }: { snapshot: MonitorSnapshot | null; shared: boolean }) {
-  return shared || snapshot?.slot ? <SlotTiles snapshot={snapshot} /> : <NowTiles snapshot={snapshot} />;
+function TilesNow({ snapshot, shared, expectedCards }: { snapshot: MonitorSnapshot | null; shared: boolean; expectedCards: number }) {
+  return shared || snapshot?.slot ? <SlotTiles snapshot={snapshot} /> : <NowTiles snapshot={snapshot} expectedCards={expectedCards} />;
 }
 
-function TilesSayWhy({ shared, children }: { shared: boolean; children: ReactNode }) {
+function TilesSayWhy({ shared, expectedCards, children }: { shared: boolean; expectedCards: number; children: ReactNode }) {
   return (
     <div className="relative" data-tiles-frame>
       <div aria-hidden className="invisible">
-        <TilesNow snapshot={null} shared={shared} />
+        <TilesNow snapshot={null} shared={shared} expectedCards={expectedCards} />
       </div>
       <div data-activity-quiet className="absolute inset-0 flex items-center overflow-hidden px-4 text-sm text-muted-foreground">
         <p className="line-clamp-3">{children}</p>
@@ -213,7 +275,44 @@ function TilesSayWhy({ shared, children }: { shared: boolean; children: ReactNod
   );
 }
 
-type LineKey = "cpu" | "memory" | "host";
+type GpuLineKey = `gpu:${number}` | `gpuMemory:${number}`;
+
+type LineKey = "cpu" | "memory" | "host" | GpuLineKey;
+
+const GPU_MEMORY_HIDDEN: readonly GpuLineKey[] = Array.from({ length: MOST_CARDS }, (_, card) => `gpuMemory:${card}` as const);
+
+interface CardLine {
+  readonly card: number;
+  readonly usage: readonly (number | null)[];
+  readonly memory: readonly (number | null)[];
+  readonly peaks?: readonly (number | null)[];
+  readonly weights?: readonly number[];
+}
+
+function gpuLines(cards: readonly CardLine[]): (ChartSeries & { key: GpuLineKey; weights?: readonly number[] })[] {
+  return cards.flatMap((line) => {
+    const name = cardName({ index: line.card }, cards.length);
+    const color = cardColour(line.card);
+    return [
+      { key: `gpu:${line.card}` as const, label: name, color, values: line.usage, ...(line.peaks ? { peaks: line.peaks } : {}), ...(line.weights ? { weights: line.weights } : {}), format: percentWords },
+      { key: `gpuMemory:${line.card}` as const, label: `${name} memory`, color, dash: DASHES.memory, values: line.memory, format: percentWords },
+    ];
+  });
+}
+
+function emptyCards(count: number): CardLine[] {
+  return Array.from({ length: count }, (_, card) => ({ card, usage: [], memory: [] }));
+}
+
+function liveCards(snapshot: MonitorSnapshot, expectedCards: number): CardLine[] {
+  const points = snapshot.history;
+  const read = [...(snapshot.gpus?.cards ?? []).map((card) => card.index), ...points.flatMap((point) => point.gpus?.map((each) => each.card) ?? [])];
+  return cardSlots(read, expectedCards).map((card) => ({
+    card,
+    usage: points.map((point) => point.gpus?.find((each) => each.card === card)?.usage ?? null),
+    memory: points.map((point) => point.gpus?.find((each) => each.card === card)?.memory ?? null),
+  }));
+}
 
 function LegendChip({ line, off, onToggle }: { line: ChartSeries; off: boolean; onToggle: () => void }) {
   return (
@@ -233,12 +332,13 @@ function LegendChip({ line, off, onToggle }: { line: ChartSeries; off: boolean; 
 
 const percentWords = (value: number) => `${Math.round(value)}%`;
 
-function usageLines(snapshot: MonitorSnapshot, share: SlotShare | null): (ChartSeries & { key: LineKey })[] {
+function usageLines(snapshot: MonitorSnapshot, share: SlotShare | null, expectedCards: number): (ChartSeries & { key: LineKey })[] {
   const points = snapshot.history;
   if (!share) {
     return [
       { key: "cpu", label: "CPU", color: CHART_COLOURS.cpu, values: points.map((point) => point.cpuPercent), format: percentWords },
       { key: "memory", label: "Memory", color: CHART_COLOURS.memory, dash: DASHES.memory, values: points.map((point) => point.memoryPercent), format: percentWords },
+      ...gpuLines(liveCards(snapshot, expectedCards)),
     ];
   }
   const host = snapshot.slot!.host;
@@ -344,12 +444,12 @@ function slotLabels(host: string | null) {
   return { cpu: "This slot's CPU", memory: "This slot's memory", host: `${hostAtStart(host ?? "its Mac")}'s CPU, all slots` };
 }
 
-function liveSkeleton(shared: boolean): (ChartSeries & { key: LineKey })[] {
+function liveSkeleton(shared: boolean, expectedCards: number): (ChartSeries & { key: LineKey })[] {
   const labels = shared ? slotLabels(null) : { cpu: "CPU", memory: "Memory", host: "" };
   return [
     { key: "cpu", label: labels.cpu, color: CHART_COLOURS.cpu, values: [], format: percentWords },
     { key: "memory", label: labels.memory, color: CHART_COLOURS.memory, dash: DASHES.memory, values: [], format: percentWords },
-    ...(shared ? [{ key: "host" as const, label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: [], format: percentWords }] : []),
+    ...(shared ? [{ key: "host" as const, label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: [], format: percentWords }] : gpuLines(emptyCards(expectedCards))),
   ];
 }
 
@@ -357,23 +457,23 @@ const LIVE_FRAME_MS = 6 * 60_000;
 
 type LiveLines = [ReadonlySet<LineKey>, (key: LineKey) => void];
 
-function LiveFrame({ shared, words, lines: [hidden, toggle] }: { shared: boolean; words: string; lines: LiveLines }) {
+function LiveFrame({ shared, expectedCards, words, lines: [hidden, toggle] }: { shared: boolean; expectedCards: number; words: string; lines: LiveLines }) {
   const now = Date.now();
   const window = { from: now - LIVE_FRAME_MS, to: now };
   const empty = { times: [], window, longestStepMs: LIVE_FRAME_MS, timeWords: clockWithSeconds, gapWords: "No reading" };
   return (
     <ChartsBody
-      lines={liveSkeleton(shared)}
+      lines={liveSkeleton(shared, expectedCards)}
       hidden={hidden}
       onToggle={toggle}
       words={words}
-      usage={{ ...empty, ticks: liveTicks(window), label: `${shared ? "This slot's CPU and memory" : "CPU and memory"}, Live`, summary: words }}
+      usage={{ ...empty, ticks: liveTicks(window), label: `${shared ? "This slot's CPU and memory" : usageWhat(expectedCards > 0)}, Live`, summary: words }}
       network={{ whose: shared ? "Its Mac, all slots" : null, series: [], ceiling: LEAST_RATE_CEILING * 1.15, chart: { ...empty, label: shared ? "Its Mac's download and upload, Live" : "Download and upload, Live", summary: words } }}
     />
   );
 }
 
-function Charts({ snapshot: live, share, lines: [hidden, toggle] }: { snapshot: MonitorSnapshot; share: SlotShare | null; lines: LiveLines }) {
+function Charts({ snapshot: live, share, expectedCards, lines: [hidden, toggle] }: { snapshot: MonitorSnapshot; share: SlotShare | null; expectedCards: number; lines: LiveLines }) {
   const [held, setHeld] = useState<MonitorSnapshot | null>(null);
   const snapshot = held ?? live;
   const holdWhileRead = () => setHeld((current) => current ?? live);
@@ -385,7 +485,7 @@ function Charts({ snapshot: live, share, lines: [hidden, toggle] }: { snapshot: 
   const interval = snapshot.refreshIntervalMs;
   const window = liveWindow(points, interval);
   const words = liveWords(interval);
-  const lines = usageLines(snapshot, share);
+  const lines = usageLines(snapshot, share, expectedCards);
   const cpuLine = lines.find((line) => line.key === "cpu")!;
   const memoryLine = lines.find((line) => line.key === "memory")!;
   const down = points.map((point) => point.networkRxBytesPerSecond);
@@ -402,7 +502,7 @@ function Charts({ snapshot: live, share, lines: [hidden, toggle] }: { snapshot: 
       held={Boolean(held)}
       onFocus={holdWhileRead}
       onBlur={goOnWhenLeft}
-      usage={{ ...common, ticks: liveTicks(window), label: `${share ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`, summary: usageSummary(words, times, { cpu: cpuLine, memory: memoryLine }, gapsOf(times, cpuLine.values, interval), clockWithSeconds) }}
+      usage={{ ...common, ticks: liveTicks(window), label: `${share ? "This slot's CPU and memory" : usageWhat(lines.length > 2 && !share)}, ${words}`, summary: usageSummary(words, times, { cpu: cpuLine, memory: memoryLine, gpus: lines.filter((line) => line.key.startsWith("gpu:")) }, gapsOf(times, cpuLine.values, interval), clockWithSeconds) }}
       network={{
         whose: host ? `${hostAtStart(host)}, all slots` : null,
         series: [
@@ -414,6 +514,10 @@ function Charts({ snapshot: live, share, lines: [hidden, toggle] }: { snapshot: 
       }}
     />
   );
+}
+
+function usageWhat(gpu: boolean): string {
+  return gpu ? "CPU, memory and GPU" : "CPU and memory";
 }
 
 export type ActivityRange = "live" | HistoryRange;
@@ -528,9 +632,26 @@ function useBoxHistory(boxId: string, range: HistoryRange, state: string) {
   return { view, error };
 }
 
-type HistoryLineKey = "cpu" | "memory" | "disk" | "host";
+type HistoryLineKey = "cpu" | "memory" | "disk" | "host" | GpuLineKey;
 
-function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared: boolean, host: string | null): (ChartSeries & { key: HistoryLineKey; weights?: readonly number[] })[] {
+export function cardsOfSteps(steps: readonly HistoryStep[]): number[] {
+  return [...new Set(steps.flatMap((step) => (step.gpus ?? []).map((gpu) => gpu.card)))].sort((left, right) => left - right);
+}
+
+function historyCards(steps: readonly HistoryStep[], range: HistoryRange, expectedCards: number): CardLine[] {
+  const cards = cardSlots(cardsOfSteps(steps), expectedCards);
+  const busiest = range !== "1h";
+  const of = (step: HistoryStep, card: number) => step.gpus?.find((gpu) => gpu.card === card);
+  return cards.map((card) => ({
+    card,
+    usage: steps.map((step) => of(step, card)?.usage ?? null),
+    memory: steps.map((step) => of(step, card)?.memory ?? null),
+    weights: steps.map((step) => of(step, card)?.covered ?? 0),
+    ...(busiest ? { peaks: steps.map((step) => of(step, card)?.usageBusiest ?? null) } : {}),
+  }));
+}
+
+function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared: boolean, host: string | null, expectedCards: number): (ChartSeries & { key: HistoryLineKey; weights?: readonly number[] })[] {
   const busiest = range !== "1h";
   const labels = shared ? slotLabels(host) : { cpu: "CPU", memory: "Memory", host: "" };
   return [
@@ -539,7 +660,21 @@ function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared
     shared
       ? { key: "host", label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: steps.map((step) => step.host), format: percentWords }
       : { key: "disk", label: "Disk", color: CHART_COLOURS.down, dash: DASHES.disk, values: steps.map((step) => step.disk), format: percentWords },
+    ...(shared ? [] : gpuLines(historyCards(steps, range, expectedCards))),
   ];
+}
+
+function sharedCardsWords(steps: readonly HistoryStep[]): string {
+  const cards = cardsOfSteps(steps);
+  const read = (card: number) => steps.flatMap((step) => step.gpus?.filter((gpu) => gpu.card === card && gpu.usage !== null) ?? []);
+  const shared = cards.filter((card) => read(card).some((gpu) => gpu.shared));
+  if (!shared.length) return "";
+  const always = shared.every((card) => read(card).every((gpu) => gpu.shared));
+  const names = shared.map((card) => cardName({ index: card }, cards.length));
+  const one = shared.length === 1;
+  return always
+    ? ` ${names.join(" and ")} ${one ? "was" : "were"} shared with other boxes, so ${one ? "its lines are" : "their lines are"} the whole card's.`
+    : ` ${names.join(" and ")} ${one ? "was" : "were"} shared with other boxes for some of this time, so ${one ? "its lines are" : "their lines are"} the whole card's then.`;
 }
 
 function gapAtStep(view: BoxHistoryView, step: HistoryStep | undefined): string {
@@ -577,10 +712,10 @@ function HistoryWords({ view, range, held, failed }: { view: BoxHistoryView | nu
   return <>{`% used, ${RANGE_WORDS[range]}${range === "1h" ? "" : "; the light band is each step's busiest minute"}`}</>;
 }
 
-function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
+function HistoryCharts({ box, range, expectedCards }: { box: BoxView; range: HistoryRange; expectedCards: number }) {
   const { view: latest, error } = useBoxHistory(box.id, range, box.state);
   const shared = box.shared || Boolean(latest?.slot);
-  const [hidden, toggle] = useHidden<HistoryLineKey>(["disk", "host"]);
+  const [hidden, toggle] = useHidden<HistoryLineKey>(["disk", "host", ...GPU_MEMORY_HIDDEN]);
   const [held, setHeld] = useState<BoxHistoryView | null>(null);
   const container = useRef<HTMLDivElement>(null);
   useRevealOnLoad(container, `${box.id}:${range}`, latest !== null);
@@ -599,7 +734,8 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
   const clockOf = historyTimeWords(range, now);
   const timeWords = (centre: number) => stepSpanWords(range, centre - stepMs / 2, stepMs, clockOf);
   const host = view?.slot?.host ?? null;
-  const lines = historyLines(steps, range, shared, host);
+  const lines = historyLines(steps, range, shared, host, expectedCards);
+  const gpuUsage = lines.filter((line) => line.key.startsWith("gpu:"));
   const stepWords = (index: number) => stepWhenWords(range, steps[index]?.at ?? shape.from, stepMs, clockOf);
   const cpuLine = lines.find((line) => line.key === "cpu")!;
   const memoryLine = lines.find((line) => line.key === "memory")!;
@@ -617,7 +753,7 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
   const failed = view && error ? error : null;
   const staleWords = view && failed ? `bb-box could not read ${box.name}'s history again (${failed}), so this is as read at ${historyClock(view.now)}. ` : "";
   const common = { times, window, longestStepMs: stepMs * 1.5, timeWords, gapWords, notes, bands };
-  const usageSummaryWords = view ? `${staleWords}${historySummary(words, { cpu: cpuLine, memory: memoryLine }, gaps, stepWords, clockOf, now)}` : waiting;
+  const usageSummaryWords = view ? `${staleWords}${historySummary(words, { cpu: cpuLine, memory: memoryLine, gpus: gpuUsage }, gaps, stepWords, clockOf, now)}${sharedCardsWords(steps)}` : waiting;
   const shortWorkNote = shared && range !== "1h" ? SLOT_SHORT_WORK_WORDS : null;
   const networkSummaryWords = !view
     ? waiting
@@ -637,7 +773,7 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
         held={Boolean(held)}
         onFocus={holdWhileRead}
         onBlur={goOnWhenLeft}
-        usage={{ ...common, ticks: historyTicks(range, window), label: `${shared ? "This slot's CPU and memory" : "CPU and memory"}, ${words}`, summary: usageSummaryWords }}
+        usage={{ ...common, ticks: historyTicks(range, window), label: `${shared ? "This slot's CPU and memory" : usageWhat(gpuUsage.length > 0)}, ${words}`, summary: usageSummaryWords }}
         usageNote={shortWorkNote}
         network={{
           whose: shared ? `${hostAtStart(host ?? "its Mac")}, all slots` : null,
@@ -713,21 +849,27 @@ export function forgetActivity(): void {
   keptHistory.clear();
 }
 
+export function expectedCardsOf(box: Pick<BoxView, "id" | "gpu" | "shared">): number {
+  if (box.shared) return 0;
+  return rememberedGpuCards(box.id) ?? (box.gpu ? 1 : 0);
+}
+
 export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView; now: number }) {
   const reach = page.monitor;
   const [chosen, setChosen] = useChosenRange(box.id);
   const liveWhy = liveWhyNot(page, box);
   const range: ActivityRange = chosen === "live" && liveWhy ? "24h" : (chosen ?? (liveWhy ? "24h" : "live"));
   const group = <RangeGroup value={range} onChange={setChosen} liveWhy={liveWhy} />;
-  const liveLines = useHidden<LineKey>(["host"]);
-  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} />;
+  const liveLines = useHidden<LineKey>(["host", ...GPU_MEMORY_HIDDEN]);
+  const expectedCards = expectedCardsOf(box);
+  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} expectedCards={expectedCards} />;
   return (
     <div className="space-y-5" data-activity-frame>
       <ActivityCard status={reach.is === "off" ? "Not read" : null} group={group}>
-        <TilesSayWhy shared={box.shared}>{notReadWhy(page, box, now)}</TilesSayWhy>
-        {range === "live" ? <LiveFrame shared={box.shared} words={liveWhy ?? ""} lines={liveLines} /> : <HistoryCharts key={range} box={box} range={range} />}
+        <TilesSayWhy shared={box.shared} expectedCards={expectedCards}>{notReadWhy(page, box, now)}</TilesSayWhy>
+        {range === "live" ? <LiveFrame shared={box.shared} expectedCards={expectedCards} words={liveWhy ?? ""} lines={liveLines} /> : <HistoryCharts key={range} box={box} range={range} expectedCards={expectedCards} />}
       </ActivityCard>
-      <Processes snapshot={null} slot={box.shared} host={null} why={processesWhy(page, box)} />
+      <Processes snapshot={null} slot={box.shared} host={null} why={processesWhy(page, box)} gpu={expectedCards > 0} />
     </div>
   );
 }
@@ -739,8 +881,16 @@ function readStatus(snapshot: MonitorSnapshot | null, error: string | null, acti
   return active ? "Reading…" : "Read while this page is shown";
 }
 
-function LiveActivity({ machineId, box, range, group, lines }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines }) {
+function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines; expectedCards: number }) {
   const { container, active, snapshot, error } = useMonitorSnapshot(machineId);
+  const readCards = snapshot ? gpuCardCount(snapshot) : 0;
+  const [seenCards, setSeenCards] = useState(expectedCards);
+  const cards = Math.max(seenCards, readCards);
+  useEffect(() => {
+    if (readCards === 0) return;
+    rememberGpuCards(box.id, readCards);
+    setSeenCards((seen) => Math.max(seen, readCards));
+  }, [box.id, readCards]);
   useRevealOnLoad(container, machineId, snapshot !== null);
   const errorWords = error ? loadErrorCopy(error, box.name) : null;
   const share = snapshot?.slot?.share ?? null;
@@ -754,10 +904,10 @@ function LiveActivity({ machineId, box, range, group, lines }: { machineId: stri
             {errorWords} Showing data from {minuteClock(Date.parse(snapshot.timestamp))}.
           </p>
         ) : null}
-        {unanswered ? <TilesSayWhy shared={shared}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} />}
-        {range !== "live" ? <HistoryCharts key={range} box={box} range={range} /> : snapshot ? <Charts snapshot={snapshot} share={share} lines={lines} /> : <LiveFrame shared={shared} words={unanswered ? "Not read" : "Reading…"} lines={lines} />}
+        {unanswered ? <TilesSayWhy shared={shared} expectedCards={cards}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} expectedCards={cards} />}
+        {range !== "live" ? <HistoryCharts key={range} box={box} range={range} expectedCards={cards} /> : snapshot ? <Charts snapshot={snapshot} share={share} expectedCards={cards} lines={lines} /> : <LiveFrame shared={shared} expectedCards={cards} words={unanswered ? "Not read" : "Reading…"} lines={lines} />}
       </ActivityCard>
-      <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `bb-box cannot list ${box.name}'s processes now.` : null} />
+      <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `bb-box cannot list ${box.name}'s processes now.` : null} gpu={cards > 0 || Boolean(snapshot?.gpus)} />
     </div>
   );
 }
@@ -768,7 +918,7 @@ function processMemory(bytes: number): string {
 
 type ProcessRow = MonitorSnapshot["processes"]["top"][number];
 
-function ProcessCells({ process }: { process: ProcessRow }) {
+function ProcessCells({ process, gpu, gpuMemory }: { process: ProcessRow; gpu: boolean; gpuMemory: number | null }) {
   return (
     <>
       <td className="px-4 py-1.5 font-mono text-foreground" data-reveal="">
@@ -781,13 +931,18 @@ function ProcessCells({ process }: { process: ProcessRow }) {
       <td className="py-1.5 pl-2 pr-4 text-right tabular-nums text-muted-foreground" data-reveal="">
         {processMemory(process.rssBytes)}
       </td>
+      {gpu ? (
+        <td className="py-1.5 pl-2 pr-4 text-right tabular-nums text-muted-foreground" data-reveal="" data-gpu-memory>
+          {gpuMemory === null ? "–" : processMemory(gpuMemory)}
+        </td>
+      ) : null}
     </>
   );
 }
 
 const PROCESS_SAMPLES = ["node", "com.apple.Webkit", "dockerd", "systemd", "sshd", "bash"] as const;
 
-function PlaceholderCells({ index, pulse }: { index: number; pulse: boolean }) {
+function PlaceholderCells({ index, pulse, gpu }: { index: number; pulse: boolean; gpu: boolean }) {
   const text = (sample: string) => (pulse ? <LoadingText sample={sample} /> : "\u00a0");
   return (
     <>
@@ -795,11 +950,12 @@ function PlaceholderCells({ index, pulse }: { index: number; pulse: boolean }) {
       <td className="px-2 py-1.5 text-right tabular-nums max-sm:hidden">{text("1234")}</td>
       <td className="px-2 py-1.5 text-right tabular-nums">{text("0.0%")}</td>
       <td className="py-1.5 pl-2 pr-4 text-right tabular-nums">{text("100 MiB")}</td>
+      {gpu ? <td className="py-1.5 pl-2 pr-4 text-right tabular-nums">{text("1 GiB")}</td> : null}
     </>
   );
 }
 
-export function Processes({ snapshot, slot, host, why = null }: { snapshot: MonitorSnapshot | null; slot: boolean; host: string | null; why?: string | null }) {
+export function Processes({ snapshot, slot, host, why = null, gpu = false }: { snapshot: MonitorSnapshot | null; slot: boolean; host: string | null; why?: string | null; gpu?: boolean }) {
   const processes = snapshot?.processes ?? null;
   const read = processes?.available ? processes.top.slice(0, PROCESS_ROWS) : [];
   const said = why ?? (processes && !processes.available ? "bb-box could not list its processes." : null);
@@ -828,6 +984,11 @@ export function Processes({ snapshot, slot, host, why = null }: { snapshot: Moni
               <th scope="col" className="w-20 py-2 pl-2 pr-4 text-right font-normal">
                 Memory
               </th>
+              {gpu ? (
+                <th scope="col" className="w-20 py-2 pl-2 pr-4 text-right font-normal">
+                  GPU
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody className={cn("divide-y divide-border border-t border-border", said && "invisible")}>
@@ -835,11 +996,11 @@ export function Processes({ snapshot, slot, host, why = null }: { snapshot: Moni
               const process = said ? null : read[index];
               return process ? (
                 <tr key={process.pid}>
-                  <ProcessCells process={process} />
+                  <ProcessCells process={process} gpu={gpu} gpuMemory={gpuMemoryOf(snapshot?.gpus, process.pid)} />
                 </tr>
               ) : (
                 <tr key={`empty-${index}`} aria-hidden data-process-placeholder>
-                  <PlaceholderCells index={index} pulse={pulse} />
+                  <PlaceholderCells index={index} pulse={pulse} gpu={gpu} />
                 </tr>
               );
             })}
@@ -851,7 +1012,7 @@ export function Processes({ snapshot, slot, host, why = null }: { snapshot: Moni
           </p>
         ) : null}
       </div>
-      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%. bb-box reads names and PIDs only, never arguments or environment.</p>
+      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%.{gpu ? " GPU is the card memory a process uses for compute; processes on the GPU are always listed." : ""} bb-box reads names and PIDs only, never arguments or environment.</p>
     </section>
   );
 }

@@ -21,6 +21,10 @@ function sourceFor(machineKey: string): SnapshotSource {
   return source;
 }
 
+export function forgetMonitorReadings(): void {
+  sources.clear();
+}
+
 export const SERVER_MACHINE = "server";
 
 export function useMonitorSnapshot(machineId: string) {

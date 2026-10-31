@@ -184,13 +184,15 @@ test("the remembered panel layout survives bad storage and clamps tailscale rows
   const global = globalThis as { localStorage?: unknown };
   global.localStorage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value) };
   try {
-    assert.deepEqual(readPanelShape("host_mac"), { gpu: false, battery: false, tailscaleRows: 0 });
-    rememberPanelShape("host_mac", { gpu: true, battery: true, tailscaleRows: 3 });
-    assert.deepEqual(readPanelShape("host_mac"), { gpu: true, battery: true, tailscaleRows: 3 });
-    store.set("bb-box:monitor:shape:host_box", JSON.stringify({ gpu: "yes", tailscaleRows: 40 }));
-    assert.deepEqual(readPanelShape("host_box"), { gpu: false, battery: false, tailscaleRows: 4 });
+    assert.deepEqual(readPanelShape("host_mac"), { gpu: false, gpuCards: 0, battery: false, tailscaleRows: 0 });
+    rememberPanelShape("host_mac", { gpu: true, gpuCards: 0, battery: true, tailscaleRows: 3 });
+    assert.deepEqual(readPanelShape("host_mac"), { gpu: true, gpuCards: 0, battery: true, tailscaleRows: 3 });
+    rememberPanelShape("host_gpus", { gpu: true, gpuCards: 2, battery: false, tailscaleRows: 0 });
+    assert.deepEqual(readPanelShape("host_gpus"), { gpu: true, gpuCards: 2, battery: false, tailscaleRows: 0 });
+    store.set("bb-box:monitor:shape:host_box", JSON.stringify({ gpu: "yes", gpuCards: 99, tailscaleRows: 40 }));
+    assert.deepEqual(readPanelShape("host_box"), { gpu: false, gpuCards: 16, battery: false, tailscaleRows: 4 });
     store.set("bb-box:monitor:shape:host_box", "{not json");
-    assert.deepEqual(readPanelShape("host_box"), { gpu: false, battery: false, tailscaleRows: 0 });
+    assert.deepEqual(readPanelShape("host_box"), { gpu: false, gpuCards: 0, battery: false, tailscaleRows: 0 });
   } finally {
     delete global.localStorage;
   }

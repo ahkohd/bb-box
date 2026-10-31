@@ -1086,6 +1086,59 @@ On 30 October 2026, during unit 5:
   host's tag. The network's label is "Network", with the Mac's name after
   its legend.
 
+## Decided after unit 5: NVIDIA GPUs
+
+On 31 October 2026, the Monitor and a box's page gained NVIDIA GPUs,
+wherever `nvidia-smi` answers: Proxmox LXC and Docker GPU boxes, BB
+machines with NVIDIA cards, and BB's server.
+
+- **Read where the reading already runs.** The full reading and box
+  history's light reading each run `nvidia-smi --query-gpu` once, as CSV
+  with no units, then `nvidia-smi -q -d PIDS` once for the processes,
+  compute and graphics. `nvidia-smi` refuses two `--query-` switches in one
+  call, and `--query-compute-apps` leaves out a desktop's Xorg and
+  browser. They run only where `/dev/nvidiactl` and `nvidia-smi` are, so a
+  box with no NVIDIA card pays nothing. In a GPU box, the card query took
+  29 to 35 ms and about 10 ms of CPU.
+- **A hang costs only the GPU.** In a box's script, each call runs under
+  `timeout -k 1 2`, the GPU sections come last, and the process query is
+  skipped when the card query timed out. On BB's server and BB machines,
+  each call races a 2 s timer that kills it with SIGKILL and gives up on
+  it even if it never exits, and bb-box asks nothing more of `nvidia-smi`
+  for 5 minutes after one that did not answer. The output of a call that
+  exits with an error is still read, so one lost card does not hide the
+  others.
+- **A shared card.** In a container, `nvidia-smi` gives the whole card's
+  figures but lists only the container's own processes. When the card's
+  memory used is more than the box's own processes', graphics included, by
+  512 MiB or more, the box shares the card: its tile is "GPU, whole card",
+  marked shared, with its own memory beside the card's.
+- **Busy, never health.** A GPU at 85% or more, the Monitor's warning
+  level, for 5 whole minutes makes a box busy: "Busy: GPU 98% for 12
+  min", after CPU and CPU pressure in the order of reasons. A shared card
+  never makes a box busy: `nvidia-smi` gives use per card, and per process
+  only through `pmon` or accounting, neither checked inside a container,
+  so an idle box beside another box's training would read busy. The lead
+  decided that GPU use never changes a machine's health: a card at full
+  use is a training box doing its job, so health stays judged by CPU,
+  memory, disk and load, and `bb box monitor health` never exits 2 for
+  it.
+- **Box history.** A migration adds `gpu_minutes` and `gpu_hours`: each
+  card's use and memory at each minute point, and each hour's mean, its
+  busiest minute and its highest memory, and whether it was shared. A
+  minute's `gpu` column is the counted use, for busy. A GPU's minute is
+  the card's use at the moment of reading, not a mean over the minute.
+  Counters keep no GPU figures. Where the history shares bb-box's
+  database, its cap of 200,000 rows counts each GPU's row as well. With a
+  set clock, 30 boxes for 7 days took 2.82 MB with no GPU, 4.72 MB with
+  one each and 6.5 MB with two; the write-ahead log peaked at 1.08 MB,
+  under section 10's 10 MB and 4 MB.
+- **Nothing moves.** A box of a GPU kind, or whose GPUs the page or the
+  Monitor read before, has its GPU tiles, lines and process column from its
+  first frame, and keeps them through a reading that missed its cards. A
+  reading with no GPU is never remembered as no cards. The tiles sit in a
+  grid whose every row is bordered, so 8 cards make three clean rows.
+
 ## Open questions for the owner
 
 The owner answered all four on 29 October 2026, each with its default.

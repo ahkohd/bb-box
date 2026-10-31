@@ -1,8 +1,9 @@
 import type { MetricPoint, MonitorSnapshot } from "./snapshot.ts";
 import { CONTAINER_FILES, containerCapacity, containerCpuPercent, containerMemory, parseContainer, type ContainerFile } from "./container.ts";
-import { NO_PROCESSES, PROCESS_COLUMNS, calculateCpuUsage, calculateNetworkRates, diskFrom, memoryDetailsFrom, parseMeminfo, parseNetDev, parseNetstatLinks, parseProcStat, parseProcesses, parseVmStatUsedBytes, pushHistory, type CpuTimes, type NetworkTotals, type ProcessScope } from "./collector.ts";
+import { NO_PROCESSES, PROCESS_COLUMNS, calculateCpuUsage, gpuPoints, calculateNetworkRates, diskFrom, memoryDetailsFrom, parseMeminfo, parseNetDev, parseNetstatLinks, parseProcStat, parseProcesses, parseVmStatUsedBytes, pushHistory, type CpuTimes, type NetworkTotals, type ProcessScope } from "./collector.ts";
 import { assessHealth } from "./health.ts";
 import { clampPercentage } from "./numbers.ts";
+import { gpuPids, gpuReadingFromSections, nvidiaScript } from "./nvidia.ts";
 import { createOwnUsage, macOwnCommand, parseOwnReading, psOwnCommand, type OwnUsage } from "./own-usage.ts";
 
 export type RouteOs = "linux" | "macos";
@@ -41,6 +42,7 @@ export function routeScript(os: RouteOs, scope: ProcessScope): string {
     section("netdev", "cat /proc/net/dev"),
     section("cpuinfo", "grep -m 1 '^model name' /proc/cpuinfo"),
     ...CONTAINER_FILES.map((name) => section(`cgroup:${name}`, `[ -f /sys/fs/cgroup/${name} ] && cat /sys/fs/cgroup/${name}`)),
+    ...(scope === "machine" ? [nvidiaScript(section)] : []),
     "true",
   ].join("; ");
 }
@@ -123,10 +125,12 @@ export function createRouteCollector(options: RouteOptions) {
     const uname = unameParts(sections.get("uname"));
     const hostname = (sections.get("hostname") ?? "").trim() || "box";
     const disk = parseDfRoot(sections.get("df"));
-    const processes = sections.has("ps") ? parseProcesses(sections.get("ps") ?? "", (command) => command.split("/").pop() ?? command) : NO_PROCESSES;
+    const container = options.os === "linux" ? parseContainer(containerFiles(sections)) : null;
+    const gpus = options.os === "linux" ? gpuReadingFromSections(sections, container !== null) : null;
+    const processes = sections.has("ps") ? parseProcesses(sections.get("ps") ?? "", (command) => command.split("/").pop() ?? command, gpuPids(gpus)) : NO_PROCESSES;
     const timestamp = Date.now();
     const own = ownOf(sections, reading.receivedAt);
-    const read = options.os === "macos" ? macSnapshot(sections, uname, hostname, disk, processes, timestamp, reading.receivedAt) : linuxSnapshot(sections, uname, hostname, disk, processes, timestamp);
+    const read = options.os === "macos" ? macSnapshot(sections, uname, hostname, disk, processes, timestamp, reading.receivedAt) : linuxSnapshot(sections, uname, hostname, disk, processes, timestamp, gpus, container);
     return own ? withOwn(read, own) : read;
   }
 
@@ -146,11 +150,10 @@ export function createRouteCollector(options: RouteOptions) {
     return result;
   }
 
-  function linuxSnapshot(sections: Map<string, string>, uname: ReturnType<typeof unameParts>, hostname: string, disk: MonitorSnapshot["disk"], processes: MonitorSnapshot["processes"], timestamp: number): MonitorSnapshot {
+  function linuxSnapshot(sections: Map<string, string>, uname: ReturnType<typeof unameParts>, hostname: string, disk: MonitorSnapshot["disk"], processes: MonitorSnapshot["processes"], timestamp: number, gpus: MonitorSnapshot["gpus"], container: ReturnType<typeof parseContainer>): MonitorSnapshot {
     const uptimeSeconds = firstNumber(sections.get("uptime")) ?? 0;
     const at = uptimeSeconds * 1000;
     const stat = parseProcStat(sections.get("stat") ?? "");
-    const container = parseContainer(containerFiles(sections));
     const visibleCores = stat?.perCore.length ?? 0;
     const capacity = container ? containerCapacity(container, visibleCores) : Math.max(1, visibleCores);
     const cores = Math.max(1, Math.ceil(capacity - 1e-6));
@@ -201,10 +204,11 @@ export function createRouteCollector(options: RouteOptions) {
       },
       disk,
       network: net,
+      gpus,
       processes,
       runtime: null,
       health: assessHealth({ cpuPercent: usagePercent, memoryPercent, diskPercent: disk?.usagePercent ?? null, load: loadAverage ? { fiveMinutes: loadAverage[1], cores } : null, cpuStall: container?.cpuStall ?? null, memoryStall: container?.memoryStall ?? null }),
-      history: pushHistory(history, { timestamp, cpuPercent: usagePercent, memoryPercent, networkRxBytesPerSecond: net?.rxBytesPerSecond ?? null, networkTxBytesPerSecond: net?.txBytesPerSecond ?? null }),
+      history: pushHistory(history, { timestamp, cpuPercent: usagePercent, memoryPercent, networkRxBytesPerSecond: net?.rxBytesPerSecond ?? null, networkTxBytesPerSecond: net?.txBytesPerSecond ?? null, ...(gpus ? { gpus: gpuPoints(gpus) } : {}) }),
     };
   }
 

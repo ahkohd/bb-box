@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, useRealtime, useRpc, type ExperimentalSidebarFooterDisclosureProps, type PluginAppBuilder } from "@get-bb/plugin-sdk/app";
 import type { Contract, Machine, MonitorSnapshot, ThreadOnBox } from "../../plugin/contract.ts";
+import type { GpuCard } from "../../monitor/snapshot.ts";
+import { SHARED_PILL, cardFoot, cardLabel, cardSlots, cardMemoryWords, gpuMemoryOf, powerWords, processesOnCard, sharedCardWords } from "../gpu-words.ts";
 import { STALL_LIMITS } from "../../monitor/health.ts";
 import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
@@ -18,7 +20,7 @@ import { Alert02Icon, ArrowDataTransferVerticalIcon, BatteryChargingIcon, Batter
 import { BarChart, BigValue, DetailRow, Footnote, LineChart, LoadingText, METRIC_COLORS, MetricSection, Pill, ProgressBar } from "./metric-parts.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HudScrollProvider, HudTooltip, HudTooltipContent, HudTooltipTrigger } from "./hud-tooltip.tsx";
-import { hasGpuReadings, readPanelShape, rememberPanelShape, type PanelShape } from "./panel-shape.ts";
+import { gpuCardCount, hasGpuReadings, readPanelShape, rememberPanelShape, type PanelShape } from "./panel-shape.ts";
 
 const GREEN = "#22c55e";
 const AMBER = "#eab308";
@@ -443,9 +445,8 @@ function NetworkSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   );
 }
 
-function GpuSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+function MacGpuSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   const sensors = snapshot?.sensors;
-  if (snapshot && !hasGpuReadings(snapshot)) return null;
   const history = snapshot?.history ?? [];
   return (
     <MetricSection
@@ -463,6 +464,51 @@ function GpuSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
       <Footnote>{sensors ? joinParts([cpuState(sensors.gpuPercent), formatWatts(sensors.gpuWatts)]) : <LoadingText sample="idle" />}</Footnote>
     </MetricSection>
   );
+}
+
+function CardDetails({ card, cards, gpus }: { card: GpuCard; cards: number; gpus: NonNullable<MonitorSnapshot["gpus"]> }) {
+  const processes = processesOnCard(gpus, card.index);
+  return (
+    <>
+      <p>{card.name}</p>
+      {card.shared ? <p>{sharedCardWords(card, cards, formatBytes)}</p> : null}
+      {card.usagePercent !== null ? <DetailRow label={card.shared ? "Usage, whole card" : "Usage"} value={`${Math.round(card.usagePercent)}%`} /> : null}
+      {cardMemoryWords(card, formatBytes) ? <DetailRow label={card.shared ? "Memory, whole card" : "Memory"} value={cardMemoryWords(card, formatBytes)} /> : null}
+      {card.shared && card.ownMemoryBytes !== null ? <DetailRow label="This box's memory" value={formatBytes(card.ownMemoryBytes)} /> : null}
+      {card.temperatureC !== null ? <DetailRow label="Temperature" value={`${card.temperatureC.toFixed(0)}°C`} /> : null}
+      {powerWords(card) ? <DetailRow label="Power" value={powerWords(card)} /> : null}
+      {gpus.processes === null ? null : processes.length ? processes.map((process) => <DetailRow key={process.pid} label={`${process.name} · ${process.pid}`} value={process.memoryBytes === null ? "–" : formatBytes(process.memoryBytes)} />) : <p>No compute processes of this {card.shared ? "box" : "machine"} on it.</p>}
+    </>
+  );
+}
+
+const LOADING_CARD: GpuCard = { index: 0, name: "", usagePercent: null, memoryUsedBytes: null, memoryTotalBytes: null, temperatureC: null, powerWatts: null, powerLimitWatts: null, shared: false, ownMemoryBytes: null, ownProcesses: null };
+
+function CardSection({ snapshot, card, cards, slot }: { snapshot: MonitorSnapshot | null; card: GpuCard | null; cards: number; slot: number }) {
+  const gpus = snapshot?.gpus ?? null;
+  const shown = card ?? { ...LOADING_CARD, index: slot };
+  const values = (snapshot?.history ?? []).map((point) => point.gpus?.find((each) => each.card === shown.index)?.usage ?? null);
+  return (
+    <MetricSection
+      label={cardLabel(shown, cards)}
+      icon={<SectionIcon icon={GpuIcon} color={METRIC_COLORS.gpu} />}
+      pill={!snapshot ? <Pill loading>50°C</Pill> : !card ? <Pill>not read</Pill> : card.shared ? <Pill>{SHARED_PILL}</Pill> : card.temperatureC === null ? undefined : <TemperaturePill celsius={card.temperatureC} />}
+      details={card && gpus ? <CardDetails card={card} cards={cards} gpus={gpus} /> : undefined}
+    >
+      <BigValue value={card?.usagePercent == null ? null : Math.round(card.usagePercent)} unit="%" loading={!snapshot} />
+      <LineChart series={[{ values, color: METRIC_COLORS.gpu }]} max={100} label={`${cardLabel(shown, cards)} usage over the last few minutes`} />
+      <Footnote>{!snapshot ? <LoadingText sample="8 of 24 GB · 120 W" /> : card ? cardFoot(card, formatBytes) : "No reading of this card this time"}</Footnote>
+    </MetricSection>
+  );
+}
+
+function GpuSections({ snapshot, expected }: { snapshot: MonitorSnapshot | null; expected: PanelShape }) {
+  const cards = snapshot?.gpus?.cards ?? [];
+  const slots = cardSlots(cards.map((card) => card.index), expected.gpuCards);
+  if (slots.length) return <>{slots.map((slot) => <CardSection key={slot} snapshot={snapshot} card={cards.find((card) => card.index === slot) ?? null} cards={slots.length} slot={slot} />)}</>;
+  if (snapshot && !hasGpuReadings(snapshot)) return null;
+  if (!snapshot && !expected.gpu) return null;
+  return <MacGpuSection snapshot={snapshot} />;
 }
 
 const BATTERY_STATES = {
@@ -521,40 +567,47 @@ function shareColor(share: number, warnAt: number, badAt: number): string | unde
 const PROCESS_ROWS = 5;
 const LOADING_PROCESS_NAMES = ["WindowServer", "node", "Helium Helper", "kernel_task", "bb"];
 
-function ProcessRows({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+function ProcessRows({ snapshot, gpu }: { snapshot: MonitorSnapshot | null; gpu: boolean }) {
   if (!snapshot) {
     return LOADING_PROCESS_NAMES.map((name) => (
       <div key={name} className="contents">
         <span className="min-w-0 truncate"><LoadingText sample={name} /></span>
         <span className="text-right tabular-nums"><LoadingText sample="512 MB" /></span>
+        {gpu ? <span className="text-right tabular-nums"><LoadingText sample="1 GB" /></span> : null}
         <span className="text-right tabular-nums"><LoadingText sample="1.0" /></span>
       </div>
     ));
   }
   const { processes, memory } = snapshot;
-  if (!processes.available) return <span className="col-span-3 text-muted-foreground">Unavailable</span>;
-  return processes.top.slice(0, PROCESS_ROWS).map((process) => (
-    <div key={process.pid} className="contents">
-      <HudTooltip delayDuration={400}>
-        <HudTooltipTrigger asChild>
-          <span className="min-w-0 truncate text-sidebar-foreground" data-reveal="">{process.name}</span>
-        </HudTooltipTrigger>
-        <HudTooltipContent side="right" className="text-xs">{process.name} · PID {process.pid}</HudTooltipContent>
-      </HudTooltip>
-      <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(memory.totalBytes > 0 ? process.rssBytes / memory.totalBytes : 0, 0.25, 0.5) }}>{formatBytes(process.rssBytes)}</span>
-      <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(process.cpuPercent, 50, 100) }}>{process.cpuPercent.toFixed(1)}</span>
-    </div>
-  ));
+  if (!processes.available) return <span className={cn("text-muted-foreground", gpu ? "col-span-4" : "col-span-3")}>Unavailable</span>;
+  return processes.top.slice(0, PROCESS_ROWS).map((process) => {
+    const onGpu = gpuMemoryOf(snapshot.gpus, process.pid);
+    return (
+      <div key={process.pid} className="contents">
+        <HudTooltip delayDuration={400}>
+          <HudTooltipTrigger asChild>
+            <span className="min-w-0 truncate text-sidebar-foreground" data-reveal="">{process.name}</span>
+          </HudTooltipTrigger>
+          <HudTooltipContent side="right" className="text-xs">{joinParts([process.name, `PID ${process.pid}`, onGpu === null ? null : `${formatBytes(onGpu)} of GPU memory`])}</HudTooltipContent>
+        </HudTooltip>
+        <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(memory.totalBytes > 0 ? process.rssBytes / memory.totalBytes : 0, 0.25, 0.5) }}>{formatBytes(process.rssBytes)}</span>
+        {gpu ? <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" data-gpu-memory>{onGpu === null ? "–" : formatBytes(onGpu)}</span> : null}
+        <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(process.cpuPercent, 50, 100) }}>{process.cpuPercent.toFixed(1)}</span>
+      </div>
+    );
+  });
 }
 
-function ProcessesSection({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+function ProcessesSection({ snapshot, expected }: { snapshot: MonitorSnapshot | null; expected: PanelShape }) {
+  const gpu = Boolean(snapshot?.gpus) || expected.gpuCards > 0;
   return (
     <section aria-label="Top processes" className="min-w-0 p-3">
-      <div className="grid grid-cols-[1fr_auto_3rem] items-center gap-x-3 gap-y-1.5 text-xs">
+      <div className={cn("grid items-center gap-x-3 gap-y-1.5 text-xs", gpu ? "grid-cols-[1fr_auto_auto_3rem]" : "grid-cols-[1fr_auto_3rem]")}>
         <span className="text-sidebar-foreground">Top processes</span>
         <span className="text-right text-subtle-foreground/75">Memory</span>
+        {gpu ? <span className="text-right text-subtle-foreground/75">GPU</span> : null}
         <span className="text-right text-subtle-foreground/75">% CPU</span>
-        <ProcessRows snapshot={snapshot} />
+        <ProcessRows snapshot={snapshot} gpu={gpu} />
       </div>
     </section>
   );
@@ -565,7 +618,7 @@ function StatusPopover({ snapshot, isServer, isBox, expected, waitingFor }: { sn
     <>
       <SummaryStrip snapshot={snapshot} isServer={isServer} isBox={isBox} waitingFor={waitingFor} />
       <CpuSection snapshot={snapshot} />
-      {snapshot || expected.gpu ? <GpuSection snapshot={snapshot} /> : null}
+      <GpuSections snapshot={snapshot} expected={expected} />
       <MemorySection snapshot={snapshot} />
       <DiskSection snapshot={snapshot} />
       <NetworkSection snapshot={snapshot} />
@@ -579,7 +632,7 @@ function StatusPopover({ snapshot, isServer, isBox, expected, waitingFor }: { sn
           <LoadingTailscaleRows rows={expected.tailscaleRows} />
         </Section>
       ) : null}
-      <ProcessesSection snapshot={snapshot} />
+      <ProcessesSection snapshot={snapshot} expected={expected} />
     </>
   );
 }
@@ -654,12 +707,17 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
   useRevealOnLoad(container, selected, snapshot !== null);
   const expectedShape = useMemo(() => readPanelShape(selected), [selected]);
   const loadedGpu = snapshot ? hasGpuReadings(snapshot) : null;
+  const loadedGpuCards = snapshot ? gpuCardCount(snapshot) : 0;
+  const seenCards = useRef(new Map<string, number>());
+  const keptCards = Math.max(expectedShape.gpuCards, seenCards.current.get(selected) ?? 0, loadedGpuCards);
+  const shape = useMemo(() => ({ ...expectedShape, gpu: expectedShape.gpu || keptCards > 0, gpuCards: keptCards }), [expectedShape, keptCards]);
   const loadedBattery = snapshot ? Boolean(snapshot.battery) : null;
   const loadedTailscaleRows = snapshot ? (snapshot.tailscale ? tailscaleRowCount(snapshot.tailscale) : 0) : null;
   useEffect(() => {
     if (loadedGpu === null || loadedBattery === null || loadedTailscaleRows === null) return;
-    rememberPanelShape(selected, { gpu: loadedGpu, battery: loadedBattery, tailscaleRows: loadedTailscaleRows });
-  }, [selected, loadedGpu, loadedBattery, loadedTailscaleRows]);
+    if (loadedGpuCards > 0) seenCards.current.set(selected, Math.max(seenCards.current.get(selected) ?? 0, loadedGpuCards));
+    rememberPanelShape(selected, { gpu: loadedGpu || keptCards > 0, gpuCards: loadedGpuCards > 0 ? loadedGpuCards : keptCards, battery: loadedBattery, tailscaleRows: loadedTailscaleRows });
+  }, [selected, loadedGpu, loadedGpuCards, keptCards, loadedBattery, loadedTailscaleRows]);
   return (
     <TooltipProvider>
     <HudScrollProvider container={container}>
@@ -679,7 +737,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
       {error && snapshot ? <StaleNotice message={errorMessage} updatedAt={snapshot.timestamp} /> : null}
       {!snapshot && error
         ? <UnavailableState message={errorMessage} />
-        : <StatusPopover snapshot={snapshot} isServer={selected === SERVER_MACHINE} isBox={isBox} expected={expectedShape} waitingFor={slowLoad ? machineName : null} />}
+        : <StatusPopover snapshot={snapshot} isServer={selected === SERVER_MACHINE} isBox={isBox} expected={shape} waitingFor={slowLoad ? machineName : null} />}
     </div>
     </HudScrollProvider>
     </TooltipProvider>
