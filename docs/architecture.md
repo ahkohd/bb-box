@@ -372,7 +372,15 @@ A box is a resource of its thread and gets what the thread's machine has.
   something that can pass, such as a DNS lookup that timed out, is tried
   again after 30 s, 2 min, 10 min and 30 min, then every 30 minutes, and
   gives up 24 hours after the first failure (`src/core/join-tries.ts`). Its words blame BB's setup only
-  when no box on the same backend reaches BB.
+  when no box on the same backend reaches BB. The sweep plans the same
+  tries for a box whose record says such a failure but has no tries, as
+  one that failed before bb-box retried them. `bb box enrol`, `box_enrol`
+  and the box page's Join BB again add a ready box to BB again. Each try,
+  these and the sweep's, first asks BB about the machine the record names:
+  one BB still has makes the box enrolled, and is never removed. Otherwise
+  they run BB's installer through the box's command transport, never the
+  backend's start, stop or resize, and stop only the BB daemon of a machine
+  BB no longer has. The sweep plans tries only for boxes bb-box enrols.
 - **Variables.** BB gives the thread's Git credentials and machine
   variables to its daemon in the box. Each command bb-box runs, and each
   SSH session through the box's `~/.bashrc` (`~/.zshenv` on macOS), takes

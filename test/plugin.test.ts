@@ -29,7 +29,7 @@ import { IDENTITY_STATE } from "../src/core/identity.ts";
 import { quote } from "../src/transports/process.ts";
 import { INSTALL_ID_KEY, newInstallId } from "../src/core/install.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
-import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
+import { Phases, removeStaleApp, setAsideOtherMachines, type JoinAlarm } from "../src/plugin/enrol.ts";
 import { joinProblem, nextTry, plainJoinFailure } from "../src/core/join-tries.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
@@ -82,7 +82,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; joinWaitsMs?: readonly number[]; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number; liveChecks?: boolean } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; joinWaitsMs?: readonly number[]; joinAlarm?: JoinAlarm; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number; liveChecks?: boolean } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -410,6 +410,7 @@ async function start(
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,
     joinWaitsMs: options.joinWaitsMs,
+    ...(options.joinAlarm ? { joinAlarm: options.joinAlarm } : {}),
     controlReconnectMs: options.controlReconnectMs,
     controlStaleMs: options.controlStaleMs,
     drainMs: options.drainMs,
@@ -1743,13 +1744,14 @@ test("a join that failed for something that can pass, as a DNS lookup that timed
   writeFileSync(broken, "");
   world.installer = failingInstaller(broken, DNS_TIMEOUT);
 
-  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const acquired = text(await tool("box_acquire", { kind: "linux" }));
+  assert.match(acquired, /\nBB machine: joining BB: try 2 of 5 starts in (2\d|30) s\. Try 1 failed: This box could not look up BB's address in time/, "the acquire waits for the next try to be planned, so it never says the enrolment failed");
   const box = await failedTries(app, (await only(app)).id, 1);
   assert.deepEqual([box.enrol.state, box.enrol.hostId, box.joinTries?.problem, box.joinTries?.setup], ["enrolling", null, "dns-timeout", false]);
-  assert.equal(box.joinTries?.words, `Could not resolve BB's address from this box: the DNS lookup timed out (${DNS_TIMEOUT}).`);
+  assert.equal(box.joinTries?.words, `This box could not look up BB's address in time (${DNS_TIMEOUT}).`);
   assert.ok(box.joinTries!.next! - Date.now() > 20_000 && box.joinTries!.next! - Date.now() <= 30_000, "the second try is 30 s after the first");
   const status = text(await tool("box_status", { box: box.name }));
-  assert.match(status, /BB machine: joining BB: try 2 of 5 starts in (2\d|30) s\. Try 1 failed: Could not resolve BB's address from this box: the DNS lookup timed out \(curl: \(28\) Resolving timed out after 10001 milliseconds\)\./);
+  assert.match(status, /BB machine: joining BB: try 2 of 5 starts in (2\d|30) s\. Try 1 failed: This box could not look up BB's address in time \(curl: \(28\) Resolving timed out after 10001 milliseconds\)\./);
   assert.doesNotMatch(status, /tailnet/);
   assert.equal((await joinChecksOf(harness))[0]?.status, "warn");
 
@@ -1773,16 +1775,48 @@ test("a join that failed for something that can pass, as a DNS lookup that timed
   assert.deepEqual(await joinChecksOf(harness), []);
 });
 
-test("a try to join BB starts by itself once it is due, without waiting for the next sweep", async (t) => {
-  const { harness, app, world, tool } = await start(undefined, { joinWaitsMs: [300, 300, 300, 300] });
+class SetAlarms implements JoinAlarm {
+  readonly pending: { readonly at: number; readonly ring: () => void }[] = [];
+
+  set(at: number, ring: () => void): () => void {
+    const alarm = { at, ring };
+    this.pending.push(alarm);
+    return () => {
+      const index = this.pending.indexOf(alarm);
+      if (index >= 0) this.pending.splice(index, 1);
+    };
+  }
+
+  ringAt(time: number): void {
+    for (const alarm of this.pending.filter((each) => each.at <= time)) {
+      this.pending.splice(this.pending.indexOf(alarm), 1);
+      alarm.ring();
+    }
+  }
+}
+
+test("a try to join BB starts by itself once it is due, without waiting for the next sweep (a set clock)", async (t) => {
+  const alarms = new SetAlarms();
+  const { harness, app, world, tool } = await start(undefined, { joinAlarm: alarms });
   t.after(() => harness.lifecycle.dispose());
   const broken = join(tempDir("dns"), "broken");
   writeFileSync(broken, "");
   world.installer = failingInstaller(broken, DNS_TIMEOUT);
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
   const box = await failedTries(app, (await only(app)).id, 1);
+  const due = box.joinTries!.next!;
+  assert.deepEqual(alarms.pending.map((alarm) => alarm.at), [due], "one alarm, set for the next try");
   rmSync(broken);
+  const bootstraps = world.bootstraps.length;
+
+  t.mock.timers.enable({ apis: ["Date"], now: due - 1 });
+  alarms.ringAt(due - 1);
+  assert.equal(world.bootstraps.length, bootstraps, "nothing rings before the try is due");
+  t.mock.timers.setTime(due);
+  alarms.ringAt(due);
   await until("the box to join with no sweep", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  assert.equal(world.bootstraps.length, bootstraps + 1);
+  assert.deepEqual(alarms.pending, [], "a joined box has no try planned");
 });
 
 test("a box that cannot reach BB while other boxes on its backend joined says what failed, and gives no setup advice", async (t) => {
@@ -1804,7 +1838,7 @@ test("a box that cannot reach BB while other boxes on its backend joined says wh
   assert.equal(box.joinTries?.setup, false);
   assert.equal(
     box.enrol.error,
-    `Could not resolve BB's address from this box: the DNS lookup timed out (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once.`,
+    `This box could not look up BB's address in time (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
   );
   assert.ok(box.joinTries!.next! - Date.now() > 25 * 60_000, "it keeps trying every 30 minutes");
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /tailnet|not reachable from/);
@@ -1825,7 +1859,7 @@ test("a box whose connection to BB is refused while no box on its backend reache
     assert.equal(box.joinTries?.setup, true);
     assert.equal(
       box.enrol.error,
-      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once.`,
+      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
     );
   }
   assert.deepEqual((await joinChecksOf(harness)).map((check) => check.status), ["fail", "fail"]);
@@ -1859,7 +1893,7 @@ test("Check now tries again at once to add a box waiting for its next try, and a
   await until("the box to join", async () => (await app.boxes.find(gaveUp.id))?.enrol.state === "enrolled");
 });
 
-test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep tries no more, and Check now starts a new round (clock set ahead)", async (t) => {
+test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep tries no more, and Join BB again starts a new round (clock set ahead)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   const broken = join(tempDir("dns"), "broken");
@@ -1873,7 +1907,7 @@ test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep
     await app.enrolment.sweep();
     box = await failedTries(app, box.id, failed);
   }
-  assert.match(box.enrol.error ?? "", /bb-box tries again every 30 minutes for up to 24 hours; Check now tries at once\.$/);
+  assert.match(box.enrol.error ?? "", /bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once\.$/);
 
   t.mock.timers.enable({ apis: ["Date"], now: since + 24 * 3_600_000 });
   await dueNow(app, box);
@@ -1883,7 +1917,7 @@ test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep
     return current?.joinTries?.failed === 6 ? current : null;
   });
   assert.deepEqual([gaveUp.enrol.state, gaveUp.joinTries?.next], ["failed", null]);
-  assert.match(gaveUp.enrol.error ?? "", /It failed 6 tries\. .* bb-box gave up after 24 hours of tries; Check now starts a new round\.$/);
+  assert.match(gaveUp.enrol.error ?? "", /It failed 6 tries\. .* bb-box gave up after 24 hours of tries; Join BB again starts a new round\.$/);
   assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolment failed: .*bb-box gave up after 24 hours of tries/);
   const bootstraps = world.bootstraps.length;
   t.mock.timers.setTime(since + 48 * 3_600_000);
@@ -1897,6 +1931,256 @@ test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep
   await until("the box to join", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
 });
 
+const BEFORE_TRIES = (box: string, backend: string) =>
+  `BB's server is not reachable from ${backend}: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). Enrolling box ${box} failed: Machine bootstrap command failed:\n\n${DNS_TIMEOUT}\nThe installer exited with 28.`;
+
+async function failedBeforeTheTries(app: Awaited<ReturnType<typeof start>>["app"], world: Awaited<ReturnType<typeof start>>["world"], box: BoxRecord): Promise<BoxRecord> {
+  world.hosts.delete(box.enrol.hostId!);
+  return (await app.boxes.update(box, (current) => ({ enrol: { state: "failed", hostId: null, error: BEFORE_TRIES(current.name, current.backendLabel) }, joinTries: null })))!;
+}
+
+function powerEvents(app: Awaited<ReturnType<typeof start>>["app"], boxId: string): string[] {
+  return app.boxLog
+    .events(boxId)
+    .map((event) => event.kind)
+    .filter((kind) => /start|stop|resize|restart/.test(kind));
+}
+
+function untouched(app: Awaited<ReturnType<typeof start>>["app"], before: BoxRecord, powered: readonly string[], after: BoxRecord): void {
+  assert.equal(after.state, "ready");
+  assert.equal(after.readyAt, before.readyAt, "the box was not restarted");
+  assert.deepEqual(powerEvents(app, after.id), powered, "the box was not started, stopped, restarted or resized");
+}
+
+test("a box whose join failed on a DNS timeout before bb-box tried such failures again is picked up by the sweep, says what failed without setup advice, and joins", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const enrolled = await until("the box to join", async () => {
+    const current = await app.boxes.find((await only(app)).id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  const before = await failedBeforeTheTries(app, world, enrolled);
+  const powered = powerEvents(app, before.id);
+  const broken = join(tempDir("dns"), "broken");
+  writeFileSync(broken, "");
+  world.installer = failingInstaller(broken, DNS_TIMEOUT);
+  const bootstraps = world.bootstraps.length;
+
+  await app.enrolment.sweep();
+  const planned = await failedTries(app, before.id, 1);
+  assert.deepEqual([planned.enrol.state, planned.joinTries?.problem, planned.joinTries?.setup], ["enrolling", "dns-timeout", false]);
+  assert.equal(planned.joinTries?.words, `This box could not look up BB's address in time (${DNS_TIMEOUT}).`);
+  assert.equal(world.bootstraps.length, bootstraps, "the sweep plans the tries, starting 30 s later, as after any first failure");
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith(`Box ${before.name} could not join BB and had no tries planned`)));
+  const status = text(await tool("box_status", { box: before.name }));
+  assert.doesNotMatch(status, /tailnet|not reachable from/);
+  await app.enrolment.sweep();
+  assert.equal((await app.boxes.find(before.id))?.joinTries?.failed, 1, "a second sweep plans nothing more");
+
+  await dueNow(app, planned);
+  await app.enrolment.sweep();
+  const second = await failedTries(app, before.id, 2);
+  assert.ok(second.joinTries!.next! - Date.now() > 100_000, "the next try backs off to 2 minutes");
+  rmSync(broken);
+  await dueNow(app, second);
+  await app.enrolment.sweep();
+  const joined = await until("the box to join by itself", async () => {
+    const current = await app.boxes.find(before.id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  assert.equal(joined.joinTries, null);
+  untouched(app, before, powered, joined);
+});
+
+const SLOW = "BB did not finish adding the box as a machine within 5 minutes.";
+
+async function joinedBox(app: Awaited<ReturnType<typeof start>>["app"], tool: Awaited<ReturnType<typeof start>>["tool"]): Promise<BoxRecord> {
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  return until("the box to join", async () => {
+    const current = await app.boxes.find((await only(app)).id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+}
+
+function machineLeftAlone(world: Awaited<ReturnType<typeof start>>["world"], hostId: string, events: number, bootstraps: number): void {
+  assert.deepEqual(world.events.slice(events).filter((event) => event.includes(hostId) || event.startsWith("create")), [], "BB's machine was neither removed nor made again");
+  assert.equal(world.bootstraps.length, bootstraps, "BB's installer did not run, so BB's daemon in the box was not stopped");
+  assert.equal(world.hosts.get(hostId)?.status, "connected");
+}
+
+test("an old slow failure whose machine BB has connected is recorded as a BB machine by the sweep: the machine is not removed and the box is not added again (review 1336)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const joined = await joinedBox(app, tool);
+  const hostId = joined.enrol.hostId!;
+  await app.boxes.update(joined, () => ({ enrol: { state: "failed", hostId, error: SLOW }, joinTries: null }));
+  const events = world.events.length;
+  const bootstraps = world.bootstraps.length;
+
+  await app.enrolment.sweep();
+  const kept = await until("the box to be recorded as a BB machine", async () => {
+    const current = await app.boxes.find(joined.id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  assert.deepEqual([kept.enrol.hostId, kept.joinTries], [hostId, null]);
+  await app.enrolment.sweep();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  machineLeftAlone(world, hostId, events, bootstraps);
+});
+
+test("a try that is due, Join BB again, bb box enrol and box_enrol leave a machine BB still has alone, and record the box as a BB machine (review 1336)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const joined = await joinedBox(app, tool);
+  const hostId = joined.enrol.hostId!;
+  const slowRecord = { enrol: { state: "failed" as const, hostId, error: SLOW }, joinTries: null };
+  const events = world.events.length;
+  const bootstraps = world.bootstraps.length;
+
+  await app.boxes.update(joined, () => ({ enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 1, next: Date.now() - 1, words: SLOW, problem: "slow", setup: false, machine: hostId, since: Date.now() } }));
+  await app.enrolment.sweep();
+  await until("the due try to find the machine", async () => (await app.boxes.find(joined.id))?.enrol.state === "enrolled");
+
+  await app.boxes.update(joined, () => slowRecord);
+  const cli = await harness.behavior.runCli(["enrol", joined.name, "--thread", THREAD]);
+  assert.equal(cli.stdout, `Box ${joined.name} is a BB machine already, as machine ${hostId}. Nothing changed.\n`);
+
+  await app.boxes.update(joined, () => slowRecord);
+  assert.match(text(await tool("box_enrol", { box: joined.name })), new RegExp(`is a BB machine already, as machine ${hostId}\\. Nothing changed\\.$`));
+
+  await app.boxes.update(joined, () => slowRecord);
+  const page = (await harness.behavior.callRpc("enrol", { threadId: THREAD, box: joined.id })) as { box: { enrol: { state: string; hostId: string | null } } | null; error: string | null };
+  assert.deepEqual([page.error, page.box?.enrol.state, page.box?.enrol.hostId], [null, "enrolled", hostId]);
+  machineLeftAlone(world, hostId, events, bootstraps);
+});
+
+test("a machine BB is still adding is not removed: Join BB again says the box is joining, and changes nothing (review 1336)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const joined = await joinedBox(app, tool);
+  const hostId = joined.enrol.hostId!;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, lifecycle: { ...world.hosts.get(hostId)!.lifecycle, phase: "creating" } });
+  await app.boxes.update(joined, () => ({ enrol: { state: "failed", hostId, error: SLOW }, joinTries: null }));
+  const events = world.events.length;
+  const bootstraps = world.bootstraps.length;
+  const cli = await harness.behavior.runCli(["enrol", joined.name, "--thread", THREAD]);
+  assert.match(cli.stdout ?? "", new RegExp(`^Box ${joined.name} is joining BB now, so nothing else was started\\.`));
+  await app.enrolment.sweep();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(world.events.slice(events).filter((event) => event.includes(hostId)), []);
+  assert.equal(world.bootstraps.length, bootstraps);
+  assert.deepEqual((await app.boxes.find(joined.id))?.enrol, { state: "failed", hostId, error: SLOW });
+});
+
+test("with enrolment off, the sweep plans no tries for a thread's box that failed before the retries (review 1336)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const off = await only(app);
+  const failed = (await app.boxes.update(off, (current) => ({ enrol: { state: "failed", hostId: null, error: BEFORE_TRIES(current.name, current.backendLabel) }, joinTries: null })))!;
+  const bootstraps = world.bootstraps.length;
+  await app.enrolment.sweep();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const after = (await app.boxes.find(failed.id))!;
+  assert.deepEqual([after.enrol, after.joinTries], [failed.enrol, null]);
+  assert.equal(world.bootstraps.length, bootstraps);
+});
+
+test("a failure that cannot pass, as bb connect without a sign-in, is not picked up by the sweep", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const enrolled = await until("the box to join", async () => {
+    const current = await app.boxes.find((await only(app)).id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  world.hosts.delete(enrolled.enrol.hostId!);
+  const failed = (await app.boxes.update(enrolled, () => ({ enrol: { state: "failed", hostId: null, error: "Enrolling box x failed: Sign in to your bb account to use bb connect" }, joinTries: null })))!;
+  await app.enrolment.sweep();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual((await app.boxes.find(failed.id))?.enrol, failed.enrol);
+  assert.equal((await app.boxes.find(failed.id))?.joinTries, null);
+});
+
+test("bb box enrol adds a ready box that is not a BB machine without restarting it, and leaves one that is as it is", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const off = await only(app);
+  assert.equal(off.enrol.state, "off");
+  const bootstraps = world.bootstraps.length;
+  const powered = powerEvents(app, off.id);
+
+  const added = await harness.behavior.runCli(["enrol", off.name, "--thread", THREAD]);
+  assert.equal(added.exitCode, 0, added.stderr);
+  const joined = (await app.boxes.find(off.id))!;
+  assert.equal(joined.enrol.state, "enrolled");
+  assert.equal(added.stdout, `Box ${off.name} joined BB as machine ${joined.enrol.hostId}. bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.\n`);
+  assert.equal(world.bootstraps.length, bootstraps + 1);
+  untouched(app, off, powered, joined);
+
+  const events = world.events.length;
+  const again = await harness.behavior.runCli(["enrol", off.name, "--thread", THREAD]);
+  assert.equal(again.exitCode, 0);
+  assert.equal(again.stdout, `Box ${off.name} is a BB machine already, as machine ${joined.enrol.hostId}. Nothing changed.\n`);
+  assert.equal(world.bootstraps.length, bootstraps + 1, "no installer ran");
+  assert.deepEqual(world.events.slice(events), [], "BB was asked for nothing");
+  assert.deepEqual((await app.boxes.find(off.id))?.enrol, joined.enrol);
+
+  const json = JSON.parse((await harness.behavior.runCli(["enrol", off.name, "--thread", THREAD, "--json"])).stdout ?? "{}") as { is: string };
+  assert.equal(json.is, "joined");
+});
+
+test("bb box enrol tries at once on a box that could not join, says why when it fails, and refuses a box that is not ready without starting it", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const broken = join(tempDir("dns"), "broken");
+  writeFileSync(broken, "");
+  world.installer = failingInstaller(broken, DNS_TIMEOUT);
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const waiting = await failedTries(app, (await only(app)).id, 1);
+  const powered = powerEvents(app, waiting.id);
+
+  const failedAgain = await harness.behavior.runCli(["enrol", waiting.name, "--thread", THREAD]);
+  assert.equal(failedAgain.exitCode, 1);
+  assert.match(failedAgain.stderr ?? "", new RegExp(`^Box ${waiting.name} did not join BB at this try\\. It is joining BB: try 3 of 5 starts in \\d+ min\\. Try 2 failed: This box could not look up BB's address in time \\(curl: \\(28\\) Resolving timed out after 10001 milliseconds\\)\\.\\n$`));
+
+  rmSync(broken);
+  const answer = text(await tool("box_enrol", { box: waiting.name }));
+  const joined = (await app.boxes.find(waiting.id))!;
+  assert.equal(joined.enrol.state, "enrolled");
+  assert.equal(answer, `Box ${waiting.name} joined BB as machine ${joined.enrol.hostId}. bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.`);
+  untouched(app, waiting, powered, joined);
+  assert.match(text(await tool("box_enrol", { box: waiting.name })), /is a BB machine already, as machine .*\. Nothing changed\.$/);
+
+  assert.match(text(await tool("box_stop", { box: waiting.name })), /is stopped/);
+  const refused = await harness.behavior.runCli(["enrol", waiting.name, "--thread", THREAD]);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.stderr ?? "", /is stopped, and only a ready box can join BB\. bb-box does not start a box to add it to BB: start it first\./);
+  assert.equal((await app.boxes.find(waiting.id))?.state, "stopped");
+});
+
+test("bb box enrol --machine adds one of your machines that could not join, and the box page's Join BB again does the same over RPC", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true, "boxes-per-thread": 1 });
+  t.after(() => harness.lifecycle.dispose());
+  const mine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const before = await failedBeforeTheTries(app, world, mine);
+  const powered = powerEvents(app, before.id);
+  const added = await harness.behavior.runCli(["enrol", "build-1", "--machine"]);
+  assert.equal(added.exitCode, 0, added.stderr);
+  const joined = (await app.boxes.find(before.id))!;
+  assert.equal(joined.enrol.state, "enrolled");
+  assert.equal(joined.threadId, OPERATOR, "it stays one of your machines");
+  untouched(app, before, powered, joined);
+
+  const again = await failedBeforeTheTries(app, world, joined);
+  const answer = (await harness.behavior.callRpc("enrol", { threadId: OPERATOR, box: again.id })) as { box: { enrol: { state: string } } | null; error: string | null };
+  assert.equal(answer.error, null);
+  assert.equal(answer.box?.enrol.state, "enrolling", "the page's action answers at once, and the page shows the try");
+  await until("the machine to join", async () => (await app.boxes.find(again.id))?.enrol.state === "enrolled");
+});
+
 test("the schedule of tries ends 24 hours after a round's first failure", () => {
   const since = 1_000_000;
   const plan = (now: number) => nextTry({ failed: 7, problem: "dns-timeout", verdict: "others joined", now, since });
@@ -1908,7 +2192,7 @@ test("the schedule of tries ends 24 hours after a round's first failure", () => 
 
 test("a join's failure says what failed in plain words first, and only a failure to reach BB is tried again", () => {
   const production = `Enrolling box quiet-oak failed: Machine bootstrap command failed:\n\n${DNS_TIMEOUT}\nThe installer exited with 28.`;
-  assert.equal(plainJoinFailure(production), `Could not resolve BB's address from this box: the DNS lookup timed out (${DNS_TIMEOUT}).`);
+  assert.equal(plainJoinFailure(production), `This box could not look up BB's address in time (${DNS_TIMEOUT}).`);
   assert.equal(joinProblem(production)?.problem, "dns-timeout");
   assert.equal(joinProblem("curl: (6) Could not resolve host: bb.example.com")?.problem, "dns");
   assert.equal(joinProblem("curl: (7) Failed to connect to bb.example.com port 443 after 2 ms: No route to host")?.problem, "unroutable");

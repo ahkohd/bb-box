@@ -220,8 +220,8 @@ function ViewButton({ route, view, describedBy }: { route: BoxPageRoute; view: V
 }
 
 interface PageActions {
-  readonly act: (method: "stop" | "start" | "release" | "refresh" | "forget") => void;
-  readonly busy: "stop" | "start" | null;
+  readonly act: (method: "stop" | "start" | "release" | "refresh" | "forget" | "enrol") => void;
+  readonly busy: "stop" | "start" | "enrol" | null;
   readonly remove: () => void;
   readonly ask: (what: MenuAsk) => void;
   readonly resize: () => void;
@@ -467,8 +467,17 @@ function Notices({ page, box, now, actions, announce }: { page: BoxPageState; bo
   if (box.state === "ready" && box.enrol.state === "failed") {
     note("join", "It could not join BB", box.enrol.error ?? "");
     notices.push(
-      <PageNotice key="join" tone="warn" title="It could not join BB">
+      <PageNotice key="join" tone="warn" title="It could not join BB" actions={<SmallButton words="Join BB again" disabled={actions.busy !== null} onClick={() => actions.act("enrol")} />}>
         <JoinHelp words={box.enrol.error} advice={joinAdvice(box)} />
+      </PageNotice>,
+    );
+  }
+  const waiting = box.state === "ready" && box.enrol.state === "enrolling" && box.joinTries && box.joinTries.failed > 0 ? joiningSecond(box.joinTries, now) : null;
+  if (waiting) {
+    note("joining", "It has not joined BB yet", `Try ${box.joinTries!.failed} failed: ${box.joinTries!.words}`);
+    notices.push(
+      <PageNotice key="joining" tone="warn" title="It has not joined BB yet" actions={<SmallButton words="Join BB again" disabled={actions.busy !== null} onClick={() => actions.act("enrol")} />}>
+        {waiting}
       </PageNotice>,
     );
   }
@@ -778,8 +787,8 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   if (!box) return <NotHere page={page} back={back} now={now} />;
   const yours = page.owner === "yours";
   const threadId = page.threadId ?? OPERATOR;
-  const busyOf = (busy: string | null): "stop" | "start" | null => (busy === `stop:${box.id}` ? "stop" : busy === `start:${box.id}` ? "start" : null);
-  const act = (method: "stop" | "start" | "release" | "refresh" | "forget", options: { readonly deleteKept?: boolean } = {}) =>
+  const busyOf = (busy: string | null): PageActions["busy"] => (busy === `stop:${box.id}` ? "stop" : busy === `start:${box.id}` ? "start" : busy === `enrol:${box.id}` ? "enrol" : null);
+  const act = (method: "stop" | "start" | "release" | "refresh" | "forget" | "enrol", options: { readonly deleteKept?: boolean } = {}) =>
     void (yours ? machineActions.act(method === "release" ? "remove" : method, box, false, options.deleteKept === true) : threadActions.act(threadId, method, box, false, options.deleteKept === true));
   const actions: PageActions = {
     act,

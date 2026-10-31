@@ -461,6 +461,7 @@ export interface BoxesDeps {
    * BB's bootstrap with the box ID as the key. Commands wait for it a while.
    */
   reconnect?(box: BoxRecord): Promise<void>;
+  tryingToJoin?(boxId: string): boolean;
   /**
    * A thread, neither archived nor deleted, on a spare's BB machine, or
    * null. A claim skips such a spare, and the spare upkeep makes it yours
@@ -2511,6 +2512,10 @@ export class Boxes {
 
   /** Whether a box can enrol as a BB machine: its kind can and bb-box enrols boxes. */
   /** A thread's own box (role "machine") is enrolled by the machine provider that made it, with the thread's key. */
+  async enrols(box: BoxRecord): Promise<boolean> {
+    return this.#enrols(box);
+  }
+
   async #enrols(box: BoxRecord): Promise<boolean> {
     // Your machines are BB machines whatever the general setting says (036).
     return box.role !== "machine" && box.capabilities.enrol && !!this.#deps.enrol && (box.threadId === OPERATOR || (await this.#deps.general()).enrol);
@@ -3342,6 +3347,10 @@ export class Boxes {
    * Waits a while for a box that is enrolling to finish, or for its BB
    * machine to reconnect after a start, and returns it as it is then.
    */
+  #joinUnsettled(box: BoxRecord): boolean {
+    return (box.enrol.state === "enrolling" && !waitingToJoin(box)) || (box.enrol.state === "failed" && !!this.#deps.tryingToJoin?.(box.id));
+  }
+
   async enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
     const deadline = this.#now() + (this.#deps.enrolWaitMs ?? ENROL_WAIT_MS);
     const reconnect = this.#reconnects.get(box.id);
@@ -3349,7 +3358,7 @@ export class Boxes {
       await within(reconnect, deadline - this.#now(), signal);
       box = (await this.find(box.id)) ?? box;
     }
-    while (box.state === "ready" && box.enrol.state === "enrolling" && !waitingToJoin(box) && this.#now() < deadline && !signal?.aborted) {
+    while (box.state === "ready" && this.#joinUnsettled(box) && this.#now() < deadline && !signal?.aborted) {
       await new Promise((resolve) => setTimeout(resolve, ENROL_POLL_MS));
       box = (await this.find(box.id)) ?? box;
     }

@@ -36,7 +36,7 @@
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
+import { BoxError, OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
@@ -46,7 +46,12 @@ import { daemonStarting, endThreadProcesses, hideBbConsoles, runWindowsCommand, 
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../core/identity.ts";
-import { JOIN_TRIES, backendVerdict, dueToJoin, gaveUpWords, joinProblem, nextTry, plainJoinFailure, tryWords, waitWords, waitingToJoin } from "../core/join-tries.ts";
+import { JOIN_TRIES, backendVerdict, dueToJoin, failedBeforeTries, gaveUpWords, joinProblem, nextTry, plainJoinFailure, tryWords, waitWords, waitingToJoin } from "../core/join-tries.ts";
+
+interface TryOutcome {
+  resetFound: { readonly machine: string; readonly reset: IdentityReset } | null;
+  startOver: boolean;
+}
 
 type ResetFound = { readonly found: "reset"; readonly reset: IdentityReset } | { readonly found: "none" } | { readonly found: "unread"; readonly why: string };
 
@@ -59,6 +64,24 @@ function recoveryPending(box: BoxRecord): boolean {
 }
 
 export const MACHINE_PROVIDER_ID = "bb-box";
+
+export interface JoinAgain {
+  readonly is: "joined" | "joining" | "trying";
+  readonly box: BoxRecord;
+}
+
+type MachineInBb = "live" | "adding" | "gone";
+
+const GONE_PHASES = new Set(["removing", "removed", "destroying", "destroyed", "failed"]);
+
+function namedMachine(box: BoxRecord): string | null {
+  if (recoveryPending(box) && box.identityReset!.machine === (box.joinTries?.machine ?? box.enrol.hostId)) return null;
+  return box.enrol.hostId ?? box.joinTries?.machine ?? null;
+}
+
+function joiningNow(box: BoxRecord): boolean {
+  return box.enrol.state === "enrolling" && !waitingToJoin(box);
+}
 
 /**
  * BB's manual provider, which makes Windows boxes' machines (#539):
@@ -217,7 +240,20 @@ export interface EnrolmentDeps {
   /** How long a release waits for BB to finish removing a Windows box's manual machine (#539). */
   readonly manualRemoveMs?: number;
   readonly joinWaitsMs?: readonly number[];
+  readonly joinAlarm?: JoinAlarm;
 }
+
+export interface JoinAlarm {
+  set(at: number, ring: () => void): () => void;
+}
+
+export const TIMER_ALARM: JoinAlarm = {
+  set(at, ring) {
+    const timer = setTimeout(ring, Math.max(0, at - Date.now()));
+    timer.unref?.();
+    return () => clearTimeout(timer);
+  },
+};
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
 
@@ -415,7 +451,8 @@ export class Enrolment {
   readonly #reconnecting = new Set<string>();
   readonly #recovering = new Set<string>();
   readonly #trying = new Set<string>();
-  readonly #nextTries = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #nextTries = new Map<string, () => void>();
+  readonly #joinAlarm: JoinAlarm;
   readonly #joinWaitsMs: readonly number[] | undefined;
   readonly #identityTurns = new Map<string, Promise<unknown>>();
   /** The steps of each enrolment this process is following. */
@@ -434,23 +471,23 @@ export class Enrolment {
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
     this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
     this.#joinWaitsMs = deps.joinWaitsMs;
+    this.#joinAlarm = deps.joinAlarm ?? TIMER_ALARM;
   }
 
   dispose(): void {
-    for (const timer of this.#nextTries.values()) clearTimeout(timer);
+    for (const cancel of this.#nextTries.values()) cancel();
     this.#nextTries.clear();
     this.#stopping.abort(new Error("bb-box stopped, as for a reload"));
   }
 
   #tryAt(boxId: string, at: number): void {
     if (this.#stopping.signal.aborted) return;
-    clearTimeout(this.#nextTries.get(boxId));
-    const timer = setTimeout(() => {
+    this.#nextTries.get(boxId)?.();
+    const cancel = this.#joinAlarm.set(at, () => {
       this.#nextTries.delete(boxId);
       void this.#tryWhenDue(boxId);
-    }, Math.max(0, at - Date.now()));
-    timer.unref?.();
-    this.#nextTries.set(boxId, timer);
+    });
+    this.#nextTries.set(boxId, cancel);
   }
 
   async #tryWhenDue(boxId: string): Promise<void> {
@@ -657,14 +694,36 @@ export class Enrolment {
     const since = options.since ?? "ready";
     const phases = new Phases(since === "ready" ? (box.readyAt ?? Date.now()) : Date.now(), Date.now, since);
     this.#phases.set(box.id, phases);
-    let startOver = false;
-    let resetFound: { readonly machine: string; readonly reset: IdentityReset } | null = null;
+    const outcome: TryOutcome = { resetFound: null, startOver: false };
+    try {
+      if (!(await this.#oneTry(box, phases, since, outcome))) return;
+      await this.#afterTry(box.id).catch((error) => {
+        if (!this.#isStopping(error)) this.#deps.logError("plan the next try to add a box to BB", error);
+      });
+    } finally {
+      this.#following.delete(box.id);
+    }
+    const found = outcome.resetFound;
+    if (found) {
+      await this.#identityTurn(box.id, async () => {
+        const latest = await this.#deps.boxes.find(box.id);
+        if (latest) await this.#deps.boxes.identityResetFound(latest, { at: found.reset.at, why: found.reset.why, machine: found.machine });
+      });
+      void this.#recover(box.id);
+      return;
+    }
+    if (!outcome.startOver || this.#stopping.signal.aborted) return;
+    const latest = await this.#deps.boxes.find(box.id);
+    if (latest?.state === "ready" && latest.enrol.state === "enrolling" && !latest.enrol.hostId) await this.enrol(latest, { since: "resumed" });
+  }
+
+  async #oneTry(box: BoxRecord, phases: Phases, since: EnrolSince, outcome: TryOutcome): Promise<boolean> {
     try {
       let current: BoxRecord = box;
       let access: Promise<void> | null = null;
       if (!box.enrol.hostId) {
         const host = await this.#create(box);
-        if (!host) return;
+        if (!host) return false;
         if (since === "reset" && host.id === box.identityReset?.machine) {
           await this.#deps.boxes.update(box, (latest) => (latest.identityReset ? { identityReset: { ...latest.identityReset, retiredAt: null } } : {}));
           throw new Error(`BB gave back machine ${host.id}, which the identity reset left, so bb-box removes it again at its next sweep before it enrols the box`);
@@ -674,7 +733,7 @@ export class Enrolment {
         // Released meanwhile: its release did not know the machine yet.
         if (!recorded || recorded.state === "releasing") {
           await this.#remove(host.id);
-          return;
+          return false;
         }
         current = recorded;
         // The thread's access needs only the machine's ID, so on Windows too it is set up while BB's installer runs,
@@ -688,7 +747,7 @@ export class Enrolment {
         // again, so bootstrap with the same key starts the daemon.
         if (box.capabilities.os !== "windows" && host.lifecycle.phase === "active" && host.status !== "connected") {
           const found = await this.#resetThatRemoved(current, host.id);
-          if (found.found === "reset") resetFound = { machine: host.id, reset: found.reset };
+          if (found.found === "reset") outcome.resetFound = { machine: host.id, reset: found.reset };
           else {
             const reach = await this.#reach(current);
             await this.#bootstrapAgain(current, host.id, reach, {
@@ -701,40 +760,25 @@ export class Enrolment {
           }
         }
       }
-      if (!resetFound) {
-        startOver = (await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases))) === "start over";
-        if (current.capabilities.os === "windows" && !startOver) void this.#hideConsoles(current);
+      if (!outcome.resetFound) {
+        outcome.startOver = (await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases))) === "start over";
+        if (current.capabilities.os === "windows" && !outcome.startOver) void this.#hideConsoles(current);
       }
     } catch (error) {
-      if (this.#isStopping(error)) return;
+      if (this.#isStopping(error)) return false;
       this.#deps.logError("enrol", error);
       // A Windows box's manual machine is bb-box's to remove: none may stay in BB's list (#539).
       const manual = box.capabilities.os === "windows" ? (await this.#deps.boxes.find(box.id))?.enrol.hostId : null;
       if (manual) await this.#remove(manual).catch((removal) => this.#deps.logError("enrol", removal));
       await this.#deps.boxes
         .update(box, (current) => ({
-          enrol: { ...current.enrol, ...(manual ? { hostId: null } : {}), state: "failed", error: current.enrol.state === "failed" && current.enrol.error ? current.enrol.error : describeError(error, "Enrolling the box") },
+          enrol: { ...current.enrol, ...(manual ? { hostId: null } : {}), state: "failed", error: current.enrol.state === "failed" && current.enrol.error ? current.enrol.error : plainJoinFailure(describeError(error, "Enrolling the box")) },
         }))
         .catch(() => null);
     } finally {
       this.#phases.delete(box.id);
-      this.#following.delete(box.id);
     }
-    await this.#afterTry(box.id).catch((error) => {
-      if (!this.#isStopping(error)) this.#deps.logError("plan the next try to add a box to BB", error);
-    });
-    if (resetFound) {
-      const found = resetFound;
-      await this.#identityTurn(box.id, async () => {
-        const latest = await this.#deps.boxes.find(box.id);
-        if (latest) await this.#deps.boxes.identityResetFound(latest, { at: found.reset.at, why: found.reset.why, machine: found.machine });
-      });
-      void this.#recover(box.id);
-      return;
-    }
-    if (!startOver || this.#stopping.signal.aborted) return;
-    const latest = await this.#deps.boxes.find(box.id);
-    if (latest?.state === "ready" && latest.enrol.state === "enrolling" && !latest.enrol.hostId) await this.enrol(latest, { since: "resumed" });
+    return true;
   }
 
   /**
@@ -817,7 +861,7 @@ export class Enrolment {
         return "start over";
       }
       if (phase === "destroyed" || phase === "removing") {
-        const reason = host.lifecycle.message ?? "BB removed the machine before it connected.";
+        const reason = plainJoinFailure(host.lifecycle.message ?? "BB removed the machine before it connected.");
         await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId: null, error: reason } }));
         return;
       }
@@ -1130,6 +1174,7 @@ export class Enrolment {
       if (box.identityReset && box.identityReset.enrolledAgainAt === null) void this.#recover(box.id);
       else if (box.removedMachineToCheck) void this.#checkRemovedMachine(box);
       else if (dueToJoin(box, Date.now())) void this.#tryAgain(box.id);
+      else if (failedBeforeTries(box)) void this.#startTries(box.id);
     }
     const enrolled = all.filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
     await Promise.all(
@@ -1309,28 +1354,97 @@ export class Enrolment {
 
   async tryNow(box: BoxRecord): Promise<BoxRecord | null> {
     if (box.state !== "ready" || box.role === "machine" || !box.capabilities.enrol) return null;
-    if (this.#following.has(box.id) || this.#trying.has(box.id)) return null;
+    return this.#tryAtOnce(box, (current) => current.enrol.state === "failed" || waitingToJoin(current));
+  }
+
+  async joinAgain(box: BoxRecord): Promise<JoinAgain> {
+    if (box.role === "machine") throw new BoxError("unsupported", `Box ${box.name} is a thread's own machine, which BB adds itself, so bb-box cannot add it to BB again.`);
+    if (!box.capabilities.enrol) throw new BoxError("unsupported", `A ${box.kindLabel} box cannot become a BB machine.`);
+    if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}, and only a ready box can join BB. bb-box does not start a box to add it to BB: start it first.`);
+    if (box.enrol.state === "enrolled") return { is: "joined", box };
+    if (this.isTrying(box.id) || joiningNow(box)) return { is: "joining", box };
+    const known = namedMachine(box);
+    if (known) {
+      const kept = await this.#keptAsMachine(box, known);
+      const latest = (await this.#deps.boxes.find(box.id)) ?? box;
+      if (kept === "live") return { is: "joined", box: latest };
+      if (kept === "adding") return { is: "joining", box: latest };
+    }
+    const marked = await this.#tryAtOnce(box, (current) => current.state === "ready" && current.enrol.state !== "enrolled" && !joiningNow(current));
+    if (marked) return { is: "trying", box: marked };
+    const latest = (await this.#deps.boxes.find(box.id)) ?? box;
+    return { is: latest.enrol.state === "enrolled" ? "joined" : "joining", box: latest };
+  }
+
+  isTrying(boxId: string): boolean {
+    return this.#following.has(boxId) || this.#trying.has(boxId) || this.#recovering.has(boxId);
+  }
+
+  async #tryAtOnce(box: BoxRecord, accepts: (current: BoxRecord) => boolean): Promise<BoxRecord | null> {
+    if (this.isTrying(box.id)) return null;
     const now = Date.now();
     const marked = await this.#deps.boxes.update(box, (current) => {
-      if (current.enrol.state !== "failed" && !waitingToJoin(current)) return {};
+      if (!accepts(current)) return {};
       const tries = current.joinTries;
-      const gaveUp = current.enrol.state === "failed";
+      const newRound = current.enrol.state !== "enrolling";
       return {
         enrol: { state: "enrolling", hostId: null, error: null },
         joinTries: {
-          failed: gaveUp ? 0 : (tries?.failed ?? 0),
+          failed: newRound ? 0 : (tries?.failed ?? 0),
           next: now,
           words: tries?.words ?? current.enrol.error ?? "",
           problem: tries?.problem ?? null,
           setup: tries?.setup ?? false,
           machine: tries?.machine ?? current.enrol.hostId,
-          since: gaveUp ? now : (tries?.since ?? now),
+          since: newRound ? now : (tries?.since ?? now),
         },
       };
     });
     if (!marked?.joinTries || marked.joinTries.next !== now) return null;
     void this.#tryAgain(marked.id, recoveryPending(marked) ? "reset" : "retry");
     return marked;
+  }
+
+  async #machineInBb(hostId: string): Promise<MachineInBb> {
+    try {
+      const host = await this.#deps.hosts().get({ hostId });
+      if (GONE_PHASES.has(host.lifecycle.phase)) return "gone";
+      return host.lifecycle.phase === "active" ? "live" : "adding";
+    } catch (error) {
+      if (isNotFound(error)) return "gone";
+      throw error;
+    }
+  }
+
+  async #keptAsMachine(box: BoxRecord, hostId: string): Promise<MachineInBb> {
+    const found = await this.#machineInBb(hostId);
+    if (found !== "live") return found;
+    const kept = await this.#deps.boxes.update(box, (current) =>
+      current.state !== "ready" || current.enrol.state === "enrolled" ? {} : { enrol: { state: "enrolled", hostId, error: null }, joinTries: null },
+    );
+    if (kept?.enrol.state === "enrolled" && kept.enrol.hostId === hostId) {
+      this.#nextTries.get(box.id)?.();
+      this.#nextTries.delete(box.id);
+      this.#deps.log?.(`Box ${kept.name}'s machine ${hostId} is in BB, so bb-box records the box as a BB machine and neither removes that machine nor adds the box again.`);
+    }
+    return found;
+  }
+
+  async #startTries(boxId: string): Promise<void> {
+    if (this.isTrying(boxId)) return;
+    this.#trying.add(boxId);
+    try {
+      const box = await this.#deps.boxes.find(boxId);
+      if (!box || !failedBeforeTries(box) || !(await this.#deps.boxes.enrols(box))) return;
+      const known = namedMachine(box);
+      if (known && (await this.#keptAsMachine(box, known)) !== "gone") return;
+      this.#deps.log?.(`Box ${box.name} could not join BB and had no tries planned, as a box that failed before bb-box tried such failures again: bb-box plans them now.`);
+      await this.#afterTry(boxId);
+    } catch (error) {
+      if (!this.#isStopping(error)) this.#deps.logError("plan tries to add a box to BB", error);
+    } finally {
+      this.#trying.delete(boxId);
+    }
   }
 
   async #tryAgain(boxId: string, since: EnrolSince = "retry"): Promise<void> {
@@ -1340,6 +1454,14 @@ export class Enrolment {
       const box = await this.#deps.boxes.find(boxId);
       if (!box || box.role === "machine" || !dueToJoin(box, Date.now())) return;
       const left = box.joinTries!.machine ?? (box.enrol.state === "failed" ? box.enrol.hostId : null);
+      const known = namedMachine(box);
+      if (known && (await this.#keptAsMachine(box, known)) !== "gone") {
+        if ((await this.#deps.boxes.find(boxId))?.enrol.state === "enrolled") return;
+        const at = Date.now() + RETIRE_AGAIN_MS;
+        await this.#deps.boxes.update(box, (current) => (current.joinTries ? { joinTries: { ...current.joinTries, next: at } } : {}));
+        this.#tryAt(boxId, at);
+        return;
+      }
       if (left && !(await this.#retire(left))) {
         const at = Date.now() + RETIRE_AGAIN_MS;
         await this.#deps.boxes.update(box, (current) => (current.joinTries ? { joinTries: { ...current.joinTries, next: at } } : {}));

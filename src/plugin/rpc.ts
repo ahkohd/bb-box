@@ -241,6 +241,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box, undefined, BY_PERSON)),
     resize: ({ threadId, box, ...options }) => resize(threadId, box, options),
     refresh: ({ threadId, box }) => change("Checking the box", () => app.checkNow(threadId, box)),
+    enrol: ({ threadId, box }) => change("Adding the box to BB", async () => (await app.joinAgain(threadId, box)).box),
     forget: ({ threadId, box }) =>
       change("Forgetting the box", async () => {
         await app.forget(threadId, box, BY_PERSON);

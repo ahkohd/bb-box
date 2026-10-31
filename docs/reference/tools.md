@@ -9,6 +9,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_acquire`](#box_acquire) | Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. |
 | [`box_copy`](#box_copy) | Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. |
 | [`box_device`](#box_device) | Control an ios or android box's device, as the panel's toolbar does: Home, Back and Recents, lock and wake, rotate, fold, appearance, text size, location, status bar, battery, network, install an app, switch device, and reboot. |
+| [`box_enrol`](#box_enrol) | Add a ready box that could not join BB, or is not a BB machine, to BB again, so threads can run on it. |
 | [`box_fork`](#box_fork) | Make a new box of this thread from a snapshot of one of its boxes, or from the box as it is now, to try two things from one set-up state. |
 | [`box_grant`](#box_grant) | Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. |
 | [`box_image_draft`](#box_image_draft) | Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. |
@@ -82,6 +83,14 @@ Control an ios or android box's device, as the panel's toolbar does: Home, Back 
 | `charging` | boolean | no | battery: with level, whether it charges. |
 | `paths` | array of string | no | install: in the box, as box_copy puts them there. On iOS one .app folder built for the simulator; on Android one .apk, or the split APKs of one app. |
 | `device` | string | no | switch: a model this box offers, from box_list, such as iPhone 17. Each model keeps its own apps and data. |
+
+## box_enrol
+
+Add a ready box that could not join BB, or is not a BB machine, to BB again, so threads can run on it. BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
 
 ## box_fork
 

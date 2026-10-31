@@ -44,7 +44,7 @@ import { sweepStaleTempFolders } from "../core/temp-folders.ts";
 import { stopForker } from "../transports/forker.ts";
 import { forPurpose, spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
-import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
+import { Enrolment, MACHINE_PROVIDER_ID, type HostApi, type JoinAgain, type JoinAlarm } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "./holder.ts";
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
@@ -225,6 +225,7 @@ export interface BbBox {
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
   checkNow(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord>;
+  joinAgain(threadId: string, ref: string, options?: { readonly waitMs?: number; readonly signal?: AbortSignal }): Promise<JoinAgain>;
   /** With each kind's sizes from bb-box's settings. */
   kinds(): Promise<KindView[]>;
   /** The projects' images a box can choose (049), marked as `project`'s or not, with their projects' names and builds. */
@@ -309,6 +310,14 @@ setsid nohup sh -c 'i=0; while [ "$(nproc)" -ne ${cores} ] && [ $i -lt 15 ]; do 
 
 
 
+const TRY_POLL_MS = 250;
+
+async function triedOnce(boxes: Boxes, enrolment: Enrolment, marked: BoxRecord, waitMs: number, signal?: AbortSignal): Promise<BoxRecord> {
+  const deadline = Date.now() + waitMs;
+  while (enrolment.isTrying(marked.id) && Date.now() < deadline && !signal?.aborted) await new Promise((resolve) => setTimeout(resolve, TRY_POLL_MS));
+  return (await boxes.find(marked.id)) ?? marked;
+}
+
 function status(error: unknown): { status?: unknown; code?: unknown } {
   return (error ?? {}) as { status?: unknown; code?: unknown };
 }
@@ -391,6 +400,7 @@ export interface SetupOptions {
   /** How long a release waits for BB to finish removing a Windows box's manual machine. */
   readonly manualRemoveMs?: number;
   readonly joinWaitsMs?: readonly number[];
+  readonly joinAlarm?: JoinAlarm;
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
@@ -838,6 +848,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrol: (box, options) => enrolment.enrol(box, { since: options?.restored ? "restored" : "ready" }),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
+    tryingToJoin: (boxId) => enrolment.isTrying(boxId),
     // Archived and deleted threads do not count: a spare whose machine had a thread once is still free.
     spareThread: async (box) => (await api.threadsOn(box))[0]?.id ?? null,
     claimed: (box) => {
@@ -955,6 +966,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,
     joinWaitsMs: options.joinWaitsMs,
+    ...(options.joinAlarm ? { joinAlarm: options.joinAlarm } : {}),
   });
   bb.experimental_machines.register(enrolment.provider());
   registerNewBox(bb, {
@@ -1489,6 +1501,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (box.state === "ready") await reach.checkNow(box);
       const checked = (await boxes.find(box.id)) ?? box;
       return (await enrolment.tryNow(checked)) ?? checked;
+    },
+    async joinAgain(threadId, ref, options = {}) {
+      const answer = await enrolment.joinAgain(await boxes.get(threadId, ref));
+      if (answer.is !== "trying" || !options.waitMs) return answer;
+      return { is: "trying", box: await triedOnce(boxes, enrolment, answer.box, options.waitMs, options.signal) };
     },
     control: (box) => control.view(box.id),
     async imageOptions(project) {
