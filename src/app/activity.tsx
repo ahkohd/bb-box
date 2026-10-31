@@ -1012,7 +1012,7 @@ export function Processes({ snapshot, slot, host, why = null, gpu = false }: { s
           </p>
         ) : null}
       </div>
-      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%.{gpu ? " GPU is the card memory a process uses for compute; processes on the GPU are always listed." : ""} bb-box reads names and PIDs only, never arguments or environment.</p>
+      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%.{gpu ? " GPU is the card memory a process uses for compute or drawing; processes on the GPU are always listed." : ""} bb-box reads names and PIDs only, never arguments or environment.</p>
     </section>
   );
 }
