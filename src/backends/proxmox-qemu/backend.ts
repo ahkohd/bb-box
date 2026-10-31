@@ -32,7 +32,8 @@ import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
-import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata } from "../proxmox/snapshotting.ts";
+import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -93,6 +94,11 @@ import {
   type Snapshotting,
   type OutsideRollback,
   type TaskKind,
+  SnapshotFailed,
+  type CopyHooks,
+  type CopyState,
+  type GuestIdentity,
+  type HeldCopyLabel,
   type TaskOutcome,
   type TaskRef,
   type WarmShortfall,
@@ -302,6 +308,12 @@ export function smbios1For(address: string, prefix: number, gateway: string, uui
   return `base64=1,uuid=${uuid},serial=${Buffer.from(`${address}/${prefix} ${gateway}`).toString("base64")}`;
 }
 
+export function withUuid(smbios1: unknown, uuid: string): string {
+  const current = typeof smbios1 === "string" ? smbios1 : "";
+  if (!current) return `uuid=${uuid}`;
+  return /(?:^|,)uuid=/.test(current) ? current.replace(/((?:^|,)uuid=)[^,]*/, `$1${uuid}`) : `${current},uuid=${uuid}`;
+}
+
 /** A clone's net0, which keeps the MAC Proxmox gave it, on `bridge`. */
 export function net0On(net0: unknown, bridge: string): string {
   const current = typeof net0 === "string" ? net0 : "";
@@ -478,6 +490,7 @@ export class ProxmoxQemuBackend implements Backend {
         rootDisk: bootDisk,
         disks: (config) => Object.keys(config).filter((key) => (isDisk(config, key) || /^(?:efidisk|tpmstate)\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
         guests: (api, signal) => this.#boxGuests(api, signal),
+        copies: (api, signal) => this.#keptGuests(api, signal),
         sizeOf: (config) => sizeOf(config),
       },
       ["disk", "disk-and-memory"],
@@ -542,10 +555,170 @@ export class ProxmoxQemuBackend implements Backend {
     return config;
   }
 
+  async guestIdentity(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity> {
+    const api = await this.client();
+    const config = await this.#ownConfig(api, guest, signal);
+    const macs: Record<string, string> = {};
+    for (const key of netKeys(config)) {
+      const mac = macOf(String(config[key]));
+      if (mac) macs[key] = mac;
+    }
+    return { macs, smbios: /(?:^|,)uuid=([^,]+)/.exec(String(config.smbios1 ?? ""))?.[1] ?? null };
+  }
+
+  async #claimFree(api: Proxmox, signal?: AbortSignal): Promise<number> {
+    if (this.#nextVmid === null) {
+      const stored = await this.#context.storage.get<number>(NEXT_VMID);
+      this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
+    }
+    const vmid = this.#freeVmid(await api.listPool(this.#config.proxmox.pool, signal), this.#nextVmid);
+    if (vmid === null) {
+      throw new SnapshotFailed(`Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`);
+    }
+    this.#reserved.add(vmid);
+    this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
+    await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
+    return vmid;
+  }
+
+  async #fullClone(api: Proxmox, source: number, vmid: number, name: string, description: string, storage: string | null, hooks: CopyHooks, signal?: AbortSignal): Promise<void> {
+    let upid: string;
+    try {
+      await hooks.submitting();
+      upid = await api.startFullClone({ source, vmid, hostname: name, pool: this.#config.proxmox.pool, storage, description }, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to copy guest ${source}: ${error.message}`);
+      throw error;
+    }
+    await hooks.task({ ref: upid, host: api.node });
+    try {
+      await api.waitTask(upid, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.method === "TASK" && error.status === 500) throw new SnapshotFailed(`Proxmox's copy of guest ${source} failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async copyGuest(source: Guest, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const api = await this.client();
+    const from = this.#vmid(source);
+    const config = await this.#ownConfig(api, source, signal);
+    if ((await api.status(from, signal))?.status === "running") throw new SnapshotFailed(`Guest ${from} is running, and bb-box copies a guest only once it has stopped.`);
+    if (config.lock) throw new SnapshotFailed(`Proxmox has guest ${from} locked (${String(config.lock)}), so bb-box cannot copy it.`);
+    const disk = bootDisk(config);
+    const template = typeof source.data?.template === "number" ? source.data.template : null;
+    const vmid = await this.#claimFree(api, signal);
+    try {
+      const copy = this.#guest(api.node, vmid, template, label.box);
+      await hooks.claimed(copy);
+      await this.#fullClone(api, from, vmid, `bb-box-copy-${vmid}`, heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false }, signal);
+      return copy;
+    } finally {
+      this.#reserved.delete(vmid);
+    }
+  }
+
+  async #copyConfig(api: Proxmox, copy: Guest, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+    const config = await this.#guestConfig(api, this.#vmid(copy), signal);
+    if (!config) return null;
+    const tags = parseTags(config.tags);
+    const box = typeof copy.data?.box === "string" ? copy.data.box : null;
+    return tags.includes(installTag(this.#context.installId)) && (copyTags(tags).box ?? namesOf(config).box) === box ? config : null;
+  }
+
+  async disarmCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = this.#vmid(copy);
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) throw gone(vmid);
+    await api.setNetwork(vmid, Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { up: false })])), signal);
+    await api.configure(vmid, { onboot: false, smbios1: withUuid(config.smbios1, randomUUID()) }, signal);
+  }
+
+  async templateCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = this.#vmid(copy);
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) throw gone(vmid);
+    if (!isTemplate(config)) await api.makeTemplate(vmid, signal);
+  }
+
+  async copyState(copy: Guest, signal?: AbortSignal): Promise<CopyState> {
+    const api = await this.client();
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config) return "gone";
+    return isTemplate(config) && isHeldCopy(parseTags(config.tags)) ? "template" : "copy";
+  }
+
+  async deleteCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    if (!(await this.#copyConfig(api, copy, signal))) return;
+    await this.#forget(this.#vmid(copy));
+    await api.destroy(this.#vmid(copy), signal);
+  }
+
+  async adoptCopy(copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const api = await this.client();
+    const from = this.#vmid(copy);
+    const config = await this.#copyConfig(api, copy, signal);
+    if (!config || !isTemplate(config)) throw new SnapshotFailed(`Guest ${from} is not a held copy of box ${box.name} that bb-box can use.`);
+    const disk = bootDisk(config);
+    const template = typeof copy.data?.template === "number" ? copy.data.template : null;
+    const vmid = await this.#claimFree(api, signal);
+    try {
+      const fresh = this.#guest(api.node, vmid, template, box.boxId);
+      await hooks.claimed(fresh);
+      await this.#fullClone(api, from, vmid, box.name, describe(box, this.#context.installId), disk ? storageOfVolume(config[disk]) : null, hooks, signal);
+      const made = (await api.config(vmid, signal)) ?? {};
+      const address = addressFor(this.#config, vmid);
+      if (!address) throw new SnapshotFailed(`VMID ${vmid} is outside the box range.`);
+      const { bridge, prefix, gateway } = this.#config.network;
+      const nets: Record<string, string> = {};
+      for (const key of netKeys(made)) {
+        const mac = identity.macs[key];
+        nets[key] = netWith(key === "net0" ? net0On(made[key], bridge) : String(made[key]), { ...(mac ? { mac } : {}), up: true });
+      }
+      await api.setNetwork(vmid, nets, signal);
+      await api.configure(vmid, { tags: boxTags(box, this.#context.installId, template), onboot: true, smbios1: smbios1For(address, prefix, gateway, identity.smbios ?? randomUUID()), delete: ["protection"] }, signal);
+      return { ...fresh, size: sizeOf(await api.config(vmid, signal)) };
+    } finally {
+      this.#reserved.delete(vmid);
+    }
+  }
+
+  async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    const config = await this.#copyConfig(api, guest, signal);
+    if (!config) throw gone(vmid);
+    await this.#forget(vmid);
+    await api.setNetwork(vmid, Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { mac: randomMac(), up: false })])), signal);
+    const template = typeof guest.data?.template === "number" ? guest.data.template : null;
+    await api.configure(
+      vmid,
+      { onboot: false, smbios1: withUuid(config.smbios1, randomUUID()), tags: [...boxTags(box, this.#context.installId, template), EARLIER_GUEST], description: `${describe(box, this.#context.installId)}\nearlier guest` },
+      signal,
+    );
+    return guest;
+  }
+
+  async #keptGuests(api: Proxmox, signal?: AbortSignal): Promise<KeptGuest[]> {
+    const install = installTag(this.#context.installId);
+    return (await api.listPool(this.#config.proxmox.pool, signal))
+      .filter((guest) => guest.type === "qemu" && this.#inRange(guest.vmid) && guest.tags.includes(install) && (isHeldCopy(guest.tags) || isEarlierGuest(guest.tags)))
+      .flatMap((guest): KeptGuest[] => {
+        const tags = copyTags(guest.tags);
+        const owner = ownerFromTags(guest.tags, guest.name || null) ?? (tags.box ? { boxId: tags.box, threadId: "unknown", name: null, kind: null, createdAt: null } : null);
+        if (!owner) return [];
+        return [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner, where: isHeldCopy(guest.tags) ? "held-copy" : "earlier", snapshot: tags.snapshot, takenAt: tags.takenAt, kept: tags.kept, template: guest.template }];
+      });
+  }
+
   async #boxGuests(api: Proxmox, signal?: AbortSignal): Promise<{ guest: Guest; owner: BoxOwner | null }[]> {
     const install = installTag(this.#context.installId);
     return (await api.listPool(this.#config.proxmox.pool, signal))
-      .filter((guest) => guest.type === "qemu" && !guest.template && this.#inRange(guest.vmid) && guest.tags.includes(TAG) && guest.tags.includes(install))
+      .filter((guest) => guest.type === "qemu" && !guest.template && this.#inRange(guest.vmid) && guest.tags.includes(TAG) && guest.tags.includes(install) && !isEarlierGuest(guest.tags) && !isHeldCopy(guest.tags))
       .flatMap((guest) => {
         const owner = ownerFromTags(guest.tags, guest.name || null);
         return owner ? [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner }] : [];
@@ -1071,6 +1244,7 @@ export class ProxmoxQemuBackend implements Backend {
     const held: HeldGuest[] = [];
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
       if (guest.type !== "qemu" || guest.template || !this.#inRange(guest.vmid) || this.#reserved.has(guest.vmid)) continue;
+      if (isHeldCopy(guest.tags) || isEarlierGuest(guest.tags)) continue;
       if (this.#filling.has(guest.vmid) || guest.tags.includes(WARM)) continue;
       // An image box (054) is no box's, and goes with its refresh.
       if (this.#imageBoxes.has(guest.vmid) || guest.tags.includes(IMAGE_BOX) || guest.tags.some((tag) => tag.startsWith(IMAGE_TAG))) continue;
