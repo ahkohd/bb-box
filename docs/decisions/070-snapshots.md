@@ -454,7 +454,7 @@ bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 bb box snapshot list [<box>] [--kept] [--json]
 bb box snapshot delete <box> <snapshot>
 bb box snapshot restore <box> <snapshot> --replace [--no-undo] [--force]
-bb box snapshot fork <box> <snapshot> [--machine | --thread <thread>] [--name <name>]
+bb box snapshot fork <box> <snapshot> [--as-machine] [--name <name>] [--check]
 bb box snapshot keep <box> <snapshot> [--days <n> | --until <date>]
 bb box snapshot unkeep <box> <snapshot>
 bb box snapshot rename <box> <snapshot> <name>
@@ -1372,6 +1372,46 @@ On 31 October 2026, during unit 5:
   backup holding the guest's lock.
 - **`box_snapshots` has no `pictures` parameter yet**; pictures come with
   unit 6, and `box_fork` with unit 7.
+
+## Decided during unit 7
+
+On 31 October 2026, during unit 7:
+
+- **The check before ready compares what the snapshot held.** At each take,
+  with `forkSafe`, bb-box keeps a hash of the box's machine ID and of each
+  SSH host key on the snapshot's record (`identity`, a new column). On a
+  fork's first contact, before anything else bb-box runs there, it reads
+  the fork's identity reset, marker, BB folders, access file, Tailscale
+  state, machine ID and host keys, and hands it over only if the reset ran:
+  its boot says `reset` (or `kept` on a later boot of a fork that reset),
+  its marker names only the fork's own MAC addresses and no box, BB's
+  credentials, the access file and a tailnet node are gone, and the
+  machine ID and host keys are not the snapshot's. `boot=unknown` and a
+  reset still pending are waited for, up to a minute, never counted as
+  reset. A fork that fails the check is released, and fails with why. A
+  snapshot taken before this unit has no such hashes, and its forks are
+  checked without that last comparison.
+- **`forkSnapshot` makes the guest; core starts it.** The backend copies
+  the snapshot in full into a VMID of its own, recorded before the clone,
+  and re-arms it in one step: `onboot` 1, every link up, new MAC
+  addresses, the address of its own VMID, on QEMU a new SMBIOS UUID, and
+  the new box's labels. It takes the previous guest of a fork cut short by
+  a restart, as `acquire` does, and deletes it before it copies again.
+  Core starts the guest with the backend's `start`, then checks it.
+- **The copy runs on the source box's queue**, so the source's take,
+  restore, stop and release wait for it, and the fork's operation pins its
+  snapshot until the fork is ready or failed. Its box log has `fork-asked`
+  then `forked` or `fork-failed`; the fork's own log starts with `made`,
+  "Forked from (source), (snapshot) (taken ...)".
+- **Where a fork goes.** An agent forks into its own thread; the person
+  into the box's thread, or with `--as-machine` (the page's "As one of
+  your machines") as a machine of theirs; a fork of one of the person's
+  machines is one of theirs. The CLI's `--machine` and `--thread` already
+  say where the source box is, so the fork's own choice is `--as-machine`.
+  Forks into another thread stay later, as section 9 says.
+- **A fork has the snapshot's size**, read from the snapshot's config; no
+  larger size is offered yet.
+- **Held copies do not fork yet**: they come with Keep (unit 8).
 
 ## Alternatives considered
 

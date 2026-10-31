@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
@@ -567,15 +568,13 @@ export class ProxmoxQemuBackend implements Backend {
     return { macs, smbios: /(?:^|,)uuid=([^,]+)/.exec(String(config.smbios1 ?? ""))?.[1] ?? null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
     }
     const vmid = this.#freeVmid(await api.listPool(this.#config.proxmox.pool, signal), this.#nextVmid);
-    if (vmid === null) {
-      throw new SnapshotFailed(`Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`);
-    }
+    if (vmid === null) throw noneFree(`from ${this.#config.vmids.first} to ${this.#config.vmids.last}`);
     this.#reserved.add(vmid);
     this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
     await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
@@ -691,6 +690,44 @@ export class ProxmoxQemuBackend implements Backend {
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (!this.snapshotting(box.kind)) throw new BackendError("unsupported", `${this.label} forks no ${box.kind} boxes.`);
+    return forkByFullClone(
+      {
+        installId: this.#context.installId,
+        pool: this.#config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        rootDisk: bootDisk,
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        unreserve: (vmid) => this.#reserved.delete(vmid),
+        forget: (vmid) => this.#forget(vmid),
+        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, build),
+        rearm: async (api, vmid, made, forked, template, signal) => {
+          const address = addressFor(this.#config, vmid);
+          if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
+          const { bridge, prefix, gateway } = this.#config.network;
+          const nets: Record<string, string> = {};
+          for (const key of netKeys(made)) nets[key] = netWith(key === "net0" ? net0On(made[key], bridge) : String(made[key]), { mac: randomMac(), up: true });
+          await api.setNetwork(vmid, nets, signal);
+          await api.configure(
+            vmid,
+            { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: true, smbios1: smbios1For(address, prefix, gateway, randomUUID()), delete: ["protection"] },
+            signal,
+          );
+        },
+        sizeOf,
+        logError: (operation, error) => this.#context.logError(operation, error),
+      },
+      ref,
+      box,
+      previous,
+      hooks,
+      signal,
+    );
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

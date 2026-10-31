@@ -10,7 +10,7 @@ import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { extraFeatures, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
+import { extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
@@ -93,6 +93,7 @@ export interface BoxView {
   readonly lastResize?: ResizeView | null;
   readonly log?: BoxLogView | null;
   readonly reach?: ReachView | null;
+  readonly forkedFrom?: { readonly name: string; readonly snapshot: string; readonly takenAt: number } | null;
 }
 
 export interface JoinTriesView {
@@ -178,6 +179,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     lastResize: box.resize ? { to: sizeView(box.resize.to), at: box.resize.at, state: box.resize.state, restart: box.resize.restart, ms: box.resize.ms, error: box.resize.error } : null,
     log: told.log,
     reach: told.reach,
+    forkedFrom: box.fork ? { name: box.fork.source.name, snapshot: box.fork.snapshot.name, takenAt: box.fork.snapshot.takenAt } : null,
   };
 }
 
@@ -667,6 +669,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const extras = other(extraFeatures(box));
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);
   if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
+  if (box.fork) lines.push(`Origin: ${forkedFromWords(box.fork)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
   for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form") lines.push(`${fact.label}: ${fact.value}`);
   if (control && capabilities.displays.length) lines.push(controlLine(control.owner, deviceDisplayOf(capabilities.displays) ? "device" : "desktop"));

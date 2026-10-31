@@ -57,7 +57,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
-import { MARKER_WRITE_MS, writeIdentityMarker } from "./identity.ts";
+import { MARKER_WRITE_MS, forkVerdict, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
 import {
   bestAnswer,
   grantRefusal,
@@ -115,6 +115,12 @@ export interface IdentityResetFound {
   readonly retiredAt: number | null;
   readonly machineAgain: string | null;
   readonly enrolledAgainAt: number | null;
+}
+
+export interface ForkOrigin {
+  readonly operation: string;
+  readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly ref: string; readonly livesOn: Guest; readonly identity: HeldIdentity | null };
+  readonly source: { readonly id: string; readonly name: string; readonly threadId: string; readonly macs: readonly string[] };
 }
 
 export interface MachineToCheck {
@@ -203,6 +209,7 @@ export interface BoxRecord {
   /** The box's last resize (061), recorded before it changes anything. */
   readonly resize?: ResizeRecord | null;
   readonly restoring?: RestoringMark | null;
+  readonly fork?: ForkOrigin | null;
   readonly endToldAt?: number | null;
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
@@ -420,6 +427,8 @@ export interface BoxesDeps {
   /** A box's record was written, or deleted when `deleted` is true. */
   recorded?(box: BoxRecord, deleted: boolean): void;
   ended?(box: BoxRecord, how: "released" | "forgotten"): void;
+  forked?(box: BoxRecord): void;
+  forkHold?(box: BoxRecord, signal: AbortSignal): Promise<void>;
   keepsGuest?(backendId: string, guestRef: string): string | null;
   /**
    * Whether a thread still exists and is not archived, as BB says. The sweep
@@ -480,6 +489,7 @@ export interface BoxesDeps {
   log?(message: string): void;
   /** How long a command waits for its box to finish enrolling, or reconnecting after a start. */
   readonly enrolWaitMs?: number;
+  readonly forkWaitMs?: number;
   readonly sharedIosByDefault?: boolean;
   readonly events?: BoxLog;
   readonly reach?: BoxReach;
@@ -691,6 +701,25 @@ const ENROL_WAIT_MS = 20_000;
 
 /** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+const FORK_WAIT_MS = 60_000;
+const FORK_LOOKS = 30;
+
+export interface ForkRequest {
+  readonly id: string;
+  readonly threadId: string;
+  readonly projectId: string | null;
+  readonly name?: string;
+  readonly backend: string;
+  readonly backendLabel: string;
+  readonly kind: string;
+  readonly size: BoxSize;
+  readonly origin: ForkOrigin;
+  readonly who: Actor;
+}
+
+export function forkedFromWords(origin: ForkOrigin): string {
+  return `Forked from ${origin.source.name}, "${origin.snapshot.name}" (taken ${new Date(origin.snapshot.takenAt).toISOString().slice(0, 16).replace("T", " ")} UTC).`;
+}
 
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
 const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
@@ -1301,6 +1330,63 @@ export class Boxes {
       );
     } else if (claimed !== null) this.#claimed(box, claimed);
     else this.#startAcquire(box);
+    return box;
+  }
+
+  async fork(request: ForkRequest): Promise<BoxRecord> {
+    const offered = this.#deps.backends.kinds().find((candidate) => candidate.backend.id === request.backend && candidate.kind.id === request.kind);
+    if (!offered) throw new BoxError("unknown_kind", `${request.backendLabel} offers no ${request.kind} boxes now, so bb-box cannot fork one there.`);
+    const { backend, kind } = offered;
+    const yours = request.threadId === OPERATOR;
+    if (yours && request.name !== undefined && !isMachineName(request.name)) {
+      throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${request.name}" is not one.`);
+    }
+    if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
+    const room = await backend.capacity(kind.id, request.size, await this.#pending(backend.id));
+    if (!room.ok) throw new BoxError("no_capacity", `${backend.label} has no room for the fork: ${room.message ?? "it did not say why"}`);
+    const general = await this.#deps.general();
+    const box = await this.#admission.run(() =>
+      this.#locked(request.threadId, async () => {
+        const existing = await this.list(request.threadId);
+        const active = existing.filter((box) => isActive(box) && box.role === "box");
+        if (!yours && ownedByThread(request.threadId) && general.perThreadLimit !== null && active.length >= general.perThreadLimit) {
+          throw new BoxError("limit_reached", `This thread already has ${active.length} boxes, the most allowed: ${active.map((box) => box.name).join(", ")}. Release one first.`);
+        }
+        const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
+        if (request.name !== undefined && taken.has(request.name)) throw new BoxError("invalid_name", `There is a ${yours ? "machine" : "box"} called ${request.name} already${yours ? "" : " in this thread"}.`);
+        const createdAt = this.#now();
+        const record: BoxRecord = {
+          id: request.id,
+          threadId: request.threadId,
+          projectId: request.projectId,
+          name: request.name ?? generateName(await this.#liveNames(taken), this.#random),
+          kind: kind.id,
+          kindLabel: kind.label,
+          requires: [...kind.requires],
+          capabilities: kind.capabilities,
+          backend: backend.id,
+          backendLabel: backend.label,
+          nature: backend.nature,
+          role: "box",
+          size: request.size,
+          guest: null,
+          state: "acquiring",
+          error: null,
+          createdAt,
+          readyAt: null,
+          releaseRequestedAt: null,
+          resetAt: null,
+          timings: {},
+          enrol: { state: "off", hostId: null, error: null },
+          fork: request.origin,
+        };
+        await this.#deps.kv.set(indexKey(record.id), record.threadId);
+        const written = await this.#write(record);
+        this.#event(written, "made", request.who, { at: createdAt, words: forkedFromWords(request.origin) });
+        return written;
+      }),
+    );
+    this.#startAcquire(box);
     return box;
   }
 
@@ -2105,7 +2191,66 @@ export class Boxes {
     this.#acquiring.set(box.id, controller);
     void this.#chain(box.id, () => this.#acquire(box, controller.signal))
       .catch((error) => this.#deps.logError("acquire", error))
-      .finally(() => this.#acquiring.delete(box.id));
+      .finally(() => {
+        this.#acquiring.delete(box.id);
+        if (box.fork && !this.#disposed) void this.#forkSettled(box);
+      });
+  }
+
+  async #forkSettled(box: BoxRecord): Promise<void> {
+    try {
+      const current = await this.#read(box.threadId, box.id);
+      if (current && !isAcquiring(current)) this.#deps.forked?.(current);
+    } catch (error) {
+      this.#deps.logError("fork", error);
+    }
+  }
+
+  async #forkGuest(box: BoxRecord, backend: Backend, hooks: AcquireHooks, timings: Record<string, number>, signal: AbortSignal): Promise<Guest> {
+    const fork = box.fork!;
+    if (!backend.forkSnapshot || !backend.start || !backend.guestIdentity) throw new BoxError("unsupported", `${box.backendLabel} forks no snapshots.`);
+    const forkSnapshot = backend.forkSnapshot.bind(backend);
+    const size = await this.#size(box);
+    const made = await this.#chain(fork.source.id, () => forkSnapshot({ id: fork.snapshot.id, ref: fork.snapshot.ref, guest: fork.snapshot.livesOn }, identity(box, size), box.guest, hooks, signal));
+    try {
+      await hooks.claim(made);
+      await this.#deps.forkHold?.(box, signal);
+      await hooks.starting();
+      const booting = this.#now();
+      await backend.start(made, signal, hooks.timing);
+      timings.start = this.#now() - booting;
+      await this.#checkFork(box, made, backend, timings, signal);
+      return made;
+    } catch (error) {
+      await backend.release(made, QUIET).catch((cause) => this.#deps.logError("release a fork that failed", cause));
+      throw error;
+    }
+  }
+
+  async #checkFork(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
+    const fork = box.fork!;
+    const began = this.#now();
+    const command = (await backend.transports(guest, box.kind)).command;
+    if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
+    const expected = {
+      forkMacs: Object.values((await backend.guestIdentity!(guest, signal)).macs),
+      sourceMacs: fork.source.macs,
+      sourceBox: fork.source.id,
+      sourceName: fork.source.name,
+      held: fork.snapshot.identity,
+    };
+    const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;
+    for (let look = 1; ; look++) {
+      const verdict = forkVerdict(await readForkSeen(command, signal), expected);
+      if (verdict.is === "ready") break;
+      if (verdict.is === "refused" || look >= FORK_LOOKS) {
+        const waited = verdict.is === "wait" ? ` after ${Math.round(waitMs / 1000)} s` : "";
+        throw new BoxError("failed", `bb-box did not hand fork ${box.name} over${waited}: ${verdict.why}. bb-box released it, so nothing of it acts as ${fork.source.name}.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs / FORK_LOOKS));
+      signal.throwIfAborted();
+    }
+    timings.check = this.#now() - began;
   }
 
   async #acquire(initial: BoxRecord, signal: AbortSignal): Promise<void> {
@@ -2145,7 +2290,7 @@ export class Boxes {
     };
     let guest: Guest;
     try {
-      guest = await backend.acquire(identity(box, await this.#size(box)), box.guest, hooks, signal);
+      guest = box.fork ? await this.#forkGuest(box, backend, hooks, timings, signal) : await backend.acquire(identity(box, await this.#size(box)), box.guest, hooks, signal);
     } catch (error) {
       // The backend released whatever it claimed before it threw.
       const next = await this.update(box, (current) => {

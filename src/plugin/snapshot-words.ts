@@ -1,8 +1,8 @@
 import type { Backend, Snapshotting } from "../backends/types.ts";
-import type { BoxRecord } from "../core/boxes.ts";
+import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, dayWords, gbWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
-import { freedWords, type DeleteAnswer, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
+import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
 
 function seconds(ms: number): string {
@@ -48,6 +48,32 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
   if (operation.error) lines.push(operation.error.charAt(0).toUpperCase() + operation.error.slice(1).replace(/([^.])$/, "$1."));
   lines.push(`What it did to the world since stays done. Box ${boxName} is ${answer.box?.state ?? "restored"}.`);
   return lines.join("\n");
+}
+
+export const FORK_HOLDS = "It gets its own BB machine, address and keys, and never acts as its source. Everything else on its disk comes with it: project secrets, signed-in browsers and keychains. It starts fresh: no apps are running.";
+
+export function forkCheckText(check: ForkCheck): string {
+  const snapshot = check.snapshot;
+  const where = check.asMachine ? "one of your machines" : `a box of thread ${check.threadId}`;
+  const space = check.bytes !== null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
+  return [
+    `Forking "${snapshot.name}" (${snapshot.id}) of box ${check.box.name}, taken ${dayWords(snapshot.takenAt)}, would make ${where}, with ${describeSize(check.size)}, as the snapshot holds.`,
+    `bb-box copies the snapshot in full, which takes up to about ${seconds(check.aboutMs)}${space}, then starts the copy, checks that it reset its identity, and only then hands it over.`,
+    FORK_HOLDS,
+    "Nothing changed.",
+  ].join("\n");
+}
+
+export function forkedText(answer: ForkAnswer, box: BoxRecord | null): string {
+  const operation = answer.operation;
+  const named = answer.snapshot ? `"${answer.snapshot.name}" (${answer.snapshot.id})` : (operation.snapshots[0] ?? "");
+  if (!box) return `The fork of ${named} ${answer.repeated ? "asked for with that request already " : ""}has no box in bb-box's records: ${operation.error ?? "it is gone"}.`;
+  const again = answer.repeated ? " It was asked for with that request already." : "";
+  if (box.state === "failed") return `Fork ${box.name} of ${named} failed: ${box.error ?? "no reason given"}${again}`;
+  if (box.state !== "ready") return `Fork ${box.name} of ${named} is ${box.state}.${again}`;
+  const where = box.threadId === OPERATOR ? "one of your machines" : `a box of thread ${box.threadId}`;
+  const total = typeof box.timings.total === "number" ? ` in ${seconds(box.timings.total)}` : "";
+  return [`Forked ${named} into box ${box.name} (${box.id}), ${where}, ready${total}.${again}`, box.fork ? forkedFromWords(box.fork) : "", FORK_HOLDS].filter(Boolean).join("\n");
 }
 
 export function restoreCheckText(check: RestoreCheck): string {

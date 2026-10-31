@@ -40,6 +40,7 @@ import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
+import { forkByFullClone } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -755,15 +756,13 @@ export class ProxmoxLxcBackend implements Backend {
     return { macs, smbios: null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
     }
     const vmid = this.#freeVmid(await api.listPool(this.#config.proxmox.pool, signal), this.#nextVmid);
-    if (vmid === null) {
-      throw new SnapshotFailed(`Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`);
-    }
+    if (vmid === null) throw noneFree(`from ${this.#config.vmids.first} to ${this.#config.vmids.last}`);
     this.#reserved.add(vmid);
     this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
     await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
@@ -876,6 +875,37 @@ export class ProxmoxLxcBackend implements Backend {
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    this.#offer(box.kind);
+    return forkByFullClone(
+      {
+        installId: this.#context.installId,
+        pool: this.#config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        rootDisk: () => "rootfs",
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        unreserve: (vmid) => this.#reserved.delete(vmid),
+        forget: (vmid) => this.#forget(vmid),
+        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build),
+        rearm: async (api, vmid, made, forked, template, signal) => {
+          const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()}` };
+          for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: true });
+          await api.setNetwork(vmid, nets, signal);
+          await api.configure(vmid, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: true, delete: ["protection"] }, signal);
+        },
+        sizeOf,
+        logError: (operation, error) => this.#context.logError(operation, error),
+      },
+      ref,
+      box,
+      previous,
+      hooks,
+      signal,
+    );
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

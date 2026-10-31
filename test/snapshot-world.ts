@@ -26,7 +26,7 @@ export const COMMAND: Caller = { is: "command" };
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 
-export function world(options: { readonly identityTool?: string; readonly markersOn?: boolean } = {}) {
+export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -51,7 +51,7 @@ export function world(options: { readonly identityTool?: string; readonly marker
     machineRestores: false,
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
-    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
+    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}), ...(options.identityRoot ? { identityRoot: options.identityRoot } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
     boxes: null as unknown as Boxes,
@@ -106,7 +106,9 @@ export function world(options: { readonly identityTool?: string; readonly marker
       events: state.log,
       log: (message) => state.boxLogs.push(message),
       ended: (box, how) => state.snapshots.boxEnded(box, how),
+      forked: (box) => state.snapshots.forkEnded(box),
       keepsGuest: (backendId, guestRef) => state.snapshots.holdsGuest(backendId, guestRef),
+      ...(options.forkWaitMs !== undefined ? { forkWaitMs: options.forkWaitMs } : {}),
       now,
     });
     state.boxes = boxes;

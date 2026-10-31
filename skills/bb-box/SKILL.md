@@ -232,6 +232,12 @@ can put the box back to it.
   past that, bb-box deletes the oldest one an agent of this thread took.
   You cannot delete or restore a kept snapshot. You delete only those an
   agent of this thread took; on a box you run on, you see only those.
+- To try two things from one set-up state, fork the box with `box_fork`:
+  a new box of this thread from one of its snapshots, or from the box now.
+  The fork has the snapshot's files and its own BB machine, address and
+  keys; everything else on the disk comes with it. Only a snapshot taken
+  with a working identity reset forks, and only from a box of this thread
+  that you do not run on.
 - A refusal that says to try again holds only for now, such as a host's
   storage too full or a backup running: try again later.
 - When Settings turn agents' restores off, `box_restore` asks for a yes

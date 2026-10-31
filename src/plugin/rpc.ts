@@ -22,7 +22,7 @@ import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, offlineMachineWords, readableState, unreadableWords } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
-import { answered, boxSnapshotsView, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
+import { answered, boxSnapshotsView, forkPreview, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -359,6 +359,22 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return picture ? { jpeg: Buffer.from(picture.jpeg).toString("base64"), width: picture.width, height: picture.height } : null;
     },
     "snapshot.settle": ({ box }) => snapshotChange(box, "Checking the restore", () => snapshots.recover()),
+    async "snapshot.forkCheck"({ box: boxId, snapshot, asMachine }) {
+      try {
+        return await forkPreview(snapshots, await pageBox(boxId), snapshot, asMachine === true);
+      } catch (error) {
+        return { refusal: describeError(error, "Planning the fork"), check: null };
+      }
+    },
+    async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, request }) {
+      try {
+        const box = await pageBox(boxId);
+        const answer = await snapshots.fork(PERSON, box, personStanding(box), snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true, request, projectId: box.projectId });
+        return { error: null, box: answer.box ? { id: answer.box.id, name: answer.box.name } : null };
+      } catch (error) {
+        return { error: describeError(error, "Forking the snapshot"), box: null };
+      }
+    },
     async "machines.list"() {
       const records = (await boxes.list(OPERATOR)).sort((a, b) => a.createdAt - b.createdAt);
       const [machines, kinds, desktopOnDemand, access] = await Promise.all([

@@ -6671,6 +6671,25 @@ test("box_snapshot, box_snapshots and box_snapshot_delete: an agent takes, lists
   assert.ok(app.snapshotStore.record(threeRecord!.id), "nothing of the thread's was touched");
 });
 
+test("box_fork and bb box snapshot fork: with no snapshot named, box_fork takes one \"for a fork\" first; a snapshot without a working identity reset is refused with why, by the tool and the command; another thread finds no box (070 unit 7)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  new FakeSnapshots().attach(world.backend!, Date.now);
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const refused = await tool("box_fork", { box: box.name });
+  assert.equal(typeof refused === "string" ? false : refused.isError, true);
+  assert.match(text(refused), new RegExp(`^${box.name} had no working identity reset when "for a fork" was taken, so bb-box does not fork it: a copy of it would not give up ${box.name}'s identity, and could act as ${box.name}\\.\\n\\nNext: Call box_status`));
+  assert.deepEqual(app.snapshotStore.records({ box: box.id }).map((record) => record.name), ["for a fork"], "it took one of the box now, as it was asked");
+  assert.equal((await app.boxes.list(THREAD)).length, 1, "and made no box");
+  const command = await harness.behavior.runCli(["snapshot", "fork", box.name, "for a fork", "--thread", THREAD, "--check"]);
+  assert.equal(command.exitCode, 1);
+  assert.match(command.stderr ?? "", /had no working identity reset when "for a fork" was taken/);
+  const OTHER = "thr_other";
+  world.threads.set(OTHER, makeThreadResponse({ id: OTHER, projectId: PROJECT, environmentId: "env_two", providerId: "claude-code" }));
+  assert.match(text(await tool("box_fork", { box: box.name, snapshot: "for a fork" }, OTHER)), /no box|No box|not found|has no box/i);
+});
+
 test("box_restore restores the agent's own box at once with an undo; with agents' restores off it asks for a yes through a form, and a cancel, a wrong answer and a changed plan restore nothing (070 unit 5, G11)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

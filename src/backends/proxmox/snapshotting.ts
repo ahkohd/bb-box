@@ -30,6 +30,7 @@ const TAKES_ABOUT_MS = 1_000;
 const CLOCK_SLACK_S = 5;
 const MEMORY_ABOUT_MS_PER_GIB = 1_000;
 const COPY_ABOUT_MS_PER_GIB = 2_400;
+const CLONE_PRIVILEGE = "VM.Clone";
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
@@ -169,7 +170,7 @@ export class ProxmoxSnapshotting {
   }
 
   offer(): Snapshotting {
-    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
   }
 
   #tool(): string {
@@ -318,7 +319,7 @@ export class ProxmoxSnapshotting {
       },
       restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, lockWhy, takeWhy: reasons[0] ?? null }, target, signal),
       keep: { way: "no", why: "bb-box does not keep snapshots past a release yet.", aboutMs: null, bytes: null, price: null },
-      fork: { ok: false, why: "bb-box does not fork snapshots yet.", aboutMs: 0, bytes: null },
+      fork: await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal),
       locked,
       busy,
     };
@@ -369,6 +370,38 @@ export class ProxmoxSnapshotting {
         return null;
       });
     return { way, why: null, ...undo, sizeBack, leavesOnEarlierGuest: 0, newer, copyAboutMs };
+  }
+
+  async #forkPlan(
+    api: Proxmox,
+    vmid: number,
+    config: Record<string, unknown>,
+    seen: { readonly privileges: ReadonlySet<string> | null; readonly lock: string | null; readonly lockWhy: string | null; readonly locked: SnapshotPlan["locked"] },
+    target: SnapshotRef | null,
+    signal?: AbortSignal,
+  ): Promise<SnapshotPlan["fork"]> {
+    const copyOf = (size: BoxSize | null) => ({ aboutMs: Math.round((size?.diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB), bytes: size?.diskGiB != null ? size.diskGiB * GiB : null });
+    const none = (why: string, size: BoxSize | null = null): SnapshotPlan["fork"] => ({ ok: false, why, ...copyOf(size), size });
+    if (seen.privileges && !seen.privileges.has(CLONE_PRIVILEGE)) {
+      return none(`The Proxmox token lacks ${CLONE_PRIVILEGE} on /pool/${this.#guests.pool}, so bb-box cannot fork snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
+    }
+    if (seen.lock === "suspended") return none("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
+    if (seen.lockWhy) return none(seen.lockWhy);
+    if (seen.locked) return none(`Proxmox left guest ${vmid} locked (${seen.locked.lock}). ${seen.locked.fix}`);
+    if (!target) return { ok: true, why: null, ...copyOf(this.#guests.sizeOf(config)), size: this.#guests.sizeOf(config) };
+    const name = snapshotName(target.id);
+    const found = await this.#listed(api, vmid, name, signal);
+    if (!found) return none(`Guest ${vmid} has no snapshot ${name}.`);
+    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so bb-box does not fork it.`);
+    const size = await api
+      .snapshotConfig(vmid, name, signal)
+      .then((saved) => this.#guests.sizeOf(saved))
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return null;
+      });
+    if (!size) return none(`bb-box could not read the size snapshot ${name} of guest ${vmid} holds, which its fork would have.`);
+    return { ok: true, why: null, ...copyOf(size), size };
   }
 
   async #listed(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<ProxmoxSnapshot | null> {

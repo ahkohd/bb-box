@@ -125,6 +125,12 @@ export function restoreWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxN
   return null;
 }
 
+export function forkWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName: string): string | null {
+  if (view.restoring) return `${boxName} is being restored`;
+  if (view.unconfirmed) return "bb-box could not confirm its last restore";
+  return row.forkWhy;
+}
+
 export function freesWords(row: SnapshotRowView, boxName: string): string {
   if (row.state === "failed" || row.state === "lost") return "It holds nothing to free.";
   const where = row.host ? ` on ${row.host}` : "";

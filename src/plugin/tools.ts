@@ -99,7 +99,7 @@ export function thread(threadId: string | undefined): string {
   return threadId;
 }
 
-function using(box: BoxRecord): string[] {
+export function using(box: BoxRecord): string[] {
   return [`Run commands with box_run (box "${box.name}").`, `Move files with box_copy.`, `Call box_release with box "${box.name}" when you are done.`];
 }
 
@@ -188,7 +188,7 @@ function bytes(content: string, encoding: "base64" | "utf8"): Uint8Array {
 }
 
 /** Waits for an acquire to finish, up to the kind's ready timeout. Null when it has not finished. */
-async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<BoxRecord | null> {
+export async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<BoxRecord | null> {
   const timeoutMs = app.boxes.kinds().find((kind) => kind.id === box.kind)?.readyTimeoutMs ?? 5 * 60_000;
   let timer: NodeJS.Timeout | undefined;
   const waited = new Promise<null>((resolve) => {

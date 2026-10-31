@@ -1,6 +1,7 @@
 import { cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type AcquireHooks,
   RestoreChanged,
   SnapshotFailed,
   SnapshotIncomplete,
@@ -61,6 +62,9 @@ export class FakeSnapshots {
   readonly copies = new Map<string, { state: "copy" | "template"; box: string; snapshot: string; disarmed: boolean; takenAt: number }>();
   readonly earlier = new Set<string>();
   copyFault: Error | null = null;
+  forkFault: Error | null = null;
+  forkWhy: string | null = null;
+  onForked: ((made: Guest, ref: SnapshotRef) => Promise<void>) | null = null;
   #copies = 0;
   listing: Error | null = null;
   listingGate: Promise<void> | null = null;
@@ -105,7 +109,7 @@ export class FakeSnapshots {
         return start(guest, signal, timing, answered);
       };
     }
-    const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
     target.snapshotting = () => offer;
     target.planSnapshots = async (_guest: Guest, _kind: string, snapshot: SnapshotRef | null): Promise<SnapshotPlan> => ({
       storage: this.storage(),
@@ -130,7 +134,7 @@ export class FakeSnapshots {
         copyAboutMs: 2000,
       },
       keep: { way: "no", why: null, aboutMs: null, bytes: null, price: null },
-      fork: { ok: false, why: null, aboutMs: 0, bytes: null },
+      fork: { ok: this.forkWhy === null, why: this.forkWhy, aboutMs: 2000, bytes: null, size: snapshot ? (this.sizes.get(snapshot.id) ?? null) : null },
       locked: this.locked,
       busy: this.busy,
     });
@@ -278,6 +282,22 @@ export class FakeSnapshots {
       await hooks.submitting();
       const task = this.#task(copy, "copy", fresh.ref, { state: "ok" }, now());
       await hooks.task({ ref: task, host: copy.host });
+      return fresh;
+    };
+    target.forkSnapshot = async (ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks): Promise<Guest> => {
+      this.order.push(`fork ${ref.id}`);
+      if (previous && (await backend.power(previous)) !== null) await backend.release(previous, { timing: () => {}, resetting: async () => {} } as never);
+      if (!this.held.has(ref.id)) throw new Error(`snapshot bb${ref.id} does not exist`);
+      const saved = savedOf(ref.id);
+      const fresh = await backend.makeGuest(box, saved && existsSync(saved) ? saved : null);
+      await hooks.claim(fresh);
+      const fault = this.forkFault;
+      this.forkFault = null;
+      if (fault) {
+        await backend.release(fresh, { timing: () => {}, resetting: async () => {} } as never);
+        throw fault;
+      }
+      await this.onForked?.(fresh, ref);
       return fresh;
     };
     target.retireGuest = async (guest: Guest) => {

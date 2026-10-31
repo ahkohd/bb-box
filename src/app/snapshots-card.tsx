@@ -8,18 +8,21 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Actor } from "../core/box-log.ts";
-import type { BoxSnapshotsView, Contract, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
+import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { actorWords, type ThreadTitles } from "./box-words.ts";
 import { Badge, IconButton, message, StatusDot } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
-import { CameraGlyph } from "./glyphs.tsx";
+import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
+import { useBoxesNav } from "./box-nav.tsx";
 import {
   aboutWords,
   agoWords,
   attentionWords,
   footerWords,
+  forkWhyNot,
   freesWords,
+  gbWords,
   gibWords,
   headWords,
   otherLosses,
@@ -184,7 +187,7 @@ function rowLine(row: SnapshotRowView, boxName: string, now: number, titles: Thr
   };
 }
 
-type Asking = null | "restore" | "delete" | "rename" | "note";
+type Asking = null | "restore" | "fork" | "delete" | "rename" | "note";
 
 function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { box: BoxView; view: BoxSnapshotsView; row: SnapshotRowView; now: number; titles: ThreadTitles; onChanged: () => void; onDeleted: (id: string) => void }) {
   const [asking, setAsking] = useState<Asking>(null);
@@ -202,6 +205,8 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
   const line = rowLine(row, box.name, now, titles);
   const busy = row.state === "taking" || row.state === "deleting";
   const changeWhy = row.state === "deleting" ? "it is being deleted" : row.busyWhy && row.state !== "taking" ? row.busyWhy : null;
+  const forks = view.offer?.fork === "copy";
+  const forkWhy = forkWhyNot(row, view, box.name);
   return (
     <li data-snapshot-row={row.id} className="group flex min-w-0 items-start gap-3 py-3">
       {view.screen ? <Thumbnail box={box} row={row} now={now} /> : null}
@@ -229,6 +234,7 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
       </div>
       <span className="flex shrink-0 items-center gap-0.5 self-center sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-[[data-state=open]]:opacity-100 pointer-coarse:opacity-100">
         {view.offer?.restore !== "none" ? <IconButton label={restoreWhy ? `Restore: not now, as ${restoreWhy}` : `Restore ${box.name} to ${row.name}`} icon="ArrowTurnBackward" disabled={!!restoreWhy} onClick={() => ask("restore", false)} /> : null}
+        {forks ? <IconButton className="max-sm:hidden" label={forkWhy ? `Fork: not now, as ${forkWhy}` : `Fork ${row.name} into a new box`} icon={<ForkGlyph />} disabled={!!forkWhy} onClick={() => ask("fork", false)} /> : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button ref={menuButton} type="button" variant="ghost" size="icon" data-row-menu className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`${row.name} actions`}>
@@ -245,6 +251,15 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
               event.preventDefault();
             }}
           >
+            {forks ? (
+              <DropdownMenuItem className="sm:hidden" disabled={!!forkWhy} onSelect={() => ask("fork", true)}>
+                <ForkGlyph />
+                <span className="min-w-0">
+                  <span className="block">Fork…</span>
+                  {forkWhy ? <span className="block whitespace-normal text-xs text-muted-foreground">Not now: {forkWhy}</span> : null}
+                </span>
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem disabled={!!changeWhy || row.state === "failed"} onSelect={() => ask("rename", true)}>
               <Icon name="Pencil" aria-hidden />
               Rename…
@@ -269,6 +284,7 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
         </DropdownMenu>
       </span>
       {asking === "restore" ? <RestoreDialog box={box} snapshotId={row.id} perBox={view.perBox} now={now} returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
+      {asking === "fork" ? <ForkDialog box={box} row={row} now={now} returnTo={returnTo} onClose={close} /> : null}
       {asking === "delete" ? <DeleteDialog box={box} row={row} returnTo={returnTo} onClose={close} onChanged={onChanged} onDeleted={() => onDeleted(row.id)} /> : null}
       {asking === "rename" ? <TextDialog box={box} row={row} kind="rename" returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
       {asking === "note" ? <TextDialog box={box} row={row} kind="note" returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
@@ -352,6 +368,109 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
       ) : null}
       <AlertDialogDescription id={describedBy} className="text-xs leading-snug text-muted-foreground">
         {current ? (current.refusal ? null : `${holdsLine}${offer.excludes ? ` It leaves out ${offer.excludes}.` : ""}${timing} ${view.counted + 1} of ${view.perBox} for ${box.name} after this.${picture}${price}`) : "Reading what the backend plans…"}
+      </AlertDialogDescription>
+      <Refused words={refused ?? current?.refusal ?? null} />
+    </Shell>
+  );
+}
+
+function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: SnapshotRowView; now: number; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+  const call = useSnapshotCall();
+  const nav = useBoxesNav();
+  const [name, setName] = useState("");
+  const [asMachine, setAsMachine] = useState(false);
+  const [preview, setPreview] = useState<(ForkPreview & { readonly asMachine: boolean }) | null>(null);
+  const [sending, setSending] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  const request = useRef(requestId());
+  const describedBy = useId();
+  const whereName = useId();
+  useEffect(() => {
+    let cancelled = false;
+    void call<ForkPreview>("snapshot.forkCheck", { box: box.id, snapshot: row.id, asMachine })
+      .then((answer) => {
+        if (!cancelled) setPreview({ ...answer, asMachine });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setPreview({ refusal: message(error), check: null, asMachine });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [call, box.id, row.id, asMachine]);
+  const current = preview?.asMachine === asMachine ? preview : null;
+  const check = current?.check ?? null;
+  const threadTitles = useThreadTitles(check && !check.asMachine ? [check.threadId] : []);
+  const fork = async () => {
+    setSending(true);
+    setRefused(null);
+    let answer: ForkStarted;
+    try {
+      answer = await call<ForkStarted>("snapshot.fork", { box: box.id, snapshot: row.id, ...(name.trim() ? { name: name.trim() } : {}), asMachine, request: request.current });
+    } catch (error) {
+      answer = { error: message(error), box: null };
+    }
+    setSending(false);
+    if (answer.error || !answer.box) {
+      setRefused(answer.error ?? "bb-box made no box for the fork.");
+      request.current = requestId();
+      return;
+    }
+    onClose();
+    nav.go({ page: "box", boxId: answer.box.id, origins: ["from-box"] });
+  };
+  const thread = check && !check.asMachine ? (threadTitles[check.threadId] ?? "this box's thread") : null;
+  const space = check?.bytes != null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
+  return (
+    <Shell
+      title={`Fork "${row.name}" of ${box.name}`}
+      onClose={onClose}
+      returnTo={returnTo}
+      footer={
+        <>
+          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
+          <Button type="button" disabled={sending || !check} onClick={() => void fork()}>
+            {sending ? "Forking…" : `Fork ${box.name}`}
+          </Button>
+        </>
+      }
+    >
+      <label className="block space-y-1">
+        <span className="text-xs text-foreground">Name of the new box</span>
+        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className="h-8" data-first-focus aria-describedby={describedBy} />
+      </label>
+      {check?.canBeMachine ? (
+        <fieldset className="space-y-1">
+          <legend className="text-xs text-foreground">Where it goes</legend>
+          {[
+            { value: false, label: `In ${thread ? `"${thread}"` : "this box's thread"}` },
+            { value: true, label: "As one of your machines" },
+          ].map((option) => (
+            <label key={String(option.value)} className="flex items-center gap-2 text-sm text-foreground">
+              <input type="radio" name={whereName} checked={asMachine === option.value} disabled={sending} onChange={() => setAsMachine(option.value)} className="size-3.5 cursor-pointer accent-[var(--primary)]" />
+              {option.label}
+            </label>
+          ))}
+        </fieldset>
+      ) : check ? (
+        <p className="text-sm text-foreground">{check.asMachine ? "It becomes one of your machines." : `It goes in ${thread ? `"${thread}"` : "this box's thread"}.`}</p>
+      ) : null}
+      <AlertDialogDescription id={describedBy} asChild>
+        <div className="space-y-2 text-xs leading-snug text-muted-foreground">
+          {check ? (
+            <>
+              <p>
+                A new box with {box.name}'s files as they were {whenInSentence(check.takenAt, now)}. It gets its own BB machine, address and keys, and never acts as {box.name}. Everything else on its disk comes with it: project secrets, signed-in browsers and
+                keychains. It starts fresh: no apps are running.
+              </p>
+              <p>
+                {check.size}, as the snapshot holds. The copy takes up to about {aboutWords(check.aboutMs)}{space}, then it starts, and bb-box checks that it reset its identity before handing it over.
+              </p>
+            </>
+          ) : current ? null : (
+            <p role="status">Reading what the fork would be…</p>
+          )}
+        </div>
       </AlertDialogDescription>
       <Refused words={refused ?? current?.refusal ?? null} />
     </Shell>

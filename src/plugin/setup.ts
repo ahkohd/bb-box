@@ -815,6 +815,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       deviceServers?.recorded(box, deleted);
     },
     ended: (box, how) => snapshots.boxEnded(box, how),
+    forked: (box) => snapshots.forkEnded(box),
+    ...(snapshotHolds ? { forkHold: (box: BoxRecord, signal: AbortSignal) => snapshotHolds.hold({ id: box.fork?.operation ?? box.id, kind: "fork" }, "forked", signal, (message) => bb.log.info(message)) } : {}),
     keepsGuest: (backendId, guestRef) => snapshots.holdsGuest(backendId, guestRef),
     async thread(threadId): Promise<ThreadAnswer> {
       try {

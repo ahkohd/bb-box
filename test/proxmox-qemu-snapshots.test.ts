@@ -63,9 +63,9 @@ function tasks(): { hooks: SnapshotHooks; seen: TaskRef[]; submitted: number[] }
   return { seen, submitted, hooks: { submitting: async () => void submitted.push(seen.length), task: async (task) => void seen.push(task) } };
 }
 
-test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs; a Windows VM offers none yet", () => {
+test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs, and forks by a full copy; a Windows VM offers none yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows-desktop"), null);
 });
 
@@ -166,4 +166,29 @@ test("a stopped VM's take is refused in words about the box, and its storage key
   assert.equal(plan.take.ok, false);
   assert.equal(plan.take.why, "a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
   assert.equal(plan.locked, null);
+});
+
+test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, re-armed with onboot, its links up, new MAC addresses, a new SMBIOS UUID and the address of its own VMID; a Windows VM forks none", async () => {
+  const state = world();
+  const { guest, vmid, box } = await linuxBox(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks);
+  const source = state.proxmox.guests.get(vmid)!;
+  const sourceUuid = /uuid=([^,]+)/.exec(source.config.smbios1 ?? "")?.[1];
+  const sourceMac = /=([0-9A-F:]{17})/i.exec(source.config.net0 ?? "")?.[1];
+  const forked = { boxId: "bxforkedvmaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_100_000, size: defaultSize(kindSizes("linux")) };
+  const made = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, forked, null, quiet, new AbortController().signal);
+  const clone = [...state.proxmox.calls].reverse().find((call) => call.method === "POST" && /\/clone$/.test(call.path))!;
+  assert.equal(clone.params.snapname, `bb${SNAPSHOT}`);
+  const config = state.proxmox.guests.get(Number(made.ref))!.config;
+  assert.equal(config.onboot, "1");
+  assert.doesNotMatch(config.net0 ?? "", /link_down/);
+  assert.ok(sourceMac && !(config.net0 ?? "").toUpperCase().includes(sourceMac.toUpperCase()), "a MAC of its own");
+  assert.match(config.net0 ?? "", /bridge=vmbr1/);
+  const uuid = /uuid=([^,]+)/.exec(config.smbios1 ?? "")?.[1];
+  assert.ok(uuid && uuid !== sourceUuid, "a new SMBIOS UUID");
+  assert.match(config.smbios1 ?? "", new RegExp(`serial=${Buffer.from(`${made.address}/24 192.0.2.1`).toString("base64")}`), "the address of its own VMID, as the VM reads it");
+  assert.equal(config.vmstate, undefined, "it starts from the disk, never the saved memory");
+  assert.match(config.tags ?? "", /box\.bxforkedvmaaaa/);
+  const refused = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { ...forked, kind: "windows-desktop" }, null, quiet, new AbortController().signal).catch((caught: unknown) => caught);
+  assert.ok(refused instanceof BackendError);
 });

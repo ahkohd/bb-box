@@ -59,9 +59,9 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
   assert.equal(parseSnapshotLabel(`bb-box install inst1 box bx1 snapshot notanid`), null);
 });
 
-test("a container offers disk snapshots taken while it runs, and nothing it cannot do yet", () => {
+test("a container offers disk snapshots taken while it runs, forks by a full copy, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -74,7 +74,7 @@ test("the plan reads the root disk's storage, its use and its thin metadata, and
   assert.equal(plan.locked, null);
   assert.equal(plan.restore.way, "rollback");
   assert.equal(plan.restore.undo, "snapshot");
-  assert.equal(plan.fork.ok, false);
+  assert.equal(plan.fork.ok, true);
 });
 
 test("the plan refuses a take on storage that takes none, on a locked guest with the host's command, and without VM.Snapshot", async () => {
@@ -442,3 +442,67 @@ test("Opus 1: deleteCopy destroys only a held copy or an earlier guest, never th
   assert.match((refused as Error).message, /is not a held copy or an earlier guest of box/);
   assert.ok(state.proxmox.guests.has(vmid));
 });
+
+test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, recorded before the clone, re-armed with onboot, its link up, a new MAC and its own address, labelled as its new box, and refused nothing the sweep could take", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  const source = state.proxmox.guests.get(vmid)!;
+  source.config.net0 = `${source.config.net0},hwaddr=BC:24:11:AA:BB:CC`;
+  source.snapshots![0]!.config = { ...source.snapshots![0]!.config, net0: `${source.config.net0},link_down=1`, onboot: "0", memory: "4096", cores: "2" };
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
+  assert.equal(plan.fork.ok, true, plan.fork.why ?? "");
+  assert.deepEqual(plan.fork.size, { cores: 2, memoryMiB: 4096, diskGiB: plan.fork.size?.diskGiB ?? null }, "the fork has the size the snapshot holds");
+  const forked: BoxIdentity = { ...identity(), name: id.name, size: plan.fork.size! };
+  const claimed: string[] = [];
+  let listedDuring: boolean | null = null;
+  state.proxmox.intercept = (call) => {
+    if (call.method === "POST" && /\/clone$/.test(call.path)) void state.backend.held().then((held) => (listedDuring = held.some((each) => each.ref !== guest.ref && each.owner?.boxId === id.boxId)));
+    return undefined;
+  };
+  const made = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forked, null, { ...quiet, claim: async (each) => void claimed.push(each.ref) }, new AbortController().signal);
+  state.proxmox.intercept = undefined;
+  assert.deepEqual(claimed, [made.ref], "the fork's VMID is recorded before the clone");
+  assert.equal(listedDuring, false, "the sweep never takes the half-made fork, whose copied tags still name its source, for a leftover");
+  const clone = [...state.proxmox.calls].reverse().find((call) => call.method === "POST" && /\/clone$/.test(call.path))!;
+  assert.equal(clone.params.snapname, snapshotName(SNAPSHOT));
+  assert.equal(clone.params.full, "1");
+  const config = state.proxmox.guests.get(Number(made.ref))!.config;
+  assert.equal(config.onboot, "1", "re-armed: it starts with its node");
+  assert.doesNotMatch(config.net0 ?? "", /link_down/, "its link is up");
+  assert.doesNotMatch(config.net0 ?? "", /BC:24:11:AA:BB:CC/i, "a MAC of its own, so its identity reset runs at its first boot");
+  assert.match(config.net0 ?? "", /hwaddr=BC:24:11:/);
+  assert.match(config.net0 ?? "", new RegExp(`ip=${made.address}/`), "the address of its own VMID");
+  assert.match(config.tags ?? "", new RegExp(`box\\.${forked.boxId}`));
+  assert.doesNotMatch(config.tags ?? "", new RegExp(`box\\.${id.boxId}`));
+  assert.match(String(config.description), new RegExp(`box ${forked.boxId}`));
+  assert.equal(config.hostname, id.name, "a fork may have its source's name");
+  assert.equal(made.data?.box, forked.boxId);
+  assert.ok((await state.backend.held()).some((held) => held.ref === made.ref && held.owner?.boxId === forked.boxId), "once re-armed, the sweep sees it as its own box's guest");
+  assert.equal(state.proxmox.guests.get(vmid)!.config.net0, source.config.net0, "the source is untouched");
+});
+
+test("070 unit 7: a fork cut short is not left behind: a failed copy is deleted, and a half-made one from before a restart is deleted before the copy is made again", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  const forked = identity();
+  const before = new Set(state.proxmox.guests.keys());
+  state.proxmox.nextTaskExit.set("vzclone", "copy failed: out of space");
+  const failed = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forked, null, quiet, new AbortController().signal).catch((caught: unknown) => caught);
+  assert.match(String(failed), /copy of snapshot bbsn7kq2m6xa4pdq of guest \d+ failed: copy failed: out of space/);
+  assert.deepEqual(new Set(state.proxmox.guests.keys()), before, "nothing of the failed fork is left");
+  const missing = await state.backend.forkSnapshot({ id: "snzzzzzzzzzzzz", ref: snapshotName("snzzzzzzzzzzzz"), guest }, forked, null, quiet, new AbortController().signal).catch((caught: unknown) => caught);
+  assert.match(String(missing), /Proxmox refused to copy snapshot bbsnzzzzzzzzzzzz/);
+  const first = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forked, null, quiet, new AbortController().signal);
+  const again = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forked, first, quiet, new AbortController().signal);
+  assert.equal(state.proxmox.guests.has(Number(first.ref)), false, "the half-made fork from before the restart is deleted");
+  assert.ok(state.proxmox.guests.has(Number(again.ref)));
+  const other = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, identity(), guest, quiet, new AbortController().signal);
+  assert.ok(state.proxmox.guests.has(vmidOf(guest)), "a guest that is not this fork's is never deleted as a half-made fork");
+  assert.ok(state.proxmox.guests.has(Number(other.ref)));
+});
+
+function vmidOf(guest: Guest): number {
+  return Number(guest.ref);
+}
