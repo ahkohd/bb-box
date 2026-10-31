@@ -109,7 +109,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
       ended: (box, how) => state.snapshots.boxEnded(box, how),
       forked: (box) => state.snapshots.forkEnded(box),
       keepsGuest: (backendId, guestRef, ended) => state.snapshots.holdsGuest(backendId, guestRef, ended),
-      holdKeptOn: (backendId, guestRef) => state.snapshots.holdKeptOn(backendId, guestRef, BY_COMMAND),
+      holdKeptOn: (backendId, guestRef, boxId) => state.snapshots.holdKeptOn(backendId, guestRef, BY_COMMAND, boxId),
       leftoverReleased: (backendId, guestRef, boxId, why) => state.snapshots.leftoverReleased(backendId, guestRef, boxId, why),
       beforeRelease: (box, who) => state.snapshots.holdKept(box, who),
       unenrol: async (box) => void state.unenrolled.push(box.id),

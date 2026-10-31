@@ -386,7 +386,7 @@ boat's new-guest restores keep the box the same machine.
 | Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 9 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 9 |
 | Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 9 |
 | microsandbox | box; disk, or disk and memory | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot | copy: a disk snapshot restored as a new sandbox; never `msb fork`, which copies memory | as-is, if unit 10 confirms a snapshot outlives its sandbox | none | 10 |
-| boat.dev, paid plan | box; disk | live; `capturedAt` is the fresh capture a saved snapshot makes | new-guest, a swap | a saved snapshot | copy | as-is | $0.056 a day past the plan's | 11 |
+| boat.dev, paid plan | box; disk | live; `capturedAt` is the fresh capture a saved snapshot makes | new-guest, a swap | a saved snapshot of the stopped sandbox (decided during unit 11) | copy, from unit 11b | as-is, from unit 11b | $0.056 a day past the plan's | 11, 11b |
 | boat.dev, trial | box; disk | | none: no saved snapshots on the trial, and a stopped fork's capture can be a minute old, so it cannot be an exact undo | | copy, of the newest capture | no | | 11 |
 | Docker on a host of the person's | box; disk, with the box's own Docker volume, both captured while the container is paused | pauses (15 s for 1 GiB changed) | new-guest, a swap | a snapshot | copy | as-is | none | 12 |
 | Hetzner, Namespace Linux | box; as Docker | pauses | new-guest, a swap | a snapshot | copy | no: Hetzner deletes a host with no boxes, and Namespace an instance at release | none | 12 |
@@ -1217,6 +1217,7 @@ ship off until a live check on a real paid plan (unit 11).
 | 9 | Tart: macOS snapshots as APFS copies of the suspended VM beside the VMs, with memory, and the suspend before the undo; Linux VMs, disk only; restore by putting a copy back; macOS's own identity reset, then forks and Keep; a guard against a state saved under another macOS build | M | On a Tart Mac box, never a pool Mac someone else holds: take, restore, undo, fork and keep of a 16 GiB macOS box, timed; a copy on another volume refused |
 | 10 | microsandbox: native snapshots, restore as a swap, fork from a disk snapshot, dependent snapshots | S | Take with memory, restore, fork; the fork holds no process of its source; the restored box keeps its BB machine |
 | 11 | boat.dev: saved snapshots on a paid plan within the ceiling, restore as a swap; on the trial, no restore and no Keep | M | Only once the owner gives a paid plan: take, restore, the price on the row and the rate in Settings, and what a restore costs in boat's starts. Until then paid snapshots stay off |
+| 11b | boat.dev's identity source: the value bb-box sets on each guest, passed on in a same-box swap and new in a fork, delivered where boat's boot order lets the reset run before BB's daemon, Tailscale and SSH as the box user (see unit 11's results); boat's template rebuilt with the reset on; then forks from a saved snapshot and Keep, as-is until the keep date at its daily price | M | Gate G14 on boat: a fork resets with a new host ID, tailnet node, SSH host keys, machine ID and access file; a stop and start, a resize and a restore swap each keep the box's host ID with no reset; then Keep, a release, and a fork of the kept snapshot |
 | 12 | Docker, Hetzner and Namespace Linux boxes: a paused commit with the box's Docker volume; restore as a swap | M | A Docker box with images in its own Docker: take, restore, and its images are still there; Keep disabled on Hetzner and Namespace with why |
 | 13 | Android devices' own snapshots, `scope: device`, with the device's own capture order and losses | S | Save, restore, and the open app comes back; the words say the device only, and name no worktree |
 | Later | Restores with the network down on QEMU (the guest agent and `VM.GuestAgent.FileWrite`); moving a snapshot between hosts by export; forks into another thread; Windows and iOS forks and Keep; a registry push for Namespace | | |
@@ -1587,6 +1588,87 @@ probe as a regression test:
 - **"Release and delete what you kept" is offered only where it gets past
   the stop**: not while a copy is being made, a label cannot be read, or a
   held copy is not a template.
+
+## Decided during unit 11
+
+On 31 October 2026, during unit 11, the lead decided:
+
+- **The ceiling holds what the provider bills.** boat.dev's plan includes
+  saved snapshots, 10 for each $20 of plan, and bills only those past them,
+  account-wide, at $0.056 a day each. So a backend may give its own bill
+  (`snapshotBill`: how many the plan includes, how many the account holds,
+  and the daily price of each past them), and the rate held is then what is
+  past the included ones, times the price, times 30. A take, an undo and a
+  held copy add to the rate only when they would be past the included
+  ones. Each take, undo and Keep reads the bill first, and is refused when
+  it cannot be read: an older count says nothing of what others on the
+  account have added since. Settings then show an estimate, every saved
+  snapshot of the last count and bb-box's own since at full price, said as
+  an estimate. Each row's price says "past the plan's 10", and Settings and
+  the tab's line say how many the account holds and how many are billed.
+- **Keep and forks wait on boat.dev for unit 11b.** Keep is offered only for
+  what can fork after a release (section 7), and a fork needs the identity
+  reset, whose source unit 2 left for boat. boat.dev boots its base image
+  and lays the sandbox's own files over it after the sandbox is reachable,
+  so the reset cannot run before the network there, as section 9 says. Unit
+  11 ships take, list, delete, the price, the ceiling and the restore; Keep
+  and fork on boat.dev are refused with "boat.dev boxes have no identity
+  reset yet". The swap does not need the reset: boat.dev's boxes are not
+  armed, so the new sandbox comes back with the box's own BB machine files,
+  with the old sandbox stopped first.
+- **boat.dev's restore stops the box first, then saves the undo.** boat.dev's
+  stop saves the disk, and a saved snapshot of a stopped sandbox is that
+  save, so the undo holds exactly what the restore replaces. Section 5's
+  capture order took the undo from the running box, which loses what is
+  written between the undo and the stop. The cost is the box being stopped
+  while its undo is saved; unit 11's results give it as measured.
+
+Built so:
+
+- **A saved snapshot's name is its label**: the install, the box and the
+  snapshot, `<install>-<box>-<snapshot>`, at most 62 characters, as boat.dev
+  allows 63 and no labels. bb-box lists, reconciles and deletes only names
+  of its own install.
+- **A restored box runs on a new sandbox** labelled as the box, with a
+  token of its own (`bbbox-guest`), so its guest reference differs from the
+  old sandbox's, and bb-box never takes one for the other. boat.dev gives a
+  sandbox deployed from a saved snapshot no labels, so the restore deploys
+  it under a name that carries the box and the token, stops it, forks it
+  with the box's labels, and deletes the deployed one; the name is known
+  before boat is asked, so a release, a recovery or the upkeep finds it
+  after a lost answer or a restart.
+- **Never two sandboxes acting as the box, never none.** The old sandbox
+  stays, stopped, until the new one has started and taken its access
+  file; only then is it deleted, and the sweep releases it as a leftover if
+  that delete fails. If the new one does not start, or its access file
+  cannot be written, bb-box records that it is putting the old one back
+  (`swap-back`), deletes the new one, confirms it and the sandbox deployed
+  for it gone or stopped, and starts the old one again; a restart resumes
+  from that step. If it cannot confirm them, it starts neither, leaves the
+  restore unsettled and tries again at its next sweep. The box's snapshots stay restorable: they live on the
+  account.
+- **Every release deletes the box's saved snapshots**: before the sandbox
+  goes, from boat.dev's own list as well as the records, and confirmed by a
+  second list; a leftover sandbox of an ended thread's box the same way; and
+  a record left by a release that could not do it, at the next sweep. If
+  one cannot be deleted, the release stops and the sweep tries again.
+- **The plan is read from boat.dev's limits, never assumed**: only the
+  `standard` tier with a `box_` plan takes saved snapshots; a missing or
+  unfamiliar tier or plan takes none.
+- **What a restore costs in starts** is in its plan and its words: 2 starts,
+  the deploy and the fork, free within the plan's starts and priced from
+  the wallet past them. A restore needs 3 available in every one of
+  boat.dev's windows, free or paid up to boat.dev's own ceilings with the
+  wallet (`startLimitsWithWallet`), as putting the box back takes a third,
+  and is refused before anything stops otherwise.
+- **Reservations last until boat.dev counts them**: a snapshot bb-box holds
+  that boat.dev's list does not name yet counts beside its bill. When the
+  bill cannot be read just now, no paid snapshot is admitted. A snapshot
+  found again keeps its backend's price.
+- **A live check can count fewer included snapshots**:
+  `bb box snapshot fake-included <backend> <count>`, only with
+  `BB_BOX_LIVE_CHECKS=1`, until bb-box restarts, so the ceiling's refusal is
+  seen with a few snapshots.
 
 ## Alternatives considered
 

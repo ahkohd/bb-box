@@ -700,6 +700,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
           ) : null}
           {sizeBack ? <p>{sizeBack}</p> : null}
           {preview.undoUnflushed ? <p className="text-warning-text">This undo may miss what was written in the last seconds before its restore: bb-box could not flush the box's writes to its disk then ({preview.undoUnflushed.replace(/\.$/, "")}).</p> : null}
+          {check.fromSnapshot ? <p>{box.name} comes back on a new guest made from the snapshot, with the box's own identity, and its old guest is deleted. {check.costWords ?? ""}</p> : null}
           {check.swap && check.leavesOnEarlierGuest ? <p>{check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its earlier guest: fork only.</p> : null}
         </div>
       </AlertDialogDescription>

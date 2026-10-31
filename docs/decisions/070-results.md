@@ -3081,3 +3081,237 @@ tests, 2,971 passed, 0 failed, 288 skipped; vitest ran 431, all passed.
   turned on, by arming its backends.
 - **Rebuild the LXC template with version 7** before arming Proxmox LXC
   (unit 7's condition) also gates Keep there.
+
+## Unit 11: boat.dev's saved snapshots
+
+boat.dev's saved snapshots on a paid plan, within the ceiling, and a
+restore as a swap to a new sandbox. On the trial, nothing: no take, no
+restore and no Keep. Forks and Keep wait for unit 11b, as the lead decided
+(070, [Decided during unit 11](070-snapshots.md#decided-during-unit-11)).
+
+### What changed
+
+- **boat.dev's backend** offers snapshots (`src/backends/boat/snapshots.ts`
+  and the backend): `snapshotting`, `planSnapshots`, `snapshot`,
+  `deleteSnapshot`, `heldSnapshots`, `snapshotsOn`, `providerTask`,
+  `powerOff`, `adoptSnapshot` and `snapshotBill`. The plan is read from
+  `/limits`: `accessTier` and `sandboxPlanKey` say trial or paid, and a
+  plan it cannot read takes nothing. A take saves the sandbox under
+  `<install>-<box>-<snapshot>`, records `save:<name>` as its task before it
+  asks, polls until boat says `ready`, and keeps the capture's own time
+  (`GET /snapshots/{snapshotId}`) as `capturedAt` and boat's size. A save
+  boat fails is deleted. A delete records `delete:<name>` and confirms the
+  name is gone.
+- **The restore deploys the snapshot, then copies it.** boat gives a
+  sandbox deployed from a saved snapshot no labels, whatever the request
+  says, and labels cannot be set later (found live, below). So
+  `adoptSnapshot` deploys it into a staging sandbox named
+  `bb-box:restoring:<box>:<token>`, waits until it runs, stops it (boat's
+  stop takes its last capture), forks it with the box's labels and a token
+  of its own (`bbbox-guest`), and deletes the staging sandbox. The staging
+  sandbox is on the claimed guest's record from the moment it exists, so a
+  release or a recovery deletes it, and only one with that name and no
+  labels. A restored guest's reference carries the token, so it never
+  equals the old sandbox's.
+- **Core: a new-guest restore from a snapshot** (`fromSnapshot`): the stop,
+  the undo of the stopped box, then `adoptSnapshot` in place of a rollback,
+  the swap, and the old guest deleted rather than kept as an earlier guest,
+  as the box's snapshots live on the account; their records follow the box
+  to its new guest. Recovery after a restart uses the swap's steps.
+- **Core: a release deletes snapshots that live on the provider** before
+  the guest goes, and stops, deleting nothing more, if one cannot be
+  deleted. With `snapshots.db` unreadable it lists them from the provider
+  and refuses where a label says kept.
+- **Core: a backend's own bill** (`snapshotBill`) for the ceiling, read
+  before each take, restore and Keep and at each sweep, trusted for 10
+  minutes; otherwise every snapshot counts at its price. A take within the
+  included ones adds nothing. Takes boat has not counted yet are counted.
+- **Words**: a price with an included count says "$0.056 a day past the
+  plan's 10"; Settings say "Held now on the account: 3 of the 10 saved
+  snapshots the plan includes, so boat.dev bills about $0.00 a month for
+  those past them"; the tab's line "boat.dev $0.00 a month held (3 of the
+  10 the plan includes used)"; the restore dialog and `--check` say the new
+  guest and the starts it costs; Keep and fork say why not yet.
+- **Live checks**: `bb box snapshot fake-included <backend> <count>`.
+- Sizes below 1 GB are said in MB in core's words, as the app says them,
+  not "0.0 GB".
+- Docs: the boat guide's Snapshots section and clean-up check; the
+  snapshots guide's offer table, restore, release and paid snapshots; 070's
+  decisions and unit 11b's row.
+
+### Tests
+
+New: `test/boat-snapshots.test.ts` (11 tests, boat's recorded `/limits`
+and `/saved-snapshots` answers from the paid account on 31 October 2026
+and the trial's, a set clock, and FakeBoat, which now drops a deploy's
+labels as boat does), `test/provider-snapshots.test.ts` (7, core against
+the fake provider in boat's shape: the bill and its fallback, the swap and
+its undo, a swap that fails, the release, Keep and fork), and two app
+tests (the restore dialog's words, Settings' included count).
+
+On a Proxmox LXC box, in a copy whose git tree is this unit's commit over
+main `b7a1b4c9` (the same tree hash): `npx tsc` passes, and the reference
+is current (`node scripts/reference.ts --check`); the node suite ran
+3,292 tests, 3,004 passed, 0 failed, 288 skipped; vitest ran 442, all
+passed.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i` and `BB_BOX_LIVE_CHECKS=1`, in a Proxmox LXC
+box, bb-box installed from this branch with `bb plugin install path:`, and
+the boat backend added with `bb box backend add boat --secret api-key=...
+--secrets-file`, from a key file `box_copy` put in the box. The account is
+on boat's `standard` tier, plan `box_20`, with 10 saved snapshots
+included and none held at the start. Boxes were machines of the person's.
+As 068 found, a BB with no account cannot make boat boxes BB machines
+("Sign in to your bb account to use bb connect"), so "the same machine"
+was checked by a stand-in: a random host ID written to
+`~/.bb-machines/live-check/host-id` before the take.
+
+| Check | Result |
+| --- | --- |
+| Template, first box | this install built its own `linux` template: the box was ready in 620 s, most of it the build; a later box in 22.5 s (fork 0.4, ready 4.2, ssh 13.6, settle 4.0 s) |
+| Take, running box | 17 s on the first box, 132 s on the second (boat's fresh capture). "Price: $0.056 a day past the plan's 10." |
+| Restore, first try | failed and found the bug above: the deployed sandbox had `labels: {}`, so bb-box took it for gone and left the box stopped. A probe deploy with labels only, and a `PATCH` with labels, confirmed boat drops them; both probe sandboxes deleted. The box's release then deleted its two saved snapshots, and the unlabelled sandbox was deleted by hand |
+| `--check` | "stop it ...; take its undo ..., a snapshot of it stopped, about 70 s, at $0.056 a day; make it a new guest from that snapshot ...: boat counts 2 starts: 12 of 12 left this minute, at no charge within the plan's starts" |
+| Restore, after the fix | 53 s: stop 2.0, undo 6.6, swap 22, start 22, access 0.2 s. `work.txt` back to "before"; the host ID file's SHA-256 the same (`940f1fbf...`), a new boot ID; the old sandbox and the staging one deleted; the new sandbox labelled with the box and its token |
+| Undo | restoring "before the restore at 18:58": 176 s: stop 13, undo 97, swap 54, start 11 s; `work.txt` "after", the same host ID |
+| The undo's cost in downtime | the box is stopped from the stop to the start: 53 and 176 s here, of which the undo's save was 6.6 and 97 s |
+| Keep | "bb-box keeps only a snapshot it can fork after its box's release, and boat.dev boxes have no identity reset yet, so a fork of one could act as its source, and bb-box forks none until they have one. So it does not keep "before the change"." |
+| Fork | "bb-box does not fork "before the change": boat.dev boxes have no identity reset yet, ..." |
+| Ceiling | ceiling 1, `fake-included boat 0`: "It would bring snapshots held on boat.dev to about $6.72 a month, past your ceiling of $1.00. It would be saved snapshot 4 there, and the plan includes 0. ..." Boat still listed 3 |
+| Settings and the tab | after a sweep: `paid` `{ count: 3, monthly: 0, ceiling: 1, past: false, included: { included: 10, used: 3 } }`; the tab's line "boat.dev $0.00 a month held (3 of the 10 the plan includes used)" |
+| Delete | "Deleted snapshot "before the change" ...: it freed 1 MB." |
+| Release | the box's two undos deleted with it; boat's `/saved-snapshots` then empty, `used: 0` |
+
+**What it cost, from boat's figures**: the wallet went from $14.55 to
+$14.54, about $0.01 of VM time. Starts used today went from 30 to 40, all
+within the plan's 200 a day, at no charge (`nextStartDollars` 0). At most
+3 saved snapshots were held at once, within the 10 included, so they cost
+nothing; each lived under 15 minutes.
+
+### Boat's boot order, for unit 11b
+
+What 068 and this unit saw of how a boat sandbox starts, which unit 11b's
+identity source has to fit:
+
+- A sandbox, a fork, a resume and a deploy all start on a machine already
+  running boat's base image. boat then lays the sandbox's own files over
+  it after the sandbox is `ready` and reachable over SSH: system files
+  within seconds, then Docker and the enabled systemd services start
+  again, and the rest of the files in the background until `hydrated`.
+  So nothing of the sandbox's own runs before its network: section 9's
+  `Before=network-pre.target` cannot hold there.
+- The address, the SSH host key and the hostname come from boat and change
+  at every resume; the MAC addresses are boat's, not bb-box's, so they
+  cannot be the marker's value.
+- boat keeps no labels on a deploy from a saved snapshot, and labels
+  cannot change; a fork keeps the labels it is given. Per-sandbox `env`
+  and create-time `files` (under `/home/user` or `/tmp`, written once, at
+  the first start) are the ways bb-box could set a value on each guest;
+  neither was probed in this unit.
+- bb-box's own daemon and Tailscale are started by bb-box over SSH on
+  boat, and BB's daemon by a user unit after hydration, so a reset that
+  runs when boat starts the enabled services again, before those, may be
+  enough; G14 on boat has to show it.
+
+### Choices and deviations
+
+- **Two starts a restore, not one.** As boat drops a deploy's labels, a
+  restore deploys and then forks. The plan and the dialog say 2 starts,
+  and, after the reviews, a restore needs 3 left (a third puts the box back
+  if the new sandbox fails), unless boat sells more.
+- **The undo is taken from the stopped box** (decided during unit 11), not
+  as section 5's table says.
+- **Forks and Keep on boat wait for unit 11b** (decided during unit 11).
+  So "Keep and its price until the keep date" was not checked live; Keep's
+  refusal was.
+- **"The same BB machine after"** was checked by the box's record (the
+  same box ID and name, a guest reference with the new token) and a
+  stand-in host ID file, as this BB cannot enrol boat boxes.
+- **The ceiling's refusal live** needed `fake-included`, as the plan's 10
+  included snapshots make any take within them free, and the brief allowed
+  3 at once.
+- A saved snapshot's size is boat's `sizeBytes`, "what it holds", shown
+  as what deleting it frees, as boat bills by count, not size.
+
+### After the reviews
+
+Two reviews, by Opus and by Astra (with 11 probes on the fake provider),
+each said merge after fixes. The lead asked for all of them in one amended
+commit on main `056dcbb0`. Each has a test that fails on the reviewed
+commit, `576eac35`, and passes now: run against that commit's `src`, the
+8 new boat tests and 11 new core tests below failed and the unit's earlier
+tests passed.
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| Astra 1: a part-made guest whose delete failed was ignored, and the old guest started beside it | the part-made guest is deleted and confirmed gone (the provider no longer lists it) before the old guest starts; otherwise neither starts, and the restore stays unsettled for the sweep | "Astra 1: a part-made new guest that cannot be confirmed gone ..." |
+| Astra 2, Opus 2: the old sandbox was deleted before the new one started | the old guest stays, stopped, until the new one has started and taken its access file; a new guest that does not start is deleted, confirmed, and the old one started again, or neither if it cannot be confirmed | "Astra 2: the old guest stays until the new one starts ..." and "... starts neither" |
+| Opus 2: a failed staging delete threw away a restore that worked | once the copy is claimed, a failed staging delete is logged and the guest keeps the staging ID; boat's upkeep deletes staging sandboxes whose copy runs a box, or no restore has used for an hour; a release deletes its own sandbox whatever the staging delete does | "Opus 2: a deployed sandbox that cannot be deleted once its copy runs the box ..." |
+| Astra 3, Opus 1: a lost create answer, or a restart, left the staging sandbox unknown; recovery at `adopt-submitting` waited for a task boat cannot give | the staging sandbox's name (box and token) is on the claimed guest before boat is asked; release and recovery find it by that name, unlabelled; recovery without a task discards and goes on | "Opus 1 and Astra 3: a deployed sandbox whose create answer was lost ..."; "Opus 5 and Astra 3: a restore cut short at its new guest ..." |
+| Astra 4, Opus 3: two takes close together could both pass the ceiling | the bill names what boat lists; every snapshot bb-box holds that boat does not list yet counts beside it, taken or still taking | "Astra 4 and Opus 3: a snapshot boat has not listed yet counts ..." |
+| Astra 5, Opus 6: an unread bill fell back to this install's records | the whole account, as last read, at full price; with no bill read since the start, no paid take, undo or Keep; a snapshot found again keeps its backend's price | "Astra 5 and Opus 6: an unread bill counts the account ..."; "Astra 5: a snapshot found again ... keeps its backend's price" |
+| Astra 6: a release with lost records, and an ended thread's leftover, left saved snapshots | every release lists the box's saved snapshots from boat, deletes them, records or not, and lists again to confirm; an ended thread's leftover the same, before its guest goes; a record a release left is deleted at the next sweep; a living box's old guest takes none | the two "Astra 6" tests |
+| Astra 7: a failed save whose delete failed was treated as holding nothing | it is incomplete, still counted, and a delete by its ID finishes it | "Astra 7: a failed save whose clean-up fails ..." |
+| Astra 8: an unfamiliar tier or no plan key allowed saved snapshots | only the `standard` tier with a `box_<n>` plan; anything else takes none, with the tier and plan in the words | in "boat's recorded answers ..." |
+| Astra 9, Opus 7: words | Settings: "The account holds 3 saved snapshots and the plan includes 10, so none are billed.", "... holds 12 ... so 2 are billed: about $3.36 a month.", or an estimate said as one; no ledger spend for a backend with a bill; the tab "boat.dev 3 saved, none billed"; restore "boat.dev counts 2 sandbox starts for this: free within your plan's starts, 12 of 12 left this minute"; "with the box's own identity"; the allowance kept in storage so a row's price does not change at the first read; the guides and 070 say 2 starts | the app tests "070 unit 11: ..." |
+| Opus 4: 1 start left passed the check, and "at no charge" was wrong | 3 starts needed, with words that say why; past the free ones, the words say which are paid and boat's price from its first bracket | in "a restore's plan ..." |
+| Opus 5: recovery chose the restore's method from the plan as it is now | the method is saved on the operation (`newGuest`) when the restore starts | "Opus 5 and Astra 3: ..." |
+
+On a Proxmox LXC box, in a copy whose git tree is this commit's
+(`c9e9af11`, before these notes): `npx tsc` passes, the reference is
+current; the node suite ran 3,304 tests, 3,016 passed, 0 failed, 288
+skipped; vitest ran 442, all passed.
+
+
+The live recheck, on a separate BB as before (`npx bb-app` 0.48.1, no
+account, `BB_BOX_LIVE_CHECKS=1`, bb-box from this commit, the same paid
+account):
+
+| Check | Result |
+| --- | --- |
+| A box | this install's own template build hung at its first step, fetching the pinned tools inside the sandbox (boat said the sandbox was `idle` for over 30 minutes), so it was deleted; a template another install had built with the same scripts was then forked, as 068 allows; the box was ready |
+| Take | 40 s; "Price: $0.056 a day past the plan's 10." |
+| `--check` | "make it a new guest from that snapshot, with the box's own identity, start it, and delete its old guest. boat.dev counts 2 sandbox starts for this: free within your plan's starts, 12 of 12 left this minute" |
+| Restore | 153 s: stop 0.7, undo 121, swap 21, start 9.0, access 0.2 s. `work.txt` back to "before", the host ID file's SHA-256 the same; only the new sandbox left |
+| Undo | 156 s: stop 3.5, undo 107, swap 34, start 10 s; `work.txt` "after", the same host ID |
+| Settings and the tab | `paid` `{ count: 3, monthly: 0, included: { included: 10, used: 3 }, billing: "billed" }`, so "The account holds 3 saved snapshots and the plan includes 10, so none are billed."; the tab "boat.dev 3 saved, none billed" |
+| Release | 1 s; boat's `/saved-snapshots` then empty, `used: 0`, and no sandbox of this install left |
+
+What it cost, from boat's figures: the wallet went from $14.54 to $14.49
+and starts today from 40 to 49, all within the plan's 200, at no charge.
+The wallet and the starts are the account's, so they include anything
+else on it in that hour; most of this check's share was the hung template
+sandbox, about 40 minutes at the `default` size, about $0.02. At most 3
+saved snapshots at once, within the 10 included.
+
+The hung build is not this unit's: `fetch-artifacts.sh` downloads with
+`curl --retry 3` and no time limit, so a stalled download waits until the
+build's 90 minutes. A follow-up should give its downloads a time limit.
+
+### After Astra's re-review
+
+Astra's re-review of `8bb7987d` found 10 of its 11 probes no longer
+reproduced, and 5 findings left. Each fix has a test from Astra's probes
+that fails on `8bb7987d` and passes now.
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| R1: a release reported a staging sandbox gone while it could still run | when its delete fails, the release stops it and waits until boat says it is stopped; if it cannot, the release fails, so the restore stays unsettled and the old guest is not started | "R1: a release whose deployed sandbox cannot be deleted ..." |
+| R2: a new guest gone before its access file settled the restore, and the sweep deleted the old one | an access failure rolls back as a start failure does: the new guest is deleted and confirmed, and the old one put back and started, protected by the unsettled operation until then | "R2: a new guest that goes before its access file is written ..." |
+| R3: an old account count could undercount | no paid take, undo or Keep without a count read just then; Settings show an estimate, said as one; the claim that the fallback never undercounts is gone from 070 and the guides | "R3: a take is refused during a bill outage ...", and the updated fallback tests |
+| R4: a price for the next start did not prove 3 starts | 3 starts available in every window, free or paid up to boat's `startLimitsWithWallet` | "R4: a restore needs 3 starts available in every window ..." |
+| R5: a restart mid-rollback lost the old guest's reference | the rollback is journalled as its own step, `swap-back`, before the new guest is deleted, and recovery resumes it: the box's record back on the old guest, which is started | "R5: a restart while putting the old guest back ..." |
+| Settings' slot | the billed or estimated sentence sits in one block of 3 lines' height, whichever it says | in the app test "070 unit 11: Settings say ..." |
+
+The happy path of take, restore and release did not change: these fixes
+act only when a staging delete fails, an access file cannot be written, a
+bill cannot be read, starts run short, or bb-box restarts mid-rollback.
+So no new live check was run.
+
+On a Proxmox LXC box, in a copy whose git tree is this commit's
+(`fdb3ca7c`, before this paragraph): `npx tsc` passes, the reference is
+current; the node suite ran 3,309 tests, 3,021 passed, 0 failed, 288
+skipped; vitest ran 442, all passed.

@@ -367,6 +367,25 @@ export function snapshotCommands(app: BbBox) {
               return out(`Snapshots taken on ${backend} from now on carry a made-up price of $${daily} a day, for live checks, until bb-box restarts.`);
             },
           }),
+          "snapshot fake-included": cliCommand({
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: bb-box counts a backend's plan as including fewer snapshots than its provider says, so the ceiling can be checked without holding many. Until bb-box restarts.`,
+            positionals: [
+              { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
+              { name: "count", description: "How many snapshots to count as included, such as 1; or off.", required: true },
+            ],
+            async run({ positionals }) {
+              const backend = positionals.backend!;
+              if (!app.backends.get(backend)) throw new PluginCliError(`There is no backend "${backend}".`, { code: "not_found", hint: "bb box config show lists the backends' IDs." });
+              if (positionals.count === "off") {
+                prices.setIncluded(backend, null);
+                return out(`bb-box counts the snapshots ${backend}'s plan includes as its provider says again.`);
+              }
+              const included = Number(positionals.count);
+              if (!Number.isInteger(included) || included < 0) throw new PluginCliError(`Give a whole number of snapshots, 0 or more, or off; not "${positionals.count}".`, { code: "invalid_value" });
+              prices.setIncluded(backend, included);
+              return out(`bb-box counts ${backend}'s plan as including ${included} snapshot${included === 1 ? "" : "s"}, at most what its provider says, for live checks, until bb-box restarts.`);
+            },
+          }),
         }
       : {}),
   };

@@ -34,6 +34,19 @@ export interface FakeCall {
   readonly headers: Record<string, string>;
 }
 
+export interface FakeSaved {
+  name: string;
+  status: "saving" | "ready" | "failed";
+  error: string | null;
+  sourceSandboxId: string;
+  snapshotId: string;
+  type: string;
+  sizeBytes: number;
+  createdAt: number;
+  capturedAt: number;
+  savingReads: number;
+}
+
 interface Failure {
   readonly status: number;
   readonly code: string;
@@ -55,6 +68,15 @@ export class FakeBoat {
   startsRestoreForReads = 0;
   stopsArchiveForReads = 0;
   stopsFailWith: string | null = null;
+  planKey: string | null = null;
+  readonly saved = new Map<string, FakeSaved>();
+  included = 10;
+  otherSaved = 0;
+  savesTakeReads = 1;
+  savesFailWith: string | null = null;
+  nextStartDollars: number | null = 0;
+  startsLeftThisHour = 24;
+  allowanceShown = true;
   #next = 0;
   readonly #now: () => number;
 
@@ -125,7 +147,62 @@ export class FakeBoat {
     };
   }
 
+  #savedView(saved: FakeSaved): Record<string, unknown> {
+    return { name: saved.name, status: saved.status, ...(saved.error ? { error: saved.error } : {}), sourceSandboxId: saved.sourceSandboxId, ...(saved.status === "ready" ? { snapshotId: saved.snapshotId } : {}), type: saved.type, sizeBytes: saved.sizeBytes, createdAt: new Date(saved.createdAt).toISOString() };
+  }
+
+  allowance(): Record<string, unknown> {
+    const used = this.saved.size + this.otherSaved;
+    const extra = Math.max(0, used - this.included);
+    return { org: null, orgName: null, included: this.included, free: this.included, used, extra, extraMonthlyDollars: extra * 1.68, extraDailyDollars: extra * 0.056, pricePerExtraMonthlyDollars: 1.68, pricePerExtraDailyDollars: 0.056 };
+  }
+
+  #savedRoute(method: string, name: string | null, body: Record<string, unknown>, reply: (status: number, value: Record<string, unknown>) => Awaited<ReturnType<BoatFetch>>, refuse: (status: number, code: string) => Awaited<ReturnType<BoatFetch>>): Awaited<ReturnType<BoatFetch>> {
+    if (!name && method === "GET") return reply(200, { type: "snapshot.saved.list", snapshots: [...this.saved.values()].reverse().map((each) => this.#savedView(each)), ...(this.allowanceShown ? { allowance: this.allowance() } : {}) });
+    if (!name && method === "POST") {
+      if (this.tier === "trial") return refuse(403, "trial_saved_snapshots_not_allowed");
+      const source = this.sandboxes.get(String(body.sandboxId));
+      if (!source || source.state === "deleted") return refuse(404, "not_found");
+      const wanted = String(body.name);
+      if (this.saved.get(wanted)?.status === "saving") return refuse(409, "save_in_progress");
+      const saved: FakeSaved = { name: wanted, status: "saving", error: null, sourceSandboxId: source.id, snapshotId: `art-${wanted}`, type: source.type, sizeBytes: 3_200_000_000, createdAt: this.#now(), capturedAt: source.state === "archived" ? (source.stoppedAt ?? this.#now()) : this.#now() + 2000, savingReads: this.savesTakeReads };
+      this.saved.set(wanted, saved);
+      return reply(202, { type: "snapshot.saved.saving", status: "saving", snapshot: this.#savedView(saved) });
+    }
+    const saved = name ? this.saved.get(name) : undefined;
+    if (!saved) return refuse(404, "not_found");
+    if (method === "GET") {
+      const view = this.#savedView(saved);
+      if (saved.status === "saving" && --saved.savingReads <= 0) {
+        saved.status = this.savesFailWith ? "failed" : "ready";
+        saved.error = this.savesFailWith;
+      }
+      return reply(200, { type: "snapshot.saved.info", snapshot: view });
+    }
+    if (method === "DELETE") {
+      if (saved.status === "saving") return refuse(409, "save_in_progress");
+      this.saved.delete(saved.name);
+      return reply(200, { type: "snapshot.saved.deleted", name: saved.name, status: "deleted" });
+    }
+    return refuse(404, "not_found");
+  }
+
+  readonly lostReplies = new Set<string>();
+
   readonly fetch: BoatFetch = async (url, init) => {
+    const answer = await this.#answer(url, init);
+    const parsed = new URL(url);
+    const parts = parsed.pathname.replace(/^\/api\/v1/, "").split("/").filter(Boolean);
+    const route = `${init.method} /${parts.map((part, index) => (index === 1 && parts[0] === "sandboxes" ? ":id" : part)).join("/")}`;
+    const lost = [...this.lostReplies].find((wanted) => route === wanted || (wanted === "POST /sandboxes from" && route === "POST /sandboxes" && init.body?.includes('"from"')));
+    if (lost) {
+      this.lostReplies.delete(lost);
+      throw new Error("socket hang up");
+    }
+    return answer;
+  };
+
+  readonly #answer: BoatFetch = async (url, init) => {
     const parsed = new URL(url);
     const path = parsed.pathname.replace(/^\/api\/v1/, "");
     const body = (init.body ? JSON.parse(init.body) : {}) as Record<string, unknown>;
@@ -146,6 +223,8 @@ export class FakeBoat {
     switch (route) {
       case "GET /snapshots": {
         const [, snapshot, what] = parts;
+        const artifact = [...this.saved.values()].find((each) => each.snapshotId === snapshot);
+        if (!what && artifact) return reply(200, { type: "snapshot.info", snapshot: { id: artifact.snapshotId, sandboxId: artifact.sourceSandboxId, status: "completed", createdAt: new Date(artifact.capturedAt).toISOString(), completedAt: new Date(artifact.capturedAt + 4000).toISOString() } });
         const owner = this.sandboxes.get(String(snapshot).replace(/^snap-/, ""));
         if (what === "files" && owner) {
           const content = owner.files[(parsed.searchParams.get("path") ?? "").replace(/^\/+/, "")];
@@ -159,7 +238,10 @@ export class FakeBoat {
         return reply(200, {
           accessTier: this.tier,
           currentLimits: { activeSandboxes: this.activeSandboxes },
-          starts: { minute: { limit: 5, used: 5 - this.startsLeftThisMinute, remaining: this.startsLeftThisMinute }, hour: { limit: 25, used: 1, remaining: 24 }, day: { limit: 75, used: 1, remaining: 74 } },
+          ...(this.planKey ? { sandboxPlanKey: this.planKey } : {}),
+          overagePrices: { vmHourDollars: 0.036, savedSnapshotDayDollars: 0.056, startBrackets: [{ aboveMultiple: 1, upToMultiple: 1.5, dollars: 0.03 }] },
+          nextStartDollars: this.nextStartDollars,
+          starts: { minute: { limit: 5, used: 5 - this.startsLeftThisMinute, remaining: this.startsLeftThisMinute }, hour: { limit: 25, used: 25 - this.startsLeftThisHour, remaining: this.startsLeftThisHour }, day: { limit: 75, used: 1, remaining: 74 } },
           trialComputeUsedSeconds: this.computeUsedSeconds,
           trialComputeCapSeconds: 90_000,
           planIncluded: { vmHoursRemaining: 500, periodEnd: "2030-01-08T00:00:00.000Z" },
@@ -171,10 +253,21 @@ export class FakeBoat {
         return reply(200, { type: "sandbox.list", sandboxes: found.map((each) => this.#view(each)), pageInfo: { nextCursor: null, hasMore: false, limit: 200 } });
       }
       case "POST /sandboxes": {
+        if (typeof body.from === "string") {
+          const from = this.saved.get(body.from);
+          if (!from || from.status !== "ready") return refuse(404, "snapshot_not_found");
+          const repeat = [...this.sandboxes.values()].find((each) => each.idempotencyKey !== null && each.idempotencyKey === headers["idempotency-key"]);
+          if (repeat) return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(repeat) });
+          const source = this.sandboxes.get(from.sourceSandboxId);
+          const deployed = this.add({ labels: {}, name: String(body.name ?? from.name), type: String(body.type ?? from.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: `saved:${from.name}`, idempotencyKey: headers["idempotency-key"] ?? null, files: { ...(source?.files ?? {}) } });
+          deployed.archiveAfter = deployed.ttlSeconds === null ? null : this.#now() + deployed.ttlSeconds * 1000;
+          return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(deployed) });
+        }
         const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: String(body.name ?? ""), type: String(body.type ?? "default"), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", idempotencyKey: headers["idempotency-key"] ?? null });
         return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(made) });
       }
     }
+    if (parts[0] === "saved-snapshots") return this.#savedRoute(init.method, parts[1] ?? null, body, reply, refuse);
     if (parts[0] === "sandboxes" && (!sandbox || sandbox.state === "deleted")) return refuse(404, "not_found");
     const id = sandbox!;
     switch (route) {

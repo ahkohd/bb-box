@@ -135,6 +135,8 @@ export interface BackendSnapshotsView {
     readonly spent: number;
     readonly ceiling: number;
     readonly past: boolean;
+    readonly included: { readonly included: number; readonly used: number } | null;
+    readonly billing: "billed" | "estimate" | null;
   } | null;
 }
 

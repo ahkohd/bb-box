@@ -9393,7 +9393,7 @@ test("a release whose failure the log lost still says it did not finish, with Re
 
 const SNAPSHOT_DOCUMENT: ConfigDocument = { schema: 1, revision: 4, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: {} };
 
-function snapshotServer(paid: { past?: boolean; ceiling?: number } | null) {
+function snapshotServer(paid: { past?: boolean; ceiling?: number; included?: { included: number; used: number }; billing?: "billed" | "estimate"; monthly?: number; count?: number } | null) {
   applied = SNAPSHOT_DOCUMENT;
   const backends = configState({}).backends.map((backend) => ({
     ...backend,
@@ -9401,7 +9401,7 @@ function snapshotServer(paid: { past?: boolean; ceiling?: number } | null) {
     snapshots: {
       offers: [{ kinds: ["linux", "linux-desktop"], words: paid ? "its disk, or its disk and memory, while it runs · $0.056 a day each" : "its disk, or its disk and memory, while it runs · no charge" }],
       price: paid ? { amount: 0.056, currency: "USD" as const, per: "day" as const, known: true } : null,
-      paid: paid ? { currency: "USD" as const, count: 2, unknown: 0, monthly: 3.36, spent: 0.39, ceiling: paid.ceiling ?? 5, past: paid.past ?? false } : null,
+      paid: paid ? { currency: "USD" as const, count: paid.count ?? 2, unknown: 0, monthly: paid.monthly ?? 3.36, spent: 0.39, ceiling: paid.ceiling ?? 5, past: paid.past ?? false, included: paid.included ?? null, billing: paid.billing ?? null } : null,
     },
   }));
   return server([], { config: { backends } });
@@ -9603,7 +9603,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
     threadsUnread: null,
     control: false,
     terminals: 0,
-    check: { swap: false, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null },
+    check: { swap: false, fromSnapshot: false, costWords: null, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null },
     snapshot: snapshotRow(),
     token: "tokenone",
     undoUnflushed: null,
@@ -10351,4 +10351,43 @@ test("070 unit 8 review: the bulk dialog checks the snapshots chosen when it ope
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(asked).toEqual(["snreleasedaaaa"]);
   expect(within(dialog).getByText(/Until 2026-11-29\./)).toBeTruthy();
+});
+
+test("070 unit 11: a boat restore's dialog says the new guest, what it costs in starts and what its undo costs", async () => {
+  const at = Date.now() - 10 * 60_000;
+  const price = { amount: 0.056, currency: "USD" as const, per: "day" as const, known: true, included: 10 };
+  const preview = restorePreviewOf({
+    snapshot: snapshotRow({ id: "snundo", name: "before the restore at 11:02" }),
+    check: {
+      ...restorePreviewOf().check!,
+      swap: true,
+      fromSnapshot: true,
+      costWords: "boat.dev counts 2 sandbox starts for this: free within your plan's starts, 59 of 60 left this hour.",
+      undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 70_000, bytes: 0, price },
+    },
+  });
+  const restored = server([box()], { snapshots: snapshotsView({ restored: { operation: "opone", at, to: "before the migration", toTakenAt: Date.now() - 26 * 60 * 60_000, by: { is: "person" }, undo: { id: "snundo", name: "before the restore at 11:02", ready: true }, unflushed: null } }), restorePreview: preview });
+  const slot = boxPageAt(restored.handlers, "box/box_1");
+  const notice = (await slot.findByText(/^Restored at/)).closest("section")!;
+  fireEvent.click(within(notice).getByRole("button", { name: "Undo…" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the restore at 11:02"?' });
+  expect(within(dialog).getByText(/calm-otter comes back on a new guest made from the snapshot, with the box's own identity, and its old guest is deleted\. boat\.dev counts 2 sandbox starts for this: free within your plan's starts, 59 of 60 left this hour\./)).toBeTruthy();
+  expect(within(dialog).getByRole("checkbox", { name: /It costs \$0\.056 a day past the plan's 10 until it is deleted\./ })).toBeTruthy();
+});
+
+test("070 unit 11: Settings say how many saved snapshots the account holds and the plan includes, what is billed, and when the figure is an estimate", async () => {
+  let slot = settings(snapshotServer({ ceiling: 1, included: { included: 10, used: 3 }, billing: "billed", monthly: 0 }).handlers, "#option/snapshots");
+  expect(await slot.findByText(/The account holds 3 saved snapshots and the plan includes 10, so none are billed\./)).toBeTruthy();
+  expect(document.querySelector("[data-bill-slot]")?.className).toContain("min-h-[3lh]");
+  expect(slot.queryByText(/\$0\.00 a month/)).toBeNull();
+  expect(slot.queryByText(/Spent this month so far/)).toBeNull();
+  cleanup();
+  slot = settings(snapshotServer({ ceiling: 5, included: { included: 10, used: 12 }, billing: "billed", monthly: 3.36 }).handlers, "#option/snapshots");
+  expect(await slot.findByText(/The account holds 12 saved snapshots and the plan includes 10, so 2 are billed: about \$3\.36 a month\./)).toBeTruthy();
+  expect(slot.queryByText(/12 of the 10/)).toBeNull();
+  cleanup();
+  slot = settings(snapshotServer({ ceiling: 5, billing: "estimate", monthly: 5.04, count: 3 }).handlers, "#option/snapshots");
+  expect(await slot.findByText(/could not read what .* bills just now, so it counts each of the 3 saved snapshots it knows of at full price: about \$5\.04 a month, an estimate\./)).toBeTruthy();
+  expect(document.querySelector("[data-bill-slot]")?.className).toContain("min-h-[3lh]");
+  expect(slot.queryByText(/Spent this month so far/)).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +24,20 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type CopyHooks,
+  type GuestIdentity,
+  type HeldSnapshot,
+  type SnapshotBill,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type TaskOutcome,
+  type TaskRef,
+  SnapshotFailed,
+  SnapshotIncomplete,
   type DoctorCheck,
   type DoctorReport,
   type Guest,
@@ -36,7 +51,8 @@ import {
   type StopReason,
   type WithheldKind,
 } from "../types.ts";
-import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type Sandbox, type SandboxSize, type SizeShape, type SshReach } from "./api.ts";
+import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type SavedAllowance, type SavedSnapshot, type Sandbox, type SandboxSize, type SizeShape, type SshReach } from "./api.ts";
+import { BOAT_STORAGE, FORK_NOT_YET, SAVE_POLL_MS, SAVE_RUNNING_ABOUT_MS, SAVE_STOPPED_ABOUT_MS, SAVE_WAIT_MS, billOf, boatOffer, heldFrom, heldStateOf, parseSavedName, savedName, savedPrice, savedRefusal, startCostWords } from "./snapshots.ts";
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
 import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
@@ -51,7 +67,22 @@ export const LABELS = {
   created: "bbbox-created",
   role: "bbbox-role",
   key: "bbbox-key",
+  guest: "bbbox-guest",
 } as const;
+
+const SAVE_TASK = "save:";
+const ALLOWANCE_KEY = "saved-allowance";
+const STAGING_ABANDONED_MS = 60 * 60_000;
+const DELETE_TASK = "delete:";
+const GUEST_TOKEN_LETTERS = "abcdefghijkmnpqrstuvwxyz23456789";
+
+function guestToken(): string {
+  return [...randomBytes(8)].map((byte) => GUEST_TOKEN_LETTERS[byte % GUEST_TOKEN_LETTERS.length]).join("");
+}
+
+function tokenOf(sandbox: Sandbox): string | null {
+  return sandbox.labels[LABELS.guest] ?? null;
+}
 
 export const READY_TIMEOUT_MS = 5 * 60_000;
 export const DESKTOP_READY_TIMEOUT_MS = 10 * 60_000;
@@ -239,6 +270,15 @@ export function knownHostsLine(reach: SshReach): string {
   return `${reach.port === 22 ? reach.host : `[${reach.host}]:${reach.port}`} ${reach.hostKey}`;
 }
 
+export function stagingName(boxId: string, token: string): string {
+  return `${NAME_PREFIX}restoring:${boxId}:${token}`;
+}
+
+export function stagingOf(name: string): { readonly box: string; readonly token: string } | null {
+  const found = /^bb-box:restoring:(bx[a-z2-7]{12}):([a-z2-9]{8})$/.exec(name);
+  return found ? { box: found[1]!, token: found[2]! } : null;
+}
+
 export function sandboxName(box: Pick<BoxIdentity, "threadId" | "name">): string {
   return `${NAME_PREFIX}${box.threadId}:${box.name}`.slice(0, 120);
 }
@@ -288,6 +328,8 @@ export class BoatBackend implements Backend {
   #knownHostsPath: string | null = null;
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
   #limits: { readonly at: number; readonly limits: Promise<BoatLimits> } | null = null;
+  #lastLimits: BoatLimits | null = null;
+  #lastAllowance: SavedAllowance | null = null;
   #bbReach: { readonly at: number; readonly reach: Promise<BbReach> } | null = null;
   #androidOffer: DeviceOffer | null = null;
   #androidLeftOut: readonly string[] = [];
@@ -321,6 +363,9 @@ export class BoatBackend implements Backend {
       ...options.templates,
     });
     void this.#readAndroidOffer().catch((error) => context.logError("read boat's Android template", error));
+    void context.storage.get<SavedAllowance>(ALLOWANCE_KEY).then((kept) => {
+      if (kept && !this.#lastAllowance) this.#lastAllowance = kept;
+    }, (error: unknown) => context.logError("read boat's saved snapshot allowance", error));
   }
 
   kinds(): readonly BoxKind[] {
@@ -448,7 +493,7 @@ export class BoatBackend implements Backend {
       await hooks.claim(guest);
       return guest;
     } catch (error) {
-      const leftover = made ?? (await this.#find(box.boxId).catch(() => null));
+      const leftover = made ?? (await this.#find(box.boxId, null).catch(() => null));
       if (leftover) {
         await this.#forget(leftover.id);
         await this.#api.delete(leftover.id).catch((cause) => this.#context.logError("delete a boat sandbox after a failed acquire", cause));
@@ -461,6 +506,17 @@ export class BoatBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    const staging = typeof guest.data?.staging === "string" ? guest.data.staging : null;
+    let stagingLeft: unknown = null;
+    if (typeof guest.data?.box === "string" && typeof guest.data?.guest === "string") {
+      const box = guest.data.box;
+      const token = guest.data.guest;
+      await this.#dropStaging(box, token, staging, signal).catch(async (error: unknown) => {
+        if (signal?.aborted) throw error;
+        if (await this.#stagingStopped(box, token, staging, signal)) this.#context.logError(`delete the sandbox deployed to restore box ${box}, which is stopped; bb-box's upkeep deletes it later`, error);
+        else stagingLeft = error;
+      });
+    }
     const sandbox = await this.#mine(guest, signal);
     if (sandbox) {
       if (isRunning(sandbox.state) && this.#context.tailnet?.()) await this.#leave(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, signal);
@@ -468,6 +524,21 @@ export class BoatBackend implements Backend {
       await this.#api.delete(sandbox.id, signal);
     }
     hooks.timing("delete", Math.round(performance.now() - started));
+    if (stagingLeft) throw new Error(`boat's sandbox deployed to restore box ${String(guest.data?.box)} may still run, and bb-box could not delete or stop it: ${message(stagingLeft)}`);
+  }
+
+  async #stagingStopped(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const wanted = stagingName(boxId, token);
+      const found = id ? await this.#api.get(id, signal) : ((await this.#api.list({}, signal)).find((sandbox) => sandbox.name === wanted && !Object.keys(sandbox.labels).length) ?? null);
+      if (!found || found.state === "archived") return true;
+      if (found.name !== wanted || Object.keys(found.labels).length) return true;
+      if (found.state !== "archiving") await this.#api.stop(found.id, signal);
+      return (await this.#api.waitArchived(found.id, this.#now() + STATE_WITHIN_MS, signal)).state === "archived";
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return false;
+    }
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
@@ -594,6 +665,202 @@ export class BoatBackend implements Backend {
     return (await this.#held(signal)).map((sandbox) => ({ ...this.#guest(sandbox.labels[LABELS.box] ?? sandbox.id, sandbox, shapeOf(sandbox.size)), owner: ownerOf(sandbox), power: powerOf(sandbox) }));
   }
 
+  snapshotting(kind: string): Snapshotting | null {
+    if (!(this.#offered() as readonly string[]).includes(kind)) return null;
+    return boatOffer(this.#lastLimits, this.#lastAllowance);
+  }
+
+  async snapshotBill(signal?: AbortSignal): Promise<SnapshotBill> {
+    const listed = await this.#api.savedSnapshots(signal);
+    if (!listed.allowance) throw new Error("boat's list of saved snapshots gave no allowance to count the bill by.");
+    await this.#keepAllowance(listed.allowance);
+    return billOf(listed.allowance, listed.snapshots.map((saved) => saved.name));
+  }
+
+  async #keepAllowance(allowance: SavedAllowance): Promise<void> {
+    const changed = this.#lastAllowance?.included !== allowance.included;
+    this.#lastAllowance = allowance;
+    if (changed) await this.#context.storage.set(ALLOWANCE_KEY, allowance).catch((error: unknown) => this.#context.logError("keep boat's saved snapshot allowance", error));
+  }
+
+  async planSnapshots(guest: Guest, kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    this.#kind(kind);
+    const limits = await this.#readLimits(signal);
+    const sandbox = await this.#mine(guest, signal);
+    const refused = savedRefusal(limits);
+    const gone = sandbox ? null : `boat's sandbox for box ${guest.ref} is gone.`;
+    const moving = sandbox && !isRunning(sandbox.state) && sandbox.state !== "archived" ? `boat's sandbox ${sandbox.id} is ${sandbox.state}; try again once it has ${isStarting(sandbox.state) ? "started" : "stopped"}.` : null;
+    const failed = sandbox?.state === "error" ? `boat says sandbox ${sandbox.id} failed${sandbox.error ? `: ${sandbox.error}` : "."}` : null;
+    const takeWhy = refused ?? gone ?? failed;
+    const saved = target && !refused ? await this.#api.savedSnapshot(target.ref, signal) : null;
+    const starts = startCostWords(limits);
+    const restoreWhy = refused ?? gone ?? failed ?? (target && !saved ? `boat has no saved snapshot ${target.ref} any more.` : saved && saved.status !== "ready" ? `boat's saved snapshot ${saved.name} is ${saved.status}${saved.error ? `: ${saved.error}` : ""}.` : null) ?? (starts.ok ? null : `${starts.words}.`);
+    const price = refused ? null : savedPrice(limits, this.#lastAllowance);
+    const back = saved?.size ? shapeOf(saved.size) : null;
+    return {
+      storage: BOAT_STORAGE,
+      take: { ok: takeWhy === null, why: takeWhy, aboutMs: sandbox && isRunning(sandbox.state) ? SAVE_RUNNING_ABOUT_MS : SAVE_STOPPED_ABOUT_MS, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: "boat.dev saves a sandbox's disk only." },
+      restore: {
+        way: restoreWhy ? "none" : "new-guest",
+        why: restoreWhy,
+        undo: restoreWhy ? "none" : "snapshot",
+        undoAboutMs: RESTART_SECONDS[this.#kind(kind)] * 1000 + SAVE_STOPPED_ABOUT_MS,
+        undoBytes: 0,
+        sizeBack: back ? shapeSize(back) : null,
+        leavesOnEarlierGuest: 0,
+        newer: 0,
+        copyAboutMs: null,
+        costWords: refused ? null : `${starts.words}.`,
+      },
+      keep: { way: refused ? "no" : "as-is", why: refused ?? `${FORK_NOT_YET}.`, aboutMs: null, bytes: null, price },
+      fork: { ok: false, why: `${FORK_NOT_YET}.`, aboutMs: 0, bytes: null, size: null },
+      locked: null,
+      busy: !refused && !gone && !failed ? moving : null,
+    };
+  }
+
+  async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const limits = await this.#readLimits(signal, true);
+    const refused = savedRefusal(limits);
+    if (refused) throw new SnapshotFailed(refused);
+    const sandbox = await this.#mine(guest, signal);
+    if (!sandbox) throw new SnapshotFailed(`boat's sandbox for box ${guest.ref} is gone.`);
+    const name = savedName(this.#context.installId, take.box, take.id);
+    await hooks.submitting();
+    await hooks.task({ ref: `${SAVE_TASK}${name}`, host: BOAT_HOST });
+    try {
+      await this.#whileBusy(signal, () => this.#api.saveSnapshot(sandbox.id, name, signal));
+    } catch (error) {
+      if (error instanceof BoatError && (error.kind === "refused" || error.kind === "unpaid" || (error.kind === "failed" && error.status >= 400 && error.status < 500))) throw new SnapshotFailed(error.message);
+      throw error;
+    }
+    const saved = await this.#savedSettled(name, signal);
+    if (saved.status !== "ready") {
+      const failed = `boat could not save it${saved.error ? `: ${saved.error.replace(/\.$/, "")}` : ""}`;
+      try {
+        await this.#api.deleteSavedSnapshot(name, signal);
+        if (await this.#api.savedSnapshot(name, signal)) throw new Error(`boat still lists ${name}.`);
+      } catch (cause) {
+        if (signal?.aborted) throw cause;
+        throw new SnapshotIncomplete(`${failed}, and bb-box could not delete what it left, ${name}: ${message(cause)}`);
+      }
+      throw new SnapshotFailed(`${failed}.`);
+    }
+    const capturedAt = (saved.artifact ? await this.#api.captureTime(saved.artifact, signal).catch(() => null) : null) ?? saved.createdAt ?? this.#now();
+    return { ref: name, holds: "disk", capturedAt, size: saved.bytes !== null ? { bytes: saved.bytes, means: "own" } : null };
+  }
+
+  async #savedSettled(name: string, signal?: AbortSignal): Promise<SavedSnapshot> {
+    const deadline = this.#now() + SAVE_WAIT_MS;
+    for (;;) {
+      signal?.throwIfAborted();
+      const saved = await this.#api.savedSnapshot(name, signal);
+      if (!saved) throw new SnapshotFailed(`boat no longer lists the saved snapshot ${name} it was saving.`);
+      if (saved.status !== "saving") return saved;
+      if (this.#now() >= deadline) throw new Error(`boat was still saving ${name} after ${Math.round(SAVE_WAIT_MS / 60_000)} minutes.`);
+      await this.#sleep(SAVE_POLL_MS, signal);
+    }
+  }
+
+  async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
+    const name = ref.ref || (box ? savedName(this.#context.installId, box, ref.id) : "");
+    const parsed = parseSavedName(name);
+    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so bb-box does not delete it.`);
+    await hooks.submitting();
+    await hooks.task({ ref: `${DELETE_TASK}${name}`, host: BOAT_HOST });
+    await this.#whileBusy(signal, () => this.#api.deleteSavedSnapshot(name, signal));
+    if (await this.#api.savedSnapshot(name, signal)) throw new Error(`boat still lists the saved snapshot ${name} after deleting it.`);
+  }
+
+  async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    const deleting = task.ref.startsWith(DELETE_TASK);
+    const name = task.ref.slice(deleting ? DELETE_TASK.length : SAVE_TASK.length);
+    const saved = await this.#api.savedSnapshot(name, signal);
+    if (deleting) return saved ? { state: "failed", words: `boat still lists the saved snapshot ${name}.` } : { state: "ok" };
+    if (!saved) return { state: "missing", words: `boat has no saved snapshot ${name}.` };
+    if (saved.status === "saving") return { state: "running" };
+    return saved.status === "ready" ? { state: "ok" } : { state: "failed", words: heldStateOf(saved).words ?? "boat could not save it." };
+  }
+
+  async heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const listed = await this.#api.savedSnapshots(signal);
+    if (listed.allowance) await this.#keepAllowance(listed.allowance);
+    const mine = listed.snapshots.flatMap((saved) => {
+      const parsed = parseSavedName(saved.name);
+      return parsed && parsed.install === this.#context.installId ? [{ saved, parsed }] : [];
+    });
+    if (!mine.length) return [];
+    const sandboxes = await this.#held(signal);
+    return mine.map(({ saved, parsed }) => {
+      const sandbox = sandboxes.find((each) => each.labels[LABELS.box] === parsed.box && (isRunning(each.state) || isStarting(each.state) || isStopped(each.state))) ?? null;
+      const guest = sandbox ? this.#guest(parsed.box, sandbox, shapeOf(sandbox.size)) : this.#guest(parsed.box, null, null);
+      return heldFrom(saved, parsed.box, parsed.snapshot, guest, sandbox ? ownerOf(sandbox) : null);
+    });
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const boxId = typeof guest.data?.box === "string" ? guest.data.box : null;
+    return boxId ? (await this.heldSnapshots(signal)).filter((held) => held.box === boxId) : [];
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await this.stop(guest, signal);
+  }
+
+  async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, _identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const kind = this.#kind(box.kind);
+    const limits = await this.#readLimits(signal, true);
+    const refused = savedRefusal(limits);
+    if (refused) throw new SnapshotFailed(refused);
+    const saved = await this.#api.savedSnapshot(ref.ref, signal);
+    if (!saved || saved.status !== "ready") throw new SnapshotFailed(saved ? `boat's saved snapshot ${ref.ref} is ${saved.status}.` : `boat has no saved snapshot ${ref.ref}.`);
+    const allowed = (each: SizeShape) => limits.sizes.find((size) => size.size === each.size)?.available ?? true;
+    const shape = (saved.size ? shapeOf(saved.size) : null) ?? sizeFor(box.size, allowed);
+    if (!shape) throw new SnapshotFailed(this.#tooBig(box.size, limits));
+    const token = guestToken();
+    const claimed = (sandbox: Sandbox | null, staging: string | null) => {
+      const guest = this.#guest(box.boxId, sandbox, shape, [], token);
+      return staging ? { ...guest, data: { ...guest.data, staging } } : guest;
+    };
+    await hooks.claimed(claimed(null, null));
+    await hooks.submitting();
+    const refusal = (error: unknown) => (error instanceof BoatError && error.kind !== "unreachable" ? new SnapshotFailed(error.message) : error);
+    const staging = await this.#whileBusy(signal, () =>
+      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}-staging` }, signal),
+    ).catch((error: unknown) => {
+      throw refusal(error);
+    });
+    await hooks.claimed(claimed(null, staging.id));
+    await this.#api.waitFor(staging.id, (each) => isRunning(each.state), this.#now() + this.#readyMs(), signal);
+    await this.#whileBusy(signal, () => this.#api.stop(staging.id, signal));
+    await this.#api.waitArchived(staging.id, this.#now() + STATE_WITHIN_MS, signal);
+    const made = await this.#whileBusy(signal, () =>
+      this.#api.fork(staging.id, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: { ...this.#labels(box, kind), [LABELS.guest]: token }, name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}` }, signal),
+    ).catch((error: unknown) => {
+      throw refusal(error);
+    });
+    await hooks.claimed(claimed(made, staging.id));
+    try {
+      await this.#dropStaging(box.boxId, token, staging.id, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#context.logError(`delete boat's sandbox ${staging.id}, deployed to restore box ${box.boxId}; bb-box's upkeep deletes it later`, error);
+      return claimed(made, staging.id);
+    }
+    const guest = claimed(made, null);
+    await hooks.claimed(guest);
+    return guest;
+  }
+
+  async #dropStaging(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<void> {
+    const wanted = stagingName(boxId, token);
+    const staging = id ? await this.#api.get(id, signal) : ((await this.#api.list({}, signal)).find((sandbox) => sandbox.name === wanted && !Object.keys(sandbox.labels).length) ?? null);
+    if (!staging) return;
+    if (staging.name !== wanted || Object.keys(staging.labels).length) throw new Error(`boat's sandbox ${staging.id} is not the one bb-box deployed to restore box ${boxId}, so bb-box leaves it.`);
+    await this.#api.delete(staging.id, signal);
+  }
+
   async relabel(guest: Guest, box: BoxIdentity, _from: string, signal?: AbortSignal): Promise<void> {
     const sandbox = await this.#mine(guest, signal);
     if (sandbox) await this.#api.rename(sandbox.id, sandboxName(box), signal);
@@ -614,6 +881,19 @@ export class BoatBackend implements Backend {
     await this.#keepAndroidTemplate(signal).catch((error) => this.#context.logError("build boat's Android template", error));
     await this.#readAndroidOffer();
     await this.#removeStaleDevices(all, signal).catch((error) => this.#context.logError("remove boat sandboxes' leftover tailnet devices", error));
+    await this.#dropOldStaging(recordedGuests, signal).catch((error) => this.#context.logError("delete boat sandboxes deployed for restores", error));
+  }
+
+  async #dropOldStaging(recordedGuests: ReadonlySet<string> | undefined, signal?: AbortSignal): Promise<void> {
+    for (const sandbox of await this.#api.list({}, signal)) {
+      const found = stagingOf(sandbox.name);
+      if (!found || Object.keys(sandbox.labels).length) continue;
+      const done = recordedGuests?.has(`bbbox-${found.box}-${found.token}`) ?? false;
+      const abandoned = sandbox.createdAt !== null && this.#now() - sandbox.createdAt > STAGING_ABANDONED_MS;
+      if (!done && !abandoned) continue;
+      await this.#api.delete(sandbox.id, signal);
+      this.#context.log?.(`Deleted boat's sandbox ${sandbox.id}, deployed to restore box ${found.box}: ${done ? "the box runs on its copy now" : "no restore has used it for an hour"}.`);
+    }
   }
 
   async #keepAndroidTemplate(signal?: AbortSignal): Promise<void> {
@@ -784,7 +1064,9 @@ export class BoatBackend implements Backend {
     if (!fresh && this.#limits && this.#now() - this.#limits.at < LIMITS_KEPT_MS) return this.#limits.limits;
     const pending = this.#api.limits(signal);
     this.#limits = { at: this.#now(), limits: pending };
-    pending.catch(() => {
+    pending.then((limits) => {
+      this.#lastLimits = limits;
+    }, () => {
       if (this.#limits?.limits === pending) this.#limits = null;
     });
     return pending;
@@ -846,18 +1128,19 @@ export class BoatBackend implements Backend {
   }
 
   #refOf(sandbox: Sandbox): string {
-    return `bbbox-${sandbox.labels[LABELS.box] ?? sandbox.id}`;
+    const token = tokenOf(sandbox);
+    return `bbbox-${sandbox.labels[LABELS.box] ?? sandbox.id}${token ? `-${token}` : ""}`;
   }
 
-  #guest(boxId: string, sandbox: Sandbox | null, shape: SizeShape | null, facts: readonly GuestFact[] = []): Guest {
+  #guest(boxId: string, sandbox: Sandbox | null, shape: SizeShape | null, facts: readonly GuestFact[] = [], token: string | null = sandbox ? tokenOf(sandbox) : null): Guest {
     const reach = sandbox ? this.#reaches.get(sandbox.id) : undefined;
     const all: GuestFact[] = [...(shape ? [{ label: "Size", value: sizeWords(shape) }] : []), ...facts];
     return {
-      ref: `bbbox-${boxId}`,
+      ref: `bbbox-${boxId}${token ? `-${token}` : ""}`,
       host: BOAT_HOST,
       address: reach ? `${reach.host}:${reach.port}` : null,
       size: shape ? { cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, diskGiB: shape.diskGB } : null,
-      data: { box: boxId, ...(sandbox ? { sandbox: sandbox.id } : {}) },
+      data: { box: boxId, ...(token ? { guest: token } : {}), ...(sandbox ? { sandbox: sandbox.id } : {}) },
       ...(all.length ? { facts: all } : {}),
     };
   }
@@ -866,17 +1149,18 @@ export class BoatBackend implements Backend {
     return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((sandbox) => !sandbox.labels[LABELS.role]);
   }
 
-  async #find(boxId: string, signal?: AbortSignal): Promise<Sandbox | null> {
-    return (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal))[0] ?? null;
+  async #find(boxId: string, token: string | null, signal?: AbortSignal): Promise<Sandbox | null> {
+    return (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal)).find((sandbox) => tokenOf(sandbox) === token) ?? null;
   }
 
   async #mine(guest: Guest, signal?: AbortSignal): Promise<Sandbox | null> {
     const boxId = typeof guest.data?.box === "string" ? guest.data.box : null;
-    const id = typeof guest.data?.sandbox === "string" ? guest.data.sandbox : boxId ? ((await this.#find(boxId, signal))?.id ?? null) : null;
+    const token = typeof guest.data?.guest === "string" ? guest.data.guest : null;
+    const id = typeof guest.data?.sandbox === "string" ? guest.data.sandbox : boxId ? ((await this.#find(boxId, token, signal))?.id ?? null) : null;
     if (!id) return null;
     const sandbox = await this.#api.get(id, signal);
     if (!sandbox || sandbox.labels[LABELS.install] !== this.#context.installId) return null;
-    if ((sandbox.labels[LABELS.box] ?? null) !== boxId) return null;
+    if ((sandbox.labels[LABELS.box] ?? null) !== boxId || tokenOf(sandbox) !== token) return null;
     return sandbox;
   }
 

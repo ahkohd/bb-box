@@ -1,4 +1,4 @@
-import type { Snapshotting } from "../backends/types.ts";
+import type { SnapshotBill, Snapshotting } from "../backends/types.ts";
 import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
 
 export const LIVE_CHECKS_VARIABLE = "BB_BOX_LIVE_CHECKS";
@@ -91,15 +91,28 @@ export class MachineRestores {
 
 export class FakeSnapshotPrices {
   readonly #daily = new Map<string, number>();
+  readonly #included = new Map<string, number>();
 
   set(backend: string, daily: number | null): void {
     if (daily === null) this.#daily.delete(backend);
     else this.#daily.set(backend, daily);
   }
 
+  setIncluded(backend: string, included: number | null): void {
+    if (included === null) this.#included.delete(backend);
+    else this.#included.set(backend, included);
+  }
+
   priced(backend: { readonly id: string }, offer: Snapshotting): Snapshotting {
     const daily = this.#daily.get(backend.id);
-    return daily === undefined ? offer : { ...offer, price: { amount: daily, currency: "USD", per: "day", known: true } };
+    const included = this.#included.get(backend.id);
+    const priced = daily === undefined ? offer : { ...offer, price: { amount: daily, currency: "USD" as const, per: "day" as const, known: true } };
+    return included === undefined || !priced.price ? priced : { ...priced, price: { ...priced.price, included } };
+  }
+
+  billed(backend: { readonly id: string }, bill: SnapshotBill): SnapshotBill {
+    const included = this.#included.get(backend.id);
+    return included === undefined ? bill : { ...bill, included: Math.min(included, bill.included) };
   }
 }
 

@@ -818,7 +818,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     forked: (box) => snapshots.forkEnded(box),
     ...(snapshotHolds ? { forkHold: (box: BoxRecord, signal: AbortSignal) => snapshotHolds.hold({ id: box.fork?.operation ?? box.id, kind: "fork" }, "forked", signal, (message) => bb.log.info(message)) } : {}),
     keepsGuest: (backendId, guestRef, ended) => snapshots.holdsGuest(backendId, guestRef, ended),
-    holdKeptOn: (backendId, guestRef) => snapshots.holdKeptOn(backendId, guestRef, byBbBox("its guest's thread ended")),
+    holdKeptOn: (backendId, guestRef, boxId) => snapshots.holdKeptOn(backendId, guestRef, byBbBox("its guest's thread ended"), boxId),
     leftoverReleased: (backendId, guestRef, boxId, why) => snapshots.leftoverReleased(backendId, guestRef, boxId, why),
     beforeRelease: (box, who) => snapshots.holdKept(box, who),
     async thread(threadId): Promise<ThreadAnswer> {
@@ -873,7 +873,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
     settings: () => snapshotConfig(configuration.document),
-    ...(snapshotPrices ? { priced: (backend, offer) => snapshotPrices.priced(backend, offer) } : {}),
+    ...(snapshotPrices ? { priced: (backend, offer) => snapshotPrices.priced(backend, offer), billed: (backend, bill) => snapshotPrices.billed(backend, bill) } : {}),
     ...(zfsOrder ? { undoByCopy: (backendId) => zfsOrder.has(backendId) } : {}),
     machineRestores: () => machineRestores?.on ?? MACHINE_RESTORES_SHIP,
     marksChanged: () => void turnHold.refresh(),

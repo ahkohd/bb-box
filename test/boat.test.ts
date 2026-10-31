@@ -75,7 +75,7 @@ test("boat's answers read as sandboxes, an SSH reach through the IPv4 forward, a
   assert.equal(knownHostsLine({ host: "203.0.113.11", port: 22, user: "box", hostKey: "ssh-ed25519 AAAA" }), "203.0.113.11 ssh-ed25519 AAAA");
   const limits = limitsFrom({ accessTier: "trial", currentLimits: { activeSandboxes: 2 }, starts: { minute: { limit: 5, remaining: 4 } }, trialComputeUsedSeconds: 490, trialComputeCapSeconds: 90000, machineTypes: [{ type: "large", available: false, reason: "not during the free trial" }] });
   assert.equal(limits.activeSandboxes, 2);
-  assert.deepEqual(limits.starts, [{ window: "minute", limit: 5, remaining: 4 }]);
+  assert.deepEqual(limits.starts, [{ window: "minute", limit: 5, remaining: 4, withWallet: null }]);
   assert.deepEqual(limits.sizes, [{ size: "large", available: false, reason: "not during the free trial" }]);
   assert.equal(limits.computeCapSeconds, 90000);
   assert.equal(limits.savedSnapshots, false);
