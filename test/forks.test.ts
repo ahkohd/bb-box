@@ -12,7 +12,7 @@ import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
 import { forkCheckText, forkedText } from "../src/plugin/snapshot-words.ts";
 import { forkPreview, forkWhyOf } from "../src/plugin/snapshot-card.ts";
-import { forkVerdict, parseForkSeen } from "../src/core/identity.ts";
+import { IDENTITY_TOOL, forkCheckScript, forkVerdict, parseForkSeen, type ForkSeen } from "../src/core/identity.ts";
 import { COMMAND, THREAD, flushing, identityGuest, readIn, readyBox, rejection, standing, withIdentitySource, world, writeIn, type World } from "./snapshot-world.ts";
 
 const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
@@ -60,6 +60,7 @@ interface Forks {
   readonly state: World;
   readonly source: { readonly root: string; readonly tool: string };
   readonly roots: Map<string, string>;
+  readonly macsAfterRestart: () => void;
   firstBoot: FirstBoot;
 }
 
@@ -70,9 +71,12 @@ function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?:
   withIdentitySource(state, "eth");
   const macs = new Map<string, string>();
   const roots = new Map<string, string>();
-  const forks: Forks = { state, source, roots, firstBoot: "reset" };
+  const giveMacs = () => {
+    (state.backend as unknown as Record<string, unknown>).guestIdentity = async (guest: Guest): Promise<GuestIdentity> => ({ macs: { net0: macs.get(guest.ref) ?? SOURCE_MAC.toUpperCase() }, smbios: null });
+  };
+  giveMacs();
+  const forks: Forks = { state, source, roots, macsAfterRestart: giveMacs, firstBoot: "reset" };
   let count = 0;
-  (state.backend as unknown as Record<string, unknown>).guestIdentity = async (guest: Guest): Promise<GuestIdentity> => ({ macs: { net0: macs.get(guest.ref) ?? SOURCE_MAC.toUpperCase() }, smbios: null });
   state.provider.onForked = async (made) => {
     const root = join(tempDir("fork-root"), "root");
     cpSync(source.root, root, { recursive: true });
@@ -417,4 +421,130 @@ test("070 unit 7 reviews: before box_fork takes a snapshot, the box is checked a
   writeFileSync(join(forks.source.root, "etc/bb-box/identity"), "garbled\n");
   assert.match((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box)))).message, /has no working identity reset now/);
   assert.equal(state.store.records({ box: box.id }).length, 0, "the checks take nothing");
+});
+
+function probedFork(): { readonly root: string; readonly breakTool: (name: string) => void; readonly seen: () => ForkSeen } {
+  const root = join(tempDir("fork-probe"), "root");
+  const bin = join(root, "..", "bin");
+  mkdirSync(bin, { recursive: true });
+  const put = (path: string, text: string, mode?: number) => {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, text, mode === undefined ? {} : { mode });
+  };
+  put(join(root, "etc/machine-id"), "fedcba9876543210fedcba9876543210\n");
+  put(join(root, "etc/ssh/ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAInewkey fork\n");
+  put(join(root, "etc/bb-box/identity"), "mac bc:24:11:0f:01:2c\n");
+  put(join(root, "var/lib/tailscale/tailscaled.state"), '{"_current-profile":"cHJvZmlsZQ=="}\n');
+  const tool = join(bin, "bb-box-identity");
+  put(tool, `#!/bin/sh\nprintf '%s\\n' ${quote(STATUS_RESET)}\n`, 0o755);
+  put(join(bin, "id"), "#!/bin/sh\necho 0\n", 0o755);
+  put(join(bin, "ip"), `#!/bin/sh\necho ${quote(addressLine("10.0.0.6").trim())}\n`, 0o755);
+  return {
+    root,
+    breakTool: (name) => put(join(bin, name), `#!/bin/sh\necho "${name}: simulated Input/output error" >&2\nexit 2\n`, 0o755),
+    seen: () => {
+      const ran = spawnSync("sh", ["-c", forkCheckScript().replaceAll(IDENTITY_TOOL, tool)], { encoding: "utf8", env: { ...process.env, BBBOX_IDENTITY_ROOT: root, PATH: `${bin}:${process.env.PATH}` } });
+      return parseForkSeen(ran.stdout, ran.status);
+    },
+  };
+}
+
+test("070 unit 7 re-review: a probe that fails to read the fork's Tailscale state, hash its machine ID or read its marker says it could not, and the fork is refused, never taken as clean", () => {
+  const expected = { ...EXPECTED, held: null };
+  const clean = probedFork();
+  rmSync(join(clean.root, "var/lib/tailscale/tailscaled.state"));
+  assert.deepEqual(forkVerdict(clean.seen(), expected), { is: "ready" }, "the probe itself passes a clean fork");
+  const loggedIn = probedFork();
+  assert.match((forkVerdict(loggedIn.seen(), expected) as { why: string }).why, /still holds a tailnet node/);
+  const cases: readonly [string, string, RegExp][] = [
+    ["grep", "tailscale-state", /could not read tailscale-state/],
+    ["sha256sum", "machine-id", /could not read machine-id/],
+    ["sed", "identity-marker", /could not read identity-marker/],
+  ];
+  for (const [tool, item, why] of cases) {
+    const probe = probedFork();
+    probe.breakTool(tool);
+    const seen = probe.seen();
+    assert.ok(seen.unreadable.includes(item), `${tool}: ${JSON.stringify(seen.unreadable)}`);
+    const verdict = forkVerdict(seen, expected);
+    assert.equal(verdict.is, "refused", tool);
+    assert.match((verdict as { why: string }).why, why, tool);
+  }
+});
+
+test("070 unit 7 re-review: a fork cut off by bb-box stopping during its first start keeps its guest on its record, and recovery deletes that guest before it copies the snapshot again", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  const backend = state.backend as unknown as { start: (guest: Guest, signal?: AbortSignal, ...rest: unknown[]) => Promise<unknown> };
+  const start = backend.start.bind(state.backend);
+  let first: Guest | null = null;
+  let started: () => void = () => {};
+  const starting = new Promise<void>((resolve) => (started = resolve));
+  backend.start = async (guest: Guest, signal?: AbortSignal) => {
+    first = guest;
+    await start(guest);
+    started();
+    await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
+  };
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+  await starting;
+  await state.boxes.dispose();
+  backend.start = start;
+  const cut = first as Guest | null;
+  assert.ok(cut);
+  const kept = (await state.boxes.find(answer.box!.id))!;
+  assert.equal(kept.guest?.ref, cut.ref, "the record keeps the guest it was starting");
+  assert.equal(await state.backend.power(cut), "running");
+  await state.restart();
+  forks.macsAfterRestart();
+  assert.equal(await state.backend.power(cut), "running", "bb-box's restart leaves the guest as it was");
+  const copy = state.provider.onForked!;
+  let cutAtCopy: string | null = "not copied again";
+  state.provider.onForked = async (made, ref) => {
+    cutAtCopy = await state.backend.power(cut);
+    await copy(made, ref);
+  };
+  await state.boxes.sweep();
+  const fork = await forked(state, await state.boxes.find(answer.box!.id));
+  assert.equal(cutAtCopy, null, "the guest it was starting was deleted before the snapshot was copied again");
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.notEqual(fork.guest?.ref, cut.ref);
+  assert.equal(await state.backend.power(cut), null);
+});
+
+test("070 unit 7 re-review: box_fork's check before its take refuses a fork with no room or no place for it, so the take never deletes an older snapshot for a fork that is then refused", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  state.settings = { perBox: 2 };
+  const oldest = (await state.snapshots.take(agent, box, standing(box), { name: "oldest" })).snapshot!;
+  state.tick(1000);
+  await state.snapshots.take(agent, box, standing(box), { name: "second" });
+  const capacity = state.backend.capacity.bind(state.backend);
+  state.backend.capacity = async () => ({ ok: false, message: "No room for any new guest", warm: null, hosts: [] });
+  const refused = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box)));
+  assert.equal(refused.code, "no_capacity");
+  assert.match(refused.message, /has no room for the fork: No room for any new guest/);
+  state.backend.capacity = capacity;
+  assert.equal((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { name: box.name }))).code, "invalid_name", "a name its thread already has");
+  assert.ok(state.store.record(oldest.id), "nothing was taken or deleted");
+  assert.equal(state.store.records({ box: box.id }).filter((record) => record.state === "ready").length, 2);
+});
+
+test("070 unit 7 re-review: a fork's guest is disarmed before each attempt to delete it, when the fork fails and at each sweep after", async () => {
+  const forks = forkWorld();
+  forks.firstBoot = "same-mac";
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  state.backend.faults.release = new Error("CT is locked (clone)");
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+  const fork = await forked(state, answer.box);
+  const ref = fork.guest!.ref;
+  await state.boxes.sweep();
+  const steps = state.backend.calls.filter((call) => call === `disarm ${ref}` || call === `release ${ref}`);
+  assert.deepEqual(steps, [`disarm ${ref}`, `release ${ref}`, `disarm ${ref}`, `release ${ref}`]);
 });

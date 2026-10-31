@@ -720,6 +720,8 @@ export interface ForkRequest {
   readonly who: Actor;
 }
 
+export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind"> & { readonly size: BoxSize | null };
+
 function sentenceOf(text: string): string {
   const trimmed = text.trim();
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
@@ -1349,7 +1351,12 @@ export class Boxes {
     return box;
   }
 
-  async fork(request: ForkRequest): Promise<BoxRecord> {
+  async admitFork(request: ForkAdmission): Promise<void> {
+    await this.#forkRoom(request);
+    this.#forkPlace(request, await this.list(request.threadId), await this.#deps.general());
+  }
+
+  async #forkRoom(request: ForkAdmission): Promise<OfferedKind> {
     const offered = this.#deps.backends.kinds().find((candidate) => candidate.backend.id === request.backend && candidate.kind.id === request.kind);
     if (!offered) throw new BoxError("unknown_kind", `${request.backendLabel} offers no ${request.kind} boxes now, so bb-box cannot fork one there.`);
     const { backend, kind } = offered;
@@ -1358,18 +1365,29 @@ export class Boxes {
       throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${request.name}" is not one.`);
     }
     if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
-    const room = await backend.capacity(kind.id, request.size, await this.#pending(backend.id));
+    const size = request.size ?? defaultSize(kindSizes(kind.id, (await this.#deps.general()).sizes));
+    const room = await backend.capacity(kind.id, size, await this.#pending(backend.id));
     if (!room.ok) throw new BoxError("no_capacity", `${backend.label} has no room for the fork: ${room.message ?? "it did not say why"}`);
+    return offered;
+  }
+
+  #forkPlace(request: ForkAdmission, existing: readonly BoxRecord[], general: GeneralConfig): Set<string> {
+    const yours = request.threadId === OPERATOR;
+    const active = existing.filter((box) => isActive(box) && box.role === "box");
+    if (!yours && ownedByThread(request.threadId) && general.perThreadLimit !== null && active.length >= general.perThreadLimit) {
+      throw new BoxError("limit_reached", `This thread already has ${active.length} boxes, the most allowed: ${active.map((box) => box.name).join(", ")}. Release one first.`);
+    }
+    const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
+    if (request.name !== undefined && taken.has(request.name)) throw new BoxError("invalid_name", `There is a ${yours ? "machine" : "box"} called ${request.name} already${yours ? "" : " in this thread"}.`);
+    return taken;
+  }
+
+  async fork(request: ForkRequest): Promise<BoxRecord> {
+    const { backend, kind } = await this.#forkRoom(request);
     const general = await this.#deps.general();
     const box = await this.#admission.run(() =>
       this.#locked(request.threadId, async () => {
-        const existing = await this.list(request.threadId);
-        const active = existing.filter((box) => isActive(box) && box.role === "box");
-        if (!yours && ownedByThread(request.threadId) && general.perThreadLimit !== null && active.length >= general.perThreadLimit) {
-          throw new BoxError("limit_reached", `This thread already has ${active.length} boxes, the most allowed: ${active.map((box) => box.name).join(", ")}. Release one first.`);
-        }
-        const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
-        if (request.name !== undefined && taken.has(request.name)) throw new BoxError("invalid_name", `There is a ${yours ? "machine" : "box"} called ${request.name} already${yours ? "" : " in this thread"}.`);
+        const taken = this.#forkPlace(request, await this.list(request.threadId), general);
         const createdAt = this.#now();
         const record: BoxRecord = {
           id: request.id,
@@ -2245,6 +2263,7 @@ export class Boxes {
     let cleanup: string | null = null;
     let stopped = false;
     if (left) {
+      await backend.disarmFork?.(left).catch((cause) => this.#deps.logError(`disarm guest ${left.ref} of fork ${box.name} before deleting it`, cause));
       try {
         await backend.release(left, QUIET);
       } catch (cause) {
@@ -2268,6 +2287,7 @@ export class Boxes {
     const backend = this.#deps.backends.get(current.backend);
     if (!backend) return;
     const guest = current.guest;
+    await backend.disarmFork?.(guest).catch((error) => this.#deps.log?.(`Could not disarm guest ${guest.ref} of fork ${current.name} before deleting it: ${describeError(error, "Disarming it")}`));
     try {
       await backend.release(guest, QUIET);
     } catch (error) {
@@ -2348,8 +2368,8 @@ export class Boxes {
     try {
       guest = box.fork ? await this.#forkGuest(box, backend, hooks, timings, signal) : await backend.acquire(identity(box, await this.#size(box)), box.guest, hooks, signal);
     } catch (error) {
-      if (box.fork && !this.#disposed) {
-        await this.#forkFailed(box, backend, error, timings);
+      if (box.fork) {
+        if (!this.#disposed) await this.#forkFailed(box, backend, error, timings);
         return;
       }
       // The backend released whatever it claimed before it threw.

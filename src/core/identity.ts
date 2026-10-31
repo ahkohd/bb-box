@@ -66,7 +66,7 @@ const EMPTY_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
 
 const HELD_IDENTITY_FACTS = [
   IDENTITY_FILES_ROOT,
-  `hash() { sha256sum | cut -d' ' -f1; }`,
+  `hash() { sum=$(sha256sum) || return 1; printf '%s\\n' "\${sum%% *}"; }`,
   `if [ ! -e "$r/etc/machine-id" ]; then echo missing=machine-id; elif [ -r "$r/etc/machine-id" ] && h=$(hash < "$r/etc/machine-id"); then printf 'machine_id=%s\\n' "$h"; else echo unreadable=machine-id; fi`,
   `keys=0; for f in "$r"/etc/ssh/ssh_host_*_key.pub; do [ -e "$f" ] || continue; if [ -r "$f" ] && h=$(cut -d' ' -f2 "$f" | hash); then printf 'host_key=%s\\n' "$h"; keys=$((keys + 1)); else printf 'unreadable=%s\\n' "\${f#"$r"}"; fi; done; [ "$keys" -gt 0 ] || echo missing=ssh-host-keys`,
 ];
@@ -75,8 +75,8 @@ const FORK_FACTS = [
   ...HELD_IDENTITY_FACTS,
   `for d in "$r"/home/*/.bb-machines/* "$r"/home/*/.bb-machines/.set-aside/* "$r"/root/.bb-machines/* "$r"/root/.bb-machines/.set-aside/*; do [ -d "$d" ] || continue; for f in host-id auth.json config.json; do if [ -e "$d/$f" ]; then printf 'bb_file=%s\\n' "\${d#"$r"}/$f"; fi; done; done`,
   `for f in "$r"/home/*/.config/bb-box/env "$r"/root/.config/bb-box/env; do if [ -e "$f" ]; then printf 'access_file=%s\\n' "\${f#"$r"}"; fi; done`,
-  `s=$r/var/lib/tailscale/tailscaled.state; if [ ! -e "$s" ]; then echo tailnet_node=no; elif [ ! -r "$s" ]; then echo unreadable=tailscale-state; elif grep -q -e '"_current-profile"' -e '"profile-' "$s"; then echo tailnet_node=yes; else echo tailnet_node=no; fi`,
-  `m=$r/etc/bb-box/identity; if [ -r "$m" ]; then sed -n 's/^mac /marker_mac=/p' "$m"; else echo unreadable=identity-marker; fi`,
+  `s=$r/var/lib/tailscale/tailscaled.state; if [ ! -e "$s" ]; then echo tailnet_node=no; elif [ ! -r "$s" ]; then echo unreadable=tailscale-state; else grep -q -e '"_current-profile"' -e '"profile-' "$s"; g=$?; if [ "$g" -eq 0 ]; then echo tailnet_node=yes; elif [ "$g" -eq 1 ]; then echo tailnet_node=no; else echo unreadable=tailscale-state; fi; fi`,
+  `m=$r/etc/bb-box/identity; if [ -r "$m" ] && macs=$(sed -n 's/^mac /marker_mac=/p' "$m"); then printf '%s\\n' "$macs"; else echo unreadable=identity-marker; fi`,
   `if a=$(ip -o -4 addr show scope global 2>/dev/null); then printf '%s\\n' "$a" | awk '{ for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), part, "/"); print "address=" part[1] } }'; echo addresses_read=yes; else echo unreadable=addresses; fi`,
 ];
 
@@ -94,8 +94,12 @@ export interface ForkSafety {
   readonly identity: HeldIdentity | null;
 }
 
+function everyValue(stdout: string, key: string): string[] {
+  return stdout.split("\n").flatMap((line) => (line.startsWith(`${key}=`) ? [line.slice(key.length + 1).trim()] : []));
+}
+
 function values(stdout: string, key: string): string[] {
-  return stdout.split("\n").flatMap((line) => (line.startsWith(`${key}=`) ? [line.slice(key.length + 1).trim()] : [])).filter(Boolean);
+  return everyValue(stdout, key).filter(Boolean);
 }
 
 interface IdentityRead {
@@ -107,8 +111,8 @@ interface IdentityRead {
 
 function identityRead(stdout: string): IdentityRead {
   const valid = (hash: string) => HASH.test(hash) && hash !== EMPTY_HASH;
-  const machineIds = values(stdout, "machine_id");
-  const keys = values(stdout, "host_key");
+  const machineIds = everyValue(stdout, "machine_id");
+  const keys = everyValue(stdout, "host_key");
   const unreadable = [...values(stdout, "unreadable"), ...machineIds.filter((hash) => !valid(hash)).map(() => "machine-id"), ...keys.filter((hash) => !valid(hash)).map(() => "an SSH host key")];
   return {
     identity: { machineId: machineIds.find(valid) ?? null, hostKeys: [...new Set(keys.filter(valid))].sort() },

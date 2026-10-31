@@ -1467,6 +1467,17 @@ After the two reviews of unit 7, the lead decided:
 - **Names are checked before anything is recorded**, by the machine rule.
 - **A fork of a kept snapshot is one of the person's machines.**
 
+After the re-reviews:
+
+- **A fork's record keeps its guest when bb-box stops.** Recovery deletes
+  that guest, and confirms it is gone, before it copies the snapshot
+  again.
+- **A read that fails is unreadable, never a negative answer**, so it
+  refuses the fork.
+- **`box_fork`'s check before its take includes the fork's room and
+  place**: the backend's room, the thread's limit and the name.
+- **An abandoned clone is disarmed before each attempt to delete it.**
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

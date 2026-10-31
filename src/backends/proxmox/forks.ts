@@ -24,8 +24,8 @@ function proxmoxWords(error: ProxmoxError): string {
   return /failed \(\d+\): (.*)$/s.exec(error.message)?.[1]?.trim() || error.message;
 }
 
-function madeFor(config: Record<string, unknown> | null, box: BoxIdentity, installId: string): boolean {
-  return !!config && ownerFromDescription(config.description)?.boxId === box.boxId && installFromDescription(config.description) === installId;
+function madeFor(config: Record<string, unknown> | null, boxId: string, installId: string): boolean {
+  return !!config && ownerFromDescription(config.description)?.boxId === boxId && installFromDescription(config.description) === installId;
 }
 
 async function configOrNull(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
@@ -40,14 +40,36 @@ async function configOrNull(api: Proxmox, vmid: number, signal?: AbortSignal): P
 async function dropHalfMadeFork(guests: ForkGuests, api: Proxmox, previous: Guest, box: BoxIdentity, signal: AbortSignal): Promise<void> {
   const vmid = Number(previous.ref);
   if (!Number.isInteger(vmid)) return;
-  if (!madeFor(await configOrNull(api, vmid, signal), box, guests.installId)) return;
+  if (!madeFor(await configOrNull(api, vmid, signal), box.boxId, guests.installId)) return;
   await guests.forget(vmid);
+  const cannot = (why: string) => new Error(`bb-box could not delete guest ${vmid}, the copy a fork of box ${box.name} had begun before bb-box restarted, so it makes no other: ${why}`);
+  const { lockOutlasted } = await disarmBeforeDelete(guests, api, vmid, "a fork cut short by a restart", signal);
+  if (lockOutlasted) throw cannot("Proxmox still holds its lock.");
   try {
     await api.destroy(vmid, signal);
   } catch (error) {
     if (error instanceof ProxmoxError && error.gone) return;
-    throw new Error(`bb-box could not delete guest ${vmid}, the copy a fork of box ${box.name} had begun before bb-box restarted, so it makes no other: ${error instanceof ProxmoxError ? proxmoxWords(error) : String(error)}`);
+    throw cannot(error instanceof ProxmoxError ? proxmoxWords(error) : String(error));
   }
+  if (madeFor(await configOrNull(api, vmid, signal), box.boxId, guests.installId)) throw cannot("it is still there after its delete.");
+}
+
+async function disarmBeforeDelete(guests: Pick<ForkGuests, "logError">, api: Proxmox, vmid: number, what: string, signal?: AbortSignal): Promise<{ readonly lockOutlasted: boolean }> {
+  try {
+    await disarm(api, vmid, signal);
+    return { lockOutlasted: false };
+  } catch (error) {
+    guests.logError(`disarm guest ${vmid}, ${what}, before deleting it`, error);
+    return { lockOutlasted: error instanceof ProxmoxError && error.locked };
+  }
+}
+
+export async function disarmFork(guests: Pick<ForkGuests, "client" | "vmid" | "installId">, guest: Guest, signal?: AbortSignal): Promise<void> {
+  const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+  if (!box) return;
+  const api = await guests.client();
+  const vmid = guests.vmid(guest);
+  if (madeFor(await configOrNull(api, vmid, signal), box, guests.installId)) await disarm(api, vmid, signal);
 }
 
 export async function disarm(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
@@ -102,9 +124,11 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
     return { ...guest, size: guests.sizeOf(await api.config(vmid, signal)) };
   } catch (error) {
     const made = await configOrNull(api, vmid).catch(() => null);
-    if (madeFor(made, box, guests.installId)) {
+    if (madeFor(made, box.boxId, guests.installId)) {
       await guests.forget(vmid);
-      await api.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));
+      const { lockOutlasted } = await disarmBeforeDelete(guests, api, vmid, "a fork that failed");
+      if (lockOutlasted) guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, new Error("Proxmox still holds its lock, so bb-box neither disarmed nor deleted it yet."));
+      else await api.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));
     }
     throw error;
   } finally {

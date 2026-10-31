@@ -2649,6 +2649,83 @@ forked`) and became VMID 3170, at .180.
 The fork's file from the take was there. Afterwards src-lxc and lxc-v7
 were removed with their snapshot.
 
+### After the re-reviews
+
+Astra's re-review found three fixes only partly done, each shown by a
+probe. Opus's re-review said merge, with one cheap follow-up. All four are
+in. Each probe is now a regression test, and each test fails on the
+commit before these fixes.
+
+**A restart during a fork's first start keeps its guest** (Astra 5). When
+bb-box stopped while a fork was starting, the fork's record dropped its
+guest, which went on running. After the restart, bb-box copied the
+snapshot again beside it. Now bb-box leaves a fork's record as it is when
+it stops, guest included. After the restart, it makes the copy again only
+once the old guest is deleted. On Proxmox, the backend disarms the old
+guest, deletes it, and checks that it is gone. If it cannot delete it, it
+makes no other copy.
+
+**A read that fails is not a clean answer** (Astra 6). The fork's check
+took grep's error, reading its Tailscale state, for "no tailnet node". It
+now tells no match (exit 1) from an error (2 or more): an error makes the
+state unreadable, and the fork is refused. Two more reads failed open the
+same way, and now refuse:
+
+- a failed hash of the machine ID or a host key, which gave an empty value
+  that the parser dropped
+- a failed read of the identity marker, which gave no MAC addresses
+
+**`box_fork` checks room and place before its take** (Opus 2). The check
+before the take now runs the fork's own admission:
+
+- the backend's room for the box's size
+- the thread's box limit
+- a name the thread already has
+- for one of the person's machines, the machine-name rule and enrolment
+
+With no room, the take no longer deletes the agent's oldest snapshot for a
+fork that is then refused. Room can still change between the check and the
+fork. If it does, the snapshot taken for the fork is deleted, as before,
+but a snapshot the take evicted does not come back.
+
+**An abandoned clone is disarmed before each delete** (Opus's follow-up).
+A fork can fail, be released or be cut off by a restart while Proxmox
+still holds its clone lock. bb-box now disarms the clone, `onboot` 0 and
+every link down, before each attempt to delete it:
+
+- in the backend's own clean-up after a failed or cut-short copy
+- when it deletes a half-made fork after a restart
+- in core, before each release of a fork's guest, when the fork fails and
+  at each sweep after
+
+A Proxmox request waits up to 120 s for a lock, so the disarm lands as soon
+as the clone task ends. If the lock outlasts that, bb-box skips that
+delete, which would wait on the same lock, and tries again at the next
+sweep. The disarm finds a fork's clone by its description, which names
+the fork from the clone's start: the clone's copied tags name its source
+until bb-box labels it.
+
+Tests, 5:
+
+- `test/forks.test.ts`:
+  - the real check script with a failing grep, `sha256sum` and `sed`:
+    each item unreadable, and the fork refused
+  - bb-box stopping during a fork's first start, then recovery: the guest
+    kept on the record, and deleted before the copy is made again
+  - room and a taken name refused before `box_fork`'s take, with both
+    snapshots still there at the limit
+  - a disarm before each release of a fork's guest, at the failure and at
+    the sweep
+- `test/proxmox-lxc-snapshots.test.ts`: a failed copy disarmed before its
+  delete, and left disarmed when the delete fails; recovery's disarm
+  before its delete; `disarmFork` acting only on the fork's own guest
+
+On a new Linux box, over main `812f78dc`: `npx tsc` passes and the
+reference is current; the node suite ran 3,211 tests, 2,923 passed, 0
+failed, 288 skipped; vitest ran 423, all passed. The 5 new tests, run
+against the previous commit's source, all failed, each on the gap it
+covers.
+
 ### Conditions and open questions
 
 - **Rebuild the LXC template with version 7** of the identity program

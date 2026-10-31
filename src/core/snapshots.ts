@@ -18,7 +18,7 @@ import {
   type TaskKind,
   type TaskOutcome,
 } from "../backends/types.ts";
-import { BoxError, type BoxRecord, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
+import { BoxError, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
 import { readForkSafe, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
@@ -81,6 +81,7 @@ export interface SnapshotBoxes {
   writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void>;
   machineBack(box: BoxRecord): boolean;
   fork(request: ForkRequest): Promise<BoxRecord>;
+  admitFork(request: ForkAdmission): Promise<void>;
 }
 
 export interface ThreadOnTheBox {
@@ -1571,6 +1572,15 @@ export class Snapshots {
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (safety.version === null) throw new BoxError("unsupported", `Box ${box.name} has no working identity reset now, so a copy of it would not give up its identity, and bb-box does not fork it.`);
     if (safety.version < safeFrom) throw new BoxError("unsupported", `Box ${box.name} has version ${safety.version} of the identity reset, and bb-box forks ${backend.label}'s boxes only from version ${safeFrom}.`);
+    const asMachine = caller.is !== "agent" && (input.asMachine === true || box.threadId === OPERATOR);
+    await this.#deps.boxes.admitFork({
+      threadId: asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : box.threadId,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      backend: backend.id,
+      backendLabel: backend.label,
+      kind: box.kind,
+      size: box.guest.size ?? box.size ?? null,
+    });
   }
 
   async #forkedBefore(operation: SnapshotOperation): Promise<ForkAnswer> {
