@@ -700,7 +700,7 @@ be undone on its own.
    containers and Tailscale; a spare claimed, renamed and restarted; a card
    added, booted, then the first removed; and a card that comes late. The
    G14 runs above were of version 1 of the program. Step 3 ran on 31
-   October: see "Rollout step 3" below; both templates need version 4.
+   October: see "Rollout step 3" below; both templates need version 5.
 4. **A box made before** keeps working as it does: it has no marker, so it
    never resets, and its snapshots say "not fork-safe". bb-box arms a box
    only at its first ready, so turning a backend on arms no running box.
@@ -980,7 +980,7 @@ message.
 
 The templates still hold version 2, so neither backend goes into
 `identityResetBackends` until 9800 and 9806 are rebuilt with the fix, and
-`bb-box-identity version` in a new box says so: version 4, below.
+`bb-box-identity version` in a new box says so: version 5, below.
 
 Afterwards the snapshots, boxes and both backends were removed from the
 separate BB, its box released, and the lead destroyed the clones. One
@@ -1063,7 +1063,91 @@ with a fixed MAC and a TAP named `eth8` were made in it.
 
 The lead deleted the snapshots and destroyed the clones. Neither backend
 goes into `identityResetBackends` until 9800 and 9806 are rebuilt with
-version 4.
+version 5, below.
+
+### After the version 4 re-review
+
+Astra found two more. GRE TAP, IPv6 GRE TAP and ERSPAN interfaces named
+`eth9` passed version 4's tests: they are Ethernet, with another index as
+their link and none of the excluded entries, so with the card missing they
+reset the box. And indices belong to namespaces: a card with index 20 and its
+peer at 100 outside, beside a veth of the box's with index 100 and its peer
+at 20 in a namespace of its own, looked like a pair inside the box. That hid
+the card; a second card then reset the box.
+
+The lead stopped chasing kinds one by one, and set the rule for version 5.
+
+**What a card is, version 5.** On LXC, a card is what the kernel's own link
+information, `ip -d -j link`, says is one:
+
+- `link_type` `ether` and `info_kind` `veth`
+- a `link_netnsid`: its peer is in another namespace
+- no `master`: it is on no bridge or bond
+- named `eth` and a number
+
+Nothing else is a card or an anchor, whatever its name. The index arithmetic
+of version 4 is gone; the collision needs none of it, as the two veths have
+different `link_netnsid` values and the box's has another name. On a VM a
+card still has a device. Anchors still grow only at boot.
+
+On a production LXC box, `eth0` is `veth` with `link_netnsid` 0 and no
+master; Docker's veth there has a master and `link_netnsid` 1.
+
+Two consequences, plainly:
+
+- **A card renamed from `eth`** on LXC, such as with `pct set --net0
+  name=lan0,...`, is no card, so the box is held as unknown, removing
+  nothing, until it has its name again. bb-box always names its cards `eth0`.
+- **The remaining limit.** A veth that the box makes, names `eth` and a
+  number, keeps off any bridge, and whose peer it moves into another
+  namespace is a card by this rule. With the box's own card missing, it
+  resets the box. Unit 2's recovery then keeps the box and enrols it again as
+  a new BB machine, so the cost is the box's BB machine, tailnet node and
+  access file, not the box.
+
+**Tests.** The test guest now gives the program a fake `ip` that prints the
+links it is given. `identity-reset.test.ts`:
+
+- with the card missing, each of a bridge, bond, TAP, a veth whose peer is
+  inside, a veth on a bridge as Docker's are, a dummy, a macvlan, an ipvlan, a
+  VLAN, a GRE TAP, an IPv6 GRE TAP, an ERSPAN, a VXLAN and a Geneve, named
+  `eth9`, leaves the box held at boot and in `settle`, on LXC and on a VM
+- the reviewer's collision: the marker still matches, the box is kept at
+  boot and in `settle`, and a second card is grown at the next boot, never a
+  reset
+- a card renamed `lan0` holds the box at three boots, removing nothing
+
+The fixture changed shape, so version 4 cannot run these tests; the probe
+compares the two versions instead.
+
+**Probe**, with real kernel interfaces in network namespaces on a QEMU box,
+the card made as LXC makes it:
+
+| Case | Version 4 | Version 5 |
+| --- | --- | --- |
+| Card missing; a GRE TAP, IPv6 GRE TAP or ERSPAN named `eth9` | reset | held |
+| Card missing; a veth on a bridge named `eth9`, its peer in a namespace of the box's | reset | held |
+| Card missing; a bridge, bond, inside veth, dummy, TAP, TUN, WireGuard, macvlan, ipvlan, VLAN, VXLAN or Geneve named `eth9`, or docker0, `tap0` and a Docker-like veth | held | held |
+| The reviewer's collision, then a second card | reset | kept; the second card grown at the next boot |
+| A copy: the card with a new MAC, alone or with docker0 | reset | reset |
+| The box itself, with docker0 and a Docker-like veth | kept | kept |
+| The box itself, its card renamed `lan0` | kept | held |
+| A copy, card missing, a bridge with the MAC its marker holds made again | held | held |
+| The limit: card missing, a veth named `eth9` with its peer in a namespace of the box's | reset | reset |
+
+**Live, by hand**, on a production LXC box with version 5 installed and armed
+by hand, running Docker containers and tailscaled; the lead ran the node
+steps. While the box, or its copy, waited with no card, a bridge with a fixed
+MAC, a TAP, a GRE TAP, an ERSPAN and a veth pair inside the box were made in
+it, named `eth5` to `eth9`.
+
+| Check | Result |
+| --- | --- |
+| A plain clone | pass: reset at its first start, the host ID removed |
+| A copy whose card comes late | pass: `boot=unknown`, the host ID kept; still `unknown` with the five interfaces; reset once its new card came, its copied daemon refused; `kept` after a reboot |
+| The box itself, its card late | pass: `unknown` through the five interfaces, the host ID kept; `kept` with the same host ID once its own card was back |
+
+The lead deleted the snapshot and destroyed the clones.
 
 ### Choices and deviations
 

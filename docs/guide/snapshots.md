@@ -64,11 +64,11 @@ When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/
 
 At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's daemon start, the box compares the marker with what it has:
 
-- if any of the marker's MAC addresses is on any of its cards, whatever the card's name, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
-- if its cards are all known, and it has a new card named `eth` and a number on Proxmox LXC, or any new card on a VM, but none of the marker's, it is a copy, and it resets
+- if any of the marker's MAC addresses is on any of its cards, it keeps its identity, and adds its current cards to the marker: so a card added, then the first card removed, changes nothing
+- if its cards are all known, and it has a new card but none of the marker's, it is a copy, and it resets
 - if it cannot tell, as when its card has not appeared after 30 seconds, it removes nothing and starts its network, its desktop and logins, but SSH, Tailscale and BB's daemon wait while it keeps looking; once a card appears, it decides as above
 
-A card is one the backend gave the box. On Proxmox LXC that is one linked to an interface outside the box, and not a bridge, bond, TAP, VLAN or the like; on a VM, one with a device. Interfaces the box makes itself, such as Docker's and Tailscale's, are never cards, whatever their names. Cards join the marker only as the box starts, before its own software makes interfaces again.
+A card is one the backend gave the box, as the kernel reports it. On Proxmox LXC it is a veth whose other end is outside the box, on no bridge, named `eth` and a number; on a VM, one with a device. Interfaces the box makes itself, such as Docker's and Tailscale's, bridges and tunnels, are never cards, whatever their names. An LXC card renamed from `eth` is no card either, so the box waits, as above, until it has its name again. Cards join the marker only as the box starts, before its own software makes interfaces again.
 
 A reset removes what made the box its source:
 

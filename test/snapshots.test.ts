@@ -945,8 +945,8 @@ test("a box is first ready with its identity marker, written with its backend's 
   assert.equal(typeof box.identityMarkedAt, "number", "bb-box records that it armed the box, so only armed boxes are checked for a reset");
   assert.deepEqual(state.boxLogs.filter((line) => line.includes("identity marker")), []);
   const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
-  assert.equal(taken.forkSafe, 4);
-  assert.equal(state.store.record(taken.id)?.forkSafe, 4, "kept on the record, so a restart keeps it");
+  assert.equal(taken.forkSafe, 5);
+  assert.equal(state.store.record(taken.id)?.forkSafe, 5, "kept on the record, so a restart keeps it");
   assert.doesNotMatch(snapshotLine(taken), /identity reset/);
 });
 
@@ -972,7 +972,8 @@ test("a take is not fork-safe, and says so, when the box's image has no identity
   const moved = world({ identityTool: changed.tool });
   withIdentitySource(moved, "eth");
   const movedBox = await readyBox(moved);
-  writeFileSync(join(changed.root, "sys/class/net/eth0/address"), "bc:24:11:00:00:01\n");
+  const links = join(changed.root, "ip-link.json");
+  writeFileSync(links, readFileSync(links, "utf8").replace("bc:24:11:aa:f1:b6", "bc:24:11:00:00:01"));
   await notForkSafe(moved, movedBox, "its MAC addresses changed since the marker was written, so it would reset at its next boot");
 
   const unwired = identityGuest({ booted: false });
@@ -1003,7 +1004,7 @@ test("a Docker box's marker holds the value its start saw, and a box whose start
   withIdentitySource(state, "value");
   const box = await readyBox(state);
   assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource value\nvalue bxpending\n`);
-  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 4);
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 5);
 
   const before = identityGuest();
   const old = world({ identityTool: before.tool });
