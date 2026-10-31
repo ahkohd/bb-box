@@ -21,6 +21,23 @@ export function snapshotDay(at: number): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(at);
 }
 
+export const KEEP_SOON_MS = 3 * DAY_MS;
+
+export function keepDay(at: number): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(at);
+}
+
+export function keepWords(keptUntil: number, now: number): { readonly words: string; readonly soon: boolean } {
+  const left = keptUntil - now;
+  if (left >= KEEP_SOON_MS) return { words: `kept until ${keepDay(keptUntil)}`, soon: false };
+  const days = Math.max(0, Math.ceil(left / DAY_MS));
+  return { words: days <= 1 ? "goes within a day" : `goes in ${days} days`, soon: true };
+}
+
+export function utcDate(at: number): string {
+  return new Date(at).toISOString().slice(0, 10);
+}
+
 export function snapshotWhen(at: number, now: number): string {
   if (sameDay(at, now)) return `Today ${clock24(at)}`;
   if (sameDay(at, now - DAY_MS)) return `Yesterday ${clock24(at)}`;
@@ -95,7 +112,7 @@ export function footerWords(view: BoxSnapshotsView, boxName: string): string {
   const leaves = offer.excludes ? ` They leave out ${offer.excludes}.` : "";
   if (offer.scope === "device") return `Snapshots hold the device: its disk and memory, the apps open on it. A restore puts back the device only, not the rest of ${boxName}.${leaves} They go when ${boxName} is released.`;
   const holds = offer.holds.length === 2 ? "Snapshots hold the disk, or the disk and memory when asked." : offer.holds[0] === "disk" ? "Snapshots hold the disk." : `Snapshots hold the disk and memory: ${boxName} pauses for each.`;
-  return `${holds}${leaves} They go when ${boxName} is released.`;
+  return `${holds}${leaves} They go when ${boxName} is released${offer.keeps ? ", unless kept" : ""}.`;
 }
 
 export function attentionWords(row: SnapshotRowView, boxName: string): string | null {

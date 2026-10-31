@@ -395,7 +395,7 @@ test("070 unit 7 reviews: a person's fork of a kept snapshot is one of their mac
   const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "kept");
   assert.equal(check.asMachine, true);
   assert.equal(check.threadId, OPERATOR);
-  const preview = await forkPreview(state.snapshots, box, "kept", false);
+  const preview = await forkPreview(state.snapshots, box, standing(box), "kept", false);
   assert.equal(preview.check?.asMachine, true);
   assert.equal(preview.check?.canBeMachine, false, "the page offers no thread for it");
   for (const name of ["Calm Otter", "calm_otter", "otter-", "a".repeat(33), "bxsome\nthing"]) {
@@ -547,4 +547,54 @@ test("070 unit 7 re-review: a fork's guest is disarmed before each attempt to de
   await state.boxes.sweep();
   const steps = state.backend.calls.filter((call) => call === `disarm ${ref}` || call === `release ${ref}`);
   assert.deepEqual(steps, [`disarm ${ref}`, `release ${ref}`, `disarm ${ref}`, `release ${ref}`]);
+});
+
+test("070 unit 8, G15: Keep, release, restart bb-box, then fork the kept snapshot from its held copy: the fork is one of your machines, resets, and has the file written before the take", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  writeIn(state, box, "work/state.txt", "written before the take");
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "release candidate" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), taken.id);
+  writeIn(state, box, "work/state.txt", "written after the take");
+  await state.boxes.release(THREAD, box.id, "done with it", { is: "command" });
+  assert.equal(await state.backend.power(box.guest!), null, "the box is gone");
+  await state.restart();
+  forks.macsAfterRestart();
+  withIdentitySource(state, "eth");
+  await state.snapshots.sweep();
+  const kept = state.snapshots.findGone(box.name, "release candidate");
+  assert.equal(kept.guest, "held-copy");
+  assert.equal(kept.forkSafe, 7, "a held copy keeps its snapshot's identity reset version");
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  assert.match((await rejection(state.snapshots.fork(agent, { id: box.id }, standing(box), taken.id))).message, /has no snapshot/, "an agent cannot see a released box's kept snapshot");
+  const answer = await state.snapshots.forkGone(kept, { is: "command" }, { name: "from-kept" });
+  const fork = await forked(state, answer.box);
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.equal(fork.threadId, OPERATOR, "a fork of a kept snapshot is one of the person's machines");
+  assert.equal(fork.fork?.snapshot.from, "held-copy");
+  assert.equal(readIn(state, fork, "work/state.txt"), "written before the take");
+  const root = forks.roots.get(fork.guest!.ref)!;
+  assert.equal(fileOf(root, "home/box/.bb-machines/bb.example/host-id"), null, "it reset");
+  assert.equal(state.store.operation(answer.operation.id)?.state, "done");
+  assert.equal(state.store.pins().has(taken.id), false);
+  assert.deepEqual(state.kinds(box.id).filter((kind) => kind === "fork-asked" || kind === "forked"), ["fork-asked", "forked"]);
+});
+
+test("070 unit 8: a fork's release disarms its guest before every attempt to delete it, the sweep's retries included", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  state.holds.step = null;
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+  const fork = await forked(state, answer.box);
+  state.backend.calls.length = 0;
+  state.backend.faults.release = new Error("CT is locked (clone)");
+  const left = await state.boxes.release(fork.threadId, fork.id, "cancelled", { is: "command" });
+  assert.equal(left?.state, "releasing");
+  await state.boxes.sweep();
+  const order = state.backend.calls.filter((call) => call.startsWith("disarm ") || call.startsWith("release "));
+  assert.deepEqual(order, [`disarm ${fork.guest!.ref}`, `release ${fork.guest!.ref}`, `disarm ${fork.guest!.ref}`, `release ${fork.guest!.ref}`], "disarmed before the first delete and before the sweep's retry");
+  assert.equal(await state.backend.power(fork.guest!), null);
 });

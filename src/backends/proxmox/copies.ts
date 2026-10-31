@@ -7,6 +7,7 @@ export const EARLIER_GUEST = "earlier-guest";
 const SNAPSHOT_TAG = "snapshot.";
 const TAKEN_TAG = "taken.";
 const KEPT_TAG = "kept.";
+const RESET_TAG = "reset.";
 const PROXMOX_PREFIX = "BC:24:11";
 
 export function heldCopyTags(installId: string, label: HeldCopyLabel, takenAt: number, template: number | null): string[] {
@@ -16,10 +17,20 @@ export function heldCopyTags(installId: string, label: HeldCopyLabel, takenAt: n
     HELD_COPY,
     `box.${label.box}`,
     `${SNAPSHOT_TAG}${label.snapshot}`,
-    `${TAKEN_TAG}${Math.floor(takenAt / 1000)}`,
+    `${TAKEN_TAG}${Math.floor((label.takenAt ?? takenAt) / 1000)}`,
     ...(template !== null ? [templateTag(template)] : []),
     ...(label.kept ? [`${KEPT_TAG}${label.kept}`] : []),
+    ...(typeof label.forkSafe === "number" ? [`${RESET_TAG}${label.forkSafe}`] : []),
+    ...(label.kind && /^[a-z0-9-]+$/.test(label.kind) ? [`kind.${label.kind}`] : []),
   ];
+}
+
+export function withKeptTag(tags: readonly string[], kept: string | null): string[] {
+  return [...tags.filter((tag) => !tag.startsWith(KEPT_TAG)), ...(kept ? [`${KEPT_TAG}${kept}`] : [])];
+}
+
+export function copyName(vmid: number): string {
+  return `bb-box-copy-${vmid}`;
 }
 
 export function heldCopyDescription(installId: string, label: HeldCopyLabel): string {
@@ -31,12 +42,15 @@ export interface CopyTags {
   readonly snapshot: string | null;
   readonly takenAt: number | null;
   readonly kept: string | null;
+  readonly forkSafe: number | null;
+  readonly kind: string | null;
 }
 
 export function copyTags(tags: readonly string[]): CopyTags {
   const value = (prefix: string) => tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length) ?? null;
   const taken = Number(value(TAKEN_TAG));
-  return { box: value("box."), snapshot: value(SNAPSHOT_TAG), takenAt: Number.isFinite(taken) && taken > 0 ? taken * 1000 : null, kept: value(KEPT_TAG) };
+  const reset = Number(value(RESET_TAG));
+  return { box: value("box."), snapshot: value(SNAPSHOT_TAG), takenAt: Number.isFinite(taken) && taken > 0 ? taken * 1000 : null, kept: value(KEPT_TAG), forkSafe: Number.isInteger(reset) && reset > 0 ? reset : null, kind: value("kind.") };
 }
 
 export function isHeldCopy(tags: readonly string[]): boolean {
@@ -78,4 +92,25 @@ export function netWith(value: string, change: { readonly mac?: string; readonly
   if (change.mac && !parts.some((part) => macOf(part) !== null)) next.push(`hwaddr=${change.mac}`);
   if (!change.up) next.push("link_down=1");
   return next.join(",");
+}
+
+export const TEMPLATE_WAIT_MS = 120_000;
+
+export async function untilTemplate(
+  read: () => Promise<Record<string, unknown> | null>,
+  isTemplate: (config: Record<string, unknown>) => boolean,
+  pause: (ms: number) => Promise<void>,
+  pollMs: number,
+  vmid: number,
+  now: () => number = () => performance.now(),
+): Promise<void> {
+  const deadline = now() + TEMPLATE_WAIT_MS;
+  for (;;) {
+    const config = await read();
+    if (config && isTemplate(config)) return;
+    if (!config) throw new Error(`Guest ${vmid} went before it was a template.`);
+    const left = deadline - now();
+    if (left <= 0) throw new Error(`Proxmox did not make guest ${vmid} a template within ${TEMPLATE_WAIT_MS / 1000} s.`);
+    await pause(Math.min(pollMs, left));
+  }
 }

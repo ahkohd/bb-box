@@ -10,7 +10,7 @@ import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
+import { RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
@@ -55,6 +55,7 @@ export interface BoxView {
   readonly size: string | null;
   readonly state: BoxState;
   readonly error: string | null;
+  readonly releaseHeldForKept?: boolean;
   /** Why it last stopped without bb-box's request, and what bb-box did, in words (#406). */
   readonly stopped: string | null;
   readonly waitingOn?: string | null;
@@ -151,6 +152,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     size: sizeWords(box),
     state: box.state,
     error: box.error,
+    releaseHeldForKept: box.state === "releasing" && (box.error ?? "").startsWith("Release did not finish: ") && (box.error ?? "").endsWith(RELEASE_OR_DELETE_KEPT),
     stopped: stopWords(box) || null,
     waitingOn: waitingWords(box),
     createdAt: box.createdAt,

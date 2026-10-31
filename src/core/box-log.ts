@@ -43,6 +43,8 @@ export const BOX_EVENT_KINDS = [
   "snapshot-deleted",
   "snapshot-lost",
   "snapshot-unavailable",
+  "snapshot-kept",
+  "snapshot-unkept",
   "restore-asked",
   "restored",
   "restore-failed",

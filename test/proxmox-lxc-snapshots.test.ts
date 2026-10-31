@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { ProxmoxLxcBackend, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
-import { keptUntilOf, parseSnapshotLabel, snapshotLabel, snapshotName } from "../src/backends/proxmox/snapshotting.ts";
+import { cloneWaitMs, keptUntilOf, parseSnapshotLabel, snapshotLabel, snapshotName } from "../src/backends/proxmox/snapshotting.ts";
+import { Proxmox } from "../src/backends/proxmox/api.ts";
+import { untilTemplate } from "../src/backends/proxmox/copies.ts";
 import type { FetchResponse } from "../src/backends/proxmox/api.ts";
 import { RestoreChanged, SnapshotFailed, SnapshotIncomplete, type AcquireHooks, type BoxIdentity, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
@@ -52,7 +54,10 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
   assert.equal(snapshotName(SNAPSHOT), "bbsn7kq2m6xa4pdq");
   const label = snapshotLabel({ install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, kept: null });
   assert.equal(label, `bb-box install inst1 box bxamberfox2q7k snapshot ${SNAPSHOT}`);
-  assert.deepEqual(parseSnapshotLabel(label), { install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, kept: null });
+  assert.deepEqual(parseSnapshotLabel(label), { install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, reset: null, kept: null });
+  const versioned = snapshotLabel({ install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, reset: 7, kept: "2026-11-29" });
+  assert.equal(versioned, `bb-box install inst1 box bxamberfox2q7k snapshot ${SNAPSHOT} reset 7 kept 2026-11-29`);
+  assert.deepEqual(parseSnapshotLabel(versioned), { install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, reset: 7, kept: "2026-11-29" }, "the identity reset's version is a number, not a name or a secret");
   assert.deepEqual(parseSnapshotLabel(`${label} kept 2026-11-29`)?.kept, "2026-11-29");
   assert.equal(keptUntilOf("2026-11-29"), Date.UTC(2026, 10, 30) - 1, "kept until the end of the day");
   assert.equal(parseSnapshotLabel("bb-box snapshot research"), null);
@@ -61,7 +66,7 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
 
 test("a container offers disk snapshots taken while it runs, forks by a full copy from version 7 of the identity reset, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 7, keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 7, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -597,4 +602,134 @@ test("070 unit 7 re-review: a fork's clone is disarmed before each attempt to de
   assert.deepEqual(recovery.map((call) => call.method), ["PUT", "DELETE"], "recovery disarms the half-made fork before it deletes it");
   assert.equal(recovery[0]!.params.onboot, "0");
   assert.ok(state.proxmox.guests.has(Number(again.ref)));
+});
+
+test("a held copy cut short before its own labels still carries its source's tags, and the sweep sees it as a guest that names no box, never one to restore", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  state.proxmox.intercept = (call) =>
+    call.method === "PUT" && /\/lxc\/\d+\/config$/.test(call.path) && !call.path.endsWith(`/lxc/${vmid}/config`)
+      ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cut short" }) }
+      : undefined;
+  let claimed: Guest | null = null;
+  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async (made) => void (claimed = made) }).catch((caught: unknown) => caught);
+  state.proxmox.intercept = undefined;
+  assert.ok(cut instanceof Error);
+  const part = [...state.proxmox.guests.values()].find((each) => each.vmid !== vmid && each.name.startsWith("bb-box-copy-"))!;
+  assert.match(part.config.tags ?? "", new RegExp(`(^|;)box\\.${id.boxId}(;|$)`), "it still carries its source's tags");
+  const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
+  assert.ok(listed, "the sweep sees it");
+  assert.equal(listed.owner, null, "as a guest that names no box");
+  await assert.rejects(state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }), /is not the copy bb-box made of snapshot snbbbbbbbbbbbb/);
+  await state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30", forkSafe: 7, kind: "linux" });
+  for (const tag of ["held-copy", `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7"]) assert.match(part.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), `labelled once its clone ends well: ${tag}`);
+  assert.equal(part.config.onboot, "0");
+  assert.match(part.config.net0 ?? "", /link_down=1/);
+  assert.equal((await state.backend.held()).some((each) => each.ref === String(part.vmid)), false, "and then a held copy, which the box sweep never sees");
+});
+
+test("a release's label check lists one guest's own snapshots with their keep dates, and fails when Proxmox cannot list them", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  await state.backend.labelKept({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, "2026-11-30");
+  assert.deepEqual((await state.backend.snapshotsOn(guest)).map((held) => ({ id: held.id, keptUntil: held.keptUntil, forkSafe: held.forkSafe })), [{ id: SNAPSHOT, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), forkSafe: null }]);
+  state.proxmox.intercept = (call) =>
+    call.method === "GET" && call.path.endsWith(`/lxc/${vmid}/snapshot`) ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cannot read" }) } : undefined;
+  await assert.rejects(state.backend.snapshotsOn(guest));
+  state.proxmox.intercept = undefined;
+});
+
+test("070 unit 8: Keep's held copy is a full copy of the snapshot into the box range, recorded before the clone, disarmed, labelled with its box, snapshot, keep date, kind and reset version, and a template only once Proxmox says so", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks: snapshotHooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, snapshotHooks);
+  await state.backend.labelKept({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, "2026-11-30");
+  const vmid = Number(guest.ref);
+  const label = state.proxmox.guests.get(vmid)!.snapshots!.find((each) => each.name === snapshotName(SNAPSHOT))!.description;
+  assert.deepEqual({ ...parseSnapshotLabel(label)!, install: "" }, { install: "", box: id.boxId, snapshot: SNAPSHOT, reset: null, kept: "2026-11-30" }, "the keep date is on the snapshot's own label");
+  const claimed: string[] = [];
+  const copy = await state.backend.copySnapshot(
+    { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest },
+    { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30", takenAt: Date.UTC(2026, 9, 31, 14, 21), forkSafe: 7, kind: "linux" },
+    { ...tasks().hooks, claimed: async (made) => void claimed.push(made.ref) },
+  );
+  assert.deepEqual(claimed, [copy.ref], "the copy's VMID is recorded before the clone");
+  assert.equal(state.proxmox.calls.filter((call) => call.method === "POST" && call.path.endsWith(`/lxc/${vmid}/clone`) && call.params.snapname === snapshotName(SNAPSHOT)).length, 1, "a clone of the snapshot itself");
+  const copied = state.proxmox.guests.get(Number(copy.ref))!;
+  for (const tag of ["held-copy", `box.${id.boxId}`, `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7", "kind.linux", `taken.${Date.UTC(2026, 9, 31, 14, 21) / 1000}`]) assert.match(copied.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), tag);
+  assert.equal(copied.config.onboot, "0");
+  assert.match(copied.config.net0 ?? "", /link_down=1/);
+  assert.match(copied.config.description ?? "", new RegExp(`held copy of snapshot ${SNAPSHOT} kept 2026-11-30$`));
+  state.proxmox.templateLag = 3;
+  await state.backend.templateCopy(copy);
+  assert.equal(await state.backend.copyState(copy), "template", "templateCopy returns once Proxmox lists it as a template, not when its call answers");
+  assert.deepEqual(await state.backend.copyPlan(copy), { state: "template", size: (await state.backend.copyPlan(copy)).size, running: false });
+  await state.backend.labelKept({ id: SNAPSHOT, ref: copy.ref, guest: copy, from: "held-copy" }, "2027-01-15");
+  assert.match(state.proxmox.guests.get(Number(copy.ref))!.config.tags ?? "", /(^|;)kept\.2027-01-15(;|$)/);
+  assert.doesNotMatch(state.proxmox.guests.get(Number(copy.ref))!.config.tags ?? "", /kept\.2026-11-30/);
+  const listed = (await state.backend.heldSnapshots()).find((held) => held.where === "held-copy")!;
+  assert.equal(listed.keptUntil, Date.UTC(2027, 0, 15, 23, 59, 59, 999));
+  assert.equal(listed.forkSafe, 7);
+  assert.equal(listed.owner?.kind, "linux");
+  assert.equal(listed.takenAt, Date.UTC(2026, 9, 31, 14, 21));
+});
+
+test("review 6: the wait for a held copy's template is bounded by 120 s of elapsed time, slow reads included, and stops when it is cancelled", async () => {
+  let clock = 0;
+  let reads = 0;
+  const slow = untilTemplate(
+    async () => {
+      clock += 5_000;
+      reads++;
+      return {};
+    },
+    () => false,
+    async (ms) => {
+      clock += ms;
+    },
+    250,
+    7001,
+    () => clock,
+  );
+  await assert.rejects(slow, /Proxmox did not make guest 7001 a template within 120 s\./);
+  assert.ok(clock >= 120_000 && clock <= 125_000, `stopped after ${clock} ms`);
+  assert.equal(reads, 23);
+  const stop = new AbortController();
+  const cancelled = untilTemplate(
+    async () => ({}),
+    () => false,
+    async () => {
+      stop.abort(new Error("bb-box is stopping."));
+      throw stop.signal.reason;
+    },
+    250,
+    7002,
+    () => 0,
+  );
+  await assert.rejects(cancelled, /bb-box is stopping/);
+  let ready = 0;
+  await untilTemplate(async () => (++ready >= 3 ? { template: 1 } : {}), (config) => config.template === 1, async () => {}, 250, 7003, () => 0);
+  assert.equal(ready, 3);
+});
+
+test("review: a clone's wait grows with its disk, at 3 times bb-box's estimate and never under 180 s, and the task is waited for that long in the same run", async () => {
+  assert.equal(cloneWaitMs(null), 180_000);
+  assert.equal(cloneWaitMs(16), 180_000);
+  assert.equal(cloneWaitMs(100), 720_000, "a 100 GiB disk: 3 times 240 s");
+  assert.equal(cloneWaitMs(500), 3_600_000);
+  let polls = 0;
+  const fetch = async (url: string) => {
+    const running = url.includes("/tasks/") && ++polls < 6;
+    const body = url.includes("/tasks/") ? { data: running ? { status: "running" } : { status: "stopped", exitstatus: "OK" } } : { data: null };
+    return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify(body) };
+  };
+  const options = { apiUrl: "https://pve.example.com:8006/", tokenId: "a@pve!b", tokenSecret: "c", node: "pve", fetch, taskPollMs: 2, taskTimeoutMs: 1, sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) };
+  const upid = "UPID:pve:00001:00002:00003:vzclone:7000:root@pam:";
+  await assert.rejects(new Proxmox(options).waitTask(upid), /task did not finish in time/, "the default wait gives up");
+  polls = 0;
+  await new Proxmox(options).waitTask(upid, undefined, 60_000);
+  assert.equal(polls, 6, "a longer wait keeps polling until the task ends");
 });

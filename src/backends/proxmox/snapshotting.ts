@@ -36,6 +36,13 @@ const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
+const CLONE_WAIT_LEAST_MS = 180_000;
+const CLONE_WAIT_TIMES_ESTIMATE = 3;
+
+export function cloneWaitMs(diskGiB: number | null): number {
+  return Math.max(CLONE_WAIT_LEAST_MS, CLONE_WAIT_TIMES_ESTIMATE * Math.round((diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB));
+}
+
 export function snapshotName(id: string): string {
   return `bb${id}`;
 }
@@ -44,17 +51,19 @@ export interface SnapshotLabel {
   readonly install: string;
   readonly box: string;
   readonly snapshot: string;
+  readonly reset?: number | null;
   readonly kept: string | null;
 }
 
 export function snapshotLabel(label: SnapshotLabel): string {
-  return `bb-box install ${label.install} box ${label.box} snapshot ${label.snapshot}${label.kept ? ` kept ${label.kept}` : ""}`;
+  const reset = typeof label.reset === "number" ? ` reset ${label.reset}` : "";
+  return `bb-box install ${label.install} box ${label.box} snapshot ${label.snapshot}${reset}${label.kept ? ` kept ${label.kept}` : ""}`;
 }
 
 export function parseSnapshotLabel(text: string): SnapshotLabel | null {
-  const match = /^bb-box install (\S+) box (\S+) snapshot (sn[a-z2-7]{12})(?: kept (\d{4}-\d{2}-\d{2}))?\s*$/.exec(text.trim());
+  const match = /^bb-box install (\S+) box (\S+) snapshot (sn[a-z2-7]{12})(?: reset (\d{1,4}))?(?: kept (\d{4}-\d{2}-\d{2}))?\s*$/.exec(text.trim());
   if (!match) return null;
-  return { install: match[1]!, box: match[2]!, snapshot: match[3]!, kept: match[4] ?? null };
+  return { install: match[1]!, box: match[2]!, snapshot: match[3]!, reset: match[4] ? Number(match[4]) : null, kept: match[5] ?? null };
 }
 
 export function keptUntilOf(date: string | null): number | null {
@@ -71,6 +80,7 @@ export interface KeptGuest {
   readonly takenAt: number | null;
   readonly kept: string | null;
   readonly template: boolean;
+  readonly forkSafe?: number | null;
 }
 
 export interface SnapshotGuests {
@@ -88,6 +98,7 @@ export interface SnapshotGuests {
   sizeOf(config: Record<string, unknown>): BoxSize | null;
   guests(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly guest: Guest; readonly owner: BoxOwner | null }[]>;
   copies?(api: Proxmox, signal?: AbortSignal): Promise<readonly KeptGuest[]>;
+  freeVmids?(api: Proxmox, signal?: AbortSignal): Promise<{ readonly free: number; readonly range: string }>;
 }
 
 const MiB = 1024 * 1024;
@@ -172,7 +183,7 @@ export class ProxmoxSnapshotting {
   }
 
   offer(): Snapshotting {
-    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: this.#guests.type === "lxc" ? LXC_FORK_SAFE_FROM : QEMU_FORK_SAFE_FROM, keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    return { scope: "box", holds: this.#holds, whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: this.#guests.type === "lxc" ? LXC_FORK_SAFE_FROM : QEMU_FORK_SAFE_FROM, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null };
   }
 
   #tool(): string {
@@ -308,6 +319,7 @@ export class ProxmoxSnapshotting {
         else memory = { storage: memoryStorage, addsBytes: (memoryMiB * 2 + STATE_EXTRA_MIB) * MiB };
       }
     }
+    const fork = await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal);
     return {
       storage: storage ?? { key: storageKey(api.node, storageName, false), name: storageName, type, percentFull: 0, metadataPercentFull: null, metadataUnread: null, totalBytes: null, usedBytes: null },
       take: {
@@ -320,8 +332,8 @@ export class ProxmoxSnapshotting {
         memoryWhy,
       },
       restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, lockWhy, takeWhy: reasons[0] ?? null }, target, signal),
-      keep: { way: "no", why: "bb-box does not keep snapshots past a release yet.", aboutMs: null, bytes: null, price: null },
-      fork: await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal),
+      keep: await this.#keepPlan(api, vmid, fork, signal),
+      fork,
       locked,
       busy,
     };
@@ -406,6 +418,40 @@ export class ProxmoxSnapshotting {
     return { ok: true, why: null, ...copyOf(size), size };
   }
 
+  async #keepPlan(api: Proxmox, vmid: number, fork: SnapshotPlan["fork"], signal?: AbortSignal): Promise<SnapshotPlan["keep"]> {
+    const usedBytes = await api
+      .status(vmid, signal)
+      .then((status) => status?.diskUsed ?? null)
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return null;
+      });
+    const room = await this.#guests.freeVmids?.(api, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    const why = room && room.free < 1 ? `Every VMID ${room.range} is in use now, so a release would have none for the held copy. Release a box, or widen the VMID range in bb-box's settings.` : null;
+    return { way: "held-copy", why, aboutMs: fork.aboutMs, bytes: fork.bytes, usedBytes: usedBytes !== null && fork.bytes !== null ? Math.min(usedBytes, fork.bytes) : usedBytes, price: null };
+  }
+
+  async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    const api = await this.#guests.client();
+    const vmid = this.#guests.vmid(ref.guest);
+    const name = snapshotName(ref.id);
+    const listed = await this.#listed(api, vmid, name, signal);
+    if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}, so bb-box cannot write its keep date there.`);
+    const label = parseSnapshotLabel(listed.description);
+    if (!label || label.install !== this.#guests.installId || label.snapshot !== ref.id) {
+      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
+    }
+    try {
+      await api.describeSnapshot(vmid, name, snapshotLabel({ ...label, kept }), signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to write the keep date on snapshot ${name} of guest ${vmid}: ${taskWords(error)}`);
+      throw error;
+    }
+  }
+
   async #listed(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<ProxmoxSnapshot | null> {
     return (await api.snapshots(vmid, signal)).find((snapshot) => snapshot.name === name) ?? null;
   }
@@ -434,7 +480,7 @@ export class ProxmoxSnapshotting {
       if (!(await this.#guests.still(api, guest, signal))) throw new SnapshotFailed(`Guest ${vmid} is no longer the box's.`);
       if (await this.#listed(api, vmid, name, signal)) throw new SnapshotFailed(`Guest ${vmid} has a snapshot named ${name} already.`);
       await hooks.submitting();
-      upid = await api.startSnapshot(vmid, { name, description: snapshotLabel({ install: this.#guests.installId, box: take.box, snapshot: take.id, kept: null }), memory: take.memory }, signal);
+      upid = await api.startSnapshot(vmid, { name, description: snapshotLabel({ install: this.#guests.installId, box: take.box, snapshot: take.id, reset: take.forkSafe ?? null, kept: null }), memory: take.memory }, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;
@@ -549,39 +595,52 @@ export class ProxmoxSnapshotting {
         takenAt: copy.takenAt,
         keptUntil: keptUntilOf(copy.kept),
         storage: null,
+        forkSafe: copy.forkSafe ?? null,
       });
     }
     const guests = [...(await this.#guests.guests(api, signal)).map((each) => ({ ...each, where: "current" as const })), ...kept.filter((copy) => copy.where === "earlier").map((copy) => ({ guest: copy.guest, owner: copy.owner, where: "earlier" as const }))];
     for (const { guest, owner, where } of guests) {
       signal?.throwIfAborted();
-      const vmid = this.#guests.vmid(guest);
-      let listed: ProxmoxSnapshot[];
-      try {
-        listed = await api.snapshots(vmid, signal);
-      } catch (error) {
-        if (error instanceof ProxmoxError && error.gone) continue;
-        throw error;
-      }
-      let busy: Busy | null = null;
-      for (const snapshot of listed) {
-        const label = parseSnapshotLabel(snapshot.description);
-        if (!label || label.install !== this.#guests.installId || snapshot.name !== snapshotName(label.snapshot)) continue;
-        if (snapshot.snapstate && busy === null) busy = await this.#busy(api, vmid, signal);
-        held.push({
-          id: label.snapshot,
-          ref: snapshot.name,
-          box: label.box,
-          owner,
-          guest,
-          where,
-          state: snapshot.snapstate ? (busy?.is === "idle" ? "incomplete" : "in-progress") : "complete",
-          words: snapshot.snapstate ? `${snapstateWords(snapshot.snapstate)}.` : null,
-          holds: snapshot.vmstate ? "disk-and-memory" : "disk",
-          takenAt: snapshot.snaptime !== null ? snapshot.snaptime * 1000 : null,
-          keptUntil: keptUntilOf(label.kept),
-          storage: null,
-        });
-      }
+      held.push(...(await this.#listedOn(api, guest, owner, where, signal)));
+    }
+    return held;
+  }
+
+  async on(guest: Guest, signal?: AbortSignal): Promise<HeldSnapshot[]> {
+    const api = await this.#guests.client();
+    return this.#listedOn(api, guest, null, "current", signal);
+  }
+
+  async #listedOn(api: Proxmox, guest: Guest, owner: BoxOwner | null, where: "current" | "earlier", signal?: AbortSignal): Promise<HeldSnapshot[]> {
+    const vmid = this.#guests.vmid(guest);
+    let listed: ProxmoxSnapshot[];
+    try {
+      listed = await api.snapshots(vmid, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.gone) return [];
+      throw error;
+    }
+    const held: HeldSnapshot[] = [];
+    let busy: Busy | null = null;
+    for (const snapshot of listed) {
+      const label = parseSnapshotLabel(snapshot.description);
+      if (!label || label.install !== this.#guests.installId || snapshot.name !== snapshotName(label.snapshot)) continue;
+      if (snapshot.snapstate && busy === null) busy = await this.#busy(api, vmid, signal);
+      held.push({
+        id: label.snapshot,
+        ref: snapshot.name,
+        box: label.box,
+        owner,
+        guest,
+        where,
+        state: snapshot.snapstate ? (busy?.is === "idle" ? "incomplete" : "in-progress") : "complete",
+        words: snapshot.snapstate ? `${snapstateWords(snapshot.snapstate)}.` : null,
+        holds: snapshot.vmstate ? "disk-and-memory" : "disk",
+        takenAt: snapshot.snaptime !== null ? snapshot.snaptime * 1000 : null,
+        keptUntil: keptUntilOf(label.kept),
+        storage: null,
+        forkSafe: label.reset ?? null,
+      });
     }
     return held;
   }

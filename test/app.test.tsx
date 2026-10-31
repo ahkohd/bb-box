@@ -9,7 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, BoxEntry, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ForkPreview, ForkStarted, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxEntry, BulkCheck, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, KeepPreview, MachineEntry, PanelState, ForkPreview, ForkStarted, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, SnapshotsTabView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { Busy } from "../src/monitor/busy.ts";
 import { busyNow, busyUntil, rowLine, rowReasons, rowWords } from "../src/app/row-line.ts";
@@ -537,7 +537,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -732,6 +732,21 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       return { error: null, pending: false };
     },
     "snapshot.forkCheck": ({ asMachine }) => options.forkPreview?.(asMachine === true) ?? { refusal: "No preview.", check: null },
+    "snapshot.keepCheck": ({ days, until }) => options.keepPreview?.({ ...(days !== undefined ? { days } : {}), ...(until !== undefined ? { until } : {}) }) ?? { refusal: "No preview.", check: null },
+    "snapshot.keep": (input) => {
+      changes.push(`snapshot.keep ${JSON.stringify(input)}`);
+      return { error: options.failWith ?? null, pending: false };
+    },
+    "snapshot.unkeep": (input) => {
+      changes.push(`snapshot.unkeep ${JSON.stringify(input)}`);
+      return { error: options.failWith ?? null, pending: false };
+    },
+    "snapshots.tab": () => options.tab?.() ?? { groups: [], line: { count: 0, undos: 0, byAgents: 0, hosts: [], paid: [], attention: [] }, keepDays: 30, none: [] },
+    "snapshots.bulkCheck": (input) => options.bulkCheck?.(input) ?? { allowed: [], skipped: [] },
+    "snapshots.bulk": (input) => {
+      changes.push(`snapshots.bulk ${JSON.stringify(input)}`);
+      return { done: input.snapshots.map((id) => ({ id, name: id, box: "", words: "Done." })), refused: [] };
+    },
     "snapshot.fork": (input) => {
       changes.push(`snapshot.fork ${JSON.stringify({ ...input, request: undefined })}`);
       return options.forkAnswer ?? { error: options.failWith ?? null, box: options.failWith ? null : { id: "box_fork", name: "fork-one" } };
@@ -6879,6 +6894,7 @@ test("the Boxes page has a Machines tab and a Threads tab with counts, opens on 
   expect(list.getAllByRole("tab").map((tab) => [tab.textContent, tab.getAttribute("aria-selected")])).toEqual([
     ["Machines1", "true"],
     ["Threads1", "false"],
+    ["Snapshots", "false"],
   ]);
   expect(list.getAllByRole("button", { name: "Open desktop" })).toHaveLength(1);
   expect(list.queryByRole("button", { name: "Open thread" })).toBeNull();
@@ -9405,7 +9421,8 @@ test("070 unit 4: Settings' Snapshots page saves the limit, the room and each pa
   expect(slot.getByText("fast (LVM-thin) restores any snapshot.")).toBeTruthy();
   expect(slot.getByText("Fix: Watch the pool's metadata on the host.").className).toContain("text-warning-text");
   expect(slot.getAllByRole("switch").map((each) => each.getAttribute("aria-label"))).toEqual(["Agents may restore their own boxes", "Agents may restore memory snapshots", "Keep a picture of the screen with each snapshot"]);
-  expect(slot.queryByText(/Keep keeps a snapshot for/)).toBeNull();
+  expect((slot.getByRole("textbox", { name: "Keep keeps a snapshot for, in days" }) as HTMLInputElement).value).toBe("30");
+  expect(slot.getByText(/A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date\. Only you keep one\. Keeping it again adds these days to its date\. 1 to 365\./)).toBeTruthy();
 
   fireEvent.change(room, { target: { value: "60" } });
   expect(slot.getByText(/or past 55% of a thin pool's metadata\. Past 67%/)).toBeTruthy();
@@ -9427,15 +9444,15 @@ test("070 unit 4: with no backend that charges the page says so, a ceiling past 
   cleanup();
   const overview = settings(snapshotServer({ past: true, ceiling: 3 }).handlers);
   const row = await overview.findByRole("button", { name: "Snapshots" });
-  expect(document.getElementById(row.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full · past a paid ceiling");
+  expect(document.getElementById(row.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · kept 30 days · none taken past 85% full · past a paid ceiling");
   cleanup();
   const within = settings(snapshotServer({ ceiling: 7.5 }).handlers);
   const withinRow = await within.findByRole("button", { name: "Snapshots" });
-  expect(document.getElementById(withinRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full · paid up to $7.50 a month");
+  expect(document.getElementById(withinRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · kept 30 days · none taken past 85% full · paid up to $7.50 a month");
   cleanup();
   const plain = settings(snapshotServer(null).handlers);
   const freeRow = await plain.findByRole("button", { name: "Snapshots" });
-  expect(document.getElementById(freeRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · none taken past 85% full");
+  expect(document.getElementById(freeRow.getAttribute("aria-describedby")!.split(" ").at(-1)!)?.textContent).toBe("5 per box · kept 30 days · none taken past 85% full");
 });
 
 test("070 unit 4: Find finds each snapshot setting with its value, and a refused value's problem lands on its field", () => {
@@ -9446,7 +9463,7 @@ test("070 unit 4: Find finds each snapshot setting with its value, and a refused
   expect(labelsFor(entries, "snapshot limit")[0]).toBe("Snapshots per box | Options › Snapshots");
   expect(labelsFor(entries, "snapshot ceiling")[0]).toBe("Paid snapshots on Fake host | Options › Snapshots");
   expect(labelsFor(entries, "storage full")).toContain("Refuse new snapshots when a host's storage is past | Options › Snapshots");
-  expect(entries.some((entry) => /Keep keeps/.test(entry.label))).toBe(false);
+  expect(entries.find((entry) => /Keep keeps/.test(entry.label))?.value).toBe("30 days");
   const free = settingsIndex(stateOf(snapshotServer(null).handlers));
   expect(free.find((entry) => entry.key === "option snapshots ceiling")).toMatchObject({ label: "Paid snapshots", value: "None of your backends charges" });
   expect(problemPath("general.snapshots.ceilings.fake:pc-1", {})).toBe("snapshots/ceilings/fake:pc-1");
@@ -9551,6 +9568,8 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     picture: null,
     busyWhy: null,
     forkWhy: null,
+    keepWhy: null,
+    boxGone: null,
     unflushed: null,
     ...overrides,
   };
@@ -9558,8 +9577,9 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
 
 function snapshotsView(overrides: Partial<BoxSnapshotsView> = {}): BoxSnapshotsView {
   return {
-    offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "none", excludes: null, price: null },
+    offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "none", keeps: false, excludes: null, price: null },
     noneWhy: null,
+    keepDays: 30,
     perBox: 5,
     counted: 1,
     undos: 0,
@@ -9617,7 +9637,7 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
     refusal: null,
     check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null },
   });
-  const { handlers, changes } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", excludes: null, price: null } }), forkPreview: preview });
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", keeps: true, excludes: null, price: null } }), forkPreview: preview });
   const slot = boxPageAt(handlers, "box/box_1");
   const card = await slot.findByRole("region", { name: "Snapshots" });
   const button = within(card).getByRole("button", { name: "Fork before the migration into a new box" });
@@ -9640,7 +9660,7 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
 });
 
 test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a row says when its take could not flush the box's writes", async () => {
-  const forkable = { holds: ["disk" as const], scope: "box" as const, whileRunning: "live" as const, restore: "in-place" as const, fork: "copy" as const, excludes: null, price: null };
+  const forkable = { holds: ["disk" as const], scope: "box" as const, whileRunning: "live" as const, restore: "in-place" as const, fork: "copy" as const, keeps: true, excludes: null, price: null };
   const { handlers } = server([box()], {
     snapshots: snapshotsView({ offer: forkable, records: [snapshotRow({ forkWhy: "calm-otter had no working identity reset when it was taken", unflushed: "sync: Input/output error" })] }),
     forkPreview: () => ({ refusal: "No.", check: null }),
@@ -9786,7 +9806,7 @@ test("070 unit 6: Rename, Note and Delete from a row's menu, each with focus on 
   const card = await slot.findByRole("region", { name: "Snapshots" });
   const trigger = within(card).getByRole("button", { name: "before the migration actions" });
   let menu = await openMenu(trigger);
-  expect(items(menu)).toEqual(["Rename…", "Note…", "Copy ID", "Delete…"]);
+  expect(items(menu)).toEqual(["Rename…", "Note…", "Keep…", "Copy ID", "Delete…"]);
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Rename…" }));
   let dialog = await slot.findByRole("alertdialog", { name: 'Rename "before the migration"' });
   const name = within(dialog).getByRole("textbox", { name: "Name" });
@@ -10130,4 +10150,205 @@ test("the list asks once at a time: a slow answer is applied, and a recheck that
   } finally {
     vi.useRealTimers();
   }
+});
+
+function keepPreviewOf(until: number, overrides: Partial<NonNullable<KeepPreview["check"]>> = {}): KeepPreview {
+  return {
+    refusal: null,
+    check: { keptUntil: until, current: null, renews: false, shortens: false, gone: false, cost: "If calm-otter is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.1 GB on pve-1's fast until 2026-11-29, at no charge.", warning: null, unflushed: null, defaultDays: 30, ...overrides },
+  };
+}
+
+test("070 unit 8: Keep… opens on the date bb-box plans, says what keeping costs, keeps until the date chosen, and returns focus to the menu's button", async () => {
+  const until = Date.UTC(2026, 10, 29, 23, 59, 59, 999);
+  const asked: { days?: number; until?: string }[] = [];
+  const { handlers, changes } = server([box()], {
+    snapshots: snapshotsView(),
+    keepPreview: (input) => {
+      asked.push(input);
+      return keepPreviewOf(input.until ? Date.parse(`${input.until}T23:59:59.999Z`) : until, input.until === "2026-12-24" ? { warning: "At today's size, a release would not finish: pve-1's storage fast has 6 GB free." } : {});
+    },
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const trigger = within(card).getByRole("button", { name: "before the migration actions" });
+  const menu = await openMenu(trigger);
+  expect(items(menu)).toEqual(["Rename…", "Note…", "Keep…", "Copy ID", "Delete…"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Keep…" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Keep "before the migration"' });
+  const date = within(dialog).getByLabelText("Keep it until the end of") as HTMLInputElement;
+  await waitFor(() => expect(date.value).toBe("2026-11-29"));
+  expect(document.activeElement).toBe(date);
+  expect(within(dialog).getByText(/copies this snapshot in full into a template that cannot start/)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Keep until 29 Nov" })).toBeTruthy();
+  fireEvent.change(date, { target: { value: "2026-12-24" } });
+  expect(await within(dialog).findByText(/a release would not finish/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep until 24 Dec" }));
+  await waitFor(() => expect(changes).toContain('snapshot.keep {"box":"box_1","snapshot":"snaaaaaaaaaaaa","until":"2026-12-24"}'));
+  await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(asked[0]).toEqual({});
+});
+
+test("070 unit 8: Keep… is off with why where no fork could use it after a release; a kept snapshot offers a renewal and Stop keeping, and says when it goes", async () => {
+  const soon = Date.now() + 2 * 24 * 60 * 60_000 + 60_000;
+  const { handlers, changes } = server([box()], {
+    snapshots: snapshotsView({
+      offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "none", keeps: true, excludes: null, price: null },
+      records: [
+        snapshotRow({ id: "snoldimageaaaa", name: "old image", keepWhy: "taken before calm-otter's image had the identity reset: it could not be forked after a release" }),
+        snapshotRow({ id: "snkeptsoonaaaa", name: "kept soon", keptUntil: soon }),
+      ],
+    }),
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  let menu = await openMenu(within(card).getByRole("button", { name: "old image actions" }));
+  expect(items(menu)).toContain("Keep…Not now: taken before calm-otter's image had the identity reset: it could not be forked after a release (disabled)");
+  fireEvent.keyDown(menu, { key: "Escape" });
+  expect(within(card).getByText("goes in 3 days")).toBeTruthy();
+  expect(within(card).getAllByText("Kept")).toHaveLength(1);
+  menu = await openMenu(within(card).getByRole("button", { name: "kept soon actions" }));
+  expect(items(menu)).toEqual(["Rename…", "Note…", "Keep 30 more days…", "Stop keeping", "Copy ID", "Delete…"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Stop keeping" }));
+  await waitFor(() => expect(changes).toContain('snapshot.unkeep {"box":"box_1","snapshot":"snkeptsoonaaaa"}'));
+  expect(within(card).getByText(/They go when calm-otter is released, unless kept\./)).toBeTruthy();
+});
+
+function tabView(): SnapshotsTabView {
+  const now = Date.now();
+  const living = snapshotRow({ id: "snlivingaaaaaa", name: "before the migration", by: { is: "agent", threadId: THREAD } });
+  const kept = snapshotRow({ id: "snreleasedaaaa", name: "release candidate", keptUntil: now + 20 * 24 * 60 * 60_000, guest: "held-copy", boxGone: { at: now - 24 * 60 * 60_000, how: "released" } });
+  const tabBox = { kind: "linux", kindLabel: "Linux", system: "linux", backend: "Proxmox LXC on pve-1", host: "pve-1", yours: false, screen: false, restores: true, forks: true, perBox: 5, restoring: false };
+  return {
+    groups: [
+      { box: { ...tabBox, id: "box_1", name: "calm-otter", threadId: THREAD, state: "ready", gone: null }, rows: [{ ...living, restoreWhy: null }] },
+      { box: { ...tabBox, id: "box_gone", name: "grey-ridge", threadId: "operator", yours: true, state: null, gone: { at: now - 24 * 60 * 60_000, how: "released" } }, rows: [{ ...kept, restoreWhy: "its box was released: fork it into a new box instead" }] },
+    ],
+    line: { count: 2, undos: 0, byAgents: 1, hosts: [{ host: "pve-1", bytes: 2.4e9, unknown: 0 }], paid: [], attention: [] },
+    keepDays: 30,
+    none: [],
+  };
+}
+
+test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card per box with a released box's kept snapshot, search, and Select with a bulk Keep that names what it skips", async () => {
+  const bulkAsked: string[] = [];
+  const { handlers, changes } = server([box()], {
+    tab: tabView,
+    bulkCheck: (input) => {
+      bulkAsked.push(`${input.change} ${input.snapshots.join(" ")}`);
+      return { allowed: [{ id: "snreleasedaaaa", name: "release candidate", box: "grey-ridge", words: "Its box was released, so it lives on as a held copy." }], skipped: [{ id: "snlivingaaaaaa", name: "before the migration", box: "calm-otter", words: '"before the migration" is in use by the restore that began at 10:42 UTC.' }] };
+    },
+  });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  const tab = await list.findByRole("tab", { name: "Snapshots 2" });
+  expect(tab.getAttribute("aria-selected")).toBe("true");
+  expect(await list.findByText("2 snapshots, 1 by agents · 2.4 GB on pve-1")).toBeTruthy();
+  const released = await list.findByRole("region", { name: "grey-ridge's snapshots" });
+  expect(within(released).getByText(/released/)).toBeTruthy();
+  expect(within(released).getByText("Your machine")).toBeTruthy();
+  expect(within(released).getByText(/held copy on pve-1/)).toBeTruthy();
+  expect(within(released).getByRole("button", { name: "Restore: not now, as its box was released: fork it into a new box instead" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.change(list.getByRole("textbox", { name: "Search snapshots" }), { target: { value: "candidate" } });
+  expect(list.queryByRole("region", { name: "calm-otter's snapshots" })).toBeNull();
+  fireEvent.change(list.getByRole("textbox", { name: "Search snapshots" }), { target: { value: "" } });
+  fireEvent.click(list.getByRole("button", { name: "Select" }));
+  fireEvent.click(list.getByRole("checkbox", { name: "Select before the migration of calm-otter" }));
+  fireEvent.click(list.getByRole("checkbox", { name: "Select release candidate of grey-ridge" }));
+  expect(list.getByText("2 selected")).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Keep…" }));
+  const dialog = await list.findByRole("alertdialog", { name: "Keep 2 snapshots" });
+  expect(await within(dialog).findByText(/is in use by the restore that began/)).toBeTruthy();
+  expect(within(dialog).getByText("Skipped, and why:")).toBeTruthy();
+  const keep = within(dialog).getByRole("button", { name: "Keep 1" });
+  fireEvent.click(keep);
+  await waitFor(() => expect(changes.find((change) => change.startsWith("snapshots.bulk "))).toBe('snapshots.bulk {"snapshots":["snreleasedaaaa"],"change":"keep"}'), { timeout: 2000 });
+  expect(bulkAsked[0]).toBe("keep snlivingaaaaaa snreleasedaaaa");
+});
+
+test("070 unit 8: a release that stopped for a snapshot you kept offers Release again, and Release and delete what you kept", async () => {
+  const stopped = box({ state: "releasing", error: 'Release did not finish: bb-box could not copy "kept one", which you kept: pve-1\'s storage fast has 6 GB free. bb-box tries again in a few minutes.', releaseHeldForKept: true });
+  const { handlers } = server([stopped]);
+  const slot = boxPageAt(handlers, "box/box_1");
+  const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: /Release again/ }));
+  const dialog = await slot.findByRole("alertdialog", { name: "Release calm-otter again?" });
+  expect(within(dialog).getByText(/could not copy a snapshot you kept/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release and delete what you kept" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "release")?.input).toEqual({ threadId: THREAD, box: "box_1", deleteKept: true }));
+});
+
+test("070 unit 8 review 7: a held copy found again with no known thread says so in plain words, with no button to a thread", async () => {
+  const base = tabView();
+  const found = base.groups[1]!;
+  const view: SnapshotsTabView = { ...base, groups: [{ ...found, box: { ...found.box, id: "box_found", name: "found-box", yours: false, threadId: null } }] };
+  const { handlers } = server([box()], { tab: () => view });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  const card = await list.findByRole("region", { name: "found-box's snapshots" });
+  expect(within(card).getByText("Found again on its host; its thread is not known")).toBeTruthy();
+  expect(within(card).queryByRole("button", { name: /unknown/ })).toBeNull();
+  expect(within(card).queryByText("Your machine")).toBeNull();
+});
+
+test("070 unit 8 review: the Snapshots tab says it is reading them until its answer comes, and says why when it fails", async () => {
+  let answer!: (view: SnapshotsTabView) => void;
+  const { handlers } = server([box()], { tab: () => new Promise<SnapshotsTabView>((resolve) => (answer = resolve)) });
+  const [page] = app.navPanels;
+  const reading = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect((await reading.findByText("Reading the snapshots…")).closest('[role="status"]')).toBeTruthy();
+  answer(tabView());
+  await waitFor(() => expect(reading.queryByText("Reading the snapshots…")).toBeNull());
+  expect(await reading.findByRole("button", { name: "Select" })).toBeTruthy();
+  reading.unmount();
+  forgetLive();
+  const { handlers: failing } = server([box()], {
+    tab: () => {
+      throw new Error("bb-box cannot read snapshots.db.");
+    },
+  });
+  const failed = renderSlot(page!, { subPath: "snapshots" }, { rpc: failing, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  await waitFor(() => expect(failed.getAllByRole("alert").some((each) => /bb-box cannot read snapshots\.db/.test(each.textContent ?? ""))).toBe(true));
+  expect(failed.queryByText("Reading the snapshots…")).toBeNull();
+});
+
+test("070 unit 8 review: Release and delete what you kept, then Release anyway for the threads on it, keeps the choice", async () => {
+  const stopped = box({ state: "releasing", error: "Release did not finish: bb-box could not copy \"kept one\", which you kept.", releaseHeldForKept: true });
+  const { handlers } = server([stopped], { inUse: [{ id: "thr_other", title: "Run the tests", running: true }] });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: /Release again/ }));
+  fireEvent.click(within(await slot.findByRole("alertdialog", { name: "Release calm-otter again?" })).getByRole("button", { name: "Release and delete what you kept" }));
+  const anyway = await slot.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  fireEvent.click(within(anyway).getByRole("button", { name: "Release anyway" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "release").map((call) => call.input)).toEqual([
+    { threadId: THREAD, box: "box_1", deleteKept: true },
+    { threadId: THREAD, box: "box_1", force: true, deleteKept: true },
+  ]));
+});
+
+test("070 unit 8 review: the bulk dialog checks the snapshots chosen when it opened, once, and keeps its answer after the selection empties", async () => {
+  const asked: string[] = [];
+  const { handlers } = server([box()], {
+    tab: tabView,
+    bulkCheck: (input) => {
+      asked.push(input.snapshots.join(" "));
+      return { allowed: [{ id: "snreleasedaaaa", name: "release candidate", box: "grey-ridge", words: "Until 2026-11-29." }], skipped: [] };
+    },
+  });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  fireEvent.click(await list.findByRole("button", { name: "Select" }));
+  expect(list.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(list.getByRole("checkbox", { name: "Select release candidate of grey-ridge" }));
+  fireEvent.click(list.getByRole("button", { name: "Keep…" }));
+  const dialog = await list.findByRole("alertdialog", { name: "Keep 1 snapshot" });
+  expect(await within(dialog).findByText(/Until 2026-11-29\./)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Keep 1" })).toBeTruthy();
+  expect(within(dialog).getByText(/30 days from today by default, or 30 more days for one kept already\./)).toBeTruthy();
+  fireEvent.click(list.getByRole("checkbox", { name: "Select release candidate of grey-ridge", hidden: true }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(asked).toEqual(["snreleasedaaaa"]);
+  expect(within(dialog).getByText(/Until 2026-11-29\./)).toBeTruthy();
 });

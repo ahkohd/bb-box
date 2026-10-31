@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Actor } from "../core/box-log.ts";
-import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
+import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { actorWords, type ThreadTitles } from "./box-words.ts";
 import { Badge, IconButton, message, StatusDot } from "./common.tsx";
@@ -26,6 +26,9 @@ import {
   gbWords,
   gibWords,
   headWords,
+  holdsWords,
+  keepDay,
+  keepWords,
   otherLosses,
   requestId,
   restoreWhyNot,
@@ -37,6 +40,7 @@ import {
   snapshotWhen,
   threadLosses,
   undoLabel,
+  utcDate,
   whenInSentence,
 } from "./snapshot-words.ts";
 
@@ -67,7 +71,7 @@ export function useSnapshotTitles(view: BoxSnapshotsView | null | undefined): Th
   return useThreadTitles(agentThreads([...(view?.records ?? []).map((row) => row.by), view?.restored?.by]));
 }
 
-function Shell({ title, children, footer, onClose, returnTo }: { title: string; children: ReactNode; footer: ReactNode; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+export function Shell({ title, children, footer, onClose, returnTo }: { title: string; children: ReactNode; footer: ReactNode; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const opener = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement && document.activeElement !== document.body && !document.activeElement.closest("[role=menu]") ? document.activeElement : null);
   return (
     <AlertDialog open onOpenChange={(open) => (open ? null : onClose())}>
@@ -94,7 +98,7 @@ function Shell({ title, children, footer, onClose, returnTo }: { title: string; 
   );
 }
 
-function Refused({ words }: { words: string | null }) {
+export function Refused({ words }: { words: string | null }) {
   return words ? (
     <p role="alert" className="text-xs text-destructive-text">
       {words}
@@ -102,7 +106,7 @@ function Refused({ words }: { words: string | null }) {
   ) : null;
 }
 
-function WarnPanel({ children }: { children: ReactNode }) {
+export function WarnPanel({ children }: { children: ReactNode }) {
   return <div className="rounded-md border border-surface-warning-border bg-surface-warning px-3 py-2 text-foreground">{children}</div>;
 }
 
@@ -119,6 +123,37 @@ function Checkbox({ checked, onChange, label, disabled, describedBy }: { checked
 }
 
 const pictures = new Map<string, Promise<string | null>>();
+
+export interface RowBox {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface RowPlace {
+  readonly box: RowBox;
+  readonly restores: boolean;
+  readonly forks: boolean;
+  readonly screen: boolean;
+  readonly perBox: number;
+  readonly keepDays: number;
+  readonly wide: boolean;
+  readonly restoreWhy: (row: SnapshotRowView) => string | null;
+  readonly forkWhy: (row: SnapshotRowView) => string | null;
+}
+
+export function cardPlace(box: BoxView, view: BoxSnapshotsView): RowPlace {
+  return {
+    box,
+    restores: view.offer?.restore !== "none",
+    forks: view.offer?.fork === "copy",
+    screen: view.screen,
+    perBox: view.perBox,
+    keepDays: view.keepDays,
+    wide: false,
+    restoreWhy: (row) => restoreWhyNot(row, view, box.name, box.state),
+    forkWhy: (row) => forkWhyNot(row, view, box.name),
+  };
+}
 
 function usePicture(boxId: string, row: SnapshotRowView): string | null {
   const call = useSnapshotCall();
@@ -148,7 +183,7 @@ function usePicture(boxId: string, row: SnapshotRowView): string | null {
   return wanted ? source : null;
 }
 
-function Thumbnail({ box, row, now }: { box: BoxView; row: SnapshotRowView; now: number }) {
+function Thumbnail({ box, row, now }: { box: RowBox; row: SnapshotRowView; now: number }) {
   const source = usePicture(box.id, row);
   const [open, setOpen] = useState(false);
   const label = `${box.name}'s screen around ${whenInSentence(row.takenAt, now).replace(/^today at /, "")}`;
@@ -180,18 +215,50 @@ function Dot() {
   );
 }
 
-function rowLine(row: SnapshotRowView, boxName: string, now: number, titles: ThreadTitles): { attention: string | null; rest: string[] } {
-  const ending = row.keptUntil !== null ? `kept until ${snapshotDay(row.keptUntil)}` : null;
+function rowLine(row: SnapshotRowView, place: RowPlace, now: number, titles: ThreadTitles): { attention: string | null; soon: boolean; rest: string[] } {
+  const keep = row.keptUntil !== null ? keepWords(row.keptUntil, now) : null;
+  const attention = attentionWords(row, place.box.name);
+  const soon = !attention && !!keep?.soon;
+  const life = place.wide ? (row.guest === "held-copy" ? `held copy${row.host ? ` on ${row.host}` : ""}` : keep ? null : row.undoOf ? null : "goes with the box") : row.guest === "held-copy" ? "held copy" : null;
   return {
-    attention: attentionWords(row, boxName),
-    rest: [ending, snapshotWhen(row.takenAt, now), actorWords(row.by, titles), row.state === "failed" ? null : snapshotSizeWords(row.size), snapshotPriceWords(row.price), row.unflushed ? "may miss its last writes" : null].filter((part): part is string => !!part),
+    attention: attention ?? (soon ? keep!.words : null),
+    soon,
+    rest: [
+      soon ? null : (keep?.words ?? null),
+      snapshotWhen(row.takenAt, now),
+      actorWords(row.by, titles),
+      place.wide ? holdsWords(row.holds, row.scope) : null,
+      row.state === "failed" ? null : snapshotSizeWords(row.size),
+      snapshotPriceWords(row.price),
+      life,
+      row.unflushed ? "may miss its last writes" : null,
+    ].filter((part): part is string => !!part),
   };
 }
 
-type Asking = null | "restore" | "fork" | "delete" | "rename" | "note";
+type Asking = null | "restore" | "fork" | "delete" | "rename" | "note" | "keep";
 
-function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { box: BoxView; view: BoxSnapshotsView; row: SnapshotRowView; now: number; titles: ThreadTitles; onChanged: () => void; onDeleted: (id: string) => void }) {
+export function SnapshotRow({
+  place,
+  row,
+  now,
+  titles,
+  onChanged,
+  onDeleted,
+  select,
+}: {
+  place: RowPlace;
+  row: SnapshotRowView;
+  now: number;
+  titles: ThreadTitles;
+  onChanged: () => void;
+  onDeleted: (id: string) => void;
+  select?: { readonly checked: boolean; readonly onChange: (on: boolean) => void } | null;
+}) {
+  const call = useSnapshotCall();
+  const box = place.box;
   const [asking, setAsking] = useState<Asking>(null);
+  const [unkeepRefused, setUnkeepRefused] = useState<string | null>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const fromMenu = useRef(false);
   const dialogFromMenuOpening = useRef(false);
@@ -202,15 +269,31 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
   };
   const close = () => setAsking(null);
   const returnTo = fromMenu.current ? menuButton : undefined;
-  const restoreWhy = restoreWhyNot(row, view, box.name, box.state);
-  const line = rowLine(row, box.name, now, titles);
+  const restoreWhy = place.restoreWhy(row);
+  const line = rowLine(row, place, now, titles);
   const busy = row.state === "taking" || row.state === "deleting";
   const changeWhy = row.state === "deleting" ? "it is being deleted" : row.busyWhy && row.state !== "taking" ? row.busyWhy : null;
-  const forks = view.offer?.fork === "copy";
-  const forkWhy = forkWhyNot(row, view, box.name);
+  const forks = place.forks;
+  const forkWhy = place.forkWhy(row);
+  const kept = row.keptUntil !== null;
+  const unkeep = async () => {
+    setUnkeepRefused(null);
+    const answer = await changed(call, "snapshot.unkeep", { box: box.id, snapshot: row.id });
+    onChanged();
+    if (answer.error) setUnkeepRefused(answer.error);
+  };
   return (
     <li data-snapshot-row={row.id} className="group flex min-w-0 items-start gap-3 py-3">
-      {view.screen ? <Thumbnail box={box} row={row} now={now} /> : null}
+      {select ? (
+        <input
+          type="checkbox"
+          checked={select.checked}
+          onChange={(event) => select.onChange(event.target.checked)}
+          aria-label={`Select ${row.name} of ${box.name}`}
+          className="mt-3 size-3.5 shrink-0 cursor-pointer accent-[var(--primary)] max-sm:mt-2"
+        />
+      ) : null}
+      {place.screen ? <Thumbnail box={box} row={row} now={now} /> : null}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
           <span className="min-w-0 truncate text-sm text-foreground">{row.name}</span>
@@ -232,9 +315,10 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
         </p>
         {row.undoOf ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">The undo of the restore{row.undoOf.to ? ` to "${row.undoOf.to}"` : ""} at {snapshotClock(row.undoOf.at)}.</p> : null}
         {row.note ? <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-xs leading-snug text-subtle-foreground">{row.note}</p> : null}
+        {unkeepRefused ? <Refused words={unkeepRefused} /> : null}
       </div>
       <span className="flex shrink-0 items-center gap-0.5 self-center sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-[[data-state=open]]:opacity-100 pointer-coarse:opacity-100">
-        {view.offer?.restore !== "none" ? <IconButton label={restoreWhy ? `Restore: not now, as ${restoreWhy}` : `Restore ${box.name} to ${row.name}`} icon="ArrowTurnBackward" disabled={!!restoreWhy} onClick={() => ask("restore", false)} /> : null}
+        {place.restores ? <IconButton label={restoreWhy ? `Restore: not now, as ${restoreWhy}` : `Restore ${box.name} to ${row.name}`} icon="ArrowTurnBackward" disabled={!!restoreWhy} onClick={() => ask("restore", false)} /> : null}
         {forks ? <IconButton className="max-sm:hidden" label={forkWhy ? `Fork: not now, as ${forkWhy}` : `Fork ${row.name} into a new box`} icon={<ForkGlyph />} disabled={!!forkWhy} onClick={() => ask("fork", false)} /> : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -269,6 +353,19 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
               <Icon name="Pencil" aria-hidden />
               {row.note ? "Edit note…" : "Note…"}
             </DropdownMenuItem>
+            <DropdownMenuItem disabled={!!row.keepWhy} onSelect={() => ask("keep", true)}>
+              <Icon name="Bookmark" aria-hidden />
+              <span className="min-w-0">
+                <span className="block">{kept ? `Keep ${place.keepDays} more days…` : "Keep…"}</span>
+                {row.keepWhy ? <span className="block whitespace-normal text-xs text-muted-foreground">Not now: {row.keepWhy}</span> : null}
+              </span>
+            </DropdownMenuItem>
+            {kept && !row.boxGone ? (
+              <DropdownMenuItem disabled={!!changeWhy} onSelect={() => void unkeep()}>
+                <Icon name="BookmarkRemove" aria-hidden />
+                Stop keeping
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(row.id)}>
               <Icon name="Copy" aria-hidden />
               Copy ID
@@ -284,7 +381,8 @@ function SnapshotRow({ box, view, row, now, titles, onChanged, onDeleted }: { bo
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
-      {asking === "restore" ? <RestoreDialog box={box} snapshotId={row.id} perBox={view.perBox} now={now} returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
+      {asking === "restore" ? <RestoreDialog box={box} snapshotId={row.id} perBox={place.perBox} now={now} returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
+      {asking === "keep" ? <KeepDialog box={box} row={row} keepDays={place.keepDays} returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
       {asking === "fork" ? <ForkDialog box={box} row={row} now={now} returnTo={returnTo} onClose={close} /> : null}
       {asking === "delete" ? <DeleteDialog box={box} row={row} returnTo={returnTo} onClose={close} onChanged={onChanged} onDeleted={() => onDeleted(row.id)} /> : null}
       {asking === "rename" ? <TextDialog box={box} row={row} kind="rename" returnTo={returnTo} onClose={close} onChanged={onChanged} /> : null}
@@ -375,7 +473,7 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
   );
 }
 
-function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: SnapshotRowView; now: number; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: SnapshotRowView; now: number; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const nav = useBoxesNav();
   const [name, setName] = useState("");
@@ -481,7 +579,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: S
   );
 }
 
-export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged, returnTo }: { box: BoxView; snapshotId: string; perBox: number; now: number; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged, returnTo }: { box: RowBox; snapshotId: string; perBox: number; now: number; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const [preview, setPreview] = useState<RestorePreview | null>(null);
   const [undo, setUndo] = useState(true);
@@ -625,7 +723,85 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
   );
 }
 
-function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { box: BoxView; row: SnapshotRowView; onClose: () => void; onChanged: () => void; onDeleted: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box: RowBox; row: SnapshotRowView; keepDays: number; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+  const call = useSnapshotCall();
+  const [until, setUntil] = useState<string | null>(null);
+  const [preview, setPreview] = useState<(KeepPreview & { readonly until: string | null }) | null>(null);
+  const [sending, setSending] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  const describedBy = useId();
+  useEffect(() => {
+    let cancelled = false;
+    const asked = until && /^\d{4}-\d{2}-\d{2}$/.test(until) ? until : null;
+    if (until !== null && !asked) return;
+    void call<KeepPreview>("snapshot.keepCheck", { box: box.id, snapshot: row.id, ...(asked ? { until: asked } : {}) })
+      .then((answer) => {
+        if (cancelled) return;
+        setPreview({ ...answer, until });
+        if (until === null && answer.check) setUntil(utcDate(answer.check.keptUntil));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setPreview({ refusal: message(error), check: null, until });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [call, box.id, row.id, until]);
+  const check = preview?.check ?? null;
+  const renews = row.keptUntil !== null;
+  const keep = async () => {
+    if (!check) return;
+    setSending(true);
+    setRefused(null);
+    const answer = await changed(call, "snapshot.keep", { box: box.id, snapshot: row.id, until: utcDate(check.keptUntil) });
+    setSending(false);
+    onChanged();
+    if (answer.error) setRefused(answer.error);
+    else onClose();
+  };
+  const current = preview && preview.until === until;
+  return (
+    <Shell
+      title={renews ? `Keep "${row.name}" longer` : `Keep "${row.name}"`}
+      onClose={onClose}
+      returnTo={returnTo}
+      footer={
+        <>
+          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
+          <Button type="button" disabled={sending || !check || !current} onClick={() => void keep()}>
+            {sending ? "Keeping…" : check ? `Keep until ${keepDay(check.keptUntil)}` : "Keep"}
+          </Button>
+        </>
+      }
+    >
+      <label className="block space-y-1">
+        <span className="text-xs text-foreground">Keep it until the end of</span>
+        <Input type="date" value={until ?? ""} onChange={(event) => setUntil(event.target.value)} className="h-8 w-44" data-first-focus aria-describedby={describedBy} />
+      </label>
+      <AlertDialogDescription id={describedBy} asChild>
+        <div className="space-y-2 text-xs leading-snug text-muted-foreground">
+          {check ? (
+            <>
+              <p>
+                {renews && check.current !== null ? `It is kept until ${keepDay(check.current)} now. ` : ""}It becomes yours: no agent can delete it, and it outlives {box.name}'s release. bb-box deletes it after {keepDay(check.keptUntil)}. Days are counted in UTC; {keepDays} by default, in
+                Settings.
+              </p>
+              {check.shortens ? <p className="text-warning-text">This shortens its keep, from {keepDay(check.current!)} to {keepDay(check.keptUntil)}.</p> : null}
+              <p>{check.cost}</p>
+              {check.warning ? <p className="text-warning-text">{check.warning}</p> : null}
+              {check.unflushed ? <p className="text-warning-text">It may miss what {box.name} wrote in its last seconds before it: bb-box could not flush them first.</p> : null}
+            </>
+          ) : preview ? null : (
+            <p role="status">Reading what keeping it would cost…</p>
+          )}
+        </div>
+      </AlertDialogDescription>
+      <Refused words={refused ?? (current ? (preview?.refusal ?? null) : null)} />
+    </Shell>
+  );
+}
+
+function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { box: RowBox; row: SnapshotRowView; onClose: () => void; onChanged: () => void; onDeleted: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -659,7 +835,7 @@ function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { b
       <AlertDialogDescription asChild>
         <div className="space-y-2">
           <p>{freesWords(row, box.name)} It cannot be undone.</p>
-          {row.keptUntil !== null ? <p>You kept it until {snapshotDay(row.keptUntil)}.</p> : null}
+          {row.keptUntil !== null ? <p>You kept it until {keepDay(row.keptUntil)}.</p> : null}
           {row.undoOf ? <p>It is the undo of the restore at {snapshotClock(row.undoOf.at)}.</p> : null}
         </div>
       </AlertDialogDescription>
@@ -668,7 +844,7 @@ function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { b
   );
 }
 
-function TextDialog({ box, row, kind, onClose, onChanged, returnTo }: { box: BoxView; row: SnapshotRowView; kind: "rename" | "note"; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
+function TextDialog({ box, row, kind, onClose, onChanged, returnTo }: { box: RowBox; row: SnapshotRowView; kind: "rename" | "note"; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const [text, setText] = useState(kind === "rename" ? row.name : (row.note ?? ""));
   const [sending, setSending] = useState(false);
@@ -776,7 +952,7 @@ export function SnapshotsCard({ box, view, now, titles, onChanged }: { box: BoxV
       {view.records.length ? (
         <ul className="divide-y divide-border border-t border-border px-4">
           {view.records.map((row) => (
-            <SnapshotRow key={row.id} box={box} view={view} row={row} now={now} titles={titles} onChanged={onChanged} onDeleted={onDeleted} />
+            <SnapshotRow key={row.id} place={cardPlace(box, view)} row={row} now={now} titles={titles} onChanged={onChanged} onDeleted={onDeleted} />
           ))}
         </ul>
       ) : (

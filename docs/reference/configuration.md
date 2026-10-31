@@ -60,7 +60,7 @@ Snapshots of boxes (070). A ceiling for a backend that is not set is 5.
 | --- | --- | --- | --- |
 | `perBox` | `number` | `5` | The most snapshots a box holds, 1 to 50; kept ones count, and undos are counted apart, 2 a box. 5 unless set. |
 | `roomPercent` | `number` | `85` | How full a host's storage may be, in percent, 50 to 90, for bb-box to take a snapshot on it: a take is refused past it, and past 5 points below it of a thin pool's metadata. 7 points above it, bb-box deletes agents' snapshots on that storage that nobody kept, oldest first. 85 unless set. |
-| `keepDays` | `number` | `30` | Days Keep keeps a snapshot, 1 to 365. 30 unless set. Not used yet: Keep comes with 070's unit 8. |
+| `keepDays` | `number` | `30` | Days Keep keeps a snapshot from the day the person keeps it, or adds to a keep that has not ended, unless they choose a date: 1 to 365, 30 unless set. bb-box deletes a kept snapshot after its date. |
 | `agentsRestore` | `boolean` | `true` | Whether an agent restores its thread's own boxes without asking, always with an undo first. Off, it asks for a yes in its thread through a form. A box threads run on always needs that yes. On unless set off. |
 | `agentsMemory` | `boolean` | `true` | Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one. On unless set off. |
 | `pictures` | `boolean` | `true` | Whether bb-box keeps a small picture of a box's screen with each snapshot: a JPEG 320 px wide, taken as the snapshot is, kept with it in snapshots.db and shown to the person on the box's page. On unless set off. |

@@ -12,10 +12,12 @@ import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
-import type { BoxSnapshotsView, ForkPreview, ForkStarted, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
+import type { BoxSnapshotsView, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
+import type { BulkCheck, BulkDone, SnapshotsTabView } from "./snapshots-tab.ts";
 import type { BoxHistoryView } from "./box-history.ts";
 
-export type { BoxSnapshotsView, FailedRestoreView, ForkPreview, ForkStarted, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
+export type { BoxSnapshotsView, FailedRestoreView, ForkPreview, ForkStarted, KeepPreview, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
+export type { BulkCheck, BulkDone, BulkItem, SnapshotsTabView, TabBox, TabGroup, TabLine, TabRow } from "./snapshots-tab.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 export type { BoxHistoryView } from "./box-history.ts";
@@ -220,6 +222,7 @@ export const MAX_PASTE_LENGTH = 1_000_000;
 const viewer = oneBox.extend({ viewer: viewerId });
 const boxResult = z.custom<BoxResult>();
 const forceable = oneBox.extend({ force: z.boolean().optional() });
+const keepDate = { days: z.number().int().min(1).max(365).optional(), until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() };
 /** One of your machines, by ID or name. */
 const machineRef = z.object({ box: z.string().min(1) });
 const whole = z.number().int().positive().optional();
@@ -250,7 +253,7 @@ export const contract = defineRpcContract({
   /** The projects' images a box can choose (049), marked as the thread's or the project's own, for BB's new-thread inputs, where there is no thread yet. */
   images: { input: z.object({ threadId: z.string().min(1).optional(), projectId: z.string().min(1).optional() }), output: z.custom<ImageOptionView[]>() },
   /** Without `force`, a box a thread is working on is left alone, and the answer names the threads. */
-  release: { input: forceable, output: boxResult },
+  release: { input: forceable.extend({ deleteKept: z.boolean().optional() }), output: boxResult },
   stop: { input: forceable, output: boxResult },
   start: { input: oneBox, output: boxResult },
   resize: { input: oneBox.merge(resizing), output: z.custom<ResizeResult>() },
@@ -299,6 +302,12 @@ export const contract = defineRpcContract({
   "snapshot.note": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), note: z.string().max(4096) }), output: z.custom<SnapshotChange>() },
   "snapshot.picture": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<{ readonly jpeg: string; readonly width: number; readonly height: number } | null>() },
   "snapshot.settle": { input: z.object({ box: z.string().min(1) }), output: z.custom<SnapshotChange>() },
+  "snapshot.keepCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), ...keepDate }), output: z.custom<KeepPreview>() },
+  "snapshot.keep": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), ...keepDate }), output: z.custom<SnapshotChange>() },
+  "snapshot.unkeep": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<SnapshotChange>() },
+  "snapshots.tab": { input: z.null(), output: z.custom<SnapshotsTabView>() },
+  "snapshots.bulkCheck": { input: z.object({ snapshots: z.array(z.string().min(1)).min(1).max(200), change: z.enum(["keep", "delete"]), ...keepDate }), output: z.custom<BulkCheck>() },
+  "snapshots.bulk": { input: z.object({ snapshots: z.array(z.string().min(1)).min(1).max(200), change: z.enum(["keep", "delete"]), ...keepDate }), output: z.custom<BulkDone>() },
   "snapshot.forkCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), asMachine: z.boolean().optional() }), output: z.custom<ForkPreview>() },
   "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).refine((name) => name === "" || isMachineName(name)).optional(), asMachine: z.boolean().optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
@@ -309,7 +318,7 @@ export const contract = defineRpcContract({
     output: boxResult,
   },
   /** Without `force`, one a thread is working on is left alone, and the answer names the threads. */
-  "machines.remove": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
+  "machines.remove": { input: machineRef.extend({ force: z.boolean().optional(), deleteKept: z.boolean().optional() }), output: boxResult },
   "machines.stop": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
   "machines.start": { input: machineRef, output: boxResult },
   "machines.resize": { input: machineRef.merge(resizing), output: z.custom<ResizeResult>() },

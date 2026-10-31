@@ -24,7 +24,7 @@ export function paidBackends(state: ConfigState): { readonly config: BackendConf
 
 export function snapshotsSummary(state: ConfigState): string {
   const config = snapshotConfig(state.document);
-  return [`${config.perBox} per box`, `none taken past ${config.roomPercent}% full`, ...paidWords(state)].join(" · ");
+  return [`${config.perBox} per box`, `kept ${config.keepDays} ${config.keepDays === 1 ? "day" : "days"}`, `none taken past ${config.roomPercent}% full`, ...paidWords(state)].join(" · ");
 }
 
 function paidWords(state: ConfigState): string[] {
@@ -125,7 +125,7 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
   const stored = snapshotConfig(state.document);
   const paid = paidBackends(state);
   const roomPath = snapshotPath("roomPercent");
-  const placed = [snapshotPath("perBox"), roomPath, ...paid.map(({ config }) => ceilingPath(config.id))];
+  const placed = [snapshotPath("perBox"), roomPath, snapshotPath("keepDays"), ...paid.map(({ config }) => ceilingPath(config.id))];
   return (
     <div className="space-y-6">
       <RestoredNote draft={draft} />
@@ -141,6 +141,20 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
               description={`Kept ones count. Undos are counted apart: each box has room for ${UNDOS_PER_BOX} besides. Past this, a new snapshot is refused, with what to delete. ${SNAPSHOT_LIMITS.perBox.least} to ${SNAPSHOT_LIMITS.perBox.most}.`}
             />
             <DraftNumberRow draft={draft} path={roomPath} label="Refuse new snapshots when a host's storage is past" unit="% full" unitWord="percent full" description={roomWords(typedRoom(draft, roomPath, stored.roomPercent))} />
+          </Rows>
+        </Card>
+      </Group>
+      <Group title="Keep">
+        <Card>
+          <Rows>
+            <DraftNumberRow
+              draft={draft}
+              path={snapshotPath("keepDays")}
+              label="Keep keeps a snapshot for"
+              unit="days"
+              unitWord="days"
+              description={`From the day you keep it, unless you choose a date. A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date. Only you keep one. Keeping it again adds these days to its date. ${SNAPSHOT_LIMITS.keepDays.least} to ${SNAPSHOT_LIMITS.keepDays.most}.`}
+            />
           </Rows>
         </Card>
       </Group>

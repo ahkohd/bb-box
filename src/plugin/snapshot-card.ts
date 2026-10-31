@@ -3,7 +3,8 @@ import type { BoxSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning }
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, eligible, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
-import { restoreStepWords, unflushedOf, type ForkCheck, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
+import { restoreStepWords, unflushedOf, type ForkCheck, type KeepInput, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
+import { keepCostWords } from "./snapshot-words.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { Snapshotting } from "../backends/types.ts";
 import { withinWait } from "../core/snapshot-picture.ts";
@@ -39,6 +40,8 @@ export interface SnapshotRowView {
   readonly picture: PictureState | null;
   readonly busyWhy: string | null;
   readonly forkWhy: string | null;
+  readonly keepWhy: string | null;
+  readonly boxGone: { readonly at: number; readonly how: string } | null;
   readonly unflushed: string | null;
 }
 
@@ -60,7 +63,8 @@ export interface FailedRestoreView {
 }
 
 export interface BoxSnapshotsView {
-  readonly offer: { readonly holds: readonly Holds[]; readonly scope: SnapshotScope; readonly whileRunning: WhileRunning; readonly restore: "in-place" | "new-guest" | "none"; readonly fork: "copy" | "none"; readonly excludes: string | null; readonly price: Price | null } | null;
+  readonly offer: { readonly holds: readonly Holds[]; readonly scope: SnapshotScope; readonly whileRunning: WhileRunning; readonly restore: "in-place" | "new-guest" | "none"; readonly fork: "copy" | "none"; readonly keeps: boolean; readonly excludes: string | null; readonly price: Price | null } | null;
+  readonly keepDays: number;
   readonly noneWhy: string | null;
   readonly perBox: number;
   readonly counted: number;
@@ -118,14 +122,25 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
   if (record.state === "deleting") return "it is being deleted";
   if (record.state !== "ready") return `it is ${record.state}`;
   if (record.scope === "device") return "it holds the device only";
-  if (record.guest === "held-copy") return "it is a held copy, which bb-box does not fork yet";
   if (record.box.system !== "linux") return "bb-box forks Linux boxes only";
   if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
   return null;
 }
 
-function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): SnapshotRowView {
+export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pinned: string | null): string | null {
+  if (!offer || offer.keepsPastRelease === "no") return "its backend keeps nothing past a release";
+  if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
+  if (pinned) return pinned;
+  if (record.scope === "device") return "it holds the device only, which lives in the box";
+  if (record.boxGone && record.guest !== "held-copy") return "its box is gone, and bb-box keeps it until you delete it";
+  if (record.box.system !== "linux") return "bb-box keeps only what it can fork after a release, and forks Linux boxes only";
+  if (record.forkSafe === null) return `taken before ${record.box.name}'s image had the identity reset: it could not be forked after a release`;
+  if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `taken under version ${record.forkSafe} of ${record.box.name}'s identity reset, older than the version ${offer.forkSafeFrom} a fork needs`;
+  return null;
+}
+
+export function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): SnapshotRowView {
   const ledger = snapshots.ledger;
   const pin = ledger.pins().get(record.id) ?? null;
   const verdict = eligible(record, "delete", { pin, now });
@@ -151,6 +166,8 @@ function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): Snaps
     picture: record.picture,
     busyWhy: verdict.ok ? null : verdict.why,
     forkWhy: forkWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind)),
+    keepWhy: keepWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind), pin ? (eligible(record, "keep", { pin, now }) as { why?: string }).why ?? null : null),
+    boxGone: record.boxGone,
     unflushed: record.unflushed ?? null,
   };
 }
@@ -189,7 +206,8 @@ export function boxSnapshotsView(snapshots: Snapshots, box: BoxRecord, takeWhy: 
   const offer = backend ? snapshots.offerFor(backend, box.kind) : null;
   const records = snapshots.visible(PERSON, personStanding(box)).sort((a, b) => b.takenAt - a.takenAt);
   return {
-    offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, fork: offer.fork, excludes: offer.excludes, price: offer.price } : null,
+    offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, fork: offer.fork, keeps: offer.keepsPastRelease !== "no", excludes: offer.excludes, price: offer.price } : null,
+    keepDays: snapshots.settings.keepDays,
     noneWhy: offer ? null : backend ? `Boxes on ${box.backendLabel} have no snapshots.` : `The ${box.backendLabel} backend is not in bb-box's settings, so it takes no snapshots of ${box.name}.`,
     perBox: snapshots.settings.perBox,
     counted: records.filter(countsAgainstLimit).length,
@@ -273,9 +291,9 @@ export interface ForkStarted {
   readonly box: { readonly id: string; readonly name: string } | null;
 }
 
-export async function forkPreview(snapshots: Snapshots, box: BoxRecord, ref: string, asMachine: boolean): Promise<ForkPreview> {
+export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, standing: Standing, ref: string, asMachine: boolean): Promise<ForkPreview> {
   try {
-    const check: ForkCheck = await snapshots.checkFork(PERSON, box, personStanding(box), ref, { asMachine });
+    const check: ForkCheck = await snapshots.checkFork(PERSON, { id: standing.box!.id }, standing, ref, { asMachine });
     return {
       refusal: null,
       check: {
@@ -283,13 +301,50 @@ export async function forkPreview(snapshots: Snapshots, box: BoxRecord, ref: str
         takenAt: check.snapshot.takenAt,
         threadId: check.threadId,
         asMachine: check.asMachine,
-        canBeMachine: box.threadId !== OPERATOR && box.capabilities.enrol && !isKept(check.snapshot),
+        canBeMachine: !!box && box.threadId !== OPERATOR && box.capabilities.enrol && !isKept(check.snapshot),
         size: describeSize(check.size),
         aboutMs: check.aboutMs,
         bytes: check.bytes,
         host: check.host,
         storage: check.storage,
         unflushed: check.snapshot.unflushed ?? null,
+      },
+    };
+  } catch (error) {
+    return { refusal: message(error), check: null };
+  }
+}
+
+export interface KeepPreview {
+  readonly refusal: string | null;
+  readonly check: {
+    readonly keptUntil: number;
+    readonly current: number | null;
+    readonly renews: boolean;
+    readonly shortens: boolean;
+    readonly gone: boolean;
+    readonly cost: string;
+    readonly warning: string | null;
+    readonly unflushed: string | null;
+    readonly defaultDays: number;
+  } | null;
+}
+
+export async function keepPreview(snapshots: Snapshots, standing: Standing, ref: string, input: KeepInput): Promise<KeepPreview> {
+  try {
+    const check = await snapshots.checkKeep(PERSON, standing, ref, input);
+    return {
+      refusal: null,
+      check: {
+        keptUntil: check.keptUntil,
+        current: check.snapshot.keptUntil,
+        renews: check.renews,
+        shortens: check.shortens,
+        gone: check.gone,
+        cost: keepCostWords(check),
+        warning: check.warning,
+        unflushed: check.snapshot.unflushed ?? null,
+        defaultDays: snapshots.settings.keepDays,
       },
     };
   } catch (error) {

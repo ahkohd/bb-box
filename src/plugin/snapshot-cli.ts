@@ -3,7 +3,7 @@ import { BoxError, OPERATOR, describeError, type BoxRecord } from "../core/boxes
 import { BY_COMMAND } from "../core/box-log.ts";
 import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core/snapshot.ts";
 import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
-import { deletedText, forkCheckText, forkedText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, forkCheckText, forkedText, keepCheckText, keptText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
 
 const COMMAND: Caller = { is: "command" };
@@ -38,6 +38,27 @@ function ownerOf(options: { readonly machine?: boolean; readonly thread?: string
 
 function standingOf(box: BoxRecord): Standing {
   return { box: { id: box.id, threadId: box.threadId }, runsOn: false };
+}
+
+function ownerOrNone(options: { readonly machine?: boolean; readonly thread?: string }, ctx: PluginCliContext): string | null {
+  return options.machine ? OPERATOR : (options.thread ?? ctx.threadId ?? null);
+}
+
+async function boxOrGone(app: BbBox, owner: string | null, boxRef: string): Promise<BoxRecord | null> {
+  if (owner === null) {
+    if (app.snapshots.ledger.records().some((record) => record.boxGone !== null && (record.box.id === boxRef || record.box.name === boxRef))) return null;
+    throw new PluginCliError("No thread.", { code: "missing_required", hint: "Run this in a BB thread, or pass --thread <id> or --machine." });
+  }
+  try {
+    return await app.boxes.get(owner, boxRef);
+  } catch (error) {
+    if (error instanceof BoxError && error.code === "not_found") return null;
+    throw error;
+  }
+}
+
+function keepInput(options: { readonly days?: unknown; readonly until?: unknown }): { days?: number; until?: string } {
+  return { ...(typeof options.days === "number" ? { days: options.days } : {}), ...(typeof options.until === "string" ? { until: options.until } : {}) };
 }
 
 function shown(records: readonly SnapshotRecord[], kept: boolean): SnapshotRecord[] {
@@ -110,12 +131,7 @@ export function snapshotCommands(app: BbBox) {
       options: { ...threadOption, ...machineOption, ...jsonOption, request: { type: "string", description: "An ID you make, so a repeat of this command is the same delete." } },
       run: ({ positionals, options }, ctx) =>
         guard("Deleting the snapshot", async () => {
-          let box: BoxRecord | null = null;
-          try {
-            box = await boxes.get(ownerOf(options, ctx), positionals.box);
-          } catch (error) {
-            if (!(error instanceof BoxError && error.code === "not_found")) throw error;
-          }
+          const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
           if (!box) {
             const record = snapshots.findGone(positionals.box, positionals.snapshot);
             const answer = await snapshots.deleteGone(record, BY_COMMAND);
@@ -172,7 +188,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot fork": cliCommand({
       summary:
-        "Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready.",
+        "Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks from its held copy, as one of your machines; name its box as bb box snapshot list --all does.",
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
@@ -188,16 +204,68 @@ export function snapshotCommands(app: BbBox) {
       },
       run: ({ positionals, options }, ctx) =>
         guard("Forking the snapshot", async () => {
-          const box = await boxes.get(ownerOf(options, ctx), positionals.box);
+          const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
           const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}) };
+          const gone = box ? null : snapshots.findGone(positionals.box, positionals.snapshot);
           if (options.check) {
-            const check = await snapshots.checkFork(COMMAND, box, standingOf(box), positionals.snapshot, input);
+            const check = gone ? await snapshots.checkForkGone(gone, input) : await snapshots.checkFork(COMMAND, box!, standingOf(box!), positionals.snapshot, input);
             return options.json ? json(check) : out(forkCheckText(check));
           }
-          const answer = await snapshots.fork(COMMAND, box, standingOf(box), positionals.snapshot, { ...input, ...(options.request !== undefined ? { request: String(options.request) } : {}) });
+          const request = options.request !== undefined ? { request: String(options.request) } : {};
+          const answer = gone ? await snapshots.forkGone(gone, { is: "command" }, { ...input, ...request }) : await snapshots.fork(COMMAND, box!, standingOf(box!), positionals.snapshot, { ...input, ...request });
           const settled = answer.box ? ((await boxes.settled(answer.box)) ?? answer.box) : null;
           if (options.json) return json({ ...answer, box: settled });
           return { exitCode: settled?.state === "ready" ? 0 : 1, stdout: `${forkedText(answer, settled)}\n` };
+        }),
+    }),
+    "snapshot keep": cliCommand({
+      summary:
+        "Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.",
+      positionals: [
+        { name: "box", description: "The box's name or ID.", required: true },
+        { name: "snapshot", description: "The snapshot's name or ID.", required: true },
+      ],
+      options: {
+        ...threadOption,
+        ...machineOption,
+        ...jsonOption,
+        days: { type: "integer", min: 1, max: 365, description: "Keep it this many days from today." },
+        until: { type: "string", description: "Keep it until the end of this day, in UTC, as yyyy-mm-dd." },
+        check: { type: "boolean", description: "Say what keeping it would cost and refuse what it would refuse, changing nothing." },
+      },
+      run: ({ positionals, options }, ctx) =>
+        guard("Keeping the snapshot", async () => {
+          const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
+          const input = keepInput(options);
+          if (box) {
+            if (options.check) {
+              const check = await snapshots.checkKeep(COMMAND, standingOf(box), positionals.snapshot, input);
+              return options.json ? json(check) : out(keepCheckText(check));
+            }
+            const answer = await snapshots.keep(COMMAND, standingOf(box), positionals.snapshot, input);
+            return options.json ? json(answer) : out(keptText(answer));
+          }
+          const record = snapshots.findGone(positionals.box, positionals.snapshot);
+          if (options.check) {
+            const check = await snapshots.checkKeepGone(record, input);
+            return options.json ? json(check) : out(keepCheckText(check));
+          }
+          const answer = await snapshots.keepGone(record, BY_COMMAND, input);
+          return options.json ? json(answer) : out(keptText(answer));
+        }),
+    }),
+    "snapshot unkeep": cliCommand({
+      summary: "Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete.",
+      positionals: [
+        { name: "box", description: "The box's name or ID.", required: true },
+        { name: "snapshot", description: "The snapshot's name or ID.", required: true },
+      ],
+      options: { ...threadOption, ...machineOption, ...jsonOption },
+      run: ({ positionals, options }, ctx) =>
+        guard("Stopping keeping the snapshot", async () => {
+          const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
+          const record = box ? await snapshots.unkeep(COMMAND, standingOf(box), positionals.snapshot) : await snapshots.unkeepGone(snapshots.findGone(positionals.box, positionals.snapshot), BY_COMMAND);
+          return options.json ? json(record) : out(`"${record.name}" (${record.id}) of box ${record.box.name} is no longer kept: it goes with its box again.`);
         }),
     }),
     "snapshot forget": cliCommand({

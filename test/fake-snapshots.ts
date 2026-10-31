@@ -8,7 +8,9 @@ import {
   type BoxIdentity,
   type BoxSize,
   type CopyHooks,
+  type CopyPlan,
   type CopyState,
+  type KeepsPastRelease,
   type GuestIdentity,
   type HeldCopyLabel,
   type Guest,
@@ -33,6 +35,7 @@ export interface Held {
   holds: HeldSnapshot["holds"];
   takenAt: number;
   keptUntil: number | null;
+  forkSafe?: number | null;
 }
 
 export type Outcome = "ok" | "failed" | "incomplete" | "unknown" | "ok-task-failed";
@@ -59,7 +62,15 @@ export class FakeSnapshots {
   readonly order: string[] = [];
   readonly sizes = new Map<string, BoxSize>();
   readonly outside: OutsideRollback[] = [];
-  readonly copies = new Map<string, { state: "copy" | "template"; box: string; snapshot: string; disarmed: boolean; takenAt: number }>();
+  readonly copies = new Map<string, { state: "copy" | "template"; box: string; snapshot: string; disarmed: boolean; takenAt: number; kept?: string | null; forkSafe?: number | null; of?: string }>();
+  keepWay: KeepsPastRelease = "held-copy";
+  keepWhy: string | null = null;
+  keepUsedBytes: number | null = 2 * GiB;
+  labelFault: Error | null = null;
+  readonly labels: string[] = [];
+  readonly runningCopies = new Set<string>();
+  copyGate: Promise<void> | null = null;
+  copyTemplates = true;
   readonly earlier = new Set<string>();
   copyFault: Error | null = null;
   forkFault: Error | null = null;
@@ -109,8 +120,12 @@ export class FakeSnapshots {
         return start(guest, signal, timing, answered);
       };
     }
-    const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
-    target.snapshotting = () => offer;
+    target.snapshotting = (): Snapshotting => ({ scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null });
+    const release = backend.release.bind(backend);
+    target.release = async (guest: Guest, hooks: never) => {
+      await release(guest, hooks);
+      for (const [id, held] of this.held) if (held.guest.ref === guest.ref && !this.earlier.has(guest.ref)) this.held.delete(id);
+    };
     target.planSnapshots = async (_guest: Guest, _kind: string, snapshot: SnapshotRef | null): Promise<SnapshotPlan> => ({
       storage: this.storage(),
       take: {
@@ -133,12 +148,12 @@ export class FakeSnapshots {
         newer: this.newer,
         copyAboutMs: 2000,
       },
-      keep: { way: "no", why: null, aboutMs: null, bytes: null, price: null },
+      keep: { way: this.keepWay, why: this.keepWhy, aboutMs: 2000, bytes: 16 * GiB, usedBytes: this.keepUsedBytes, price: null },
       fork: { ok: this.forkWhy === null, why: this.forkWhy, aboutMs: 2000, bytes: null, size: snapshot ? (this.sizes.get(snapshot.id) ?? null) : null },
       locked: this.locked,
       busy: this.busy,
     });
-    target.snapshot = async (guest: Guest, take: { id: string; box: string; memory: boolean }, hooks: SnapshotHooks) => {
+    target.snapshot = async (guest: Guest, take: { id: string; box: string; memory: boolean; forkSafe?: number | null }, hooks: SnapshotHooks) => {
       this.running++;
       this.most = Math.max(this.most, this.running);
       try {
@@ -148,7 +163,7 @@ export class FakeSnapshots {
         if (submit === "never-arrived") throw new Error("cannot reach the provider: connection reset before the request arrived");
         const outcome = this.take;
         this.take = "ok";
-        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null };
+        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null, forkSafe: take.forkSafe ?? null };
         if (outcome !== "failed") this.held.set(take.id, held);
         this.order.push(`take ${take.id}`);
         const home = homeOf(guest.ref);
@@ -254,6 +269,52 @@ export class FakeSnapshots {
       await hooks.task({ ref: task, host: source.host });
       return copy;
     };
+    target.copySnapshot = async (ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks): Promise<Guest> => {
+      this.order.push(`copy-snapshot ${ref.id}`);
+      if (!this.held.has(ref.id)) throw new SnapshotFailed(`Guest ${ref.guest.ref} has no snapshot bb${ref.id}.`);
+      const copy: Guest = { ref: `copy${++this.#copies}`, host: ref.guest.host, address: null, size: this.sizes.get(ref.id) ?? ref.guest.size, data: { box: label.box } };
+      await hooks.claimed(copy);
+      await hooks.submitting();
+      const fault = this.copyFault;
+      this.copyFault = null;
+      const task = this.#task(ref.guest, "copy", label.snapshot, fault ? { state: "failed", words: fault.message } : { state: "ok" }, now());
+      if (!fault) this.copies.set(copy.ref, { state: "copy", box: label.box, snapshot: label.snapshot, disarmed: false, takenAt: label.takenAt ?? now(), kept: label.kept, forkSafe: label.forkSafe ?? null, of: ref.id });
+      const saved = savedOf(ref.id);
+      const into = savedOf(copy.ref);
+      if (!fault && saved && into && existsSync(saved)) cpSync(saved, into, { recursive: true });
+      await hooks.task({ ref: task, host: ref.guest.host });
+      if (this.copyGate) await this.copyGate;
+      if (fault) throw fault;
+      return copy;
+    };
+    target.labelCopy = async (copy: Guest, label: HeldCopyLabel): Promise<Guest> => {
+      this.order.push(`label ${copy.ref}`);
+      const held = this.copies.get(copy.ref);
+      if (!held || held.snapshot !== label.snapshot) throw new SnapshotFailed(`Guest ${copy.ref} is not the copy bb-box made of snapshot ${label.snapshot}.`);
+      held.kept = label.kept;
+      held.forkSafe = label.forkSafe ?? null;
+      return copy;
+    };
+    target.copyPlan = async (copy: Guest): Promise<CopyPlan> => {
+      const held = this.copies.get(copy.ref);
+      if (!held) return { state: "gone", size: null, running: false };
+      return { state: held.state, size: this.sizes.get(held.of ?? held.snapshot) ?? { cores: 2, memoryMiB: 4096, diskGiB: 16 }, running: this.runningCopies.has(copy.ref) };
+    };
+    target.labelKept = async (ref: SnapshotRef, kept: string | null) => {
+      this.labels.push(`${ref.from === "held-copy" ? `copy ${ref.guest.ref}` : `snapshot ${ref.id}`} kept ${kept ?? "none"}`);
+      const fault = this.labelFault;
+      this.labelFault = null;
+      if (fault) throw fault;
+      if (ref.from === "held-copy") {
+        const held = this.copies.get(ref.guest.ref);
+        if (!held) throw new SnapshotFailed(`Guest ${ref.guest.ref} is gone.`);
+        held.kept = kept;
+        return;
+      }
+      const held = this.held.get(ref.id);
+      if (!held) throw new SnapshotFailed(`Guest ${ref.guest.ref} has no snapshot bb${ref.id}.`);
+      held.keptUntil = kept ? Date.parse(`${kept}T00:00:00Z`) + 24 * 60 * 60_000 - 1 : null;
+    };
     target.disarmCopy = async (copy: Guest) => {
       const held = this.copies.get(copy.ref);
       if (held) held.disarmed = true;
@@ -261,13 +322,14 @@ export class FakeSnapshots {
     target.templateCopy = async (copy: Guest) => {
       this.order.push(`template ${copy.ref}`);
       const held = this.copies.get(copy.ref);
-      if (held) held.state = "template";
+      if (held && this.copyTemplates) held.state = "template";
     };
     target.copyState = async (copy: Guest): Promise<CopyState> => this.copies.get(copy.ref)?.state ?? (this.earlier.has(copy.ref) ? "copy" : "gone");
     target.deleteCopy = async (copy: Guest) => {
       this.order.push(`delete ${copy.ref}`);
       if (!this.copies.has(copy.ref) && !this.earlier.has(copy.ref) && (await backend.power(copy)) !== null) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest, so bb-box does not delete it as one.`);
       this.copies.delete(copy.ref);
+      this.runningCopies.delete(copy.ref);
       if (this.earlier.has(copy.ref) || (await backend.power(copy)) !== null) {
         this.earlier.delete(copy.ref);
         for (const [id, held] of this.held) if (held.guest.ref === copy.ref) this.held.delete(id);
@@ -287,8 +349,8 @@ export class FakeSnapshots {
     target.forkSnapshot = async (ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks): Promise<Guest> => {
       this.order.push(`fork ${ref.id}`);
       if (previous && (await backend.power(previous)) !== null) await backend.release(previous, { timing: () => {}, resetting: async () => {} } as never);
-      if (!this.held.has(ref.id)) throw new Error(`snapshot bb${ref.id} does not exist`);
-      const saved = savedOf(ref.id);
+      if (ref.from === "held-copy" ? this.copies.get(ref.guest.ref)?.state !== "template" : !this.held.has(ref.id)) throw new Error(`snapshot bb${ref.id} does not exist`);
+      const saved = savedOf(ref.from === "held-copy" ? ref.guest.ref : ref.id);
       const fresh = await backend.makeGuest(box, saved && existsSync(saved) ? saved : null);
       await hooks.claim(fresh);
       const fault = this.forkFault;
@@ -311,7 +373,7 @@ export class FakeSnapshots {
       this.earlier.add(guest.ref);
       return guest;
     };
-    target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
+    const listedNow = (): HeldSnapshot[] => {
       if (this.listing) throw this.listing;
       const listed = [...this.held.values()].map((held) => ({
         id: held.id,
@@ -326,6 +388,7 @@ export class FakeSnapshots {
         takenAt: held.takenAt,
         keptUntil: held.keptUntil,
         storage: { name: "fast", type: "lvmthin" },
+        forkSafe: held.forkSafe ?? null,
       }));
       const copied = [...this.copies.entries()].map(([ref, held]) => ({
         id: held.snapshot,
@@ -338,12 +401,18 @@ export class FakeSnapshots {
         words: held.state === "template" ? null : "Its copy is not a template yet, so bb-box does not trust it.",
         holds: "disk" as const,
         takenAt: held.takenAt,
-        keptUntil: null,
+        keptUntil: held.kept ? Date.parse(`${held.kept}T00:00:00Z`) + 24 * 60 * 60_000 - 1 : null,
         storage: null,
+        forkSafe: held.forkSafe ?? null,
       }));
-      if (this.listingGate) await this.listingGate;
       return [...listed, ...copied];
     };
+    target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
+      const listed = listedNow();
+      if (this.listingGate) await this.listingGate;
+      return listed;
+    };
+    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && held.guest.ref === guest.ref);
     target.providerTask = async (task: TaskRef): Promise<TaskOutcome> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return this.tasks.get(task.ref) ?? { state: "missing", words: `no task ${task.ref}` };

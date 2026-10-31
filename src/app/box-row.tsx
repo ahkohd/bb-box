@@ -105,7 +105,7 @@ export function BoxRow({
   box: BoxView;
   threadId: string;
   opening: RowOpening;
-  act: (method: BoxAction, box: BoxView) => Promise<void>;
+  act: (method: BoxAction, box: BoxView, options?: { readonly deleteKept?: boolean }) => Promise<void>;
   now: number;
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
@@ -128,10 +128,10 @@ export function BoxRow({
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [resizing, setResizing] = useState(false);
   const resizeNote = useResizeNote(box, resizing);
-  const run = async (method: BoxAction) => {
+  const run = async (method: BoxAction, options: { readonly deleteKept?: boolean } = {}) => {
     setBusy(method);
     try {
-      await act(method, box);
+      await act(method, box, options);
     } finally {
       setBusy(null);
     }
@@ -250,7 +250,7 @@ export function BoxRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
-        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method) => void run(method) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
+        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method, options) => void run(method, options) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
         {page ? <RowChevron page={page} /> : null}
       </span>
     </div>

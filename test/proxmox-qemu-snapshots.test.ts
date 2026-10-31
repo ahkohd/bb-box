@@ -65,7 +65,7 @@ function tasks(): { hooks: SnapshotHooks; seen: TaskRef[]; submitted: number[] }
 
 test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs, and forks by a full copy from version 5 of the identity reset; a Windows VM offers none yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 5, keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 5, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows-desktop"), null);
 });
 
@@ -166,6 +166,30 @@ test("a stopped VM's take is refused in words about the box, and its storage key
   assert.equal(plan.take.ok, false);
   assert.equal(plan.take.why, "a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
   assert.equal(plan.locked, null);
+});
+
+test("a VM's held copy cut short before its own labels still carries its source's tags, and the sweep sees it as a guest that names no box, never one to restore", async () => {
+  const state = world();
+  const { guest, vmid, box } = await linuxBox(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: false }, tasks().hooks);
+  state.proxmox.intercept = (call) =>
+    call.method === "PUT" && /\/qemu\/\d+\/config$/.test(call.path) && !call.path.endsWith(`/qemu/${vmid}/config`)
+      ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "cut short" }) }
+      : undefined;
+  let claimed: Guest | null = null;
+  const cut = await state.backend.copySnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { box, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async (made) => void (claimed = made) }).catch((caught: unknown) => caught);
+  state.proxmox.intercept = undefined;
+  assert.ok(cut instanceof Error);
+  const part = [...state.proxmox.guests.values()].find((each) => each.vmid !== vmid && each.name.startsWith("bb-box-copy-"))!;
+  assert.match(part.config.tags ?? "", new RegExp(`(^|;)box\\.${box}(;|$)`), "it still carries its source's tags");
+  const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
+  assert.ok(listed, "the sweep sees it");
+  assert.equal(listed.owner, null, "as a guest that names no box");
+  await state.backend.labelCopy(claimed!, { box, snapshot: SNAPSHOT, kept: "2026-11-30", forkSafe: 7, kind: "linux" });
+  for (const tag of ["held-copy", `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7"]) assert.match(part.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), `labelled once its clone ends well: ${tag}`);
+  assert.equal(part.config.onboot, "0");
+  assert.equal((await state.backend.held()).some((each) => each.ref === String(part.vmid)), false);
+  assert.deepEqual((await state.backend.snapshotsOn(guest)).map((held) => held.id), [SNAPSHOT], "one guest's own snapshots, for a release's label check");
 });
 
 test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed first, with new MAC addresses, a new SMBIOS UUID and the address of its own VMID, then armed in two late steps; a Windows VM forks none", async () => {

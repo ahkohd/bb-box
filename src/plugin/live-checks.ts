@@ -34,7 +34,7 @@ export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
   task: "its provider's task began",
   checked: "a restore's last check for running turns, before its stop",
   stopped: "a restore's stop",
-  copied: "a restore's held copy was cloned, before it is a template",
+  copied: "a held copy was cloned, for a restore's undo or a kept snapshot at its box's release, before it is a template",
   undo: "a restore's undo",
   "rolled-back": "a restore's rollback",
   adopted: "a swap's new guest was made, before the swap",

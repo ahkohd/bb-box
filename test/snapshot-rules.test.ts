@@ -3,8 +3,14 @@ import { test } from "node:test";
 import { SNAPSHOT_DEFAULTS } from "../src/core/document.ts";
 import {
   CHANGES,
-  FOUND_KEPT_MS,
   countsAgainstLimit,
+  daysLeft,
+  endOfUtcDay,
+  keepEndsWithin,
+  keepEndsWords,
+  keepLabel,
+  keptUntilAfter,
+  utcDay,
   eligible,
   judgeEach,
   limitVictim,
@@ -114,15 +120,33 @@ test("a delete is refused while it is taken, deleted or unreachable, and allowed
   assert.match((eligible(record({ state: "unavailable" }), "delete", { pin: null, now: NOW }) as { why: string }).why, /cannot reach pve-1 now/);
 });
 
-test("expiry takes only a snapshot past its keep date, and found orphans go after 7 days unless kept", () => {
+test("expiry takes only a snapshot past its keep date; a found one is never deleted by itself", () => {
   assert.equal(eligible(record({ keptUntil: NOW + 1 }), "expire", { pin: null, now: NOW }).ok, false);
   assert.equal(eligible(record(), "expire", { pin: null, now: NOW }).ok, false);
   assert.ok(eligible(record({ keptUntil: NOW - 1 }), "expire", { pin: null, now: NOW }).ok);
-  const found = record({ foundAt: NOW - FOUND_KEPT_MS + MINUTE, boxGone: { at: NOW, how: "unknown" } });
-  assert.equal(eligible(found, "remove-found", { pin: null, now: NOW }).ok, false, "found less than 7 days ago");
-  assert.ok(eligible(found, "remove-found", { pin: null, now: NOW + MINUTE }).ok);
-  assert.equal(eligible({ ...found, keptUntil: NOW + 7 * 24 * 60 * MINUTE }, "remove-found", { pin: null, now: NOW + MINUTE }).ok, false, "a found snapshot with a keep date stays");
-  assert.equal(eligible(record(), "remove-found", { pin: null, now: NOW }).ok, false, "one in bb-box's records is no orphan");
+  assert.ok(!(CHANGES as readonly string[]).includes("remove-found"), "found snapshots stay until the person deletes them");
+  const found = record({ foundAt: NOW - 30 * 24 * 60 * MINUTE, boxGone: { at: NOW, how: "unknown" }, by: { is: "unknown" }, owner: "thread" });
+  for (const change of ["evict-room", "evict-limit", "expire"] as const) assert.equal(eligible(found, change, { pin: null, now: NOW }).ok, false, change);
+});
+
+test("keep dates: the end of a UTC day, days from today, and the words from 3 days before", () => {
+  const now = Date.UTC(2026, 9, 31, 22, 30);
+  assert.equal(keptUntilAfter(now, 30), Date.UTC(2026, 10, 30, 23, 59, 59, 999));
+  assert.equal(utcDay(keptUntilAfter(now, 1)), "2026-11-01");
+  assert.equal(endOfUtcDay("2026-11-30"), Date.UTC(2026, 10, 30, 23, 59, 59, 999));
+  for (const bad of ["2026-02-30", "30 Nov", "2026-11-3", ""]) assert.equal(endOfUtcDay(bad), null, bad);
+  assert.equal(keepLabel(null), null);
+  assert.equal(keepLabel(Date.UTC(2026, 10, 30, 23, 59, 59, 999)), "2026-11-30");
+  const until = Date.UTC(2026, 10, 30, 23, 59, 59, 999);
+  const day = 24 * 60 * MINUTE;
+  assert.equal(keepEndsWords({ keptUntil: until }, until - 10 * day), "kept until 2026-11-30");
+  assert.equal(keepEndsWords({ keptUntil: until }, until - 3 * day + MINUTE), "goes in 3 days");
+  assert.equal(keepEndsWords({ keptUntil: until }, until - 2 * day), "goes in 2 days");
+  assert.equal(keepEndsWords({ keptUntil: until }, until - 5 * MINUTE), "goes within a day");
+  assert.equal(keepEndsWords({ keptUntil: null }, until), null);
+  assert.equal(keepEndsWithin({ keptUntil: until }, until - 6 * day, 7), true);
+  assert.equal(keepEndsWithin({ keptUntil: until }, until - 8 * day, 7), false);
+  assert.equal(daysLeft({ keptUntil: until }, until + day), 0);
 });
 
 test("keep needs a ready snapshot; unkeep a kept one; rename and note anything not being deleted", () => {

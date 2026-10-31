@@ -126,6 +126,7 @@ export interface GuestStatus {
   readonly uptime?: number;
   /** The guest's lock, such as "suspended" for a VM hibernated to disk. */
   readonly lock?: string;
+  readonly diskUsed?: number;
 }
 
 export interface NodeStatus {
@@ -427,6 +428,7 @@ export class Proxmox {
         name: typeof data?.name === "string" ? data.name : undefined,
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
         lock: typeof data?.lock === "string" ? data.lock : undefined,
+        diskUsed: typeof data?.disk === "number" && data.disk > 0 ? data.disk : undefined,
       };
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) return null;
@@ -490,6 +492,10 @@ export class Proxmox {
 
   startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
     return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
+  }
+
+  async describeSnapshot(vmid: number, name: string, description: string, signal?: AbortSignal): Promise<void> {
+    await this.#change("PUT", this.#guest(vmid, `/snapshot/${enc(name)}/config`), { description }, signal);
   }
 
   async snapshotConfig(vmid: number, name: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
@@ -668,10 +674,10 @@ export class Proxmox {
   }
 
   /** Polls a task until it stops. "OK" and "WARNINGS: n" are success. */
-  async waitTask(upid: string, signal?: AbortSignal): Promise<void> {
+  async waitTask(upid: string, signal?: AbortSignal, timeoutMs: number = this.#taskTimeoutMs): Promise<void> {
     if (typeof upid !== "string" || !upid.startsWith("UPID:")) return;
     const node = upid.split(":")[1] || this.node;
-    const deadline = Date.now() + this.#taskTimeoutMs;
+    const deadline = Date.now() + Math.max(timeoutMs, this.#taskTimeoutMs);
     for (;;) {
       const data = await this.#request<{ status?: string; exitstatus?: string }>(
         "GET",

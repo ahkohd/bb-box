@@ -779,7 +779,8 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const yours = page.owner === "yours";
   const threadId = page.threadId ?? OPERATOR;
   const busyOf = (busy: string | null): "stop" | "start" | null => (busy === `stop:${box.id}` ? "stop" : busy === `start:${box.id}` ? "start" : null);
-  const act = (method: "stop" | "start" | "release" | "refresh" | "forget") => void (yours ? machineActions.act(method === "release" ? "remove" : method, box) : threadActions.act(threadId, method, box));
+  const act = (method: "stop" | "start" | "release" | "refresh" | "forget", options: { readonly deleteKept?: boolean } = {}) =>
+    void (yours ? machineActions.act(method === "release" ? "remove" : method, box, false, options.deleteKept === true) : threadActions.act(threadId, method, box, false, options.deleteKept === true));
   const actions: PageActions = {
     act,
     busy: busyOf(yours ? machineActions.busy : threadActions.busy),
@@ -795,7 +796,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const menu = (
     <BoxMenu
       box={box}
-      of={yours ? { owner: "yours", inBrowser: false, stop: () => act("stop"), start: () => act("start"), remove: actions.remove, forget: () => act("forget"), check: () => act("refresh") } : { owner: "thread", threadId, held: false, offersThread: true, act: (method) => act(method) }}
+      of={yours ? { owner: "yours", inBrowser: false, stop: () => act("stop"), start: () => act("start"), remove: actions.remove, forget: () => act("forget"), check: () => act("refresh") } : { owner: "thread", threadId, held: false, offersThread: true, act: (method, options) => act(method, options) }}
       opens={opens}
       resizing={resizing}
       onResizing={setResizing}

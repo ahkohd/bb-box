@@ -24,6 +24,7 @@ const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
 } as const;
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
+const deleteKeptOption = { "delete-kept": { type: "boolean", description: "Delete the snapshots of it you kept too, instead of copying them first so they outlive it." } } as const;
 /** A preset and any parts of a custom size (028). bb-box refuses a size above the kind's largest. */
 /** A resize's size (061): parts left out stay as the box has them. */
 const resizeOptions = {
@@ -320,15 +321,16 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Resizing the machine", async () => out(await resizeWords(app, await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
         }),
         "machines remove": cliCommand({
-          summary: "Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force.",
+          summary: "Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.",
           positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
-          options: { force: { type: "boolean", description: "Remove it even while threads are working on it, which ends their work." } },
+          options: { force: { type: "boolean", description: "Remove it even while threads are working on it, which ends their work." }, ...deleteKeptOption },
           run: ({ positionals, options }) =>
             guard("Removing the machine", async () => {
               const box = await boxes.get(OPERATOR, positionals.machine);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
+              if (options["delete-kept"]) await app.snapshots.unkeepForRelease(box, BY_COMMAND);
               const left = await boxes.release(OPERATOR, box.id, "removed with bb box machines remove", BY_COMMAND);
-              if (left) return { exitCode: 1, stderr: `Machine ${left.name} is still being removed: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
+              if (left) return { exitCode: 1, stderr: `Machine ${left.name} is still being removed: ${(left.error ?? "the backend has not finished").replace(/\.$/, "")}. The sweep keeps trying.\n` };
               return out(`Removed machine ${box.name}.${idleWords(idle, false)}`);
             }),
         }),
@@ -343,16 +345,17 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         release: cliCommand({
-          summary: "Release a box. Its disk is deleted. A box a thread is working on is refused unless --force.",
+          summary: "Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.",
           positionals: boxPositional,
-          options: { ...threadOption, force: { type: "boolean", description: "Release it even while threads are working on it, which ends their work." } },
+          options: { ...threadOption, force: { type: "boolean", description: "Release it even while threads are working on it, which ends their work." }, ...deleteKeptOption },
           run: ({ positionals, options }, ctx) =>
             guard("Releasing the box", async () => {
               const threadId = threadOf(options.thread, ctx);
               const box = await boxes.get(threadId, positionals.box);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
+              if (options["delete-kept"]) await app.snapshots.unkeepForRelease(box, BY_COMMAND);
               const left = await boxes.release(threadId, positionals.box, "released with bb box release", BY_COMMAND);
-              if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
+              if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${(left.error ?? "the backend has not finished").replace(/\.$/, "")}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
             }),
         }),

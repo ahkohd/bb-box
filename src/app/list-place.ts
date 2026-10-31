@@ -32,7 +32,7 @@ export const ROW_NAME = "data-row-name";
 let place: ListPlace | null = null;
 
 function isTab(value: unknown): value is ListTab {
-  return value === "machines" || value === "threads";
+  return value === "machines" || value === "threads" || value === "snapshots";
 }
 
 function isStrings(value: unknown): value is string[] {

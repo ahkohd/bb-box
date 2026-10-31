@@ -119,7 +119,7 @@ export interface IdentityResetFound {
 
 export interface ForkOrigin {
   readonly operation: string;
-  readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly ref: string; readonly livesOn: Guest; readonly identity: HeldIdentity | null };
+  readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly ref: string; readonly livesOn: Guest; readonly identity: HeldIdentity | null; readonly from?: "snapshot" | "held-copy" };
   readonly source: { readonly id: string; readonly name: string; readonly threadId: string; readonly macs: readonly string[]; readonly address?: string | null };
 }
 
@@ -431,7 +431,10 @@ export interface BoxesDeps {
   ended?(box: BoxRecord, how: "released" | "forgotten"): void;
   forked?(box: BoxRecord): void;
   forkHold?(box: BoxRecord, signal: AbortSignal): Promise<void>;
-  keepsGuest?(backendId: string, guestRef: string): string | null;
+  keepsGuest?(backendId: string, guestRef: string, ended?: boolean): string | null;
+  holdKeptOn?(backendId: string, guestRef: string): Promise<string | null>;
+  leftoverReleased?(backendId: string, guestRef: string, boxId: string | null, why: string): void;
+  beforeRelease?(box: BoxRecord, who: Actor): Promise<void>;
   /**
    * Whether a thread still exists and is not archived, as BB says. The sweep
    * releases the thread's boxes and guests once BB says at two sweeps running
@@ -567,6 +570,7 @@ export type BoxErrorCode =
   | "reused_request"
   | "try_again"
   | "unflushed"
+  | "invalid_value"
   | "needs_yes";
 
 /** A job a box_run command left running when bb-box restarted (#405). */
@@ -582,6 +586,10 @@ export class BoxError extends Error {
     this.code = code;
   }
 }
+
+export class ReleaseWaits extends BoxError {}
+
+export const RELEASE_OR_DELETE_KEPT = "Release it again, or release it and delete what you kept.";
 
 /** #choose finding no offer for a box, with the backends that had no room: only their spares give room (#282). */
 /** What `on` named (044): the offers to try, in acquire order; why each named provider that is off was passed over; and every provider named. */
@@ -2245,7 +2253,7 @@ export class Boxes {
     if (!backend.forkSnapshot || !backend.armFork || !backend.start || !backend.guestIdentity) throw new BoxError("unsupported", `${box.backendLabel} forks no snapshots.`);
     const forkSnapshot = backend.forkSnapshot.bind(backend);
     const size = await this.#size(box);
-    const made = await this.#chain(fork.source.id, () => forkSnapshot({ id: fork.snapshot.id, ref: fork.snapshot.ref, guest: fork.snapshot.livesOn }, identity(box, size), box.guest, hooks, signal));
+    const made = await this.#chain(fork.source.id, () => forkSnapshot({ id: fork.snapshot.id, ref: fork.snapshot.ref, guest: fork.snapshot.livesOn, ...(fork.snapshot.from ? { from: fork.snapshot.from } : {}) }, identity(box, size), box.guest, hooks, signal));
     await hooks.claim(made);
     await this.#deps.forkHold?.(box, signal);
     await backend.armFork(made, "network", signal);
@@ -2570,6 +2578,17 @@ export class Boxes {
       if (!this.#failedAgain(box, kinds, words)) this.#event(box, "release-failed", who, { words, observed, backend: box.backendLabel });
     };
     const backend = box.guest ? this.#deps.backends.get(box.backend) : null;
+    const guestGone = options.observeFirst && box.guest && backend ? (await this.#stamped(box).then((stamped) => backend.power(stamped.guest!)).catch(() => undefined)) === null : false;
+    if (!guestGone && box.guest && backend && this.#deps.beforeRelease) {
+      try {
+        await this.#deps.beforeRelease(box, who);
+      } catch (error) {
+        const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
+        failed(words, null);
+        const next = error instanceof ReleaseWaits ? "bb-box tries again in a few minutes." : `bb-box tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
+        return this.update(box, () => ({ error: `${words} ${next}` }));
+      }
+    }
     // A thread's own box (role "machine") has a BB machine that BB owns and removes itself; deleting it
     // from here would wait on BB's removal, which waits on this release.
     if (box.enrol.hostId && this.#deps.unenrol && box.role !== "machine") {
@@ -2580,16 +2599,11 @@ export class Boxes {
         this.#deps.logError("unenrol", error);
       }
     }
-    if (options.observeFirst && box.guest && backend) {
-      const power = await this.#stamped(box)
-        .then((stamped) => backend.power(stamped.guest!))
-        .catch(() => undefined);
-      if (power === null) {
-        this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
-        this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
-        await this.#forget(box);
-        return null;
-      }
+    if (guestGone) {
+      this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
+      this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
+      await this.#forget(box);
+      return null;
     }
     if (box.guest) {
       if (!backend) {
@@ -2607,6 +2621,7 @@ export class Boxes {
       };
       try {
         const { guest } = await this.#stamped(box);
+        if (box.fork) await backend.disarmFork?.(guest!).catch((error) => this.#deps.logError(`disarm guest ${guest!.ref} of fork ${box.name} before deleting it`, error));
         await backend.release(guest!, hooks);
       } catch (error) {
         this.#deps.logError("release", error);
@@ -3533,7 +3548,7 @@ export class Boxes {
           if (state === "live") {
             if (await this.#restore(backend, guest, signal)) adopted++;
           } else if (state === "ended") {
-            if (await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} ended, as BB says at this sweep and the last. BB's answer: ${said}`, signal)) leftovers++;
+            if (await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} ended, as BB says at this sweep and the last. BB's answer: ${said}`, signal, true)) leftovers++;
             else guarded++;
           } else if (state === "ending") {
             this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB says thread ${owner.threadId} ended, and the next sweep releases the guest if BB says so again. BB's answer: ${said}.`);
@@ -3604,14 +3619,17 @@ export class Boxes {
     });
   }
 
-  async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal): Promise<boolean> {
-    const keep = this.#deps.keepsGuest?.(backend.id, guest.ref) ?? null;
+  async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal, ended = false): Promise<boolean> {
+    const named = `guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}`;
+    const copying = ended ? ((await this.#deps.holdKeptOn?.(backend.id, guest.ref)) ?? null) : null;
+    const keep = copying ?? this.#deps.keepsGuest?.(backend.id, guest.ref, ended) ?? null;
     if (keep) {
-      this.#deps.log?.(`Kept guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}, which no box records and ${reason}: ${keep}.`);
+      this.#deps.log?.(`Kept ${named}, which no box records and ${reason}: ${keep}.`);
       return false;
     }
-    this.#deps.log?.(`Releasing guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}, which no box records: ${reason}.`);
+    this.#deps.log?.(`Releasing ${named}, which no box records: ${reason}.`);
     await backend.release(guest, QUIET, signal);
+    this.#deps.leftoverReleased?.(backend.id, guest.ref, guest.owner?.boxId ?? null, reason);
     return true;
   }
 

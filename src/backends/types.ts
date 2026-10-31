@@ -708,6 +708,7 @@ export interface Backend {
   snapshot?(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken>;
   deleteSnapshot?(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
   heldSnapshots?(signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
+  snapshotsOn?(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
   providerTask?(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome>;
   findTasks?(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
   powerOff?(guest: Guest, signal?: AbortSignal): Promise<void>;
@@ -715,6 +716,10 @@ export interface Backend {
   outsideRollbacks?(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]>;
   guestIdentity?(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity>;
   copyGuest?(source: Guest, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  copySnapshot?(ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  labelCopy?(copy: Guest, label: HeldCopyLabel, signal?: AbortSignal): Promise<Guest>;
+  copyPlan?(copy: Guest, signal?: AbortSignal): Promise<CopyPlan>;
+  labelKept?(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void>;
   disarmCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
   templateCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
   copyState?(copy: Guest, signal?: AbortSignal): Promise<CopyState>;
@@ -797,7 +802,7 @@ export interface SnapshotPlan {
     readonly newer: number;
     readonly copyAboutMs: number | null;
   };
-  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly price: Price | null };
+  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: BoxSize | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
   readonly busy?: string | null;
@@ -807,6 +812,7 @@ export interface SnapshotTake {
   readonly id: string;
   readonly box: string;
   readonly memory: boolean;
+  readonly forkSafe?: number | null;
 }
 
 export interface SnapshotSize {
@@ -825,6 +831,7 @@ export interface SnapshotRef {
   readonly id: string;
   readonly ref: string;
   readonly guest: Guest;
+  readonly from?: "snapshot" | "held-copy";
 }
 
 export interface TaskRef {
@@ -867,9 +874,18 @@ export interface HeldCopyLabel {
   readonly box: string;
   readonly snapshot: string;
   readonly kept: string | null;
+  readonly takenAt?: number;
+  readonly forkSafe?: number | null;
+  readonly kind?: string;
 }
 
 export type CopyState = "template" | "copy" | "gone";
+
+export interface CopyPlan {
+  readonly state: CopyState;
+  readonly size: BoxSize | null;
+  readonly running: boolean;
+}
 
 export type HeldSnapshotState = "complete" | "incomplete" | "in-progress";
 
@@ -886,6 +902,7 @@ export interface HeldSnapshot {
   readonly takenAt: number | null;
   readonly keptUntil: number | null;
   readonly storage: { readonly name: string; readonly type: string } | null;
+  readonly forkSafe?: number | null;
 }
 
 export class SnapshotFailed extends Error {
