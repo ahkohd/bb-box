@@ -2,7 +2,7 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=2
+readonly VERSION=5
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
@@ -29,13 +29,11 @@ marker_source=
 marker_value=
 marker_macs=()
 found_macs=
-found_count=0
 
 say() { echo "bb-box-identity: $*"; }
 fail() { echo "bb-box-identity: $*" >&2; exit "${2:-1}"; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 lower() { tr 'A-F' 'a-f'; }
-count_lines() { if [ -n "$1" ]; then printf '%s\n' "$1" | wc -l; else echo 0; fi; }
 one_line() { printf '%s' "$1" | tr '\n' ' ' | sed 's/ $//'; }
 flush() { sync "$@" 2>/dev/null || sync; }
 make_folder() { [ -d "$1" ] || install -d -m "$2" "$1"; }
@@ -51,25 +49,24 @@ listed() {
 
 is_ethernet() { [ "$(cat "$1/type" 2>/dev/null)" = 1 ] && [ -r "$1/address" ]; }
 
-backend_interface() {
-  local source=$1 path=$2
-  case $source in
-    eth) [[ ${path##*/} =~ ^eth[0-9]+$ ]] ;;
-    device) [ -e "$path/device" ] ;;
-    any) return 0 ;;
-    *) return 1 ;;
-  esac
+lxc_card_macs() {
+  ip -d -j link show 2>/dev/null | jq -r '.[]? | select(.link_type == "ether" and .linkinfo.info_kind == "veth" and has("link_netnsid") and (has("master") | not) and (.ifname | test("^eth[0-9]+$"))) | .address' 2>/dev/null
+}
+
+vm_card_macs() {
+  local path
+  for path in "$net"/*; do
+    is_ethernet "$path" && [ -e "$path/device" ] || continue
+    cat "$path/address"
+  done
 }
 
 live_macs() {
-  local source=$1 path
-  for path in "$net"/*; do
-    is_ethernet "$path" && backend_interface "$source" "$path" || continue
-    lower <"$path/address"
-  done | sort -u
+  case $1 in
+    eth) lxc_card_macs ;;
+    device) vm_card_macs ;;
+  esac | lower | sort -u
 }
-
-counted_source() { if [ "$1" = device ]; then echo device; else echo any; fi; }
 
 write_atomically() {
   local file=$1 text=$2 mode=$3
@@ -118,7 +115,7 @@ devices_settled() {
 
 new_backend_macs() {
   local mac
-  for mac in $(live_macs "$(counted_source "$marker_source")"); do
+  for mac in $(live_macs "$marker_source"); do
     listed "$mac" "${marker_macs[@]}" || printf '%s\n' "$mac"
   done
 }
@@ -127,8 +124,7 @@ look_for_marker_macs() {
   local loops=$((nic_wait_seconds * 5)) loop=0 settled=no
   devices_settled && settled=yes
   while :; do
-    found_macs=$(live_macs any)
-    found_count=$(count_lines "$(live_macs "$(counted_source "$marker_source")")")
+    found_macs=$(live_macs "$marker_source")
     marker_mac_present && return 0
     [ "$settled" = no ] || [ -z "$(new_backend_macs)" ] || return 1
     [ "$loop" -lt "$loops" ] || return 2
@@ -375,7 +371,6 @@ settle() {
       if [ "$outcome" -eq 0 ]; then
         note_boot kept
         say "kept, now that its cards are here: the identity marker of box ${marker_box:-none} matches"
-        grow_anchors
         return 0
       fi
       if [ "$outcome" -eq 1 ]; then

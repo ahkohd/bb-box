@@ -699,7 +699,8 @@ be undone on its own.
    and the desktop; a plain clone that resets; three restarts with Docker
    containers and Tailscale; a spare claimed, renamed and restarted; a card
    added, booted, then the first removed; and a card that comes late. The
-   G14 runs above were of version 1 of the program.
+   G14 runs above were of version 1 of the program. Step 3 ran on 31
+   October: see "Rollout step 3" below; both templates need version 5.
 4. **A box made before** keeps working as it does: it has no marker, so it
    never resets, and its snapshots say "not fork-safe". bb-box arms a box
    only at its first ready, so turning a backend on arms no running box.
@@ -906,6 +907,247 @@ addresses (02:42:ac:11:00:aa) is on this box's interfaces
 "BB machine host_systemd_source went with this box's identity reset, so its
 daemon does not start". `multi-user.target` waits while SSH does, as it
 wants SSH; logins do not.
+
+### Rollout step 3, on the rebuilt templates
+
+On 31 October 2026 the lead rebuilt production's templates from main with
+version 2 of the program: Proxmox LXC 9800 (`build.20261031-015802-ee19`)
+and Proxmox QEMU 9806 (`build.20261031-015944-13b3`). A separate BB (a
+fresh `npx bb-app` 0.48.1 with no account, bb-box from main `b8088de6`) had
+a backend on each, with their own VMIDs and addresses. Each template's
+program was main's file, byte for byte, with both units enabled and 16
+drop-ins.
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| Unarmed: boot and order | pass: `boot=unarmed`; the check `@159ms +17ms`, then `network-pre.target @177ms`, networkd, ssh and `user@1000` | pass: the check after udev's coldplug, `@505ms +25ms`, then `network-pre.target @627ms`, networkd, ssh and `user@1000` |
+| Unarmed: requirements | pass: networkd, ssh, `ssh.socket`, `user@1000`, Docker, `docker.socket`, containerd and `bb-box-docker-containers` each require the check and start after it; ssh the settle unit too | pass, the same |
+| Unarmed: three restarts with Docker and tailscaled (no login) | pass: `unarmed`, nothing changed | pass |
+| Unarmed: a take | pass: "not fork-safe: lxc-u had no working identity reset when it was taken" | |
+| Naming both backends arms no running box | pass: the unarmed box restarted `unarmed` | |
+| Armed: the marker at first ready | pass: `identity 41 ms`, `source eth` | pass: `identity 44 ms`, `source device` |
+| Armed: the order | pass: `kept` in 36 ms, before `network-pre`, networkd, ssh, `user@1000`, containerd, tailscaled and Docker; settle before ssh and tailscaled | pass: after udev's coldplug, 84 ms with `udevadm settle`, then the same order |
+| Armed: three restarts with Docker and a tailnet node logged in with a single-use ephemeral key | pass: `kept` each time; host ID, credentials, machine ID, SSH key, Tailscale state and node key, access file unchanged; Tailscale `Running` | pass |
+| Armed: a stop and start through bb-box | pass, the same | no boot: bb-box's stop suspends a VM to disk, so its start resumes the same boot and no check runs |
+| A take | pass: `forkSafe: 2` | pass: `forkSafe: 2` |
+| A plain clone, by the lead, `link_down=1` | pass: reset at its first start, before networkd, ssh, `user@1000` and tailscaled; host ID, credentials, daemon unit and access file gone; new machine ID and SSH key; Tailscale state `{}`; threads' folder and containers kept; after a reboot `kept`, one reset | pass, the same |
+| The source after its clone | pass: unchanged, BB machine connected, Tailscale `Running` | pass |
+| A spare claimed, renamed and restarted | pass: claimed in 12 ms with the same box ID, marker and host ID; its access file rewritten for its owner; after a restart `kept`, its renamed BB machine connected | not run: one VMID |
+| A card added and booted, then the first removed, then put back | pass: the marker gained `eth1`'s MAC; `kept` with only `eth1`; `kept` with `eth0` back | pass, with `qm reboot`, a cold start each time |
+| A late card: started with no card, then its own card put back | **fail**: a false reset | pass: `boot=unknown` at 55 s, the host ID kept, ssh and tailscaled waiting; once the card was back, `kept`, ssh, tailscaled and BB's daemon started |
+
+**The failure.** With no card, the LXC box's check waited 30 s and ended
+`unknown`, as it should. Its network and Docker then started, and Docker made
+`docker0`, a bridge and two `veth` interfaces. The settle unit counted every
+Ethernet-type interface as a card of the backend's for an `eth` marker, so it
+took those four as new cards with none of the marker's, and reset the box:
+"none of the marker's MAC addresses (bc:24:11:87:90:2f bc:24:11:af:12:b9) is
+on this box's interfaces (52:dd:31:2b:7a:db 62:01:bc:70:20:83
+da:35:57:32:58:35 fe:63:50:f4:f1:cd)". On a VM only cards with a device
+count, so Docker's interfaces never did. The unit tests' no-card settle, and
+the systemd container's, never added Docker's interfaces.
+
+**What bb-box did.** As built: it logged `identity-reset`, removed
+`host_eai95mipb8` from BB, waited for BB to confirm, and enrolled the box
+again as `host_dvmjmz6nbv` 2 s after it found the reset (`enrolled-again`).
+It wrote the box's marker again, so the box is armed, and the doctor names it
+under Identity resets. It kept the box. The reset cost its tailnet node.
+
+**The fix, version 3.** A new card shows a copy only if it is a card of the
+marker's own source: one named `eth` and a number on LXC, one with a device on
+a VM. This holds at boot, in settle and in `status`. A copy whose card was
+renamed, which version 2 reset and unarmed, is now held as unknown, with
+nothing removed. The version goes to 3, so a take's `forkSafe` says whether
+its box had the fix.
+
+**Tests.** `identity-reset.test.ts`: on LXC and on a VM, a box with no card
+past the wait is held while Docker's and Tailscale's interfaces appear, both
+at boot and in settle; nothing is removed, SSH and BB's daemon still wait,
+`status` says `incomplete`, and it is kept once its card is back. A copy whose
+card has no `eth` name is held; one whose marker is gone and has no `eth` card
+still resets and unarms. Both fail on version 2, the first with the live
+message.
+
+**Live again, with version 3** installed by hand in the same two boxes
+(sha256 `621241f5...`), both restarted `kept`, and a new take of the LXC box
+(`forkSafe: 3`):
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| A plain clone, by the lead | pass: reset at its first start, `host_dvmjmz6nbv` removed, before networkd, ssh, `user@1000` and tailscaled | |
+| A copy whose new card comes late: a clone started with no card, given a new one after 45 s | pass: at 45 s `boot=unknown`, the host ID still there, Docker up with its bridge and veths, ssh and tailscaled waiting, BB's daemon waiting; once the card came, `settle` reset it and refused the copied machine's daemon; after a reboot `kept` | |
+| A late card on the box itself | pass: `boot=unknown` at 45 s with Docker up, ssh and tailscaled waiting, the host ID unchanged; once its own card was back, `kept`, then ssh, tailscaled and BB's daemon started | pass: the same at 55 s |
+
+The templates still hold version 2, so neither backend goes into
+`identityResetBackends` until 9800 and 9806 are rebuilt with the fix, and
+`bb-box-identity version` in a new box says so: version 5, below.
+
+Afterwards the snapshots, boxes and both backends were removed from the
+separate BB, its box released, and the lead destroyed the clones. One
+spare was released before it was claimed, by setting the spares to 0
+first; the claim was done again in the right order.
+
+### After the version 3 re-review
+
+Astra found that on LXC a name was not enough. A bridge, bond, TAP, dummy,
+veth, macvlan, ipvlan or VLAN that the box made and named `eth9` still
+counted as a new card, so with the card missing it reset the box, at boot
+and in `settle`. A software interface with a fixed MAC also became an
+anchor, so a copy that made it again, its card late, was kept. The lead set
+the rule for version 4.
+
+**What a card is, version 4.** On LXC, a card is an Ethernet interface
+the backend gave the box:
+
+- it is not a bridge, bond, TUN or TAP, nor stacked on another interface:
+  it has no `bridge`, `bonding`, `tun_flags` or `lower_*` entry
+- its `iflink` is not its own index, so it is linked to another interface
+- that interface is not inside the box: no interface in the box has
+  `iflink`'s index and links back to it
+
+On a VM a card has a device, as before. Matching the marker looks at
+cards, whatever their names, so a renamed card still keeps its box. The
+marker, its anchors and evidence of a copy need the `eth` name too, on LXC.
+Anchors grow only at boot, before the box's own software makes its
+interfaces again, not in `settle`.
+
+The back link is checked both ways because LXC moves the card into the
+box, where it gets a low index: `ifindex 2`, `iflink 2761` on a production
+box. The box's own docker0 or a veth can then take the host peer's index by
+chance, and Docker's veths had `iflink 2` there, the index of their peers in
+the containers. A one-way check, "no interface inside has that index",
+would make the card the box's own whenever that happened.
+
+**Tests.** `identity-reset.test.ts`:
+
+- each of a bridge, bond, TAP, a veth whose peer is inside, a dummy, and a
+  macvlan, ipvlan or VLAN on an inside link, named `eth9`, with the card
+  missing, leaves the box held at boot and in `settle`, nothing removed and
+  the marker `incomplete`, on LXC and on a VM, until its card is back
+- a bridge with a fixed MAC never becomes an anchor; a copy whose marker
+  holds such a MAC, as version 3 could grow it, is held when the bridge is
+  made again, its daemon waiting, and resets once its own new card comes
+- anchors do not grow in `settle`; the next boot adds the card
+- a card whose host peer's index an interface of the box later takes is
+  still the box's card, and a pair the box made, each linking to the other,
+  is not
+
+The first three fail on version 3. On a QEMU box, a probe with real kernel
+interfaces in network namespaces, the card made as LXC makes it, in its
+host's namespace and moved into the box's:
+
+| Case | Version 3 | Version 4 |
+| --- | --- | --- |
+| Card missing; the box made a bridge, bond, veth with its peer inside, dummy, TAP, macvlan, ipvlan or VLAN named `eth9` | reset, all 8 | held, nothing removed |
+| Card missing; docker0, a veth to a namespace of its own, `tap0`, or a TUN or WireGuard named `eth9` | held | held |
+| A copy: the card with a new MAC, alone or with docker0 | reset | reset |
+| The box itself: its card with docker0 and a veth, docker0 at the host peer's index | | kept, marker matches |
+| The box itself, its card renamed `lan0` | kept | kept |
+| The box itself with a fixed-MAC bridge `eth9` and a second card `eth1` | kept, both grown | kept; the marker gained `eth1` only |
+| A copy, card missing, its marker holding the bridge's MAC, the bridge made again | kept, its daemon started | held, its daemon waiting |
+
+**Known limit.** A veth that the box makes, names `eth` and a number, and
+whose peer it moves into a namespace of its own still counts as a card.
+Container runtimes name that end `veth...`, not `eth...`.
+
+**Live, by hand**, on two production boxes with version 4 installed and
+armed by hand, each running Docker containers and tailscaled; the lead ran
+the node steps. While each box waited with no card, a bridge named `eth9`
+with a fixed MAC and a TAP named `eth8` were made in it.
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| A plain clone | pass: reset at its first start, the host ID removed | pass |
+| A copy whose card comes late | pass: `boot=unknown`, the host ID kept; still `unknown` with `eth9` and `eth8`; reset once its new card came, its copied daemon refused; `kept` after a reboot, its marker holding the new `eth0` only | |
+| The box itself, its card late | pass: `unknown`, still `unknown` with `eth9` and `eth8`, the host ID kept; `kept` with the same host ID once its own card was back | pass, the same |
+
+The lead deleted the snapshots and destroyed the clones. Neither backend
+goes into `identityResetBackends` until 9800 and 9806 are rebuilt with
+version 5, below.
+
+### After the version 4 re-review
+
+Astra found two more. GRE TAP, IPv6 GRE TAP and ERSPAN interfaces named
+`eth9` passed version 4's tests: they are Ethernet, with another index as
+their link and none of the excluded entries, so with the card missing they
+reset the box. And indices belong to namespaces: a card with index 20 and its
+peer at 100 outside, beside a veth of the box's with index 100 and its peer
+at 20 in a namespace of its own, looked like a pair inside the box. That hid
+the card; a second card then reset the box.
+
+The lead stopped chasing kinds one by one, and set the rule for version 5.
+
+**What a card is, version 5.** On LXC, a card is what the kernel's own link
+information, `ip -d -j link`, says is one:
+
+- `link_type` `ether` and `info_kind` `veth`
+- a `link_netnsid`: its peer is in another namespace
+- no `master`: it is on no bridge or bond
+- named `eth` and a number
+
+Nothing else is a card or an anchor, whatever its name. The index arithmetic
+of version 4 is gone; the collision needs none of it, as the two veths have
+different `link_netnsid` values and the box's has another name. On a VM a
+card still has a device. Anchors still grow only at boot.
+
+On a production LXC box, `eth0` is `veth` with `link_netnsid` 0 and no
+master; Docker's veth there has a master and `link_netnsid` 1.
+
+Two consequences, plainly:
+
+- **A card renamed from `eth`** on LXC, such as with `pct set --net0
+  name=lan0,...`, is no card, so the box is held as unknown, removing
+  nothing, until it has its name again. bb-box always names its cards `eth0`.
+- **The remaining limit.** A veth that the box makes, names `eth` and a
+  number, keeps off any bridge, and whose peer it moves into another
+  namespace is a card by this rule. With the box's own card missing, it
+  resets the box. Unit 2's recovery then keeps the box and enrols it again as
+  a new BB machine, so the cost is the box's BB machine, tailnet node and
+  access file, not the box.
+
+**Tests.** The test guest now gives the program a fake `ip` that prints the
+links it is given. `identity-reset.test.ts`:
+
+- with the card missing, each of a bridge, bond, TAP, a veth whose peer is
+  inside, a veth on a bridge as Docker's are, a dummy, a macvlan, an ipvlan, a
+  VLAN, a GRE TAP, an IPv6 GRE TAP, an ERSPAN, a VXLAN and a Geneve, named
+  `eth9`, leaves the box held at boot and in `settle`, on LXC and on a VM
+- the reviewer's collision: the marker still matches, the box is kept at
+  boot and in `settle`, and a second card is grown at the next boot, never a
+  reset
+- a card renamed `lan0` holds the box at three boots, removing nothing
+
+The fixture changed shape, so version 4 cannot run these tests; the probe
+compares the two versions instead.
+
+**Probe**, with real kernel interfaces in network namespaces on a QEMU box,
+the card made as LXC makes it:
+
+| Case | Version 4 | Version 5 |
+| --- | --- | --- |
+| Card missing; a GRE TAP, IPv6 GRE TAP or ERSPAN named `eth9` | reset | held |
+| Card missing; a veth on a bridge named `eth9`, its peer in a namespace of the box's | reset | held |
+| Card missing; a bridge, bond, inside veth, dummy, TAP, TUN, WireGuard, macvlan, ipvlan, VLAN, VXLAN or Geneve named `eth9`, or docker0, `tap0` and a Docker-like veth | held | held |
+| The reviewer's collision, then a second card | reset | kept; the second card grown at the next boot |
+| A copy: the card with a new MAC, alone or with docker0 | reset | reset |
+| The box itself, with docker0 and a Docker-like veth | kept | kept |
+| The box itself, its card renamed `lan0` | kept | held |
+| A copy, card missing, a bridge with the MAC its marker holds made again | held | held |
+| The limit: card missing, a veth named `eth9` with its peer in a namespace of the box's | reset | reset |
+
+**Live, by hand**, on a production LXC box with version 5 installed and armed
+by hand, running Docker containers and tailscaled; the lead ran the node
+steps. While the box, or its copy, waited with no card, a bridge with a fixed
+MAC, a TAP, a GRE TAP, an ERSPAN and a veth pair inside the box were made in
+it, named `eth5` to `eth9`.
+
+| Check | Result |
+| --- | --- |
+| A plain clone | pass: reset at its first start, the host ID removed |
+| A copy whose card comes late | pass: `boot=unknown`, the host ID kept; still `unknown` with the five interfaces; reset once its new card came, its copied daemon refused; `kept` after a reboot |
+| The box itself, its card late | pass: `unknown` through the five interfaces, the host ID kept; `kept` with the same host ID once its own card was back |
+
+The lead deleted the snapshot and destroyed the clones.
 
 ### Choices and deviations
 
