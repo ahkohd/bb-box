@@ -2,7 +2,7 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=3
+readonly VERSION=4
 readonly MARKER_HEADER="bb-box identity 1"
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
@@ -49,23 +49,59 @@ listed() {
 
 is_ethernet() { [ "$(cat "$1/type" 2>/dev/null)" = 1 ] && [ -r "$1/address" ]; }
 
-backend_interface() {
+made_in_software() {
+  local path=$1 lower
+  if [ -e "$path/bridge" ] || [ -e "$path/bonding" ] || [ -e "$path/tun_flags" ]; then return 0; fi
+  for lower in "$path"/lower_*; do
+    if [ -e "$lower" ] || [ -L "$lower" ]; then return 0; fi
+  done
+  return 1
+}
+
+index_and_link() {
+  local path=$1
+  { read -r index <"$path/ifindex" && read -r link <"$path/iflink"; } 2>/dev/null && [[ $index =~ ^[0-9]+$ && $link =~ ^[0-9]+$ ]]
+}
+
+linked_outside_the_box() {
+  local path=$1 index link
+  index_and_link "$path" && [ "$link" -gt 0 ] && [ "$link" != "$index" ] && [[ $pairs_inside != *" $link>$index "* ]]
+}
+
+given_by_backend() {
   local source=$1 path=$2
   case $source in
-    eth) [[ ${path##*/} =~ ^eth[0-9]+$ ]] ;;
+    eth) ! made_in_software "$path" && linked_outside_the_box "$path" ;;
     device) [ -e "$path/device" ] ;;
-    any) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-live_macs() {
-  local source=$1 path
+named_as_recorded() {
+  local source=$1 path=$2
+  [ "$source" != eth ] || [[ ${path##*/} =~ ^eth[0-9]+$ ]]
+}
+
+links_inside() {
+  local path index link pairs=" "
   for path in "$net"/*; do
-    is_ethernet "$path" && backend_interface "$source" "$path" || continue
+    index_and_link "$path" && pairs+="$index>$link "
+  done
+  printf '%s' "$pairs"
+}
+
+card_macs() {
+  local source=$1 names=$2 path pairs_inside
+  pairs_inside=$(links_inside)
+  for path in "$net"/*; do
+    is_ethernet "$path" && given_by_backend "$source" "$path" || continue
+    [ "$names" = any-name ] || named_as_recorded "$source" "$path" || continue
     lower <"$path/address"
   done | sort -u
 }
+
+live_macs() { card_macs "$1" as-recorded; }
+given_macs() { card_macs "$1" any-name; }
 
 write_atomically() {
   local file=$1 text=$2 mode=$3
@@ -123,7 +159,7 @@ look_for_marker_macs() {
   local loops=$((nic_wait_seconds * 5)) loop=0 settled=no
   devices_settled && settled=yes
   while :; do
-    found_macs=$(live_macs any)
+    found_macs=$(given_macs "$marker_source")
     marker_mac_present && return 0
     [ "$settled" = no ] || [ -z "$(new_backend_macs)" ] || return 1
     [ "$loop" -lt "$loops" ] || return 2
@@ -370,7 +406,6 @@ settle() {
       if [ "$outcome" -eq 0 ]; then
         note_boot kept
         say "kept, now that its cards are here: the identity marker of box ${marker_box:-none} matches"
-        grow_anchors
         return 0
       fi
       if [ "$outcome" -eq 1 ]; then

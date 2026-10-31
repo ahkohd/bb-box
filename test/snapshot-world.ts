@@ -198,6 +198,8 @@ export function identityGuest(options: { readonly booted?: boolean; readonly on?
   mkdirSync(join(root, "sys/class/net/eth0"), { recursive: true });
   writeFileSync(join(root, "sys/class/net/eth0/address"), "bc:24:11:aa:f1:b6\n");
   writeFileSync(join(root, "sys/class/net/eth0/type"), "1\n");
+  writeFileSync(join(root, "sys/class/net/eth0/ifindex"), "2\n");
+  writeFileSync(join(root, "sys/class/net/eth0/iflink"), "900\n");
   const tool = join(dir, "bb-box-identity");
   writeFileSync(tool, `#!/bin/sh\nBBBOX_IDENTITY_ROOT=${quote(root)} BBBOX_IDENTITY_NIC_WAIT_SECONDS=0 exec bash ${quote(IDENTITY_SCRIPT)} "$@"\n`, { mode: 0o755 });
   if (options.on !== false) assert.equal(spawnSync(tool, ["enable", "--no-unit"]).status, 0, "the image's build turned the reset on");

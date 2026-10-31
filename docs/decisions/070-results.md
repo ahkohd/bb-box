@@ -700,7 +700,7 @@ be undone on its own.
    containers and Tailscale; a spare claimed, renamed and restarted; a card
    added, booted, then the first removed; and a card that comes late. The
    G14 runs above were of version 1 of the program. Step 3 ran on 31
-   October: see "Rollout step 3" below; LXC needs version 3 in its template.
+   October: see "Rollout step 3" below; both templates need version 4.
 4. **A box made before** keeps working as it does: it has no marker, so it
    never resets, and its snapshots say "not fork-safe". bb-box arms a box
    only at its first ready, so turning a backend on arms no running box.
@@ -979,13 +979,91 @@ message.
 | A late card on the box itself | pass: `boot=unknown` at 45 s with Docker up, ssh and tailscaled waiting, the host ID unchanged; once its own card was back, `kept`, then ssh, tailscaled and BB's daemon started | pass: the same at 55 s |
 
 The templates still hold version 2, so neither backend goes into
-`identityResetBackends` until 9800 and 9806 are rebuilt with version 3, and
-the doctor's image record or `bb-box-identity version` says 3.
+`identityResetBackends` until 9800 and 9806 are rebuilt with the fix, and
+`bb-box-identity version` in a new box says so: version 4, below.
 
 Afterwards the snapshots, boxes and both backends were removed from the
 separate BB, its box released, and the lead destroyed the clones. One
 spare was released before it was claimed, by setting the spares to 0
 first; the claim was done again in the right order.
+
+### After the version 3 re-review
+
+Astra found that on LXC a name was not enough. A bridge, bond, TAP, dummy,
+veth, macvlan, ipvlan or VLAN that the box made and named `eth9` still
+counted as a new card, so with the card missing it reset the box, at boot
+and in `settle`. A software interface with a fixed MAC also became an
+anchor, so a copy that made it again, its card late, was kept. The lead set
+the rule for version 4.
+
+**What a card is, version 4.** On LXC, a card is an Ethernet interface
+the backend gave the box:
+
+- it is not a bridge, bond, TUN or TAP, nor stacked on another interface:
+  it has no `bridge`, `bonding`, `tun_flags` or `lower_*` entry
+- its `iflink` is not its own index, so it is linked to another interface
+- that interface is not inside the box: no interface in the box has
+  `iflink`'s index and links back to it
+
+On a VM a card has a device, as before. Matching the marker looks at
+cards, whatever their names, so a renamed card still keeps its box. The
+marker, its anchors and evidence of a copy need the `eth` name too, on LXC.
+Anchors grow only at boot, before the box's own software makes its
+interfaces again, not in `settle`.
+
+The back link is checked both ways because LXC moves the card into the
+box, where it gets a low index: `ifindex 2`, `iflink 2761` on a production
+box. The box's own docker0 or a veth can then take the host peer's index by
+chance, and Docker's veths had `iflink 2` there, the index of their peers in
+the containers. A one-way check, "no interface inside has that index",
+would make the card the box's own whenever that happened.
+
+**Tests.** `identity-reset.test.ts`:
+
+- each of a bridge, bond, TAP, a veth whose peer is inside, a dummy, and a
+  macvlan, ipvlan or VLAN on an inside link, named `eth9`, with the card
+  missing, leaves the box held at boot and in `settle`, nothing removed and
+  the marker `incomplete`, on LXC and on a VM, until its card is back
+- a bridge with a fixed MAC never becomes an anchor; a copy whose marker
+  holds such a MAC, as version 3 could grow it, is held when the bridge is
+  made again, its daemon waiting, and resets once its own new card comes
+- anchors do not grow in `settle`; the next boot adds the card
+- a card whose host peer's index an interface of the box later takes is
+  still the box's card, and a pair the box made, each linking to the other,
+  is not
+
+The first three fail on version 3. On a QEMU box, a probe with real kernel
+interfaces in network namespaces, the card made as LXC makes it, in its
+host's namespace and moved into the box's:
+
+| Case | Version 3 | Version 4 |
+| --- | --- | --- |
+| Card missing; the box made a bridge, bond, veth with its peer inside, dummy, TAP, macvlan, ipvlan or VLAN named `eth9` | reset, all 8 | held, nothing removed |
+| Card missing; docker0, a veth to a namespace of its own, `tap0`, or a TUN or WireGuard named `eth9` | held | held |
+| A copy: the card with a new MAC, alone or with docker0 | reset | reset |
+| The box itself: its card with docker0 and a veth, docker0 at the host peer's index | | kept, marker matches |
+| The box itself, its card renamed `lan0` | kept | kept |
+| The box itself with a fixed-MAC bridge `eth9` and a second card `eth1` | kept, both grown | kept; the marker gained `eth1` only |
+| A copy, card missing, its marker holding the bridge's MAC, the bridge made again | kept, its daemon started | held, its daemon waiting |
+
+**Known limit.** A veth that the box makes, names `eth` and a number, and
+whose peer it moves into a namespace of its own still counts as a card.
+Container runtimes name that end `veth...`, not `eth...`.
+
+**Live, by hand**, on two production boxes with version 4 installed and
+armed by hand, each running Docker containers and tailscaled; the lead ran
+the node steps. While each box waited with no card, a bridge named `eth9`
+with a fixed MAC and a TAP named `eth8` were made in it.
+
+| Check | Proxmox LXC | Proxmox QEMU |
+| --- | --- | --- |
+| A plain clone | pass: reset at its first start, the host ID removed | pass |
+| A copy whose card comes late | pass: `boot=unknown`, the host ID kept; still `unknown` with `eth9` and `eth8`; reset once its new card came, its copied daemon refused; `kept` after a reboot, its marker holding the new `eth0` only | |
+| The box itself, its card late | pass: `unknown`, still `unknown` with `eth9` and `eth8`, the host ID kept; `kept` with the same host ID once its own card was back | pass, the same |
+
+The lead deleted the snapshots and destroyed the clones. Neither backend
+goes into `identityResetBackends` until 9800 and 9806 are rebuilt with
+version 4.
 
 ### Choices and deviations
 
