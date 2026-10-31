@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { ProxmoxLxcBackend, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { keptUntilOf, parseSnapshotLabel, snapshotLabel, snapshotName } from "../src/backends/proxmox/snapshotting.ts";
 import type { FetchResponse } from "../src/backends/proxmox/api.ts";
-import { SnapshotFailed, SnapshotIncomplete, type AcquireHooks, type BoxIdentity, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
+import { RestoreChanged, SnapshotFailed, SnapshotIncomplete, type AcquireHooks, type BoxIdentity, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
@@ -61,7 +61,7 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
 
 test("a container offers disk snapshots taken while it runs, and nothing it cannot do yet", () => {
   const { backend } = world();
-  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "none", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
+  assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null });
   assert.equal(backend.snapshotting("windows"), null);
 });
 
@@ -72,7 +72,8 @@ test("the plan reads the root disk's storage, its use and its thin metadata, and
   assert.deepEqual(plan.storage, { key: "proxmox:pve:local-lvm", name: "local-lvm", type: "lvmthin", percentFull: 33.3, metadataPercentFull: 9.8, metadataUnread: null, totalBytes: 900 * 2 ** 30, usedBytes: 300 * 2 ** 30 });
   assert.deepEqual(plan.take, { ok: true, why: null, aboutMs: 1000, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: null });
   assert.equal(plan.locked, null);
-  assert.equal(plan.restore.way, "none");
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.undo, "snapshot");
   assert.equal(plan.fork.ok, false);
 });
 
@@ -252,3 +253,85 @@ test("a take is complete only when its task succeeded; the provider is told befo
   assert.deepEqual(await state.backend.providerTask({ ref: "UPID:pve:00000000:0:0:vzsnapshot:7000:x:", host: "pve" }), { state: "missing", words: "Proxmox has no task UPID:pve:00000000:0:0:vzsnapshot:7000:x:." });
 });
 
+
+test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes back to from the snapshot's own config, how many are newer, and why it cannot", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  await state.backend.snapshot(guest, { id: "snbbbbbbbbbbbb", box: id.boxId, memory: false }, hooks);
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.why, null);
+  assert.equal(plan.restore.undo, "snapshot");
+  assert.equal(plan.restore.undoBytes, 0);
+  assert.equal(plan.restore.newer, 1);
+  assert.notEqual(plan.restore.sizeBack?.memoryMiB, 8192, "the size it goes back to is the snapshot's");
+  const missing = await state.backend.planSnapshots(guest, "linux", { id: "sncccccccccccc", ref: "", guest });
+  assert.equal(missing.restore.way, "none");
+  assert.equal(missing.restore.why, `Guest ${vmid} has no snapshot bbsncccccccccccc.`);
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  const zfs = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
+  assert.equal(zfs.restore.way, "rollback-newest-only");
+  assert.equal(zfs.restore.undo, "held-copy");
+  state.proxmox.storageTypes.delete("local-lvm");
+  state.proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => privilege !== "VM.Snapshot.Rollback")));
+  const fresh = new ProxmoxLxcBackend(
+    lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009 }),
+    state.context,
+    { fetch: state.proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 },
+  );
+  made.push(fresh);
+  const noRight = await fresh.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
+  assert.equal(noRight.restore.way, "none");
+  assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so bb-box cannot restore snapshots there\./);
+});
+
+test("a rollback refuses a running guest, records its task before it waits, puts the snapshot's config back, and says when its task failed part way", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks, seen } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
+  const running = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(running instanceof SnapshotFailed);
+  assert.equal((running as Error).message, `Guest ${vmid} is running, and bb-box restores a guest only once it has stopped.`);
+  await state.backend.powerOff(guest);
+  assert.equal(state.proxmox.guests.get(vmid)!.status, "stopped");
+  state.proxmox.guests.get(vmid)!.config.lock = "backup";
+  const locked = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(locked instanceof SnapshotFailed);
+  assert.match((locked as Error).message, new RegExp(`Proxmox has guest ${vmid} locked \\(backup\\), so it cannot restore the snapshot\\. Run \`pct unlock ${vmid}\` on pve\\.`));
+  delete state.proxmox.guests.get(vmid)!.config.lock;
+  seen.length = 0;
+  await state.backend.rollbackSnapshot(guest, ref, hooks);
+  assert.match(seen[0]!.ref, /^UPID:pve:.*:vzrollback:7000:/);
+  assert.notEqual(state.proxmox.guests.get(vmid)!.config.memory, "8192");
+  assert.deepEqual(await state.backend.findTasks(guest, "rollback", Date.now() - 60_000), [seen[0]]);
+  state.proxmox.nextTaskExit.set("vzrollback", "unable to rollback: interrupted");
+  const failed = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
+  assert.ok(failed instanceof RestoreChanged, String(failed));
+  assert.equal((failed as Error).message, "Proxmox's rollback task failed: unable to rollback: interrupted.");
+});
+
+test("G13: rollbacks of this install's guests are read from the node's task list with their user, time and status", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  await state.backend.powerOff(guest);
+  const since = Date.now() - 60_000;
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks);
+  state.proxmox.nextTaskExit.set("vzrollback", "unable to rollback");
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch(() => undefined);
+  const found = await state.backend.outsideRollbacks(since);
+  assert.deepEqual(
+    found.map((each) => ({ guest: each.guest, user: each.user, outcome: each.outcome })),
+    [
+      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "ok" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "failed", words: "unable to rollback" } },
+    ],
+  );
+});

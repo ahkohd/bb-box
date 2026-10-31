@@ -25,8 +25,17 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task"] as const;
+export const HOLD_STEPS = ["planned", "task", "stopped", "undo", "rolled-back", "started"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
+
+export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
+  planned: "its record",
+  task: "its provider's task began",
+  stopped: "a restore's stop",
+  undo: "a restore's undo",
+  "rolled-back": "a restore's rollback",
+  started: "a restored box's start",
+};
 
 export class SnapshotHolds {
   #armed: HoldStepName | null = null;
@@ -42,7 +51,7 @@ export class SnapshotHolds {
   async hold(operation: { readonly id: string; readonly kind: string }, step: HoldStepName, signal: AbortSignal, log: (message: string) => void): Promise<void> {
     if (this.#armed !== step) return;
     this.#armed = null;
-    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after its ${step === "planned" ? "record" : "provider's task began"}, as a live check asked, until bb-box stops.`);
+    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, until bb-box stops.`);
     await new Promise<never>((_, reject) => {
       if (signal.aborted) return reject(signal.reason);
       signal.addEventListener("abort", () => reject(signal.reason), { once: true });

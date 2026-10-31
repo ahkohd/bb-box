@@ -27,6 +27,7 @@ export interface FakeSnapshot {
   snaptime: number;
   snapstate?: string;
   vmstate?: boolean;
+  config?: Record<string, string>;
 }
 
 export interface FakeCall {
@@ -93,6 +94,7 @@ export class FakeProxmox {
   readonly privileges = new Map<string, Set<string>>([["/pool/bbbox", new Set(TOKEN_ROLE)]]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   killNextSnapshot = false;
+  #snapshotsTaken = 0;
   snapshotTaskFailsWhole = false;
   readonly storageConfigs = new Map<string, Record<string, unknown>>([["local-lvm", { storage: "local-lvm", type: "lvmthin", vgname: "pve", thinpool: "data", content: "rootdir,images" }]]);
   readonly thinPools: { lv: string; vg: string; metadata_size: number; metadata_used: number }[] = [{ lv: "data", vg: "pve", metadata_size: 1024 ** 3, metadata_used: 100 * 1024 ** 2 }];
@@ -287,7 +289,30 @@ export class FakeProxmox {
           (!params.typefilter || upid.split(":")[5] === params.typefilter) &&
           (!params.since || task.start >= Number(params.since)),
       );
-      return ok(listed.map(([upid, task]) => ({ upid, type: upid.split(":")[5], id: upid.split(":")[6], starttime: task.start, ...(task.pollsLeft > 0 ? {} : { status: task.exitstatus }) })));
+      return ok(listed.map(([upid, task]) => ({ upid, type: upid.split(":")[5], id: upid.split(":")[6], user: upid.split(":")[7], starttime: task.start, ...(task.pollsLeft > 0 ? {} : { status: task.exitstatus }) })));
+    }
+
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/snapshot\/([^/]+)\/(rollback|config)$/.exec(path))) {
+      const [, type = "lxc", id, encoded, action] = match;
+      const vmid = Number(id);
+      const guest = this.#of(type, vmid);
+      if (!guest) return this.#missing(vmid, type);
+      const name = decodeURIComponent(encoded!);
+      const snapshot = guest.snapshots?.find((each) => each.name === name);
+      if (!snapshot) return respond(500, `snapshot '${name}' does not exist`, { data: null });
+      if (action === "config" && method === "GET") return ok({ ...(snapshot.config ?? {}) });
+      if (action === "rollback" && method === "POST") {
+        const prefix = type === "qemu" ? "qm" : "vz";
+        const what = type === "qemu" ? "VM" : "CT";
+        if (guest.config.lock) return ok(this.#task(`${prefix}rollback`, vmid, `${what} is locked (${guest.config.lock})`));
+        if (this.nextTaskExit.has(`${prefix}rollback`)) {
+          guest.config.lock = "rollback";
+          return ok(this.#task(`${prefix}rollback`, vmid));
+        }
+        guest.config = { ...(snapshot.config ?? guest.config), parent: name };
+        guest.status = "stopped";
+        return ok(this.#task(`${prefix}rollback`, vmid));
+      }
     }
 
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/snapshot(?:\/([^/]+))?$/.exec(path))) {
@@ -307,7 +332,7 @@ export class FakeProxmox {
       if (method === "POST" && !name) {
         if (guest.config.lock) return ok(this.#task(`${prefix}snapshot`, vmid, `${what} is locked (${guest.config.lock})`));
         if (snapshots.some((snapshot) => snapshot.name === params.snapname)) return ok(this.#task(`${prefix}snapshot`, vmid, `snapshot name '${params.snapname}' already used`));
-        const taken: FakeSnapshot = { name: params.snapname!, description: params.description ?? "", snaptime: Math.floor(Date.now() / 1000), ...(params.vmstate === "1" ? { vmstate: true } : {}) };
+        const taken: FakeSnapshot = { name: params.snapname!, description: params.description ?? "", snaptime: Math.floor(Date.now() / 1000) + this.#snapshotsTaken++, config: { ...guest.config }, ...(params.vmstate === "1" ? { vmstate: true } : {}) };
         if (this.snapshotTaskFailsWhole) {
           this.snapshotTaskFailsWhole = false;
           snapshots.push(taken);

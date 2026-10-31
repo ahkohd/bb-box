@@ -1,4 +1,22 @@
-import { SnapshotFailed, SnapshotIncomplete, type Guest, type HeldSnapshot, type SnapshotHooks, type SnapshotPlan, type SnapshotStorage, type Snapshotting, type TaskOutcome, type TaskRef } from "../src/backends/types.ts";
+import { cpSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import {
+  RestoreChanged,
+  SnapshotFailed,
+  SnapshotIncomplete,
+  type BoxSize,
+  type Guest,
+  type HeldSnapshot,
+  type OutsideRollback,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotStorage,
+  type Snapshotting,
+  type TaskKind,
+  type TaskOutcome,
+  type TaskRef,
+} from "../src/backends/types.ts";
 import type { FakeBackend } from "./fake-backend.ts";
 
 export interface Held {
@@ -12,6 +30,7 @@ export interface Held {
 }
 
 export type Outcome = "ok" | "failed" | "incomplete" | "unknown" | "ok-task-failed";
+export type RollbackOutcome = "ok" | "refused" | "failed" | "unknown";
 export type Submit = "answered" | "answer-lost" | "never-arrived";
 
 export interface UnsettledSteps {
@@ -24,7 +43,15 @@ const MiB = 2 ** 20;
 export class FakeSnapshots {
   readonly held = new Map<string, Held>();
   readonly tasks = new Map<string, TaskOutcome>();
-  readonly started = new Map<string, { readonly ref: string; readonly at: number; readonly operation: "take" | "delete" }>();
+  readonly started = new Map<string, { readonly ref: string; readonly at: number; readonly operation: TaskKind }>();
+  restoreWay: SnapshotPlan["restore"]["way"] = "rollback";
+  restoreWhy: string | null = null;
+  newer = 0;
+  rollback: RollbackOutcome = "ok";
+  powerOffFault: Error | null = null;
+  readonly order: string[] = [];
+  readonly sizes = new Map<string, BoxSize>();
+  readonly outside: OutsideRollback[] = [];
   listing: Error | null = null;
   listingGate: Promise<void> | null = null;
   take: Outcome = "ok";
@@ -49,18 +76,27 @@ export class FakeSnapshots {
     return { key: this.storageKey, name: "fast", type: "lvmthin", percentFull: this.percentFull, metadataPercentFull: this.metadataPercentFull, metadataUnread: null, totalBytes: 100 * GiB, usedBytes: (this.percentFull / 100) * 100 * GiB };
   }
 
-  #task(guest: Guest, operation: "take" | "delete", id: string, outcome: TaskOutcome, now: number): string {
+  #task(guest: Guest, operation: TaskKind, id: string, outcome: TaskOutcome, now: number): string {
     const ref = `task-${++this.#tasks}`;
     this.tasks.set(ref, outcome);
     this.started.set(`${guest.ref}|${operation}|${id}`, { ref, at: now, operation });
     return ref;
   }
 
-  attach(backend: FakeBackend, now: () => number): void {
+  attach(backend: FakeBackend, now: () => number, root: string | null = null): void {
     const target = backend as unknown as Record<string, unknown>;
-    const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "none", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
+    const homeOf = (ref: string) => (root ? join(root, backend.id, ref) : null);
+    const savedOf = (id: string) => (root ? join(root, "saved", id) : null);
+    const start = backend.start?.bind(backend);
+    if (start) {
+      target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => {
+        this.order.push("start");
+        return start(guest, signal, timing);
+      };
+    }
+    const offer: Snapshotting = { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "none", keepsPastRelease: "no", lives: "host", price: null, excludes: null };
     target.snapshotting = () => offer;
-    target.planSnapshots = async (): Promise<SnapshotPlan> => ({
+    target.planSnapshots = async (_guest: Guest, _kind: string, snapshot: SnapshotRef | null): Promise<SnapshotPlan> => ({
       storage: this.storage(),
       take: {
         ok: this.takeWhy === null,
@@ -71,7 +107,17 @@ export class FakeSnapshots {
         memory: this.memoryWhy ? null : { storage: this.memoryStorage ?? this.storage(), addsBytes: (4096 * 2 + 500) * MiB },
         memoryWhy: this.memoryWhy,
       },
-      restore: { way: "none", why: null, undo: "none", undoAboutMs: 0, undoBytes: null, sizeBack: null, leavesOnEarlierGuest: 0 },
+      restore: {
+        way: this.restoreWay,
+        why: this.restoreWhy,
+        undo: this.restoreWay === "rollback" ? "snapshot" : this.restoreWay === "rollback-newest-only" ? "held-copy" : "none",
+        undoAboutMs: 1000,
+        undoBytes: 0,
+        sizeBack: snapshot ? (this.sizes.get(snapshot.id) ?? null) : null,
+        leavesOnEarlierGuest: 0,
+        newer: this.newer,
+        copyAboutMs: 2000,
+      },
       keep: { way: "no", why: null, aboutMs: null, bytes: null, price: null },
       fork: { ok: false, why: null, aboutMs: 0, bytes: null },
       locked: this.locked,
@@ -88,6 +134,12 @@ export class FakeSnapshots {
         this.take = "ok";
         const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null };
         if (outcome !== "failed") this.held.set(take.id, held);
+        this.order.push(`take ${take.id}`);
+        const home = homeOf(guest.ref);
+        const saved = savedOf(take.id);
+        if (outcome !== "failed" && home && saved && existsSync(home)) cpSync(home, saved, { recursive: true });
+        const size = backend.sizeOf(guest.ref) ?? guest.size;
+        if (size) this.sizes.set(take.id, size);
         const result: TaskOutcome =
           outcome === "failed" ? { state: "failed", words: "snapshot feature is not available" } : outcome === "incomplete" ? { state: "failed", words: "received interrupt" } : outcome === "ok-task-failed" ? { state: "failed", words: "vmstate save failed" } : { state: "ok" };
         const ref = this.#task(guest, "take", take.id, result, now());
@@ -129,6 +181,43 @@ export class FakeSnapshots {
       if (outcome === "incomplete") throw new SnapshotIncomplete("Proxmox left it part-deleted (snapstate delete).");
       if (outcome === "unknown") throw new Error("cannot reach the provider: timed out");
     };
+    target.powerOff = async (guest: Guest) => {
+      this.order.push("power-off");
+      const fault = this.powerOffFault;
+      this.powerOffFault = null;
+      if (fault) throw fault;
+      await backend.stop!(guest);
+    };
+    target.rollbackSnapshot = async (guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks) => {
+      this.order.push(`rollback ${ref.id}`);
+      if ((await backend.power(guest)) === "running") throw new SnapshotFailed(`Guest ${guest.ref} is running, and bb-box restores a guest only once it has stopped.`);
+      if (!this.held.has(ref.id)) throw new SnapshotFailed(`Guest ${guest.ref} has no snapshot bb${ref.id}.`);
+      const outcome = this.rollback;
+      this.rollback = "ok";
+      await hooks.submitting();
+      if (outcome === "refused") throw new SnapshotFailed("CT is locked (backup)");
+      const result: TaskOutcome = outcome === "failed" ? { state: "failed", words: "rollback interrupted" } : { state: "ok" };
+      const task = this.#task(guest, "rollback", ref.id, result, now());
+      await hooks.task({ ref: task, host: guest.host });
+      if (this.gate) await this.gate;
+      if (outcome === "failed") throw new RestoreChanged("Proxmox's rollback task failed: rollback interrupted.");
+      const home = homeOf(guest.ref);
+      const saved = savedOf(ref.id);
+      if (home && saved && existsSync(saved)) {
+        rmSync(home, { recursive: true, force: true });
+        cpSync(saved, home, { recursive: true });
+      }
+      const size = this.sizes.get(ref.id);
+      if (size) backend.setSize(guest.ref, size);
+      if (outcome === "unknown") throw new Error("cannot reach the provider: timed out");
+    };
+    target.outsideRollbacks = async (since: number): Promise<OutsideRollback[]> => {
+      if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
+      const own = [...this.started.entries()]
+        .filter(([, task]) => task.operation === "rollback")
+        .map(([key, task]): OutsideRollback => ({ task: { ref: task.ref, host: null }, guest: key.split("|")[0]!, user: "bb-box@pve!plugin", startedAt: task.at, outcome: this.tasks.get(task.ref) ?? { state: "missing", words: "" } }));
+      return [...own, ...this.outside].filter((each) => each.startedAt >= since).sort((a, b) => a.startedAt - b.startedAt);
+    };
     target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
       if (this.listing) throw this.listing;
       const listed = [...this.held.values()].map((held) => ({
@@ -152,7 +241,7 @@ export class FakeSnapshots {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return this.tasks.get(task.ref) ?? { state: "missing", words: `no task ${task.ref}` };
     };
-    target.findTasks = async (guest: Guest, operation: "take" | "delete", since: number): Promise<TaskRef[]> => {
+    target.findTasks = async (guest: Guest, operation: TaskKind, since: number): Promise<TaskRef[]> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return [...this.started.entries()]
         .filter(([key, task]) => key.startsWith(`${guest.ref}|${operation}|`) && task.at >= since - 5000)

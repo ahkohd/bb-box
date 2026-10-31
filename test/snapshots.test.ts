@@ -22,134 +22,7 @@ import { FakeBackend } from "./fake-backend.ts";
 import { FakeSnapshots as Provider, type Held } from "./fake-snapshots.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
 
-const THREAD = "thr_one";
-const COMMAND: Caller = { is: "command" };
-const HOUR = 60 * 60_000;
-const DAY = 24 * HOUR;
-
-function world(options: { readonly identityTool?: string; readonly markersOn?: boolean } = {}) {
-  const root = tempDir("snapshots");
-  const kv = new MemoryStorage();
-  const backendStorage = scopedStorage(kv, "backend/fake/");
-  let handle: Database.Database | null = null;
-  const source = { database: () => (handle?.open ? handle : (handle = new Database(join(root, "data.db")))) as never };
-  let files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
-  let clock = Date.UTC(2026, 9, 30, 10, 42);
-  const now = () => clock;
-  const provider = new Provider();
-  const holds: { step: HoldStep | null } = { step: null };
-  const state = {
-    root,
-    kv,
-    provider,
-    holds,
-    active: true,
-    threadState: "live" as "live" | "ended",
-    settings: {} as SnapshotSettings,
-    price: null as Price | null,
-    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}) }),
-    log: new BoxLogStore({ file: files.log, now }),
-    store: new SnapshotStore({ file: files.snapshots, now }),
-    boxes: null as unknown as Boxes,
-    snapshots: null as unknown as Snapshots,
-    errors: [] as string[],
-    logs: [] as string[],
-    boxLogs: [] as string[],
-    tick(ms: number) {
-      clock += ms;
-    },
-    get now() {
-      return clock;
-    },
-    kinds(boxId: string): BoxEventKind[] {
-      return state.log.events(boxId).map((event) => event.kind);
-    },
-    async restart() {
-      state.snapshots.dispose();
-      await state.boxes.dispose();
-      files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
-      state.log = new BoxLogStore({ file: files.log, now });
-      state.store = new SnapshotStore({ file: files.snapshots, now });
-      state.backend = new FakeBackend({ root, storage: backendStorage });
-      build();
-    },
-    source,
-    forgetBox(box: BoxRecord) {
-      return Promise.all([kv.delete(`box/${box.threadId}/${box.id}`), kv.delete(`index/${box.id}`)]);
-    },
-    forgetRecords() {
-      handle!.prepare("DELETE FROM boxsnapshots.snapshots").run();
-      handle!.prepare("DELETE FROM boxsnapshots.snapshot_operations").run();
-    },
-  };
-  const backends = {
-    get: (id: string): Backend | null => (state.active && id === state.backend.id ? state.backend : null),
-    active: (): Backend[] => (state.active ? [state.backend] : []),
-    on: (): Backend[] => (state.active ? [state.backend] : []),
-    kinds: () => (state.active ? state.backend.kinds().map((kind) => ({ kind, backend: state.backend as Backend })) : []),
-  };
-  const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"] } as unknown as GeneralConfig;
-  const build = () => {
-    provider.attach(state.backend, now);
-    provider.ledger = state.store;
-    const boxes: Boxes = new Boxes({
-      kv,
-      backends,
-      general: async () => general,
-      notify: () => {},
-      thread: async () => ({ state: state.threadState, said: state.threadState }),
-      logError: (operation, error) => state.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
-      events: state.log,
-      log: (message) => state.boxLogs.push(message),
-      ended: (box, how) => state.snapshots.boxEnded(box, how),
-      keepsGuest: (backendId, guestRef) => state.snapshots.holdsGuest(backendId, guestRef),
-      now,
-    });
-    state.boxes = boxes;
-    state.snapshots = new Snapshots({
-      ledger: state.store,
-      boxes,
-      backends,
-      events: state.log,
-      notify: () => {},
-      logError: (operation, error) => state.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
-      log: (message) => state.logs.push(message),
-      hold: async (_operation, step, signal) => {
-        if (holds.step !== step) return;
-        holds.step = null;
-        await new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
-      },
-      settings: () => snapshotConfig({ general: { snapshots: state.settings } }),
-      priced: (_backend, offer) => (state.price ? { ...offer, price: state.price } : offer),
-      now,
-      timeZone: "UTC",
-    });
-  };
-  build();
-  return state;
-}
-
-type World = ReturnType<typeof world>;
-
-async function readyBox(state: World): Promise<BoxRecord> {
-  const box = await state.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: BY_COMMAND });
-  const settled = await state.boxes.settled(box);
-  assert.equal(settled?.state, "ready");
-  return settled!;
-}
-
-function standing(box: BoxRecord): Standing {
-  return { box: { id: box.id, threadId: box.threadId }, runsOn: false };
-}
-
-async function rejection(work: Promise<unknown>): Promise<BoxError> {
-  const error = await work.then(
-    () => null,
-    (caught: unknown) => caught,
-  );
-  assert.ok(error instanceof BoxError, `expected a BoxError, got ${String(error)}`);
-  return error;
-}
+import { COMMAND, DAY, HOUR, THREAD, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
 
 test("a take is recorded and pinned before the backend is asked, records the provider's task before it waits, and is ready once confirmed", async () => {
   const state = world();
@@ -429,7 +302,7 @@ test("a request ID is bound to its caller, box, kind and arguments: a reuse is r
   const taken = await state.snapshots.take(COMMAND, one, standing(one), { request: "r", name: "first" });
   const otherBox = await rejection(state.snapshots.take(COMMAND, two, standing(two), { request: "r", name: "first" }));
   assert.equal(otherBox.code, "reused_request");
-  assert.equal(otherBox.message, 'Request ID "r" was used already, for another take or delete. Make a new one for this.');
+  assert.equal(otherBox.message, 'Request ID "r" was used already, for another take, delete or restore. Make a new one for this.');
   assert.equal((await rejection(state.snapshots.take(COMMAND, one, standing(one), { request: "r", name: "other" }))).code, "reused_request", "other arguments");
   assert.equal((await rejection(state.snapshots.delete(COMMAND, standing(one), taken.snapshot!.id, { request: "r" }))).code, "reused_request", "a delete with a take's request");
   assert.equal(state.store.records().length, 1);

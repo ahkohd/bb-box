@@ -91,6 +91,8 @@ import {
   type SnapshotTake,
   type SnapshotTaken,
   type Snapshotting,
+  type OutsideRollback,
+  type TaskKind,
   type TaskOutcome,
   type TaskRef,
   type WarmShortfall,
@@ -476,6 +478,7 @@ export class ProxmoxQemuBackend implements Backend {
         rootDisk: bootDisk,
         disks: (config) => Object.keys(config).filter((key) => (isDisk(config, key) || /^(?:efidisk|tpmstate)\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
         guests: (api, signal) => this.#boxGuests(api, signal),
+        sizeOf: (config) => sizeOf(config),
       },
       ["disk", "disk-and-memory"],
     );
@@ -489,9 +492,9 @@ export class ProxmoxQemuBackend implements Backend {
     return LINUX_KINDS.some((linux) => linux.id === kind) && this.kinds().some((offered) => offered.id === kind) ? this.#snapshots.offer() : null;
   }
 
-  async planSnapshots(guest: Guest, kind: string, _snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+  async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     if (!this.snapshotting(kind)) throw new BackendError("unsupported", `${this.label} takes no snapshots of its ${kind} boxes.`);
-    return this.#snapshots.plan(guest, signal);
+    return this.#snapshots.plan(guest, signal, snapshot);
   }
 
   snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -510,8 +513,25 @@ export class ProxmoxQemuBackend implements Backend {
     return this.#snapshots.task(task, signal);
   }
 
-  findTasks(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
+  findTasks(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
     return this.#snapshots.findTasks(guest, operation, since, signal);
+  }
+
+  rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.rollback(guest, ref, hooks, signal);
+  }
+
+  outsideRollbacks(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]> {
+    return this.#snapshots.outsideRollbacks(since, signal);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    await this.#forget(vmid);
+    if (status.status === "running") await api.stop(vmid, signal);
   }
 
   async #ownConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>> {

@@ -96,6 +96,8 @@ import {
   type SnapshotTake,
   type SnapshotTaken,
   type Snapshotting,
+  type OutsideRollback,
+  type TaskKind,
   type Started,
   type TaskOutcome,
   type TaskRef,
@@ -674,6 +676,7 @@ export class ProxmoxLxcBackend implements Backend {
         rootDisk: () => "rootfs",
         disks: (config) => Object.keys(config).filter((key) => (key === "rootfs" || /^mp\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
         guests: (api, signal) => this.#boxGuests(api, signal),
+        sizeOf: (config) => sizeOf(config),
       },
       ["disk"],
     );
@@ -687,9 +690,9 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#offers().some((offer) => offer.kind.id === kind) ? this.#snapshots.offer() : null;
   }
 
-  async planSnapshots(guest: Guest, kind: string, _snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+  async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     this.#offer(kind);
-    return this.#snapshots.plan(guest, signal);
+    return this.#snapshots.plan(guest, signal, snapshot);
   }
 
   snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -708,8 +711,25 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#snapshots.task(task, signal);
   }
 
-  findTasks(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
+  findTasks(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
     return this.#snapshots.findTasks(guest, operation, since, signal);
+  }
+
+  rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.rollback(guest, ref, hooks, signal);
+  }
+
+  outsideRollbacks(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]> {
+    return this.#snapshots.outsideRollbacks(since, signal);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    await this.#forget(vmid);
+    if (status.status === "running") await api.stop(vmid, signal);
   }
 
   async #boxGuests(api: Proxmox, signal?: AbortSignal): Promise<{ guest: Guest; owner: BoxOwner | null }[]> {

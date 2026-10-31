@@ -168,6 +168,14 @@ export function timeName(at: number, timeZone?: string): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) }).format(at);
 }
 
+export function clockName(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) }).format(at);
+}
+
+export function undoName(at: number, timeZone?: string): string {
+  return `before the restore at ${clockName(at, timeZone)}`;
+}
+
 export function nameProblem(name: string): string | null {
   const trimmed = name.trim();
   if (!trimmed.length) return "Give the snapshot a name with at least one character, or leave the name out for the time.";

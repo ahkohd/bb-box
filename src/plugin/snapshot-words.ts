@@ -1,7 +1,8 @@
 import type { Backend, Snapshotting } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, dayWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, type SnapshotRecord } from "../core/snapshot.ts";
-import { freedWords, type DeleteAnswer, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
+import { describeSize } from "../core/sizes.ts";
+import { freedWords, type DeleteAnswer, type RestoreAnswer, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
 
 function seconds(ms: number): string {
@@ -26,6 +27,24 @@ export function deletedText(answer: DeleteAnswer, boxName: string): string {
   if (!snapshot) return answer.operation?.state === "done" ? `Snapshot ${answer.operation.snapshots[0] ?? ""} of box ${boxName} was deleted already, with that request.` : `The delete asked for with that request ended ${answer.operation?.state ?? "already"}.`;
   if (answer.repeated) return `Snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName} was asked to be deleted with that request already. It is ${stateWords(snapshot)}.`;
   return `Deleted snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}: ${freedWords(snapshot)}.`;
+}
+
+export function restoredText(answer: RestoreAnswer, boxName: string): string {
+  const snapshot = answer.snapshot;
+  const operation = answer.operation;
+  const named = snapshot ? `"${snapshot.name}" (${snapshot.id})` : (operation.snapshots[0] ?? "");
+  if (answer.repeated) {
+    const how = operation.state === "done" ? "It is done" : operation.state === "failed" ? `It failed: ${operation.error ?? "no reason given"}` : operation.state === "unknown" ? `bb-box could not confirm how it ended: ${operation.error ?? "no reason given"}` : "It is still running";
+    return `The restore of box ${boxName} to ${named} was asked for with that request already. ${how}`;
+  }
+  const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. Everything on its disk since then went, and every process in it ended.`];
+  lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id}): restore that to undo this.` : "No undo was taken.");
+  if (answer.anyway.length) lines.push(`Restored anyway, though ${answer.anyway.join(", and ")}.`);
+  if (answer.from && answer.to && describeSize(answer.from) !== describeSize(answer.to)) lines.push(`Its size went back from ${describeSize(answer.from)} to ${describeSize(answer.to)}, as it was then.`);
+  if (answer.replaced.length) lines.push(`A box keeps two undos, so bb-box deleted the oldest: ${answer.replaced.map((name) => `"${name}"`).join(", ")}.`);
+  if (operation.error) lines.push(operation.error.charAt(0).toUpperCase() + operation.error.slice(1).replace(/([^.])$/, "$1."));
+  lines.push(`What it did to the world since stays done. Box ${boxName} is ${answer.box?.state ?? "restored"}.`);
+  return lines.join("\n");
 }
 
 export function boxHeading(box: Pick<SnapshotRecord["box"], "id" | "name" | "thread">, backend: string, gone: SnapshotRecord["boxGone"]): string {

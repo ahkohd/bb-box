@@ -525,6 +525,15 @@ export class FakeBackend implements Backend {
     return { ...guest, size: to };
   }
 
+  /** Gives a guest the size a provider would say it has now, as after a rollback to a snapshot taken at another size. */
+  setSize(ref: string, size: BoxSize): void {
+    this.#sizes.set(ref, size);
+  }
+
+  sizeOf(ref: string): BoxSize | null {
+    return this.#sizes.get(ref) ?? null;
+  }
+
   /** Guests held() says still have what their start lowered, by ref (#888); settle() takes each out, and is noted. */
   readonly settling = new Set<string>();
   readonly settled: string[] = [];

@@ -488,6 +488,44 @@ export class Proxmox {
     return this.#begin("DELETE", this.#guest(vmid, `/snapshot/${enc(name)}`), force ? { force: 1 } : {}, signal);
   }
 
+  startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+    return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
+  }
+
+  async snapshotConfig(vmid: number, name: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, `/snapshot/${enc(name)}/config`), undefined, signal)) ?? {};
+  }
+
+  startFullClone(input: { readonly source: number; readonly vmid: number; readonly hostname: string; readonly pool: string; readonly storage: string | null; readonly description: string }, signal?: AbortSignal): Promise<string> {
+    return this.#begin(
+      "POST",
+      this.#guest(input.source, "/clone"),
+      { newid: input.vmid, [this.type === "qemu" ? "name" : "hostname"]: input.hostname, full: 1, pool: input.pool, description: input.description, ...(input.storage ? { storage: input.storage } : {}) },
+      signal,
+    );
+  }
+
+  async setNetwork(vmid: number, settings: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<void> {
+    if (!Object.keys(settings).length) return;
+    await this.#change("PUT", this.#guest(vmid, "/config"), { ...settings }, signal);
+  }
+
+  async tasksOfType(type: string, sinceSeconds: number, signal?: AbortSignal): Promise<{ readonly upid: string; readonly vmid: number | null; readonly user: string; readonly start: number; readonly status: string | null }[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/tasks`, { typefilter: type, since: sinceSeconds, source: "all", limit: 500 }, signal);
+    return (data ?? [])
+      .filter((entry) => typeof entry.upid === "string" && entry.type === type)
+      .map((entry) => {
+        const vmid = Number(entry.id);
+        return {
+          upid: String(entry.upid),
+          vmid: Number.isInteger(vmid) && vmid > 0 ? vmid : null,
+          user: typeof entry.user === "string" ? entry.user : "",
+          start: Number(entry.starttime ?? 0),
+          status: typeof entry.status === "string" && entry.status ? entry.status : null,
+        };
+      });
+  }
+
   async snapshots(vmid: number, signal?: AbortSignal): Promise<ProxmoxSnapshot[]> {
     const data = await this.#request<Record<string, unknown>[]>("GET", this.#guest(vmid, "/snapshot"), undefined, signal);
     return (data ?? [])

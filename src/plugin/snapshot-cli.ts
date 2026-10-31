@@ -2,8 +2,8 @@ import { PluginCliError, cliCommand, type PluginCliContext, type PluginCliResult
 import { BoxError, OPERATOR, describeError, type BoxRecord } from "../core/boxes.ts";
 import { BY_COMMAND } from "../core/box-log.ts";
 import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core/snapshot.ts";
-import { HOLD_STEPS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
-import { deletedText, listText, takenText } from "./snapshot-words.ts";
+import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
+import { deletedText, listText, restoredText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
 
 const COMMAND: Caller = { is: "command" };
@@ -125,6 +125,39 @@ export function snapshotCommands(app: BbBox) {
           return options.json ? json(answer) : out(deletedText(answer, box.name));
         }),
     }),
+    "snapshot restore": cliCommand({
+      summary:
+        "Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force, and refuses a box threads run on. Asks for --replace.",
+      positionals: [
+        { name: "box", description: "The box's name or ID.", required: true },
+        { name: "snapshot", description: "The snapshot's name or ID.", required: true },
+      ],
+      options: {
+        ...threadOption,
+        ...machineOption,
+        ...jsonOption,
+        replace: { type: "boolean", description: "Replace the box's disk with the snapshot's." },
+        "no-undo": { type: "boolean", description: "Take no undo first, so this cannot be undone." },
+        force: { type: "boolean", description: "Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them." },
+        request: { type: "string", description: "An ID you make, so a repeat of this command is the same restore." },
+      },
+      run: ({ positionals, options }, ctx) =>
+        guard("Restoring the snapshot", async () => {
+          const box = await boxes.get(ownerOf(options, ctx), positionals.box);
+          if (!options.replace) {
+            return {
+              exitCode: 1,
+              stderr: `A restore replaces box ${box.name}'s disk with the snapshot's: everything on it since goes, and every process in it ends. Run it again with --replace to restore.\n`,
+            };
+          }
+          const answer = await snapshots.restore(COMMAND, box, standingOf(box), positionals.snapshot, {
+            ...(options["no-undo"] ? { undo: false } : {}),
+            ...(options.force ? { force: true } : {}),
+            ...(options.request !== undefined ? { request: String(options.request) } : {}),
+          });
+          return options.json ? json(answer) : out(restoredText(answer, box.name));
+        }),
+    }),
     "snapshot forget": cliCommand({
       summary:
         "Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes.",
@@ -148,15 +181,19 @@ export function snapshotCommands(app: BbBox) {
     ...(holds
       ? {
           "snapshot hold-next": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: the next snapshot take or delete stops after the step named, as if bb-box stopped there, until bb-box restarts.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: the next snapshot operation to reach the step named stops there, as if bb-box stopped there, until bb-box restarts.`,
             options: {
-              at: { type: "enum", values: HOLD_STEPS, description: "planned: once recorded, before the backend is asked; task: once the backend's task has begun." },
+              at: {
+                type: "enum",
+                values: HOLD_STEPS,
+                description: "planned: once recorded, before the backend is asked; task: once a provider's task has begun; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done.",
+              },
               off: { type: "boolean", description: "Hold nothing." },
             },
             async run({ options }) {
               const step = options.off ? null : ((options.at as HoldStepName | undefined) ?? "task");
               holds.arm(step);
-              return out(step ? `The next snapshot take or delete stops ${step === "planned" ? "once it is recorded" : "once its backend's task has begun"}, until bb-box restarts.` : "No snapshot operation is held.");
+              return out(step ? `The next snapshot operation to reach it stops after ${HOLD_WORDS[step]}, until bb-box restarts.` : "No snapshot operation is held.");
             },
           }),
         }
