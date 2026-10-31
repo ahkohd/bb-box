@@ -881,7 +881,7 @@ test("version 7: a reboot before settle decides loses nothing: the box itself, i
   }
 });
 
-test("version 7: a hold that cannot be made deletes the copied settings instead, and fails the boot closed only if it cannot delete them either", () => {
+test("version 7: a hold that cannot be made deletes the copied settings instead", () => {
   const root = armedWithNetwork();
   setNics(root, [LOOP]);
   mkdirSync(join(root, "var/lib/bb-box"), { recursive: true });
@@ -891,6 +891,9 @@ test("version 7: a hold that cannot be made deletes the copied settings instead,
   assert.match(deleted.out, /could not hold its network settings aside in \S+, so it deletes them instead/);
   assert.equal(read(root, NETWORK_FILE), null, "no copied settings are left for a card added later");
   assert.equal(status(root).boot, "unknown");
+});
+
+test("version 7: a boot that can neither hold nor delete the copied settings fails closed", { skip: process.getuid?.() === 0 ? "root can remove what the test protects" : false }, () => {
   const stuck = armedWithNetwork();
   setNics(stuck, [LOOP]);
   mkdirSync(join(stuck, "var/lib/bb-box"), { recursive: true });
