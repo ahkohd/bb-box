@@ -26,7 +26,7 @@ function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number;
 }
 
 function box(id: string, size = { cores: 4, memoryMiB: 8192, diskGiB: null }): BoxIdentity {
-  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "macos", createdAt: Date.parse("2030-01-01T00:00:00Z"), size };
+  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "macos", createdAt: Date.parse("2030-01-01T00:00:00Z"), size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

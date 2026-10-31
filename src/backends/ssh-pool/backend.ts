@@ -39,7 +39,7 @@ import {
   type BoxGrants,
   type BoxKind,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -225,7 +225,7 @@ interface View {
 /** A box being acquired, as capacity sees it. */
 interface Acquiring {
   readonly kind: string;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
 }
 
 interface SshKeys {
@@ -282,7 +282,7 @@ function gib(mib: number): string {
 }
 
 /** A size in words, as core gives it. */
-function sizeWords(size: BoxSize): string {
+function sizeWords(size: MachineSize): string {
   return [plural(size.cores, "core"), `${gib(size.memoryMiB)} memory`, ...(size.diskGiB !== null ? [`${size.diskGiB} GiB disk`] : [])].join(", ");
 }
 
@@ -318,7 +318,7 @@ function machineSizeWords(status: MachineStatus): string | null {
   return status.cores && status.memoryMiB ? `${plural(status.cores, "core")}, ${gib(status.memoryMiB)}` : null;
 }
 
-function machineSize(status: MachineStatus | null): BoxSize | null {
+function machineSize(status: MachineStatus | null): MachineSize | null {
   return status?.cores && status.memoryMiB ? { cores: status.cores, memoryMiB: status.memoryMiB, diskGiB: null } : null;
 }
 
@@ -327,7 +327,7 @@ function machineSize(status: MachineStatus | null): BoxSize | null {
  * MemTotal, so a machine has memory M when it shows 90% of it, the margin
  * the conformance suite allows. A disk size needs that much free.
  */
-function fits(status: MachineStatus | null, size: BoxSize): boolean {
+function fits(status: MachineStatus | null, size: MachineSize): boolean {
   const has = machineSize(status);
   if (!has || has.cores < size.cores || has.memoryMiB < size.memoryMiB * 0.9) return false;
   return size.diskGiB === null || (status!.diskGiB ?? 0) >= size.diskGiB;
@@ -387,7 +387,7 @@ function socketTest(socket: string): string {
   return `test -S ${socket.startsWith("~/") ? `"$HOME"/${quote(socket.slice(2))}` : quote(socket)}`;
 }
 
-function sameSize(a: BoxSize, b: BoxSize): boolean {
+function sameSize(a: MachineSize, b: MachineSize): boolean {
   return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
 }
 
@@ -619,7 +619,7 @@ export class SshPoolBackend implements Backend {
     return offer;
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly Acquiring[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly Acquiring[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
     if (kind === SLOT_KIND) return { ok: false, message: SLOTS_ONLY_WORDS, warm: null, hosts: [{ host: POOL_HOST, ok: false, limits: [] }] };
     const all = await this.#survey(signal);
@@ -652,14 +652,14 @@ export class SshPoolBackend implements Backend {
   }
 
   /** The free machines a box of `kind` at `size` may claim, in the order its claim tries them. */
-  #candidates(views: readonly View[], kind: string, size: BoxSize): View[] {
+  #candidates(views: readonly View[], kind: string, size: MachineSize): View[] {
     return views
       .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && !lendingSlots(view.probe.status) && this.#ready(view, kind) === null && fits(view.probe.status, size))
       .sort((a, b) => bySize(a, b) || wholeReset(a) - wholeReset(b) || a.since - b.since);
   }
 
   /** Why no machine is free for `kind` at `size`, in words for the user. `waited` machines would be free but for acquires waiting to claim. */
-  #full(kind: string, size: BoxSize, views: readonly View[], waited: number): string {
+  #full(kind: string, size: MachineSize, views: readonly View[], waited: number): string {
     const held = views.filter((view) => view.state === "held" && view.probe.status?.owner?.install === this.#context.installId).length;
     const others = views.filter((view) => view.state === "held").length - held;
     const resetting = views.filter((view) => view.state === "resetting").length;

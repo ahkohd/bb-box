@@ -71,7 +71,7 @@ import {
   type Footprint,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type ResizePlan,
@@ -345,7 +345,7 @@ function templateInfo(storage: string, config: Record<string, unknown>): Templat
 }
 
 /** The size a guest's config gives it, or null when it does not say. */
-function sizeOf(config: Record<string, unknown>): BoxSize | null {
+function sizeOf(config: Record<string, unknown>): MachineSize | null {
   const cores = Number(config.cores);
   const memoryMiB = Number(config.memory);
   if (!(Number.isInteger(cores) && cores > 0 && Number.isInteger(memoryMiB) && memoryMiB > 0)) return null;
@@ -452,7 +452,7 @@ interface TemplateInfo {
 }
 
 /** A box the registry is acquiring here, which capacity counts as coming. */
-type Pending = { readonly kind: string; readonly size: BoxSize };
+type Pending = { readonly kind: string; readonly size: MachineSize };
 
 interface Offer {
   readonly kind: BoxKind;
@@ -1032,7 +1032,7 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#offers().map((offer) => offer.kind);
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const offer = this.#offer(kind);
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
@@ -1056,7 +1056,7 @@ export class ProxmoxLxcBackend implements Backend {
   async #room(
     api: Proxmox,
     offer: Offer,
-    size: BoxSize | null,
+    size: MachineSize | null,
     guests: readonly PoolGuest[],
     pending: readonly Pending[],
     warm: { ready: number; target: number },
@@ -1438,7 +1438,7 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#offers().some((offer) => offer.kind.id === kind) ? { cores: "live", memory: "live", disk: "live", shrinks: true } : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     this.#offer(kind);
     const api = await this.client();
     const config = await this.#ownConfig(api, guest, signal);
@@ -1462,7 +1462,7 @@ export class ProxmoxLxcBackend implements Backend {
    * the disk, which cannot. When the disk fails, cores and memory go back
    * to what they were (061).
    */
-  async resize(guest: Guest, _kind: string, to: BoxSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, _kind: string, to: MachineSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const from = sizeOf(await this.#ownConfig(api, guest, signal));
@@ -1499,7 +1499,7 @@ export class ProxmoxLxcBackend implements Backend {
    * the memory and disk it adds, kept within the node's reserves, and cores
    * within the node's CPU threads. A shrink always fits.
    */
-  async #resizeRoom(api: Proxmox, storage: string | null, from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
     const reserve = this.#config.reserve;
     const heldMiB = [...this.#acquiring.values()].reduce((sum, acquire) => sum + (acquire.held ?? 0), 0);
@@ -2094,7 +2094,7 @@ export class ProxmoxLxcBackend implements Backend {
     template: number | null = null,
     box: string | null = null,
     display: DisplayMode | null = null,
-    size: BoxSize | null = null,
+    size: MachineSize | null = null,
     build: string | null = null,
   ): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
@@ -2191,7 +2191,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /** Config for a fresh clone at `vmid`. A null size keeps the template's cores and memory. */
-  #settings(size: BoxSize | null, vmid: number) {
+  #settings(size: MachineSize | null, vmid: number) {
     return {
       ...(size ? { cores: size.cores, memory: size.memoryMiB } : {}),
       net0: net0For(this.#config, vmid),
@@ -2911,7 +2911,7 @@ class WarmStore implements PoolStore<BoxIdentity> {
   /** The template of each warm guest, as last listed. */
   readonly #templates = new Map<string, number>();
   /** The size of each warm guest, as last listed. */
-  readonly #sizes = new Map<string, BoxSize>();
+  readonly #sizes = new Map<string, MachineSize>();
   /** The build of each warm guest's template, which is its own, as last listed. */
   readonly #builds = new Map<string, string>();
 
@@ -2956,7 +2956,7 @@ class WarmStore implements PoolStore<BoxIdentity> {
     return this.#builds.get(ref) ?? null;
   }
 
-  sizeOf(ref: string): BoxSize | null {
+  sizeOf(ref: string): MachineSize | null {
     return this.#sizes.get(ref) ?? null;
   }
 

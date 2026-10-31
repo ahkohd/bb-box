@@ -1,7 +1,7 @@
 // Pure helpers for the settings page: reading the configuration state the
 // server gives, and building the drafts the page sends back (029).
 
-import type { BoxSize, FieldValue, WarmShortfall } from "../backends/types.ts";
+import type { MachineSize, FieldValue, WarmShortfall } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState, SnapshotSettings } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
@@ -48,9 +48,9 @@ export function problemsLeft(problems: readonly Problem[], path: string, shown: 
 
 export interface KindSizes {
   readonly enabled: boolean;
-  readonly presets: Readonly<Record<Preset, BoxSize>>;
+  readonly presets: Readonly<Record<Preset, MachineSize>>;
   readonly default: Preset;
-  readonly largest: BoxSize;
+  readonly largest: MachineSize;
   /** Spare boxes to keep (032). */
   readonly spares: number;
 }
@@ -59,7 +59,7 @@ export interface KindSizes {
 export function effectiveKind(state: ConfigState, id: string): KindSizes {
   const shipped = state.defaults.kinds[id];
   const change = state.document.kinds[id];
-  const presets = {} as Record<Preset, BoxSize>;
+  const presets = {} as Record<Preset, MachineSize>;
   for (const preset of PRESET_NAMES) {
     const base = shipped?.presets[preset] ?? { cores: 2, memoryMiB: 4096, diskGiB: null };
     const part = change?.presets?.[preset];
@@ -82,11 +82,11 @@ export function effectiveKind(state: ConfigState, id: string): KindSizes {
 /** The kind's entry for the document: only what differs from the shipped defaults, or undefined when nothing does. */
 export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): KindConfig | undefined {
   const shipped = state.defaults.kinds[id];
-  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, BoxSize>>; default?: Preset; largest?: BoxSize; spares?: number } = {};
+  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, MachineSize>>; default?: Preset; largest?: MachineSize; spares?: number } = {};
   if (!sizes.enabled) entry.enabled = false;
   if (sizes.spares) entry.spares = sizes.spares;
   if (shipped) {
-    const presets: Partial<Record<Preset, BoxSize>> = {};
+    const presets: Partial<Record<Preset, MachineSize>> = {};
     for (const preset of PRESET_NAMES) {
       const base = shipped.presets[preset];
       const size = sizes.presets[preset];
@@ -105,7 +105,7 @@ export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): K
 }
 
 /** "2 cores · 4 GiB · base disk". */
-export function sizeWords(size: BoxSize): string {
+export function sizeWords(size: MachineSize): string {
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${gib(size.memoryMiB)} GiB`, size.diskGiB === null ? "base disk" : `${size.diskGiB} GiB`].join(" · ");
 }
 

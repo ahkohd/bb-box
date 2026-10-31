@@ -202,11 +202,34 @@ export interface BoxKind {
 }
 
 /** Cores, memory and root disk (028). */
-export interface BoxSize {
+export interface MachineSize {
   readonly cores: number;
   readonly memoryMiB: number;
   /** Null: the backend's base disk, the template's, image's or host's. */
   readonly diskGiB: number | null;
+}
+
+export const GPU_PARTS = ["none", "shared", "whole"] as const;
+export type GpuPart = (typeof GPU_PARTS)[number];
+
+export interface BoxSize extends MachineSize {
+  readonly gpu: GpuPart;
+}
+
+export type CardAnswer = "asked" | "granted" | "refused" | "yielded";
+
+export interface CardClaim {
+  readonly card: string | null;
+  readonly part: GpuPart;
+  readonly generation: number;
+  readonly answer: CardAnswer;
+}
+
+export interface CardPlacement {
+  readonly card: string;
+  readonly index: number;
+  readonly model: string;
+  readonly memoryMiB: number;
 }
 
 /**
@@ -269,7 +292,8 @@ export interface Guest {
   /** Where the box answers on the network, when known. Shown to users. */
   readonly address: string | null;
   /** The size the box has, read from the guest; null when unknown. */
-  readonly size: BoxSize | null;
+  readonly size: MachineSize | null;
+  readonly claim?: CardClaim | null;
   /**
    * Small values the backend needs later, stored with the box and passed
    * back. Never a secret. A backend whose references can be reused keeps the
@@ -527,8 +551,8 @@ export interface Backend {
    */
   capacity(
     kind: string,
-    size: BoxSize,
-    pending: readonly { readonly kind: string; readonly size: BoxSize }[],
+    size: MachineSize,
+    pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
   ): Promise<Capacity>;
 
@@ -587,8 +611,8 @@ export interface Backend {
   planResize?(
     guest: Guest,
     kind: string,
-    to: BoxSize,
-    pending: readonly { readonly kind: string; readonly size: BoxSize }[],
+    to: MachineSize,
+    pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
   ): Promise<ResizePlan>;
   /**
@@ -599,7 +623,7 @@ export interface Backend {
    * box's. When a step fails, it puts back the parts it changed that can go
    * back before it throws. Only backends with `resizing`.
    */
-  resize?(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
+  resize?(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
   /**
    * Whether `stop` saves a guest of the kind with its running session, as a
    * hibernate or a suspend does, so that it holds no memory while stopped
@@ -809,14 +833,14 @@ export interface SnapshotPlan {
     readonly undo: "snapshot" | "held-copy" | "suspend-copy" | "none";
     readonly undoAboutMs: number;
     readonly undoBytes: number | null;
-    readonly sizeBack: BoxSize | null;
+    readonly sizeBack: MachineSize | null;
     readonly leavesOnEarlierGuest: number;
     readonly newer: number;
     readonly copyAboutMs: number | null;
     readonly costWords?: string | null;
   };
   readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly price: Price | null };
-  readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: BoxSize | null };
+  readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: MachineSize | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
   readonly busy?: string | null;
 }
@@ -896,7 +920,7 @@ export type CopyState = "template" | "copy" | "gone";
 
 export interface CopyPlan {
   readonly state: CopyState;
-  readonly size: BoxSize | null;
+  readonly size: MachineSize | null;
   readonly running: boolean;
 }
 
@@ -1220,9 +1244,9 @@ export interface KindSettings {
   /** Off when the kind or this backend is: no new boxes of the kind here, and no warm guests. */
   readonly enabled: boolean;
   /** The size of a box made with no size asked for. */
-  readonly defaultSize: BoxSize;
+  readonly defaultSize: MachineSize;
   /** Every preset's size, the default's among them, smallest first. */
-  readonly presets: readonly BoxSize[];
+  readonly presets: readonly MachineSize[];
 }
 
 /** A driver's settings parsed from flat keys, as its tests and the smoke script give them. */
@@ -1346,6 +1370,6 @@ export interface BackendDriver<C = unknown> {
     /** Null when none of its settings was set, so the backend is not in the configuration. */
     read(values: Readonly<Record<string, unknown>>): EarlierBackend | null;
     /** Sizes per kind its settings gave boxes before 028, which become the kinds' default presets once. */
-    sizes?(values: Readonly<Record<string, unknown>>): Readonly<Record<string, BoxSize>>;
+    sizes?(values: Readonly<Record<string, unknown>>): Readonly<Record<string, MachineSize>>;
   };
 }

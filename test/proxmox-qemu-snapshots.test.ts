@@ -52,7 +52,7 @@ const quiet: AcquireHooks = { claim: async () => {}, starting: async () => {}, t
 
 async function linuxBox(state: ReturnType<typeof world>): Promise<{ guest: Guest; vmid: number; box: string }> {
   rmSync(join(state.ssh.dir, "windows", "192.0.2.150"), { force: true });
-  const box = { boxId: "bxlinuxvmaaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_000_000, size: defaultSize(kindSizes("linux")) };
+  const box = { boxId: "bxlinuxvmaaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_000_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" as const } };
   const guest = await state.backend.acquire(box, null, quiet, new AbortController().signal);
   return { guest, vmid: Number(guest.ref), box: box.boxId };
 }
@@ -199,7 +199,7 @@ test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed fi
   const source = state.proxmox.guests.get(vmid)!;
   const sourceUuid = /uuid=([^,]+)/.exec(source.config.smbios1 ?? "")?.[1];
   const sourceMac = /=([0-9A-F:]{17})/i.exec(source.config.net0 ?? "")?.[1];
-  const forked = { boxId: "bxforkedvmaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_100_000, size: defaultSize(kindSizes("linux")) };
+  const forked = { boxId: "bxforkedvmaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_100_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" as const } };
   const made = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, forked, null, quiet, new AbortController().signal);
   const clone = [...state.proxmox.calls].reverse().find((call) => call.method === "POST" && /\/clone$/.test(call.path))!;
   assert.equal(clone.params.snapname, `bb${SNAPSHOT}`);

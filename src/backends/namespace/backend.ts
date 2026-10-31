@@ -16,7 +16,7 @@ import {
   type BackendContext,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -64,7 +64,7 @@ const LARGEST_MACHINE = "largest-machine";
 const USAGE_GRANT = '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}';
 const LARGEST_ALLOWED = /maximum ([0-9]+)x([0-9]+)/;
 
-function linuxTooBig(size: BoxSize): string {
+function linuxTooBig(size: MachineSize): string {
   return `Namespace's Linux machines have at most 32 cores and 56 GB of memory, less than the ${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB asked for.`;
 }
 
@@ -219,7 +219,7 @@ export function macDiskGiB(shape: { readonly cores: number; readonly memoryGB: n
   return 48 + Math.max(shape.cores, shape.memoryGB / 2) * 8;
 }
 
-export function macShapeFor(size: BoxSize, largest: MacShape | null = null): MacShape | null {
+export function macShapeFor(size: MachineSize, largest: MacShape | null = null): MacShape | null {
   const allowed = largest ? MACOS_SHAPES.filter((shape) => shape.cores <= largest.cores && shape.memoryGB <= largest.memoryGB) : MACOS_SHAPES;
   const fits = allowed.filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
   return fits.sort((a, b) => a.cores * 100 + a.memoryGB - (b.cores * 100 + b.memoryGB))[0] ?? null;
@@ -520,7 +520,7 @@ export class NamespaceBackend implements Backend {
     ];
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {
     if (kind === "ios") return { ok: false, message: "Namespace lends ios boxes only as slots on a shared iOS host, each a macOS user with its own device.", warm: null, hosts: [{ host: "Namespace", ok: false, limits: [] }] };
     this.#kind(kind);
     const host = "Namespace";
@@ -994,7 +994,7 @@ export class NamespaceBackend implements Backend {
     return { cores: Math.min(...known.map((shape) => shape.cores)), memoryGB: Math.min(...known.map((shape) => shape.memoryGB)) };
   }
 
-  #tooBig(size: BoxSize, workspaceLargest: MacShape | null): string {
+  #tooBig(size: MachineSize, workspaceLargest: MacShape | null): string {
     const asked = `${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB`;
     if (!workspaceLargest) {
       const largest = MACOS_SHAPES[MACOS_SHAPES.length - 1]!;

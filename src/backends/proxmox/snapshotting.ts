@@ -3,7 +3,7 @@ import {
   SnapshotFailed,
   SnapshotIncomplete,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type OutsideRollback,
   type RestoreWay,
   type TaskKind,
@@ -95,7 +95,7 @@ export interface SnapshotGuests {
   still(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<boolean>;
   rootDisk(config: Record<string, unknown>): string | null;
   disks(config: Record<string, unknown>): readonly string[];
-  sizeOf(config: Record<string, unknown>): BoxSize | null;
+  sizeOf(config: Record<string, unknown>): MachineSize | null;
   guests(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly guest: Guest; readonly owner: BoxOwner | null }[]>;
   copies?(api: Proxmox, signal?: AbortSignal): Promise<readonly KeptGuest[]>;
   freeVmids?(api: Proxmox, signal?: AbortSignal): Promise<{ readonly free: number; readonly range: string }>;
@@ -394,8 +394,8 @@ export class ProxmoxSnapshotting {
     target: SnapshotRef | null,
     signal?: AbortSignal,
   ): Promise<SnapshotPlan["fork"]> {
-    const copyOf = (size: BoxSize | null) => ({ aboutMs: Math.round((size?.diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB), bytes: size?.diskGiB != null ? size.diskGiB * GiB : null });
-    const none = (why: string, size: BoxSize | null = null): SnapshotPlan["fork"] => ({ ok: false, why, ...copyOf(size), size });
+    const copyOf = (size: MachineSize | null) => ({ aboutMs: Math.round((size?.diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB), bytes: size?.diskGiB != null ? size.diskGiB * GiB : null });
+    const none = (why: string, size: MachineSize | null = null): SnapshotPlan["fork"] => ({ ok: false, why, ...copyOf(size), size });
     if (seen.privileges && !seen.privileges.has(CLONE_PRIVILEGE)) {
       return none(`The Proxmox token lacks ${CLONE_PRIVILEGE} on /pool/${this.#guests.pool}, so bb-box cannot fork snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }

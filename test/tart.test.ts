@@ -7,7 +7,7 @@ import { after, afterEach, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, spotlightJudgement, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { RUN_LOCK_HOLDERS_PL, TART_LISTS_SH, baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { layeredStorage } from "../src/backends/index.ts";
@@ -47,12 +47,12 @@ function setup(values: Record<string, unknown> = {}) {
 }
 
 /** The macOS kinds' small preset (028). */
-const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
+const SMALL: MachineSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 
 let counter = 0;
 function identity(kind = "macos-desktop", threadId = "thr_abc123", size = SMALL): BoxIdentity {
   counter++;
-  return { boxId: `bx${counter}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `bx${counter}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {
@@ -341,7 +341,7 @@ test("a macOS VM's clock is set in UTC, half a second on, and only in a VM", () 
 });
 
 /** The Linux kinds' small preset (028, 040). */
-const LINUX_SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const LINUX_SMALL: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 
 /** A fake Mac with the Linux image too, and linux-arm64 boxes on (040). */
 function linuxSetup(values: Record<string, unknown> = {}) {
@@ -1070,13 +1070,13 @@ test("Spotlight's fix for a TART_HOME that is not a link makes it one, and on a 
 
 test("a box has the cores and memory it asks for, read from its config, and its disk from the start, as tart get gives it; capacity refuses what a Mac cannot give", async () => {
   const { backend } = setup();
-  const medium: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
+  const medium: MachineSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
   const guest = await backend.acquire(identity("macos", "thr_abc123", medium), null, hooks().hooks, signal());
   assert.deepEqual(guest.size, { ...medium, diskGiB: 59 }, "64 GB, as tart list gives it, is 59 GiB, as a resize reads it");
   assert.deepEqual((await backend.held()).find((held) => held.ref === guest.ref)?.size, { ...medium, diskGiB: 59 }, "held reads it from the VM's config and tart list");
   await backend.release(guest, releasing);
 
-  const refused = async (size: BoxSize, pending: { kind: string; size: BoxSize }[] = []) => {
+  const refused = async (size: MachineSize, pending: { kind: string; size: MachineSize }[] = []) => {
     const capacity = await backend.capacity("macos", size, pending);
     assert.equal(capacity.ok, false, JSON.stringify(size));
     return capacity.message!;
@@ -1085,7 +1085,7 @@ test("a box has the cores and memory it asks for, read from its config, and its 
   assert.match(await refused({ ...SMALL, cores: 32 }), /mac1 has 16 cores, fewer than the 32 asked for/);
   assert.match(await refused({ ...SMALL, memoryMiB: 120 * 1024 }), /has [\d.]+ GiB of memory free and keeps 16 GiB free, so a box with 120 GiB does not fit/);
   assert.match(await refused({ ...SMALL, diskGiB: 32 }), /keeps its image's disk/);
-  const big: BoxSize = { cores: 8, memoryMiB: 64 * 1024, diskGiB: null };
+  const big: MachineSize = { cores: 8, memoryMiB: 64 * 1024, diskGiB: null };
   assert.equal((await backend.capacity("macos", big, [])).ok, true);
   assert.match(await refused(big, [{ kind: "macos", size: big }]), /memory free/, "a pending box's memory counts");
 });
@@ -1229,7 +1229,7 @@ test("a macOS VM resizes its CPUs and memory with a restart: shut down, not susp
   const { ssh, mac, backend } = setup();
   assert.deepEqual(backend.resizing("macos"), { cores: "restart", memory: "restart", disk: "no", shrinks: true });
   const guest = await backend.acquire(identity("macos", "thr_abc123", SMALL), null, hooks().hooks, signal());
-  const to: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
+  const to: MachineSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
 
   const plan = await backend.planResize(guest, "macos", to, [], signal());
   assert.deepEqual(plan.parts, [

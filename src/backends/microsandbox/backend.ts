@@ -48,7 +48,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type ResizePlan,
@@ -260,7 +260,7 @@ function powerOf(status: string): PowerState {
 /** About how long a resize's restart takes, a stop and a start of the box: 1.8 s measured, with room for a slow host (061). */
 const RESIZE_RESTART_S = 5;
 
-function sizeOf(sandbox: SandboxInfo): BoxSize | null {
+function sizeOf(sandbox: SandboxInfo): MachineSize | null {
   if (!sandbox.cpus || !sandbox.memoryMiB) return null;
   return { cores: sandbox.cpus, memoryMiB: sandbox.memoryMiB, diskGiB: sandbox.diskGiB };
 }
@@ -927,7 +927,7 @@ export class MsbBackend implements Backend {
     return Math.floor(kib / 1024);
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {
     await this.#knowArch(signal);
     this.#kind(kind);
     const machine = this.#config.machine;
@@ -950,7 +950,7 @@ export class MsbBackend implements Backend {
     return { ok: room.why === null, message: room.why === null ? null : this.#full(kind, room.why), warm: null, hosts: [room.capacity] };
   }
 
-  #room(state: HostState, size: BoxSize, unplaced = { count: 0, memoryMiB: 0 }): { capacity: HostCapacity; why: string | null } {
+  #room(state: HostState, size: MachineSize, unplaced = { count: 0, memoryMiB: 0 }): { capacity: HostCapacity; why: string | null } {
     const { facts, boxes } = state;
     const host = this.#host;
     const listed = new Set(boxes.map((box) => box.name));
@@ -1034,7 +1034,7 @@ export class MsbBackend implements Backend {
     };
     if (previous?.ref === name) this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB });
     else await step("place", () => this.#place(box, signal));
-    const guest = (size: BoxSize | null = null): Guest => ({ ref: name, host: this.#host, address: null, size, data: { box: box.boxId } });
+    const guest = (size: MachineSize | null = null): Guest => ({ ref: name, host: this.#host, address: null, size, data: { box: box.boxId } });
     try {
       await hooks.claim(guest());
       await step("image", () => this.#import(image, box.kind as MsbKind, false, signal));
@@ -1172,7 +1172,7 @@ export class MsbBackend implements Backend {
     return this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "live", shrinks: true } : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<ResizePlan> {
     this.#kind(kind);
     const { found, from } = await this.#resizable(guest, to, signal);
     const way = powerOf(found.status) === "running" ? "restart" : "live";
@@ -1191,7 +1191,7 @@ export class MsbBackend implements Backend {
    * does. When it does not come back at its new size, its old CPUs and
    * memory are saved again and it starts once more.
    */
-  async resize(guest: Guest, _kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, _kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const { found, from } = await this.#resizable(guest, to, signal);
     const running = powerOf(found.status) === "running";
     const changes = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
@@ -1199,7 +1199,7 @@ export class MsbBackend implements Backend {
     const modify = (args: readonly string[]) => this.#cli.ok(["modify", guest.ref, ...args, "--format", "json"], { timeoutMs: 120_000, signal });
     if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) await modify(["--root-disk", `${to.diskGiB}G`]);
     if (changes) {
-      const sized = (size: BoxSize) => ["--cpus", String(size.cores), "--memory", `${size.memoryMiB}M`];
+      const sized = (size: MachineSize) => ["--cpus", String(size.cores), "--memory", `${size.memoryMiB}M`];
       if (!running) await modify(sized(to));
       else {
         await modify([...sized(to), "--next-start"]);
@@ -1219,7 +1219,7 @@ export class MsbBackend implements Backend {
   }
 
   /** The box's sandbox and size, when it is the box's and the disk asked for is not smaller (061). */
-  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ found: SandboxInfo; from: BoxSize }> {
+  async #resizable(guest: Guest, to: MachineSize, signal?: AbortSignal): Promise<{ found: SandboxInfo; from: MachineSize }> {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
     const from = sizeOf(found) ?? guest.size;
@@ -1235,7 +1235,7 @@ export class MsbBackend implements Backend {
    * within the host's, the memory it adds within what the boxes may have,
    * and the disk it adds within the host's free disk.
    */
-  async #resizeRoom(from: BoxSize, to: BoxSize, pending: readonly { readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(from: MachineSize, to: MachineSize, pending: readonly { readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {
     const state = await this.#state(signal);
     const { facts, boxes } = state;
     const host = this.#host;

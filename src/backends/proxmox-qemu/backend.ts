@@ -69,7 +69,7 @@ import {
   type Footprint,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type ResizePlan,
@@ -325,7 +325,7 @@ export function net0On(net0: unknown, bridge: string): string {
 }
 
 /** The size a VM's config gives it, or null when it does not say. */
-function sizeOf(config: Record<string, unknown>): BoxSize | null {
+function sizeOf(config: Record<string, unknown>): MachineSize | null {
   const cores = Number(config.cores);
   const memoryMiB = Number(config.memory);
   if (!(Number.isInteger(cores) && cores > 0 && Number.isInteger(memoryMiB) && memoryMiB > 0)) return null;
@@ -352,7 +352,7 @@ function gone(vmid: number): BackendError {
  * change a hibernated VM, so the cores and memory must be the same, and the
  * disk at least the size asked for.
  */
-function serves(size: BoxSize, wanted: BoxSize): boolean {
+function serves(size: MachineSize, wanted: MachineSize): boolean {
   if (size.cores !== wanted.cores || size.memoryMiB !== wanted.memoryMiB) return false;
   return wanted.diskGiB === null || (size.diskGiB !== null && size.diskGiB >= wanted.diskGiB);
 }
@@ -399,14 +399,14 @@ interface TemplateInfo {
 }
 
 /** A box the registry is acquiring here, which capacity counts as coming. */
-type Pending = { readonly kind: string; readonly size: BoxSize };
+type Pending = { readonly kind: string; readonly size: MachineSize };
 
 /** A warm VM that a claim can take, with the template, build and size it was filled with. */
 interface WarmVm {
   readonly guest: PoolGuest;
   readonly template: number;
   readonly build: string | null;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
 }
 
 export class ProxmoxQemuBackend implements Backend {
@@ -964,7 +964,7 @@ export class ProxmoxQemuBackend implements Backend {
     return LINUX_TEMPLATE_KINDS.find((kind) => this.#templatesOf(kind.id).includes(template)) ?? KIND;
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
@@ -984,7 +984,7 @@ export class ProxmoxQemuBackend implements Backend {
    */
   async #room(
     api: Proxmox,
-    size: BoxSize,
+    size: MachineSize,
     guests: readonly PoolGuest[],
     pending: readonly Pending[],
     warm: { ready: number; target: number },
@@ -1236,7 +1236,7 @@ export class ProxmoxQemuBackend implements Backend {
     return this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "live", shrinks: true } : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     this.#offer(kind);
     const { config, from } = await this.#resizable(guest, to, signal);
     const parts: ResizePlan["parts"][number][] = [];
@@ -1258,7 +1258,7 @@ export class ProxmoxQemuBackend implements Backend {
    * boot. When the VM does not come back at its new size, its old cores and
    * memory go back and it boots again.
    */
-  async resize(guest: Guest, _kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, _kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const { config, from } = await this.#resizable(guest, to, signal);
@@ -1290,7 +1290,7 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** The VM's config and size, when it is the box's and runs, and the disk asked for is not smaller (061). */
-  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ config: Record<string, unknown>; from: BoxSize }> {
+  async #resizable(guest: Guest, to: MachineSize, signal?: AbortSignal): Promise<{ config: Record<string, unknown>; from: MachineSize }> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1314,7 +1314,7 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** Room on the node for a VM to grow from `from` to `to`: the memory and disk it adds, within the reserves, and cores within the node's (061). */
-  async #resizeRoom(api: Proxmox, storage: string | null, from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
     const reserve = this.#config.reserve;
     const memoryTotal = Math.floor(node.memoryTotal / MiB);
@@ -1782,7 +1782,7 @@ export class ProxmoxQemuBackend implements Backend {
     vmid: number,
     template: number | null = null,
     box: string | null = null,
-    size: BoxSize | null = null,
+    size: MachineSize | null = null,
     build: string | null = null,
     display: { mode: string; reason: string } | null = null,
   ): Guest {
@@ -1876,7 +1876,7 @@ export class ProxmoxQemuBackend implements Backend {
     await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
   }
 
-  #settings(size: BoxSize, vmid: number, current: Record<string, unknown>): GuestSettings {
+  #settings(size: MachineSize, vmid: number, current: Record<string, unknown>): GuestSettings {
     const address = addressFor(this.#config, vmid);
     if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
     const { bridge, prefix, gateway } = this.#config.network;
@@ -2246,7 +2246,7 @@ export class ProxmoxQemuBackend implements Backend {
    * compiled, and hibernated once Windows' desktop is up. It is tagged warm
    * just before, as Proxmox refuses tags after.
    */
-  async #fill(api: Proxmox, size: BoxSize, signal: AbortSignal): Promise<void> {
+  async #fill(api: Proxmox, size: MachineSize, signal: AbortSignal): Promise<void> {
     const install = installTag(this.#context.installId);
     let vmid: number | null = null;
     const claimed: number[] = [];

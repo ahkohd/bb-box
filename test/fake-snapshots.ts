@@ -6,7 +6,7 @@ import {
   SnapshotFailed,
   SnapshotIncomplete,
   type BoxIdentity,
-  type BoxSize,
+  type MachineSize,
   type CopyHooks,
   type CopyPlan,
   type CopyState,
@@ -61,7 +61,7 @@ export class FakeSnapshots {
   rollback: RollbackOutcome = "ok";
   powerOffFault: Error | null = null;
   readonly order: string[] = [];
-  readonly sizes = new Map<string, BoxSize>();
+  readonly sizes = new Map<string, MachineSize>();
   readonly outside: OutsideRollback[] = [];
   readonly copies = new Map<string, { state: "copy" | "template"; box: string; snapshot: string; disarmed: boolean; takenAt: number; kept?: string | null; forkSafe?: number | null; of?: string }>();
   keepWay: KeepsPastRelease = "held-copy";

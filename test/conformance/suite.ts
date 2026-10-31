@@ -26,7 +26,7 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type MachineSize,
   type Capacity,
   type DoctorReport,
   type Guest,
@@ -155,17 +155,17 @@ const MIB_UNITS: readonly Limit["resource"][] = ["memory", "disk", "gpu-memory"]
 const RESOURCES: readonly Limit["resource"][] = ["memory", "disk", "cpu", "guests", "gpu-desktops", "gpu-memory", "machines"];
 
 /** The size a box of the kind gets when none is asked for. */
-export function sizeOf(kind: string): BoxSize {
+export function sizeOf(kind: string): MachineSize {
   return defaultSize(kindSizes(kind));
 }
 
 export function identity(kind: string, size = sizeOf(kind)): BoxIdentity {
   const suffix = randomBytes(3).toString("hex");
-  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size };
+  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size: { ...size, gpu: "none" } };
 }
 
 /** Checks a size a guest reports, which may be null when the backend cannot read it. */
-export function checkSize(size: BoxSize | null, what: string): void {
+export function checkSize(size: MachineSize | null, what: string): void {
   if (size === null) return;
   assert.ok(Number.isInteger(size.cores) && size.cores > 0, `${what} has whole cores`);
   assert.ok(Number.isInteger(size.memoryMiB) && size.memoryMiB > 0, `${what} has whole MiB of memory`);
@@ -1020,7 +1020,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         const preset = PRESETS.find((name) => name !== sizes.default)!;
         const base = sizes.presets[preset];
         /** With a disk larger than a base disk is likely to be, for the backends that set one. */
-        const disked: BoxSize = { ...base, diskGiB: base.diskGiB ?? 32 };
+        const disked: MachineSize = { ...base, diskGiB: base.diskGiB ?? 32 };
         let asked = base;
         let guest: Guest | null = null;
         let measured: RunResult | null = null;
@@ -1080,7 +1080,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         const live = resizing?.cores === "live" && resizing.memory === "live" && resizing.shrinks ? false : "the kind's cores and memory do not change live, larger and smaller";
         const restarts = resizing?.cores === "restart" || resizing?.memory === "restart" ? false : "no part of the kind's size needs a restart";
         /** Measures the box until it has `size`, for up to `ms`, and says what it last had; a command that fails, as while the box restarts, is tried again. */
-        const has = async (command: CommandTransport, size: BoxSize, ms = 15_000): Promise<string> => {
+        const has = async (command: CommandTransport, size: MachineSize, ms = 15_000): Promise<string> => {
           const until = Date.now() + ms;
           let last = "";
           for (;;) {
@@ -1101,7 +1101,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           const sleeper = await command.run("nohup sleep 900 >/dev/null 2>&1 & echo $!", { timeoutMs: 30_000 });
           const pid = sleeper.stdout.trim();
           assert.match(pid, /^\d+$/, sleeper.stderr);
-          const larger: BoxSize = {
+          const larger: MachineSize = {
             cores: from.cores + 1,
             memoryMiB: from.memoryMiB + 1024,
             diskGiB: resizing!.disk === "live" && from.diskGiB !== null ? from.diskGiB + 2 : from.diskGiB,
@@ -1115,7 +1115,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           const grown = await backend.resize!(guest, kind!.id, larger, { restart: false }, signal());
           assert.deepEqual(grown.size, larger, "the backend reads the new size back");
           console.log(`# ${options.name} ${kind!.id}: grown to ${describeSize(larger)}; the box has ${await has(command, larger)}`);
-          const smaller: BoxSize = { ...from, diskGiB: larger.diskGiB };
+          const smaller: MachineSize = { ...from, diskGiB: larger.diskGiB };
           const shrunk = await backend.resize!(grown, kind!.id, smaller, { restart: false }, signal());
           assert.deepEqual(shrunk.size, smaller);
           console.log(`# ${options.name} ${kind!.id}: shrunk to ${describeSize(smaller)}; the box has ${await has(command, smaller)}`);
@@ -1127,7 +1127,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         it("resizes with a restart where a part needs one, refuses it without, and the box has the new size once it answers again (061)", { timeout, skip: skip.resize ?? skip.size ?? (measurable || restarts) }, async (t) => {
           assert.ok(guest?.size, "the box was acquired and read");
           const from = guest.size;
-          const larger: BoxSize = { cores: from.cores + 1, memoryMiB: from.memoryMiB + 1024, diskGiB: resizing!.disk !== "no" && from.diskGiB !== null ? from.diskGiB + 2 : from.diskGiB };
+          const larger: MachineSize = { cores: from.cores + 1, memoryMiB: from.memoryMiB + 1024, diskGiB: resizing!.disk !== "no" && from.diskGiB !== null ? from.diskGiB + 2 : from.diskGiB };
           const plan = await backend.planResize!(guest, kind!.id, larger, [], signal());
           if (!plan.room.ok) {
             t.skip(`no room to grow: ${plan.room.message}`);

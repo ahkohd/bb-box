@@ -33,7 +33,7 @@ function setup() {
   return { fake, backend: disposed(backend), pulls };
 }
 
-const box = (id: string, kind = "linux") => ({ boxId: id, threadId: "thr_1", name: `box-${id}`, kind, createdAt: Date.now(), size: { cores: 2, memoryMiB: 4096, diskGiB: null } });
+const box = (id: string, kind = "linux") => ({ boxId: id, threadId: "thr_1", name: `box-${id}`, kind, createdAt: Date.now(), size: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "none" as const } });
 const hooks = () => {
   const steps: string[] = [];
   return { steps, hooks: { claim: async () => {}, starting: async () => {}, timing: (step: string) => void steps.push(step) } };

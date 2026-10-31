@@ -65,7 +65,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type ResizePlan,
@@ -221,7 +221,7 @@ export function guestOsOf(kind: string): GuestOs {
 }
 
 /** What a box takes of its Mac's memory while it runs: a Windows box's QEMU takes more than the box's memory. */
-function footprint(kind: string, size: BoxSize): number {
+function footprint(kind: string, size: MachineSize): number {
   return size.memoryMiB + (guestOsOf(kind) === "windows" ? QEMU_OVERHEAD_MIB : 0);
 }
 
@@ -355,7 +355,7 @@ interface WarmPool {
   readonly image: string;
   /** macOS, whose VMs Tart runs, or Windows, whose VMs QEMU runs (046). */
   readonly os: GuestOs;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
   readonly kinds: readonly string[];
   /** The sum of the kinds' warm counts (029). */
   readonly target: number;
@@ -364,7 +364,7 @@ interface WarmPool {
 /** A warm VM bb-box is filling, until it is suspended or saved, or a box takes it over. */
 interface Fill {
   readonly host: string;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
   readonly kinds: readonly string[];
   readonly abort: AbortController;
   /** The VM's address once it is ready, or "" for a Windows VM, reached at its port; rejects when the fill fails. */
@@ -378,7 +378,7 @@ interface Fill {
 /** A free warm VM on a Mac, as the state script shows it. */
 interface FreeWarm {
   readonly vm: string;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
   readonly kinds: readonly string[];
   /** A macOS VM whose fill ran this Mac helper's vm-ready (058): its claim skips the grants step. */
   readonly ready: boolean;
@@ -392,7 +392,7 @@ type Placement =
   | { readonly how: "adopt"; readonly host: TartHost; readonly vm: string; readonly fill: Fill }
   | { readonly how: "wait"; readonly fills: readonly Fill[] };
 
-function sameSize(a: BoxSize, b: BoxSize): boolean {
+function sameSize(a: MachineSize, b: MachineSize): boolean {
   return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
 }
 
@@ -402,7 +402,7 @@ function warmState(fields: Readonly<Record<string, string>>): "warm" | "filling"
 }
 
 /** A warm VM's size and whether it is saved: from QEMU for a Windows VM, whose owner file names the engine, else from Tart. */
-function warmOf(state: MacState, vm: string, fields: Readonly<Record<string, string>>): { readonly size: BoxSize | null; readonly suspended: boolean } {
+function warmOf(state: MacState, vm: string, fields: Readonly<Record<string, string>>): { readonly size: MachineSize | null; readonly suspended: boolean } {
   if (fields.engine === "qemu") {
     const made = state.qemu.vms.get(vm);
     return { size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null, suspended: made?.power === "suspended" };
@@ -426,7 +426,7 @@ function failedRestore(error: unknown): boolean {
   return /failed to restore/i.test(message(error));
 }
 
-type Pending = { readonly kind: string; readonly size: BoxSize };
+type Pending = { readonly kind: string; readonly size: MachineSize };
 
 /** Boxes the registry is acquiring that have not reached a Mac yet, which count on every Mac. */
 interface Unplaced {
@@ -510,13 +510,13 @@ export function decimalGB(gib: number): number {
 }
 
 /** The size sizeScript prints: the VM's config after a line `@config` and its disk in decimal GB after `@disk`, in whole GiB; null when it does not say. */
-export function parseTartSize(stdout: string): BoxSize | null {
+export function parseTartSize(stdout: string): MachineSize | null {
   const disk = Number(sections(stdout).get("disk")?.trim());
   return sizeOf(parseConfig(stdout), disk > 0 ? disk : null);
 }
 
 /** The size a VM's config gives it, with the disk Tart gives; with none, the image's, as null. */
-function sizeOf(config: VmConfig | null | undefined, diskGB: number | null = null): BoxSize | null {
+function sizeOf(config: VmConfig | null | undefined, diskGB: number | null = null): MachineSize | null {
   if (!config || !config.cpus || !config.memoryMiB) return null;
   return { cores: config.cpus, memoryMiB: config.memoryMiB, diskGiB: diskGB ? gibOfTartGB(diskGB) : null };
 }
@@ -1000,7 +1000,7 @@ export class TartBackend implements Backend {
   }
 
   #hostRoom(host: TartHost, state: MacState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null {
-    const size: BoxSize = { cores: settings.cores, memoryMiB: settings.memoryGiB * MiB_PER_GiB, diskGiB: null };
+    const size: MachineSize = { cores: settings.cores, memoryMiB: settings.memoryGiB * MiB_PER_GiB, diskGiB: null };
     return this.#room(host, state, size, NONE_UNPLACED, leaving, "macos").why;
   }
 
@@ -1156,7 +1156,7 @@ export class TartBackend implements Backend {
     return kind;
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const states = await this.#states(signal);
     const placed = [...this.#placing.values()];
@@ -1208,7 +1208,7 @@ export class TartBackend implements Backend {
   #room(
     host: TartHost,
     state: MacState | Error,
-    size: BoxSize,
+    size: MachineSize,
     unplaced: Unplaced = NONE_UNPLACED,
     yielding: ReadonlySet<string> = new Set(),
     os: GuestOs = "macos",
@@ -1413,7 +1413,7 @@ export class TartBackend implements Backend {
       const { host, vm } = placement;
       // A Linux box says so, for its SSH user; a macOS box's data is as it was.
       const data: Readonly<Record<string, string>> = os === "linux" ? { box: box.boxId, os } : { box: box.boxId };
-      const guest = (address: string | null, size: BoxSize | null = null, build: string | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: build ? { ...data, build } : data });
+      const guest = (address: string | null, size: MachineSize | null = null, build: string | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: build ? { ...data, build } : data });
       let owned = placement.how === "resume";
       try {
         let address: string;
@@ -1844,7 +1844,7 @@ export class TartBackend implements Backend {
     return { cores: "restart", memory: "restart", disk: guestOsOf(kind) === "macos" ? "no" : "restart", shrinks: true };
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no size of its own, so it cannot be resized.");
     if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
     const { host, from } = await this.#resizable(guest, to, signal);
@@ -1865,7 +1865,7 @@ export class TartBackend implements Backend {
    * disk. When it does not come back, its old CPUs and memory go back and it
    * boots again; a disk that grew stays.
    */
-  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no size of its own, so it cannot be resized.");
     if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
     const { host, from } = await this.#resizable(guest, to, signal);
@@ -1875,7 +1875,7 @@ export class TartBackend implements Backend {
     if (os === "macos" && grows) throw new BackendError("unsupported", `${this.label} cannot grow a macOS VM's disk.`);
     const ref = guest.ref;
     const box = this.#boxOf(guest);
-    const change = (size: BoxSize, disk: number | null) =>
+    const change = (size: MachineSize, disk: number | null) =>
       os === "windows"
         ? this.#run(host, qemuSizeScript(ref, this.#context.installId, box, { cores: size.cores, memoryMiB: size.memoryMiB, diskGiB: disk }), { timeoutMs: 120_000, signal })
         : this.#run(host, sizeScript(ref, this.#context.installId, box, { cpus: size.cores, memoryMiB: size.memoryMiB, diskGB: disk === null ? null : decimalGB(disk) }), { timeoutMs: 120_000, signal });
@@ -1930,7 +1930,7 @@ export class TartBackend implements Backend {
   }
 
   /** A running VM's Mac and size, when it is the box's and the disk asked for is not smaller (061). */
-  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ host: TartHost; from: BoxSize }> {
+  async #resizable(guest: Guest, to: MachineSize, signal?: AbortSignal): Promise<{ host: TartHost; from: MachineSize }> {
     const host = this.#hostOf(guest);
     const power = await this.power(guest, signal);
     if (power === null) throw this.#gone(guest);
@@ -1944,7 +1944,7 @@ export class TartBackend implements Backend {
   }
 
   /** A VM's size as its Tart or QEMU config gives it, its disk in GiB; null when neither says. */
-  async #readSize(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+  async #readSize(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<MachineSize | null> {
     if (this.#osOf(guest) === "windows") {
       const result = await this.#run(host, qemuSizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal });
       if (result.stdout.trim() === "gone") throw this.#gone(guest);
@@ -1956,7 +1956,7 @@ export class TartBackend implements Backend {
   }
 
   /** Room on the Mac for a VM to grow from `from` to `to` (061): the memory it adds within the reserve, cores within the Mac's, and the disk it adds. */
-  #resizeRoom(host: TartHost, state: MacState | Error, from: BoxSize, to: BoxSize, pending: readonly Pending[]): Capacity {
+  #resizeRoom(host: TartHost, state: MacState | Error, from: MachineSize, to: MachineSize, pending: readonly Pending[]): Capacity {
     if (state instanceof Error) return { ok: false, message: `${host.name} did not answer: ${state.message}`, warm: null, hosts: [{ host: host.name, ok: false, limits: [] }] };
     const running = state.vms.filter((vm) => vm.running);
     const memoryUsed =
@@ -2205,7 +2205,7 @@ export class TartBackend implements Backend {
    * does a macOS VM saved more than tart-warm-max-hours ago, or at a time
    * bb-box did not note.
    */
-  #servedBy(state: MacState, fields: Readonly<Record<string, string>>, size: BoxSize | null): string[] {
+  #servedBy(state: MacState, fields: Readonly<Record<string, string>>, size: MachineSize | null): string[] {
     const windows = fields.engine === "qemu";
     if (!windows && this.#tooOld(fields)) return [];
     if (!size || fields.macos !== state.macosBuild || (windows ? fields.qemu !== state.qemu.version : fields.tart !== state.version)) return [];

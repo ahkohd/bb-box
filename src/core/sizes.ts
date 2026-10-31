@@ -5,7 +5,7 @@
 // comes from the preset, or else the default preset.
 
 import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
-import type { BoxSize, DoctorCheck } from "../backends/types.ts";
+import type { BoxSize, MachineSize, DoctorCheck } from "../backends/types.ts";
 import type { AndroidModelName } from "./device-models.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
@@ -13,14 +13,14 @@ export type Preset = (typeof PRESETS)[number];
 
 export interface KindSizes {
   /** Presets leave the disk at the base, unless the box-sizes setting gives one. */
-  readonly presets: Readonly<Record<Preset, BoxSize>>;
+  readonly presets: Readonly<Record<Preset, MachineSize>>;
   /** The preset a box gets when none is asked for. */
   readonly default: Preset;
   /** The largest custom size. Its disk is always a number. */
-  readonly largest: BoxSize;
+  readonly largest: MachineSize;
 }
 
-function size(cores: number, memoryGiB: number, diskGiB: number | null = null): BoxSize {
+function size(cores: number, memoryGiB: number, diskGiB: number | null = null): MachineSize {
   return { cores, memoryMiB: memoryGiB * 1024, diskGiB };
 }
 
@@ -89,12 +89,12 @@ export function leastSize(kind: string, device?: string): LeastSize | null {
   return Object.values(devices).reduce((least, each) => (each.memoryGiB < least.memoryGiB || (each.memoryGiB === least.memoryGiB && each.cores < least.cores) ? each : least));
 }
 
-export function fitsDevice(kind: string, device: string, size: BoxSize): boolean {
+export function fitsDevice(kind: string, device: string, size: MachineSize): boolean {
   const least = leastSize(kind, device);
   return !least || (size.cores >= least.cores && size.memoryMiB >= least.memoryGiB * 1024);
 }
 
-export function belowLeast(kind: string, size: BoxSize, changed: { readonly cores: boolean; readonly memory: boolean } = { cores: true, memory: true }, device?: string): string | null {
+export function belowLeast(kind: string, size: MachineSize, changed: { readonly cores: boolean; readonly memory: boolean } = { cores: true, memory: true }, device?: string): string | null {
   const least = leastSize(kind, device);
   if (!least) return null;
   const fewCores = changed.cores && size.cores < least.cores;
@@ -158,18 +158,18 @@ export function kindSizes(kind: string, changes: SizeChanges = {}): KindSizes {
 }
 
 /** A kind's presets, smallest first: by cores, then memory. */
-export function presetSizes(sizes: KindSizes): BoxSize[] {
+export function presetSizes(sizes: KindSizes): MachineSize[] {
   return PRESETS.map((preset) => sizes.presets[preset]).sort((a, b) => a.cores - b.cores || a.memoryMiB - b.memoryMiB);
 }
 
 /** The size a box of a kind gets when none is asked for. */
-export function defaultSize(sizes: KindSizes): BoxSize {
+export function defaultSize(sizes: KindSizes): MachineSize {
   return sizes.presets[sizes.default];
 }
 
 function apply(sizes: KindSizes, change: KindSizesChange | undefined): KindSizes {
   if (!change) return sizes;
-  const changed = (base: BoxSize, part: SizeChange | undefined): BoxSize => ({
+  const changed = (base: MachineSize, part: SizeChange | undefined): MachineSize => ({
     cores: part?.cores ?? base.cores,
     memoryMiB: part?.memoryMiB ?? base.memoryMiB,
     diskGiB: part?.diskGiB === undefined ? base.diskGiB : part.diskGiB,
@@ -295,7 +295,7 @@ export function presetMemoryChecks(changes: SizeChanges): DoctorCheck[] {
  * nothing changes: every such kind has an entry or was the shipped default,
  * or the setting is not a JSON object, which is left for its owner to fix.
  */
-export function withEarlierSizes(raw: unknown, earlier: Readonly<Record<string, BoxSize>>): string | null {
+export function withEarlierSizes(raw: unknown, earlier: Readonly<Record<string, MachineSize>>): string | null {
   const text = typeof raw === "string" ? raw.trim() : "";
   let value: unknown = {};
   if (text) {
@@ -312,7 +312,7 @@ export function withEarlierSizes(raw: unknown, earlier: Readonly<Record<string, 
   for (const [kind, size] of Object.entries(earlier)) {
     if (listed.has(kind)) continue;
     const shipped = kindSizes(kind);
-    if (sameSize(size, defaultSize(shipped))) continue;
+    if (sameMachineSize(size, defaultSize(shipped))) continue;
     const change: Record<string, SizeChange> = {};
     for (const preset of PRESETS.slice(PRESETS.indexOf(shipped.default))) {
       const part = changeTo(shipped.presets[preset], size, preset === shipped.default);
@@ -327,7 +327,7 @@ export function withEarlierSizes(raw: unknown, earlier: Readonly<Record<string, 
 }
 
 /** The parts of `base` that change for it to be `size`, or with `exact` false, at least `size`. Null when none do. */
-function changeTo(base: BoxSize, size: BoxSize, exact: boolean): SizeChange | null {
+function changeTo(base: MachineSize, size: MachineSize, exact: boolean): SizeChange | null {
   const change: { cores?: number; memoryMiB?: number; diskGiB?: number | null } = {};
   if (exact ? size.cores !== base.cores : size.cores > base.cores) change.cores = size.cores;
   if (exact ? size.memoryMiB !== base.memoryMiB : size.memoryMiB > base.memoryMiB) change.memoryMiB = size.memoryMiB;
@@ -337,13 +337,17 @@ function changeTo(base: BoxSize, size: BoxSize, exact: boolean): SizeChange | nu
 }
 
 /** Whether `size` is at most `limit` in every part. A disk of null is the base, which fits. */
-export function fits(size: BoxSize, limit: BoxSize): boolean {
+export function fits(size: MachineSize, limit: MachineSize): boolean {
   const disk = size.diskGiB === null || limit.diskGiB === null || size.diskGiB <= limit.diskGiB;
   return size.cores <= limit.cores && size.memoryMiB <= limit.memoryMiB && disk;
 }
 
-export function sameSize(a: BoxSize, b: BoxSize): boolean {
+export function sameMachineSize(a: MachineSize, b: MachineSize): boolean {
   return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
+}
+
+export function sameSize(a: BoxSize, b: BoxSize): boolean {
+  return sameMachineSize(a, b) && a.gpu === b.gpu;
 }
 
 /** What a box is asked to be: a preset, and any parts that differ from it. */
@@ -354,7 +358,7 @@ export interface SizeRequest {
   readonly diskGiB?: number;
 }
 
-export type SizeChoice = { readonly ok: true; readonly size: BoxSize } | { readonly ok: false; readonly message: string };
+export type SizeChoice = { readonly ok: true; readonly size: MachineSize } | { readonly ok: false; readonly message: string };
 
 /**
  * The size a request asks for, complete: parts left out come from the named
@@ -380,7 +384,7 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
     };
   }
   const base = sizes.presets[name as Preset];
-  const chosen: BoxSize = {
+  const chosen: MachineSize = {
     cores: request.cores ?? base.cores,
     memoryMiB: request.memoryGiB !== undefined ? request.memoryGiB * 1024 : base.memoryMiB,
     diskGiB: request.diskGiB ?? base.diskGiB,
@@ -399,7 +403,7 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
  * its disk only when it names one. The same limits as chooseSize, on the
  * parts that change, and the disk only grows.
  */
-export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, request: SizeRequest = {}, device?: string): SizeChoice {
+export function chooseResize(kind: string, sizes: KindSizes, current: MachineSize, request: SizeRequest = {}, device?: string): SizeChoice {
   const presets = `Its presets are ${describePresets(sizes)}`;
   const name = request.preset?.trim().toLowerCase();
   if (name !== undefined && name !== "" && !PRESETS.includes(name as Preset)) {
@@ -410,7 +414,7 @@ export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, r
     return { ok: false, message: "Give cores, memory in GiB and disk in GiB as whole numbers of at least 1." };
   }
   const base = name ? sizes.presets[name as Preset] : current;
-  const chosen: BoxSize = {
+  const chosen: MachineSize = {
     cores: request.cores ?? base.cores,
     memoryMiB: request.memoryGiB !== undefined ? request.memoryGiB * 1024 : base.memoryMiB,
     diskGiB: request.diskGiB ?? base.diskGiB ?? current.diskGiB,
@@ -436,7 +440,7 @@ export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, r
 }
 
 /** For example "4 cores, 8 GiB memory, 32 GiB disk". A disk of null, the base, is left out. */
-export function describeSize(size: BoxSize): string {
+export function describeSize(size: MachineSize): string {
   const parts = [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${formatMiB(size.memoryMiB)} memory`];
   if (size.diskGiB !== null) parts.push(`${size.diskGiB} GiB disk`);
   return parts.join(", ");

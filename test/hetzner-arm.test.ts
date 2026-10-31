@@ -5,12 +5,12 @@ import { test } from "node:test";
 import { armImageOf } from "../src/backends/hetzner/backend.ts";
 import { parseHetznerPart } from "../src/backends/hetzner/config.ts";
 import type { HostRecord } from "../src/backends/hetzner/hosts.ts";
-import type { AcquireHooks, BoxIdentity, BoxSize, ReleaseHooks } from "../src/backends/types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, ReleaseHooks } from "../src/backends/types.ts";
 import { MemoryStorage } from "./helpers.ts";
 import { hetznerConfig, hetznerWorld } from "./fake-hetzner-world.ts";
 
 const signal = () => AbortSignal.timeout(30_000);
-const box4: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const box4: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
 function hooks() {
@@ -20,7 +20,7 @@ function hooks() {
 }
 
 let counter = 0;
-const identity = (kind: string): BoxIdentity => ({ boxId: `bxarm${String(++counter).padStart(9, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: box4 });
+const identity = (kind: string): BoxIdentity => ({ boxId: `bxarm${String(++counter).padStart(9, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...box4, gpu: "none" } });
 
 function armWorld(extra: Parameters<typeof hetznerConfig>[0] = {}) {
   const world = hetznerWorld();

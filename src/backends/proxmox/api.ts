@@ -3,7 +3,7 @@
 // Every call goes through one `fetch`, so tests pass a fake API. The token
 // secret appears only in the Authorization header, never in errors.
 
-import type { BoxSize } from "../types.ts";
+import type { MachineSize } from "../types.ts";
 
 export interface FetchResponse {
   readonly ok: boolean;
@@ -181,7 +181,7 @@ export interface PoolGuest {
   readonly template: boolean;
   readonly tags: string[];
   /** The guest's CPUs, memory and disk as Proxmox lists them, or null when it does not. A running container's disk is its filesystem's size. */
-  readonly size: BoxSize | null;
+  readonly size: MachineSize | null;
 }
 
 type Params = Record<string, string | number | boolean | undefined>;
@@ -224,7 +224,7 @@ export function rootDiskGiB(config: Record<string, unknown>, disk = "rootfs"): n
 }
 
 /** A guest's size from Proxmox's maxcpu, maxmem and maxdisk, which give memory and disk in bytes. */
-function listedSize(entry: Record<string, unknown>): BoxSize | null {
+function listedSize(entry: Record<string, unknown>): MachineSize | null {
   const cores = Number(entry.maxcpu);
   const memory = Number(entry.maxmem);
   const disk = Number(entry.maxdisk);

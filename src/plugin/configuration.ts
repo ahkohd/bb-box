@@ -5,7 +5,7 @@
 
 import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
-import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, Price, WarmShortfall } from "../backends/types.ts";
+import type { Arch, BackendDriver, BackendStorage, MachineSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, Price, WarmShortfall } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import type { DevicePlatform } from "../core/device.ts";
 import {
@@ -147,7 +147,7 @@ export interface ConfigState {
   readonly defaults: {
     readonly general: typeof GENERAL_DEFAULTS;
     readonly monitor: typeof MONITOR_DEFAULTS;
-    readonly kinds: Readonly<Record<string, { enabled: true; presets: Record<Preset, BoxSize>; default: Preset; largest: BoxSize }>>;
+    readonly kinds: Readonly<Record<string, { enabled: true; presets: Record<Preset, MachineSize>; default: Preset; largest: MachineSize }>>;
   };
   readonly kinds: readonly KindInfoView[];
   readonly drivers: readonly DriverView[];

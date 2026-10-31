@@ -32,7 +32,7 @@ function world() {
 let boxes = 0;
 function identity(): BoxIdentity {
   boxes++;
-  return { boxId: `bxsnapshotbox${boxes}`, threadId: "thr_abc123", name: `calm-otter-${boxes}`, kind: "linux", createdAt: 1_790_000_000_000, size: defaultSize(kindSizes("linux")) };
+  return { boxId: `bxsnapshotbox${boxes}`, threadId: "thr_abc123", name: `calm-otter-${boxes}`, kind: "linux", createdAt: 1_790_000_000_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" } };
 }
 
 const quiet: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
@@ -458,7 +458,7 @@ test("070 unit 7: a fork is a full copy of the snapshot in a VMID of its own, re
   const plan = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest });
   assert.equal(plan.fork.ok, true, plan.fork.why ?? "");
   assert.deepEqual(plan.fork.size, { cores: 2, memoryMiB: 4096, diskGiB: plan.fork.size?.diskGiB ?? null }, "the fork has the size the snapshot holds");
-  const forked: BoxIdentity = { ...identity(), name: id.name, size: plan.fork.size! };
+  const forked: BoxIdentity = { ...identity(), name: id.name, size: { ...plan.fork.size!, gpu: "none" } };
   const claimed: string[] = [];
   let listedDuring: boolean | null = null;
   state.proxmox.intercept = (call) => {

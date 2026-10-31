@@ -9,12 +9,12 @@ import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
-import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, addVmFiles, fakeMacTools, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
-const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
-const MEDIUM: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
+const SMALL: MachineSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
+const MEDIUM: MachineSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
 
 const made: TartBackend[] = [];
 // Each test's backends end with it: the fake ssh serves the newest test's Mac, and a backend left running could fill
@@ -54,7 +54,7 @@ function setup(warm: Record<string, number> = { macos: 1 }) {
 let counter = 0;
 function identity(kind = "macos", size = SMALL): BoxIdentity {
   counter++;
-  return { boxId: `bxw${counter}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `bxw${counter}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

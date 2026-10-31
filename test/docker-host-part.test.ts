@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
-import type { AcquireHooks, BoxIdentity, BoxSize, ReleaseHooks } from "../src/backends/types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, ReleaseHooks } from "../src/backends/types.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 
-const SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const SMALL: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 const hooks: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
@@ -14,7 +14,7 @@ const signal = () => AbortSignal.timeout(30_000);
 let counter = 0;
 function identity(): BoxIdentity {
   counter++;
-  return { boxId: `bxpart${String(counter).padStart(8, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "linux", createdAt: 1_790_000_000_000, size: SMALL };
+  return { boxId: `bxpart${String(counter).padStart(8, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "linux", createdAt: 1_790_000_000_000, size: { ...SMALL, gpu: "none" } };
 }
 
 function part(name: string) {
