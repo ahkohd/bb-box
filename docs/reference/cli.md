@@ -983,7 +983,7 @@ Restore a thread's box, or with --machine one of your machines, to one of its sn
 
 ```text
 Usage:
-  bb box snapshot restore <box> <snapshot> [--thread <value>] [--machine] [--json] [--replace] [--no-undo] [--force] [--check] [--request <value>]
+  bb box snapshot restore <box> <snapshot> [--thread <value>] [--machine] [--json] [--replace] [--no-undo] [--force] [--unflushed] [--check] [--request <value>]
 
 Arguments:
   <box>       The box's name or ID. (required)
@@ -996,6 +996,7 @@ Options:
   --replace          Replace the box's disk with the snapshot's.
   --no-undo          Take no undo first, so this cannot be undone.
   --force            Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them.
+  --unflushed        Restore anyway when bb-box cannot flush the box's writes to its disk before stopping it, so its undo may miss the last seconds' writes.
   --check            Say what the restore would do, and refuse what it would refuse, changing nothing.
   --request <value>  An ID you make, so a repeat of this command is the same restore.
   --help, -h         Show this help and exit

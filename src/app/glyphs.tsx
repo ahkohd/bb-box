@@ -293,3 +293,12 @@ export function PhoneGlyph(props: Props) {
     </Stroked>
   );
 }
+
+export function CameraGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M3.5 8.5A1.5 1.5 0 0 1 5 7h2.5l1.5-2.5h6L16.5 7H19a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z" />
+      <circle cx="12" cy="12.75" r="3.25" />
+    </Stroked>
+  );
+}

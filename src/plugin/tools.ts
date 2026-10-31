@@ -68,6 +68,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   reused_request: "Make a new request ID for a new take, delete or restore; repeat one only to repeat the same call.",
   try_again: "This holds only for now, not for good: try again in a few minutes, or once what it names has changed.",
   needs_yes: "Call box_restore again: it asks for a yes in the thread with a form. Then end your turn.",
+  unflushed: "Nothing changed. Try again in a moment; if the box still cannot flush its writes, ask the user, who can restore with an undo that may miss them.",
 };
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {

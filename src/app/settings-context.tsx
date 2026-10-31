@@ -33,7 +33,7 @@ export function useSettings(): SettingsContextValue {
 
 export type GeneralAtOnce = "enrol" | "video" | "nightlyImages" | "defaultKind" | "iosEncoder" | "encoderLedger" | "testDevice";
 export type MonitorAtOnce = "enabled" | "backgroundMonitoring" | "pressureNotifications";
-export type SnapshotsAtOnce = "agentsRestore" | "agentsMemory";
+export type SnapshotsAtOnce = "agentsRestore" | "agentsMemory" | "pictures";
 
 export interface SettingsWrites {
   backendOn(state: ConfigState, config: BackendConfig, on: boolean, what: string): InstantWrite;

@@ -16,6 +16,7 @@ import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
 import { boxPage, viewFromPage, type BoxPageRoute } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
 import { Activity } from "./activity.tsx";
+import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
 import {
   acquireSteps,
@@ -724,7 +725,10 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const [asking, setAsking] = useState<MenuAsk>(null);
   const [resizing, setResizing] = useState(false);
   const [announced, setAnnounced] = useState("");
+  const [takingSnapshot, setTakingSnapshot] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const titles = useActorTitles(actorThreads(box), page?.thread ?? null);
+  const snapshotTitles = useSnapshotTitles(page?.snapshots);
   if (!page) return <Loading back={back} error={error} />;
   if (!box) return <NotHere page={page} back={back} now={now} />;
   const yours = page.owner === "yours";
@@ -739,6 +743,10 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
     resize: () => setResizing(true),
   };
   const opens = { screen: () => undefined, terminal: () => undefined };
+  const snapshots = page.snapshots ?? null;
+  const restoring = !!snapshots?.restoring;
+  const snapshotsShown = !!snapshots && box.state !== "acquiring" && (box.state !== "starting" || restoring) && box.state !== "failed" && box.state !== "releasing";
+  const takeSnapshot = snapshotsShown && snapshots.offer ? { why: snapshots.restoring ? "It is being restored." : snapshots.takeWhy, take: () => setTakingSnapshot(true) } : null;
   const menu = (
     <BoxMenu
       box={box}
@@ -749,9 +757,11 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       place="page"
       asking={asking}
       onAsking={setAsking}
+      takeSnapshot={takeSnapshot}
+      triggerRef={menuTrigger}
     />
   );
-  const starting = box.state === "acquiring" || box.state === "starting";
+  const starting = box.state === "acquiring" || (box.state === "starting" && !restoring);
   const failed = box.state === "failed";
   const problem = yours ? machineActions.problem : threadActions.problem;
   return (
@@ -760,11 +770,13 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
       <Notices page={page} box={box} now={now} actions={actions} announce={setAnnounced} />
+      {snapshotsShown ? <SnapshotNotices box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
       <p aria-live="polite" data-announcer className="sr-only">
         {announced}
       </p>
       {starting ? <Starting box={box} now={now} /> : null}
       {starting ? null : <Activity page={page} box={box} now={now} />}
+      {snapshotsShown ? <SnapshotsCard box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
       {starting ? null : <Facts box={box} now={now} />}
       {starting ? null : failed ? (
         <HowItStarted box={box} now={now} titles={titles} />
@@ -775,6 +787,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
         </div>
       )}
       {yours ? machineActions.dialogs : threadActions.dialogs}
+      {takingSnapshot && snapshots?.offer ? <TakeSnapshotDialog box={box} view={snapshots} now={now} returnTo={menuTrigger} onClose={() => setTakingSnapshot(false)} onChanged={refreshAll} /> : null}
     </PageFrame>
   );
 }

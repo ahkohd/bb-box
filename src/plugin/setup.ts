@@ -80,6 +80,7 @@ import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-
 import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
 import { Snapshots } from "../core/snapshots.ts";
+import { PICTURE_EDGE } from "../core/snapshot-picture.ts";
 import { FakeSnapshotPrices, MachineRestores, SnapshotHolds, ZfsOrder } from "./live-checks.ts";
 import { registerSnapshotTools } from "./snapshot-tools.ts";
 import { TurnHold } from "./turn-hold.ts";
@@ -876,8 +877,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         threadsUnread = error instanceof Error ? error.message : String(error);
       }
       const control = box.capabilities.displays.length > 0 && api.control(box).owner === "human";
-      const terminals = box.enrol.state === "enrolled" && box.enrol.hostId ? await openTerminals(box.enrol.hostId).catch(() => null) : 0;
-      return { threads, threadsUnread, control, terminals };
+      const bbTerminals = box.enrol.state === "enrolled" && box.enrol.hostId ? await openTerminals(box.enrol.hostId).catch(() => null) : 0;
+      const ownTerminals = terminals?.openOn(box.id) ?? 0;
+      return { threads, threadsUnread, control, terminals: bbTerminals === null ? null : bbTerminals + ownTerminals };
+    },
+    screen: async (box, signal) => {
+      if (box.device) {
+        if (!deviceServers) return null;
+        const answer = await deviceServers.read(box, { type: "screenshot", longestEdge: PICTURE_EDGE });
+        if (!answer.ok || answer.result?.type !== "screenshot") throw new Error(answer.ok ? "the device server answered without a picture" : answer.error.words);
+        return Buffer.from(answer.result.png, "base64");
+      }
+      if (!box.capabilities.displays.length || !box.capabilities.computerUse || !computer) return null;
+      const image = await computer.screenPicture(box, PICTURE_EDGE, signal);
+      return Buffer.from(image.data, "base64");
     },
   });
   const turnHold = new TurnHold({

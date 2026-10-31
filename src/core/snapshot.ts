@@ -110,11 +110,20 @@ export interface SnapshotOperation {
   readonly stepAt?: number | null;
 }
 
+export interface StoredPicture {
+  readonly snapshot: string;
+  readonly jpeg: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+  readonly at: number;
+}
+
 export interface SnapshotLedger {
   readonly problem: string | null;
   record(id: string): SnapshotRecord | null;
   records(filter?: { readonly box?: string; readonly backend?: string }): SnapshotRecord[];
   operation(id: string): SnapshotOperation | null;
+  operations(filter: { readonly box: string; readonly kind: OperationKind }): SnapshotOperation[];
   byRequest(request: string): SnapshotOperation | null;
   operationWithTask(task: string): SnapshotOperation | null;
   unsettled(): SnapshotOperation[];
@@ -129,6 +138,8 @@ export interface SnapshotLedger {
   updateOperation(id: string, change: Partial<SnapshotOperation>): SnapshotOperation | null;
   charges(backend?: string): Charge[];
   prune(now: number): number;
+  putPicture(picture: StoredPicture): boolean;
+  picture(snapshot: string): StoredPicture | null;
 }
 
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";

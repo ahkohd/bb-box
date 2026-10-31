@@ -10,6 +10,9 @@ import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
+import type { BoxSnapshotsView, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
+
+export type { BoxSnapshotsView, FailedRestoreView, RestorePreview, RestoredView, SnapshotChange, SnapshotRowView, TakeCheck } from "./snapshot-card.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
@@ -187,6 +190,7 @@ export interface BoxPageState {
   readonly monitor: MonitorReach;
   readonly deviceFailed: DeviceBoot | null;
   readonly ended: EndedBox | null;
+  readonly snapshots?: BoxSnapshotsView | null;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */
@@ -196,6 +200,7 @@ export interface ThreadResult {
 }
 
 const thread = z.object({ threadId: z.string().min(1) });
+const snapshotRequest = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 const oneBox = thread.extend({ box: z.string().min(1) });
 /** The viewer ID names one viewer, such as a panel tab, of a box's desktop. */
 const viewerId = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
@@ -271,6 +276,18 @@ export const contract = defineRpcContract({
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   boxPage: { input: z.object({ box: z.string().min(1) }), output: z.custom<BoxPageState>() },
+  "snapshot.takeCheck": { input: z.object({ box: z.string().min(1), memory: z.boolean().optional() }), output: z.custom<{ readonly check: TakeCheck | null; readonly refusal: string | null }>() },
+  "snapshot.take": { input: z.object({ box: z.string().min(1), name: z.string().max(200).optional(), note: z.string().max(4096).optional(), memory: z.boolean().optional(), request: snapshotRequest }), output: z.custom<SnapshotChange>() },
+  "snapshot.restoreCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<RestorePreview>() },
+  "snapshot.restore": {
+    input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), undo: z.boolean(), accept: z.array(z.string().max(500)).max(20), token: z.string().min(1).max(64), unflushed: z.boolean().optional(), request: snapshotRequest }),
+    output: z.custom<SnapshotChange>(),
+  },
+  "snapshot.delete": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), request: snapshotRequest }), output: z.custom<SnapshotChange>() },
+  "snapshot.rename": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(200) }), output: z.custom<SnapshotChange>() },
+  "snapshot.note": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), note: z.string().max(4096) }), output: z.custom<SnapshotChange>() },
+  "snapshot.picture": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1) }), output: z.custom<{ readonly jpeg: string; readonly width: number; readonly height: number } | null>() },
+  "snapshot.settle": { input: z.object({ box: z.string().min(1) }), output: z.custom<SnapshotChange>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */

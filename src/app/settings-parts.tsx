@@ -34,7 +34,7 @@ export function Group({ title, description, action, children }: { title: string;
     <section className="space-y-2.5" aria-labelledby={headingId}>
       <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1">
-          <h3 id={headingId} className="text-xs font-medium text-foreground">
+          <h3 id={headingId} className="text-xs font-normal text-foreground">
             {title}
           </h3>
           {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</p> : null}

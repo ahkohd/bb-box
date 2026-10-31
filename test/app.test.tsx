@@ -9,7 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
@@ -534,7 +534,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
+function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null } } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -694,9 +694,39 @@ function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: 
       const found = boxes.find((candidate) => candidate.id === id);
       const mine = machines.find((entry) => entry.box.id === id);
       const blank = { monitor: options.monitor ?? NOT_READ, deviceFailed: options.deviceFailed ?? null, ended: null };
-      if (found) return { ...blank, box: found, threadId: THREAD, owner: "thread", thread: options.holder ?? { id: THREAD, title: "UI thread", running: false }, threads: options.inUse ?? [] };
+      if (found) return { ...blank, box: found, threadId: THREAD, owner: "thread", thread: options.holder ?? { id: THREAD, title: "UI thread", running: false }, threads: options.inUse ?? [], snapshots: options.snapshots ?? null };
       if (mine) return { ...blank, box: mine.box, threadId: "operator", owner: "yours", thread: null, threads: mine.threads };
       return { ...blank, box: null, threadId: null, owner: null, thread: null, threads: [], ended: ended.get(id) ?? null };
+    },
+    "snapshot.takeCheck": ({ memory }) => options.takeCheck ?? { check: { aboutMs: memory ? 9_000 : 700, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null }, refusal: null },
+    "snapshot.take": (input) => {
+      changes.push(`snapshot.take ${JSON.stringify({ ...input, request: undefined })}`);
+      return { error: options.failWith ?? null, pending: false };
+    },
+    "snapshot.restoreCheck": () => options.restorePreview ?? { refusal: "No preview.", threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "none", undoUnflushed: null },
+    "snapshot.restore": (input) => {
+      changes.push(`snapshot.restore ${JSON.stringify({ ...input, request: undefined })}`);
+      const answer = options.restoreAnswers?.shift();
+      if (answer) return answer;
+      return { error: options.failWith ?? null, pending: false };
+    },
+    "snapshot.delete": ({ snapshot }) => {
+      changes.push(`snapshot.delete ${snapshot}`);
+      if (options.snapshots) options.snapshots = { ...options.snapshots, records: options.snapshots.records.filter((row) => row.id !== snapshot) };
+      return { error: null, pending: false };
+    },
+    "snapshot.rename": ({ snapshot, name }) => {
+      changes.push(`snapshot.rename ${snapshot} ${name}`);
+      return { error: null, pending: false };
+    },
+    "snapshot.note": ({ snapshot, note }) => {
+      changes.push(`snapshot.note ${snapshot} ${note}`);
+      return { error: null, pending: false };
+    },
+    "snapshot.picture": () => null,
+    "snapshot.settle": ({ box: ref }) => {
+      changes.push(`snapshot.settle ${ref}`);
+      return { error: null, pending: false };
     },
     backends: () => BACKENDS,
     doctor: (): DoctorView => ({
@@ -9357,7 +9387,8 @@ test("070 unit 4: Settings' Snapshots page saves the limit, the room and each pa
   expect(slot.getByText("Its disk, or its disk and memory, while it runs · $0.056 a day each")).toBeTruthy();
   expect(slot.getByText("fast (LVM-thin) restores any snapshot.")).toBeTruthy();
   expect(slot.getByText("Fix: Watch the pool's metadata on the host.").className).toContain("text-warning-text");
-  expect(slot.queryByText(/Keep keeps a snapshot for|picture of the screen/)).toBeNull();
+  expect(slot.getAllByRole("switch").map((each) => each.getAttribute("aria-label"))).toEqual(["Agents may restore their own boxes", "Agents may restore memory snapshots", "Keep a picture of the screen with each snapshot"]);
+  expect(slot.queryByText(/Keep keeps a snapshot for/)).toBeNull();
 
   fireEvent.change(room, { target: { value: "60" } });
   expect(slot.getByText(/or past 55% of a thin pool's metadata\. Past 67%/)).toBeTruthy();
@@ -9398,7 +9429,7 @@ test("070 unit 4: Find finds each snapshot setting with its value, and a refused
   expect(labelsFor(entries, "snapshot limit")[0]).toBe("Snapshots per box | Options › Snapshots");
   expect(labelsFor(entries, "snapshot ceiling")[0]).toBe("Paid snapshots on Fake host | Options › Snapshots");
   expect(labelsFor(entries, "storage full")).toContain("Refuse new snapshots when a host's storage is past | Options › Snapshots");
-  expect(entries.some((entry) => /Keep keeps|picture of the screen/.test(entry.label))).toBe(false);
+  expect(entries.some((entry) => /Keep keeps/.test(entry.label))).toBe(false);
   const free = settingsIndex(stateOf(snapshotServer(null).handlers));
   expect(free.find((entry) => entry.key === "option snapshots ceiling")).toMatchObject({ label: "Paid snapshots", value: "None of your backends charges" });
   expect(problemPath("general.snapshots.ceilings.fake:pc-1", {})).toBe("snapshots/ceilings/fake:pc-1");
@@ -9480,4 +9511,331 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
   fireEvent.click(screen.getByRole("button", { name: "Restore dev-desk anyway" }));
   await waitFor(() => expect(submitted).toEqual([{ restore: true, plan: "abc123" }]));
   expect(cancelled).toBe(0);
+});
+
+function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView {
+  return {
+    id: "snaaaaaaaaaaaa",
+    name: "before the migration",
+    note: null,
+    state: "ready",
+    error: null,
+    takenAt: Date.now() - 2 * 60 * 60_000,
+    by: { is: "person" },
+    scope: "box",
+    holds: "disk",
+    size: { bytes: 1.2e9, means: "own" },
+    storage: { name: "fast", type: "lvmthin" },
+    host: "pve-1",
+    price: null,
+    keptUntil: null,
+    guest: "current",
+    undoOf: null,
+    picture: null,
+    busyWhy: null,
+    ...overrides,
+  };
+}
+
+function snapshotsView(overrides: Partial<BoxSnapshotsView> = {}): BoxSnapshotsView {
+  return {
+    offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", excludes: null, price: null },
+    noneWhy: null,
+    perBox: 5,
+    counted: 1,
+    undos: 0,
+    host: "pve-1",
+    takeWhy: null,
+    screen: false,
+    pictures: true,
+    records: [snapshotRow()],
+    restoring: null,
+    unconfirmed: null,
+    restored: null,
+    failed: null,
+    ...overrides,
+  };
+}
+
+function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePreview {
+  return {
+    refusal: null,
+    threads: [],
+    threadsUnread: null,
+    control: false,
+    terminals: 0,
+    check: { swap: false, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null },
+    snapshot: snapshotRow(),
+    token: "tokenone",
+    undoUnflushed: null,
+    ...overrides,
+  };
+}
+
+test("070 unit 6: the Snapshots card sits after Activity and before the facts, with its count, its rows and its words, and Take snapshot… is in the header's menu beside Resize…", async () => {
+  const { handlers } = server([box({ resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { snapshots: snapshotsView({ counted: 2, undos: 1, records: [snapshotRow({ id: "snundo", name: "before the restore at 09:00", by: { is: "person" }, undoOf: { at: Date.now() - 60_000, to: "Thu 09:15" } }), snapshotRow({ id: "snkept", name: "Thu 09:15", keptUntil: Date.UTC(2026, 10, 29), note: "Signed in to the staging site." })] }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  expect(card.textContent).toContain("2 of 5, and 1 undo · disk · on pve-1");
+  expect(within(card).getByText("Undo")).toBeTruthy();
+  expect(within(card).getByText("Kept")).toBeTruthy();
+  expect(within(card).getByText(/The undo of the restore to "Thu 09:15" at /)).toBeTruthy();
+  expect(within(card).getByText("Signed in to the staging site.")).toBeTruthy();
+  expect(card.textContent).toContain("kept until 29 Nov");
+  expect(card.textContent).toContain("by you · 1.2 GB");
+  expect(within(card).getByText("Snapshots hold the disk. They go when calm-otter is released.")).toBeTruthy();
+  expect(within(card).queryByRole("button", { name: /^Fork/ }), "Fork comes with unit 7").toBeNull();
+  const facts = slot.getByRole("region", { name: "Facts" });
+  expect(card.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  const listed = items(menu);
+  expect(listed.indexOf("Take snapshot…")).toBe(listed.indexOf("Resize…") + 1);
+  fireEvent.keyDown(menu, { key: "Escape" });
+});
+
+test("070 unit 6: Take snapshot asks for a name and note, says what it holds, costs and counts, and sends the take; focus starts on the name and returns to the button", async () => {
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView({ screen: true }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const take = within(card).getByRole("button", { name: "Take snapshot" });
+  take.focus();
+  fireEvent.click(take);
+  const dialog = await slot.findByRole("alertdialog", { name: "Take a snapshot of calm-otter" });
+  const name = within(dialog).getByRole("textbox", { name: "Name" });
+  expect(document.activeElement).toBe(name);
+  expect(await within(dialog).findByText(/It holds the disk: files, installed apps and settings\. About 0\.7\ss; calm-otter keeps running\. 2 of 5 for calm-otter after this\. A picture of its screen around now is kept with it\. No charge/)).toBeTruthy();
+  fireEvent.change(name, { target: { value: "before the upgrade" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Note" }), { target: { value: "Node 24" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Take snapshot" }));
+  await waitFor(() => expect(changes).toContain(`snapshot.take ${JSON.stringify({ box: "box_1", name: "before the upgrade", note: "Node 24", memory: false })}`));
+  await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(take));
+});
+
+test("070 unit 6: a box whose plan refuses a take says why in the card with Take snapshot off, and a box whose backend has none says so", async () => {
+  const locked = server([box()], { snapshots: snapshotsView({ takeWhy: "Proxmox LXC on pve-1 left box calm-otter locked (rollback), so it takes no snapshot. Run `pct unlock 214` on pve-1." }) });
+  let slot = boxPageAt(locked.handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  expect(within(card).getByText(/Run `pct unlock 214` on pve-1\./)).toBeTruthy();
+  expect((within(card).getByRole("button", { name: "Take snapshot" }) as HTMLButtonElement).disabled).toBe(true);
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  expect(items(menu).find((item) => item.startsWith("Take snapshot…"))).toMatch(/\(disabled\)$/);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  cleanup();
+  const none = server([box()], { snapshots: snapshotsView({ offer: null, noneWhy: "Boxes on SSH host pool have no snapshots.", records: [], counted: 0 }) });
+  slot = boxPageAt(none.handlers, "box/box_1");
+  expect(await slot.findByText("Boxes on SSH host pool have no snapshots.")).toBeTruthy();
+  expect(slot.queryByRole("button", { name: "Take snapshot" })).toBeNull();
+  const noMenu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  expect(items(noMenu).some((item) => item.startsWith("Take snapshot"))).toBe(false);
+  fireEvent.keyDown(noMenu, { key: "Escape" });
+});
+
+test("070 unit 6: a guarded restore names every thread, the control and a terminal; a box threads run on is not restored, saying why", async () => {
+  const preview = restorePreviewOf({
+    refusal: "Box calm-otter is a box threads run on: \"Fix the sign-in flow\" (working) and \"Write the API guide\" (idle) run on it. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first. bb-box changed nothing.",
+    threads: [{ id: "thr_a", title: "Fix the sign-in flow", running: true }, { id: "thr_b", title: "Write the API guide", running: false }],
+    control: true,
+    terminals: 1,
+    check: null,
+  });
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView(), restorePreview: preview });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const restore = within(card).getByRole("button", { name: "Restore calm-otter to before the migration" });
+  restore.focus();
+  fireEvent.click(restore);
+  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the migration"?' });
+  await within(dialog).findByText(/does not restore such a box yet/);
+  const listed = within(dialog).getAllByRole("listitem").map((item) => item.textContent);
+  expect(listed).toEqual([
+    "Fix the sign-in flow is working on calm-otter: its worktree, uncommitted files and session there would go.",
+    "Write the API guide is idle on calm-otter: its worktree, uncommitted files and session there would go.",
+    "A person has control of its desktop.",
+    "A terminal is open on it.",
+  ]);
+  expect(within(dialog).queryByRole("button", { name: /^Restore/ })).toBeNull();
+  const close = within(dialog).getByRole("button", { name: "Close" });
+  expect(document.activeElement).toBe(close);
+  fireEvent.click(close);
+  await waitFor(() => expect(document.activeElement).toBe(restore));
+  expect(changes.some((change) => change.startsWith("snapshot.restore "))).toBe(false);
+});
+
+test("070 unit 6: the person restores anyway past a control and a terminal, keeps or unticks the undo, and the button says so", async () => {
+  const losses = ["a person holds control of its desktop", "a BB terminal is open on it"];
+  const preview = restorePreviewOf({ control: true, terminals: 1, check: { ...restorePreviewOf().check!, anyway: losses, from: { cores: 8, memoryMiB: 16384, diskGiB: 32 }, to: { cores: 4, memoryMiB: 8192, diskGiB: 32 } } });
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView(), restorePreview: preview });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  fireEvent.click(within(card).getByRole("button", { name: "Restore calm-otter to before the migration" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the migration"?' });
+  expect(await within(dialog).findByText(/It goes back to today at \d\d:\d\d, 2 h ago\. Everything on its disk since then goes/)).toBeTruthy();
+  expect(within(dialog).getByText("calm-otter goes back to 4 cores and 8 GiB memory, as it was then.")).toBeTruthy();
+  expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+  const undo = within(dialog).getByRole("checkbox", { name: /Take a snapshot of it, once stopped, so you can undo this\. About 0\.7\ss\./ }) as HTMLInputElement;
+  expect(undo.checked).toBe(true);
+  expect(within(dialog).getByText(/Named "before the restore at 11:02"\. Undos do not count against the 5 for calm-otter\./)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Restore calm-otter anyway" })).toBeTruthy();
+  fireEvent.click(undo);
+  const without = within(dialog).getByRole("button", { name: "Restore without undo" });
+  fireEvent.click(without);
+  await waitFor(() => expect(changes).toContain(`snapshot.restore ${JSON.stringify({ box: "box_1", snapshot: "snaaaaaaaaaaaa", undo: false, accept: losses, token: "tokenone" })}`));
+});
+
+test("070 unit 6: the restored notice says when, to what and by whom, and its Undo opens the restore dialog for the undo; restoring and an unconfirmed restore are said too", async () => {
+  const at = Date.now() - 10 * 60_000;
+  const restored = server([box()], { snapshots: snapshotsView({ restored: { operation: "opone", at, to: "before the migration", toTakenAt: Date.now() - 26 * 60 * 60_000, by: { is: "person" }, undo: { id: "snundo", name: "before the restore at 11:02", ready: true }, unflushed: null } }), restorePreview: restorePreviewOf({ snapshot: snapshotRow({ id: "snundo", name: "before the restore at 11:02" }) }) });
+  let slot = boxPageAt(restored.handlers, "box/box_1");
+  const notice = (await slot.findByText(/^Restored at \d\d:\d\d to "before the migration", taken yesterday at \d\d:\d\d, by you\.$/)).closest("section")!;
+  expect(within(notice).getByText('Undo restores "before the restore at 11:02".')).toBeTruthy();
+  const undo = within(notice).getByRole("button", { name: "Undo…" });
+  undo.focus();
+  fireEvent.click(undo);
+  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the restore at 11:02"?' });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(document.activeElement).toBe(undo));
+  fireEvent.click(within(notice).getByRole("button", { name: "Dismiss" }));
+  expect(slot.queryByText(/^Restored at/)).toBeNull();
+  cleanup();
+
+  const going = server([box()], { snapshots: snapshotsView({ restoring: { to: "before the migration", step: "the rollback" } }) });
+  slot = boxPageAt(going.handlers, "box/box_1");
+  expect(await slot.findByText('Restoring calm-otter to "before the migration"')).toBeTruthy();
+  expect(document.querySelector("[data-snapshot-announcer]")?.textContent).toBe('Restoring calm-otter to "before the migration": the rollback.');
+  expect((slot.getByRole("button", { name: "Take snapshot" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((slot.getByRole("button", { name: "Restore: not now, as calm-otter is being restored" }) as HTMLButtonElement).disabled).toBe(true);
+  cleanup();
+
+  const unsure = server([box()], { snapshots: snapshotsView({ unconfirmed: { to: "before the migration", words: "It was at the rollback when bb-box restarted." } }) });
+  slot = boxPageAt(unsure.handlers, "box/box_1");
+  expect(await slot.findByText('bb-box could not confirm the restore of calm-otter to "before the migration"')).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(unsure.changes).toContain("snapshot.settle box_1"));
+});
+
+test("070 unit 6: Rename, Note and Delete from a row's menu, each with focus on its safe choice and back on the menu's button, or after a delete on Take snapshot", async () => {
+  const { handlers, changes } = server([box()], { snapshots: snapshotsView() });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const trigger = within(card).getByRole("button", { name: "before the migration actions" });
+  let menu = await openMenu(trigger);
+  expect(items(menu)).toEqual(["Rename…", "Note…", "Copy ID", "Delete…"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Rename…" }));
+  let dialog = await slot.findByRole("alertdialog", { name: 'Rename "before the migration"' });
+  const name = within(dialog).getByRole("textbox", { name: "Name" });
+  await waitFor(() => expect(document.activeElement).toBe(name));
+  fireEvent.change(name, { target: { value: "before the schema change" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toContain("snapshot.rename snaaaaaaaaaaaa before the schema change"));
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+  menu = await openMenu(trigger);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Note…" }));
+  dialog = await slot.findByRole("alertdialog", { name: 'A note on "before the migration"' });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Note" }), { target: { value: "Cookies set." } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toContain("snapshot.note snaaaaaaaaaaaa Cookies set."));
+
+  menu = await openMenu(trigger);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete…" }));
+  dialog = await slot.findByRole("alertdialog", { name: 'Delete "before the migration"?' });
+  expect(within(dialog).getByText("Frees 1.2 GB on pve-1. It cannot be undone.")).toBeTruthy();
+  await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" })));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(changes).toContain("snapshot.delete snaaaaaaaaaaaa"));
+  await waitFor(() => expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Take snapshot" })));
+});
+
+test("070 unit 6: the pictures switch saves at once, and Find finds it", async () => {
+  const { handlers, changes } = snapshotServer(null);
+  const slot = settings(handlers, "#option/snapshots");
+  const pictures = await slot.findByRole("switch", { name: "Keep a picture of the screen with each snapshot" });
+  expect(pictures.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(pictures);
+  await waitFor(() => expect(changes.some((change) => change.includes('"pictures":false'))).toBe(true));
+  const entries = settingsIndex(stateOf(snapshotServer(null).handlers));
+  expect(foundBy(entries, "snapshots/pictures")).toMatchObject({ label: "Keep a picture of the screen with each snapshot", value: "On" });
+  expect(labelsFor(entries, "snapshot picture")[0]).toBe("Keep a picture of the screen with each snapshot | Options › Snapshots");
+});
+
+test("070 unit 6 review: the restore is bound to what the dialog showed; when it changed the dialog reads it again, and a failed flush is asked about before anything stops", async () => {
+  const shown = restorePreviewOf({ control: true, check: { ...restorePreviewOf().check!, anyway: ["a person holds control of its desktop"] } });
+  const fresh = restorePreviewOf({ control: true, terminals: 2, token: "tokentwo", check: { ...restorePreviewOf().check!, anyway: ["a person holds control of its desktop", "2 BB terminals are open on it"] } });
+  const flushWords = "bb-box could not flush box calm-otter's writes to its disk before stopping it (sync: Input/output error), so its undo could miss what was written in the last seconds before the restore. bb-box changed nothing.";
+  const { handlers, changes } = server([box()], {
+    snapshots: snapshotsView(),
+    restorePreview: shown,
+    restoreAnswers: [
+      { error: "What the restore would do or end changed since this dialog read it. Read it again below before you restore.", pending: false, preview: fresh },
+      { error: flushWords, pending: false, unflushed: flushWords },
+    ],
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  fireEvent.click(within(card).getByRole("button", { name: "Restore calm-otter to before the migration" }));
+  const dialog = await slot.findByRole("alertdialog");
+  await within(dialog).findByText("A person has control of its desktop.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Restore calm-otter anyway" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("snapshot.restore "))).toHaveLength(1));
+  expect(changes.at(-1)).toContain('"accept":["a person holds control of its desktop"],"token":"tokenone"');
+  expect(await within(dialog).findByText("2 terminals are open on it.")).toBeTruthy();
+  expect(within(dialog).getByText(/changed since this dialog read it/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Restore calm-otter anyway" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("snapshot.restore "))).toHaveLength(2));
+  expect(changes.at(-1)).toContain('"accept":["a person holds control of its desktop","2 BB terminals are open on it"],"token":"tokentwo"');
+  expect((await within(dialog).findByRole("alert")).textContent).toBe(flushWords);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Restore anyway, its undo may miss the last writes" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("snapshot.restore "))).toHaveLength(3));
+  expect(changes.at(-1)).toContain('"unflushed":true');
+});
+
+test("070 unit 6 review: notices say an undo may miss the last writes and a restore failed, and the card and its notice stay through a restore's start", async () => {
+  const at = Date.now() - 10 * 60_000;
+  const unflushed = server([box()], {
+    snapshots: snapshotsView({ restored: { operation: "opone", at, to: "one", toTakenAt: at - 60_000, by: { is: "person" }, undo: { id: "snundo", name: "before the restore at 11:02", ready: true }, unflushed: "sync: Input/output error" } }),
+    restorePreview: restorePreviewOf({ snapshot: snapshotRow({ id: "snundo", name: "before the restore at 11:02" }), undoUnflushed: "sync: Input/output error" }),
+  });
+  let slot = boxPageAt(unflushed.handlers, "box/box_1");
+  expect(await slot.findByText(/Its undo may miss what was written in the last seconds before the restore: bb-box could not flush the box's writes to its disk before stopping it \(sync: Input\/output error\)\./)).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Undo…" }));
+  const dialog = await slot.findByRole("alertdialog");
+  expect(await within(dialog).findByText(/This undo may miss what was written in the last seconds before its restore/)).toBeTruthy();
+  cleanup();
+
+  const failed = server([box()], { snapshots: snapshotsView({ failed: { operation: "opfail", at, to: "one", error: "Proxmox refused the stop: the guest would not stop. bb-box started it again as it was." } }) });
+  slot = boxPageAt(failed.handlers, "box/box_1");
+  expect(await slot.findByText(/^The restore of calm-otter to "one" failed at /)).toBeTruthy();
+  expect(document.querySelector('[data-notice="bad"]')?.textContent).toMatch(/the guest would not stop/);
+  expect(document.querySelector("[data-snapshot-announcer]")?.textContent).toMatch(/^The restore of calm-otter failed: /);
+  cleanup();
+
+  const starting = server([box({ state: "starting" })], { snapshots: snapshotsView({ restoring: { to: "one", step: "the start" } }) });
+  slot = boxPageAt(starting.handlers, "box/box_1");
+  expect(await slot.findByRole("region", { name: "Snapshots" })).toBeTruthy();
+  expect(slot.getByText('Restoring calm-otter to "one"')).toBeTruthy();
+  expect(document.querySelector("[data-snapshot-announcer]")?.textContent).toBe('Restoring calm-otter to "one": the start.');
+  expect(slot.getByRole("region", { name: "Facts" })).toBeTruthy();
+});
+
+test("070 unit 6 review: after a delete, focus goes to the next row, then the one before, then Take snapshot; the Pictures heading is at weight 400", async () => {
+  const { handlers } = server([box()], { snapshots: snapshotsView({ records: [snapshotRow({ id: "snfirst", name: "first" }), snapshotRow({ id: "snsecond", name: "second" })] }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const deleteRow = async (name: string) => {
+    const menu = await openMenu(within(card).getByRole("button", { name: `${name} actions` }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete…" }));
+    const dialog = await slot.findByRole("alertdialog", { name: `Delete "${name}"?` });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(within(card).queryByText(name)).toBeNull());
+  };
+  await deleteRow("first");
+  await waitFor(() => expect(document.activeElement).toBe(within(card).getByRole("button", { name: "second actions" })));
+  await deleteRow("second");
+  await waitFor(() => expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Take snapshot" })));
+  cleanup();
+  const page = settings(snapshotServer(null).handlers, "#option/snapshots");
+  const heading = await page.findByRole("heading", { name: "Pictures" });
+  expect(heading.className).toContain("font-normal");
+  expect(heading.className).not.toContain("font-medium");
 });

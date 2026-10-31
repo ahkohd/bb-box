@@ -42,6 +42,20 @@ function AtOnceSwitch({ label, description, settingKey, path, value, disabled, o
   );
 }
 
+function SnapshotPicturesSwitch() {
+  const { state, instant, writes } = useSettings();
+  return (
+    <AtOnceSwitch
+      label="Keep a picture of the screen with each snapshot"
+      description="A small picture of a desktop's or a device's screen, taken as each snapshot is taken, so you can tell them apart by sight. It shows whatever was on the screen then. It is kept in bb-box's own records with its snapshot, never on the provider or in the box, and goes with it. Boxes without a screen have none."
+      settingKey={switchKey.snapshots("pictures")}
+      path={snapshotPath("pictures")}
+      value={snapshotConfig(state.document).pictures}
+      onChange={(on) => void instant.run(writes.snapshots(state, "pictures", on, "Pictures of the screen"))}
+    />
+  );
+}
+
 function BoxesOptions() {
   const { state, instant, writes } = useSettings();
   const draft = useDraft(BOXES_PART, "Boxes");
@@ -299,7 +313,7 @@ export function OptionPage({ id }: { id: string }) {
       <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "snapshots" || id === "network" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
       {id === "boxes" ? <BoxesOptions /> : null}
       {id === "images" ? <ImagesOptions /> : null}
-      {id === "snapshots" ? <SnapshotsOptions agents={<AgentsSnapshotSwitches />} /> : null}
+      {id === "snapshots" ? <SnapshotsOptions agents={<AgentsSnapshotSwitches />} pictures={<SnapshotPicturesSwitch />} /> : null}
       {id === "devices" ? <DevicesOptions /> : null}
       {id === "network" ? <NetworkOptions /> : null}
       {id === "monitor" ? <MonitorOptions /> : null}

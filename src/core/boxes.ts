@@ -552,6 +552,7 @@ export type BoxErrorCode =
   | "failed"
   | "reused_request"
   | "try_again"
+  | "unflushed"
   | "needs_yes";
 
 /** A job a box_run command left running when bb-box restarted (#405). */
