@@ -1175,7 +1175,7 @@ machines add`. The node is written pve-1.
 | G8 access-first | **Passed** on LXC and QEMU, as measured above, and the memory read back across a resize on QEMU, the disk across a growth on LXC |
 | G9 serialised-and-eligible, restore's part | the undo sequences in the tests (two undos; the oldest undo restored keeps its target; a kept undo stays); live, every restore replaced the oldest undo past two, never its own target |
 | G10 ceiling-rate, the undo's part | **Passed** live on a made-up price: refused before the box stopped, and restored without it |
-| G13 outside-restore | **Passed** on LXC and QEMU: two restores to one snapshot, a failed one and a running one, between and across sweeps, each logged once by its status. OUTSIDE_TAKE |
+| G13 outside-restore | **Passed** on LXC and QEMU: two restores to one snapshot, a failed one and a running one, between and across sweeps, each logged once by its status. A snapshot taken by hand (`pct snapshot`) logged nothing, as it is not bb-box's; one of bb-box's deleted by hand (`pct delsnapshot`, 01:46:47) was logged `snapshot-lost` at 01:57:00, at the listing 10 minutes after the first that missed it, as unit 1a does. Without a task, bb-box claims no restore |
 | G16 held-copy-inert | **Passed**: each held copy a template, disarmed, in `pct config` and `qm config`; each earlier guest with `onboot` 0, links down and a MAC that is not the box's; a copy cut short before its template deleted and made again, and the remade copy adopted for the same box with its files, credentials and host ID. EARLIER_BY_HAND **Not proved**: the node's reboot, as no node can be rebooted; it is a condition before ZFS restores or unit 8's Keep are turned on |
 
 ### Choices and deviations
