@@ -289,7 +289,7 @@ export class FakeProxmox {
           (!params.typefilter || upid.split(":")[5] === params.typefilter) &&
           (!params.since || task.start >= Number(params.since)),
       );
-      return ok(listed.map(([upid, task]) => ({ upid, type: upid.split(":")[5], id: upid.split(":")[6], user: upid.split(":")[7], starttime: task.start, ...(task.pollsLeft > 0 ? {} : { status: task.exitstatus }) })));
+      return ok(listed.map(([upid, task]) => ({ upid, type: upid.split(":")[5], id: upid.split(":")[6], user: upid.split(":")[7], starttime: task.start, ...(task.pollsLeft > 0 ? { status: "RUNNING" } : { status: task.exitstatus, endtime: task.start + 1 }) })));
     }
 
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/snapshot\/([^/]+)\/(rollback|config)$/.exec(path))) {

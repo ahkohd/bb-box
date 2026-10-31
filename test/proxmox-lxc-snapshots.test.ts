@@ -335,3 +335,18 @@ test("G13: rollbacks of this install's guests are read from the node's task list
     ],
   );
 });
+
+test("G13: a rollback the node lists as running, with no end time, is read as running from its own status", async () => {
+  const state = world();
+  const { guest } = await box(state);
+  const upid = `UPID:pve:0000AAAA:00:6AE53BE9:vzrollback:${guest.ref}:root@pam:`;
+  state.proxmox.intercept = (call) => {
+    const json = (data: unknown) => ({ ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data }) });
+    if (call.method === "GET" && /\/tasks$/.test(call.path) && call.params.typefilter === "vzrollback") return json([{ upid, type: "vzrollback", id: guest.ref, user: "root@pam", starttime: Math.floor(Date.now() / 1000), status: "RUNNING" }]);
+    if (call.method === "GET" && call.path.endsWith("/status") && call.path.includes("/tasks/")) return json({ status: "running", upid });
+    return undefined;
+  };
+  const [found] = await state.backend.outsideRollbacks(Date.now() - 60_000);
+  assert.deepEqual(found?.outcome, { state: "running" });
+  assert.equal(found?.user, "root@pam");
+});

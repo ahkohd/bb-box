@@ -510,7 +510,7 @@ export class Proxmox {
     await this.#change("PUT", this.#guest(vmid, "/config"), { ...settings }, signal);
   }
 
-  async tasksOfType(type: string, sinceSeconds: number, signal?: AbortSignal): Promise<{ readonly upid: string; readonly vmid: number | null; readonly user: string; readonly start: number; readonly status: string | null }[]> {
+  async tasksOfType(type: string, sinceSeconds: number, signal?: AbortSignal): Promise<{ readonly upid: string; readonly vmid: number | null; readonly user: string; readonly start: number; readonly ended: boolean; readonly status: string | null }[]> {
     const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/tasks`, { typefilter: type, since: sinceSeconds, source: "all", limit: 500 }, signal);
     return (data ?? [])
       .filter((entry) => typeof entry.upid === "string" && entry.type === type)
@@ -521,6 +521,7 @@ export class Proxmox {
           vmid: Number.isInteger(vmid) && vmid > 0 ? vmid : null,
           user: typeof entry.user === "string" ? entry.user : "",
           start: Number(entry.starttime ?? 0),
+          ended: Number(entry.endtime ?? 0) > 0,
           status: typeof entry.status === "string" && entry.status ? entry.status : null,
         };
       });

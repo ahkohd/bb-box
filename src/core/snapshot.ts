@@ -98,7 +98,7 @@ export interface SnapshotOperation {
   readonly by: Actor;
   readonly consent: unknown;
   readonly undo: string | null;
-  readonly guests: { readonly old: string | null; readonly new: string | null } | null;
+  readonly guests: { readonly old: Guest | null; readonly new: Guest | null } | null;
   readonly step: string;
   readonly task: TaskRef | null;
   readonly state: OperationState;

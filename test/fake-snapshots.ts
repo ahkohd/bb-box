@@ -4,7 +4,12 @@ import {
   RestoreChanged,
   SnapshotFailed,
   SnapshotIncomplete,
+  type BoxIdentity,
   type BoxSize,
+  type CopyHooks,
+  type CopyState,
+  type GuestIdentity,
+  type HeldCopyLabel,
   type Guest,
   type HeldSnapshot,
   type OutsideRollback,
@@ -52,6 +57,10 @@ export class FakeSnapshots {
   readonly order: string[] = [];
   readonly sizes = new Map<string, BoxSize>();
   readonly outside: OutsideRollback[] = [];
+  readonly copies = new Map<string, { state: "copy" | "template"; box: string; snapshot: string; disarmed: boolean; takenAt: number }>();
+  readonly earlier = new Set<string>();
+  copyFault: Error | null = null;
+  #copies = 0;
   listing: Error | null = null;
   listingGate: Promise<void> | null = null;
   take: Outcome = "ok";
@@ -218,6 +227,58 @@ export class FakeSnapshots {
         .map(([key, task]): OutsideRollback => ({ task: { ref: task.ref, host: null }, guest: key.split("|")[0]!, user: "bb-box@pve!plugin", startedAt: task.at, outcome: this.tasks.get(task.ref) ?? { state: "missing", words: "" } }));
       return [...own, ...this.outside].filter((each) => each.startedAt >= since).sort((a, b) => a.startedAt - b.startedAt);
     };
+    target.guestIdentity = async (guest: Guest): Promise<GuestIdentity> => ({ macs: { net0: `mac-of-${guest.data?.box ?? guest.ref}` }, smbios: null });
+    target.copyGuest = async (source: Guest, label: HeldCopyLabel, hooks: CopyHooks): Promise<Guest> => {
+      this.order.push(`copy ${source.ref}`);
+      if ((await backend.power(source)) === "running") throw new SnapshotFailed(`Guest ${source.ref} is running, and bb-box copies a guest only once it has stopped.`);
+      const copy: Guest = { ref: `copy${++this.#copies}`, host: source.host, address: null, size: source.size, data: { box: label.box } };
+      await hooks.claimed(copy);
+      await hooks.submitting();
+      const fault = this.copyFault;
+      this.copyFault = null;
+      if (fault) throw fault;
+      const task = this.#task(source, "copy", label.snapshot, { state: "ok" }, now());
+      await hooks.task({ ref: task, host: source.host });
+      this.copies.set(copy.ref, { state: "copy", box: label.box, snapshot: label.snapshot, disarmed: false, takenAt: now() });
+      const home = homeOf(source.ref);
+      const saved = savedOf(copy.ref);
+      if (home && saved && existsSync(home)) cpSync(home, saved, { recursive: true });
+      return copy;
+    };
+    target.disarmCopy = async (copy: Guest) => {
+      const held = this.copies.get(copy.ref);
+      if (held) held.disarmed = true;
+    };
+    target.templateCopy = async (copy: Guest) => {
+      this.order.push(`template ${copy.ref}`);
+      const held = this.copies.get(copy.ref);
+      if (held) held.state = "template";
+    };
+    target.copyState = async (copy: Guest): Promise<CopyState> => this.copies.get(copy.ref)?.state ?? (this.earlier.has(copy.ref) ? "copy" : "gone");
+    target.deleteCopy = async (copy: Guest) => {
+      this.order.push(`delete ${copy.ref}`);
+      this.copies.delete(copy.ref);
+      if (this.earlier.has(copy.ref) || (await backend.power(copy)) !== null) {
+        this.earlier.delete(copy.ref);
+        for (const [id, held] of this.held) if (held.guest.ref === copy.ref) this.held.delete(id);
+        await backend.release(copy, { timing: () => {}, resetting: async () => {} } as never);
+      }
+    };
+    target.adoptCopy = async (copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks): Promise<Guest> => {
+      this.order.push(`adopt ${copy.ref} as ${identity.macs.net0}`);
+      if (this.copies.get(copy.ref)?.state !== "template") throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy bb-box can use.`);
+      const fresh = await backend.makeGuest(box, savedOf(copy.ref));
+      await hooks.claimed(fresh);
+      await hooks.submitting();
+      const task = this.#task(copy, "copy", fresh.ref, { state: "ok" }, now());
+      await hooks.task({ ref: task, host: copy.host });
+      return fresh;
+    };
+    target.retireGuest = async (guest: Guest) => {
+      this.order.push(`retire ${guest.ref}`);
+      this.earlier.add(guest.ref);
+      return guest;
+    };
     target.heldSnapshots = async (): Promise<HeldSnapshot[]> => {
       if (this.listing) throw this.listing;
       const listed = [...this.held.values()].map((held) => ({
@@ -226,7 +287,7 @@ export class FakeSnapshots {
         box: held.box,
         owner: { boxId: held.box, threadId: "thr_one", name: "gone-box", kind: "linux", createdAt: null },
         guest: held.guest,
-        where: "current" as const,
+        where: this.earlier.has(held.guest.ref) ? ("earlier" as const) : ("current" as const),
         state: held.state,
         words: held.state === "incomplete" ? "Proxmox left it part-made (snapstate prepare)." : null,
         holds: held.holds,
@@ -234,8 +295,22 @@ export class FakeSnapshots {
         keptUntil: held.keptUntil,
         storage: { name: "fast", type: "lvmthin" },
       }));
+      const copied = [...this.copies.entries()].map(([ref, held]) => ({
+        id: held.snapshot,
+        ref,
+        box: held.box,
+        owner: { boxId: held.box, threadId: "thr_one", name: "gone-box", kind: "linux", createdAt: null },
+        guest: { ref, host: null, address: null, size: null, data: { box: held.box } } as Guest,
+        where: "held-copy" as const,
+        state: held.state === "template" ? ("complete" as const) : ("incomplete" as const),
+        words: held.state === "template" ? null : "Its copy is not a template yet, so bb-box does not trust it.",
+        holds: "disk" as const,
+        takenAt: held.takenAt,
+        keptUntil: null,
+        storage: null,
+      }));
       if (this.listingGate) await this.listingGate;
-      return listed;
+      return [...listed, ...copied];
     };
     target.providerTask = async (task: TaskRef): Promise<TaskOutcome> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");

@@ -3086,12 +3086,10 @@ export class Boxes {
     if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
 
-  /** Starts an enrolled box's BB daemon again after a restore, as after a start, and waits for it; commands wait for it meanwhile. */
-  async machineBack(box: BoxRecord): Promise<boolean> {
+  /** Starts an enrolled box's BB daemon again after a restore, as a start does: commands wait for it while it reconnects. */
+  machineBack(box: BoxRecord): boolean {
     if (box.enrol.state !== "enrolled" || !this.#deps.reconnect) return false;
-    const reconnect = this.#deps.reconnect(box);
-    this.#waitFor(box.id, reconnect.catch(() => undefined));
-    await reconnect;
+    this.#waitFor(box.id, this.#deps.reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
     return true;
   }
 

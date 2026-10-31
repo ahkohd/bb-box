@@ -79,7 +79,7 @@ test("G4 on LVM-thin: a restore to the oldest of three stops the box, takes its 
   assert.equal(after.restoring ?? null, null);
   assert.ok(state.store.record(third!.id), "every newer snapshot is still there");
   assert.deepEqual(state.kinds(box.id).slice(-3), ["restore-asked", "snapshot-taken", "restored"]);
-  assert.match(state.log.events(box.id).at(-1)!.words!, /^To "one" \(sn[a-z2-7]{12}\), taken 2026-10-30 10:42 UTC, in 0\.0 s; its undo is "before the restore at 12:45"\.$/);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /^To "one" \(sn[a-z2-7]{12}\), taken 2026-10-30 10:42 UTC, in 0\.0 s \(stop 0\.0 s, undo 0\.0 s, rollback 0\.0 s, start 0\.0 s, access 0\.0 s\); its undo is "before the restore at 12:45"\.$/);
   const undone = await state.snapshots.restore(COMMAND, box, standing(box), answer.undo!.id);
   assert.equal(undone.operation.state, "done");
   assert.equal(read(state, box, "work.txt"), "written after the last snapshot, before the stop", "the undo holds what was written before the stop");
@@ -210,7 +210,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   assert.match(state.log.events(box.id).at(-1)!.words!, /^At the rollback: Proxmox's rollback task failed: rollback interrupted\. bb-box then found it stopped\.$/);
 });
 
-test("G7: a locked guest refuses a restore with the host's command; ZFS restores and restores across a disk's growth are refused before anything changes", async () => {
+test("G7: a locked guest refuses a restore with the host's command, and ZFS restores are refused, before anything changes; a restore across a disk's growth gives the disk back its size then", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
@@ -228,10 +228,12 @@ test("G7: a locked guest refuses a restore with the host's command; ZFS restores
   state.provider.restoreWay = "rollback";
   const snapshot = state.store.records({ box: box.id })[0]!;
   state.provider.sizes.set(snapshot.id, { cores: 2, memoryMiB: 4096, diskGiB: 8 });
-  await state.boxes.update(box, (latest) => ({ guest: { ...latest.guest!, size: { cores: 2, memoryMiB: 4096, diskGiB: 16 } } }));
-  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /disk grew to 16 GiB after "one" was taken, at 8 GiB/);
   assert.deepEqual(state.provider.order, []);
   assert.equal(state.store.unsettled().length, 0);
+  await state.boxes.update(box, (latest) => ({ guest: { ...latest.guest!, size: { cores: 2, memoryMiB: 4096, diskGiB: 16 } } }));
+  const across = await state.snapshots.restore(COMMAND, box, standing(box), "one");
+  assert.deepEqual(across.to, { cores: 2, memoryMiB: 4096, diskGiB: 8 }, "the disk goes back to its size then, as Proxmox gives the snapshot's volume back");
+  assert.match(state.log.events(box.id).at(-1)!.words!, /its size went from 2 cores, 4 GiB memory, 16 GiB disk to 2 cores, 4 GiB memory, 8 GiB disk, as it was then\.$/);
 });
 
 test("G6: bb-box restarted after the stop, the undo, the rollback and the start: each restore finishes at the next start, and its pins end", async () => {
@@ -348,4 +350,91 @@ test("G13: restores made outside bb-box are logged from the provider's tasks by 
   assert.deepEqual(events().map((event) => event.kind).slice(4), ["restored-outside"], "the running task, once ended, after a restart too");
   await state.snapshots.sweep();
   assert.equal(events().length, 5);
+});
+
+test("G4 in ZFS's order (the live-check switch): the newest only, after a held copy of the stopped box; undoing it is a swap to a new guest with the box's identity, which leaves an earlier guest, fork only", async () => {
+  const state = world();
+  state.undoByCopy = true;
+  const box = await readyBox(state);
+  const first = box.guest!;
+  write(state, box, "work.txt", "one");
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  state.tick(60_000);
+  write(state, box, "work.txt", "two");
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "two" });
+  write(state, box, "work.txt", "before the restore");
+  state.provider.newer = 1;
+  const older = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
+  assert.match(older.message, /as on ZFS, bb-box restores only the newest snapshot there, and "one" has 1 newer one\. Delete it yourself first\. bb-box never deletes newer snapshots/);
+  state.provider.newer = 0;
+  state.provider.order.length = 0;
+  const restored = await state.snapshots.restore(COMMAND, box, standing(box), "two");
+  const copy = restored.undo!;
+  assert.deepEqual(state.provider.order, ["power-off", `copy ${first.ref}`, `template ${copy.ref}`, `rollback ${restored.snapshot!.id}`, "start"]);
+  assert.equal(copy.guest, "held-copy");
+  assert.equal(copy.livesOn.ref, copy.ref);
+  assert.equal(state.provider.copies.get(copy.ref!)?.disarmed, true, "disarmed before it is a template");
+  assert.equal(read(state, box, "work.txt"), "two");
+  assert.ok(state.store.record(state.store.records({ box: box.id }).find((record) => record.name === "one")!.id), "every newer snapshot is still there");
+  assert.ok(state.kinds(box.id).includes("held-copy-made"));
+  write(state, box, "work.txt", "after the restore");
+  state.provider.order.length = 0;
+  const undone = await state.snapshots.restore(COMMAND, box, standing(box), copy.id, { undo: false });
+  const after = await current(state, box);
+  assert.notEqual(after.guest!.ref, first.ref, "the box runs on a new guest");
+  assert.deepEqual(state.provider.order, ["power-off", `adopt ${copy.ref} as mac-of-${box.id}`, `retire ${first.ref}`, "start"], "the new guest has the box's own identity");
+  assert.equal(read(state, after, "work.txt"), "before the restore", "the held copy held the box as it was before the restore");
+  assert.equal(undone.operation.state, "done");
+  assert.equal(after.state, "ready");
+  const earlier = state.store.records({ box: box.id }).filter((record) => record.guest === "earlier");
+  assert.deepEqual(earlier.map((record) => record.name).sort(), ["one", "two"]);
+  assert.ok(earlier.every((record) => record.livesOn.ref === first.ref));
+  assert.match((await rejection(state.snapshots.restore(COMMAND, after, standing(after), "one"))).message, /is on \S+'s earlier guest, so it cannot be restored there, only forked\./);
+  await state.boxes.sweep();
+  assert.equal(await state.backend.power(first), "stopped", "the sweep keeps the earlier guest, which is never started or released as a leftover");
+  assert.ok(state.store.record(copy.id), "the held copy stays, as the undo it is");
+  await state.boxes.release(THREAD, box.name, "done with it");
+  await state.boxes.settled(box);
+  await state.snapshots.sweep();
+  assert.deepEqual(state.store.records({ box: box.id }), [], "a release deletes its held copies and its earlier guest");
+  assert.equal(state.provider.copies.size, 0);
+  assert.equal(await state.backend.power(first), null);
+});
+
+test("G6 and G16 in ZFS's order: a copy cut short before it is a template is deleted and made again, never trusted; a swap cut short after its new guest is made finishes", async () => {
+  const state = world();
+  state.undoByCopy = true;
+  const box = await readyBox(state);
+  write(state, box, "work.txt", "one");
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  write(state, box, "work.txt", "before");
+  state.holds.step = "copied";
+  const held = state.snapshots.restore(COMMAND, box, standing(box), "one").catch((error: unknown) => error);
+  await untilHeld(state, held);
+  const untrusted = [...state.provider.copies.keys()][0]!;
+  assert.equal(state.provider.copies.get(untrusted)?.state, "copy");
+  await state.restart();
+  await held;
+  state.provider.order.length = 0;
+  assert.equal(await state.snapshots.recover(), 1);
+  assert.equal(state.provider.order[0], `delete ${untrusted}`, "the copy that was not yet a template went first");
+  assert.match(state.provider.order[1]!, /^copy g\d+$/);
+  assert.ok(!state.provider.copies.has(untrusted));
+  const undo = state.store.records({ box: box.id }).find((record) => record.undoOf)!;
+  assert.equal(undo.state, "ready");
+  assert.equal(state.provider.copies.get(undo.ref!)?.state, "template");
+  assert.equal(read(state, box, "work.txt"), "one");
+  assert.equal(state.store.pins().size, 0);
+  state.holds.step = "adopted";
+  const swapping = state.snapshots.restore(COMMAND, box, standing(box), undo.id, { undo: false }).catch((error: unknown) => error);
+  await untilHeld(state, swapping);
+  await state.restart();
+  await swapping;
+  await state.boxes.sweep();
+  assert.equal(await state.snapshots.recover(), 1);
+  const after = await current(state, box);
+  assert.equal(after.state, "ready");
+  assert.equal(read(state, after, "work.txt"), "before");
+  assert.equal(state.store.pins().size, 0);
+  assert.equal([...state.provider.earlier].length, 1, "the old guest was disarmed as the earlier guest");
 });

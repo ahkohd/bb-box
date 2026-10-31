@@ -25,15 +25,17 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task", "stopped", "undo", "rolled-back", "started"] as const;
+export const HOLD_STEPS = ["planned", "task", "stopped", "copied", "undo", "rolled-back", "adopted", "started"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
 
 export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
   planned: "its record",
   task: "its provider's task began",
   stopped: "a restore's stop",
+  copied: "a restore's held copy was cloned, before it is a template",
   undo: "a restore's undo",
   "rolled-back": "a restore's rollback",
+  adopted: "a swap's new guest was made, before the swap",
   started: "a restored box's start",
 };
 

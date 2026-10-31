@@ -20,7 +20,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
@@ -523,6 +523,21 @@ export class FakeBackend implements Backend {
     this.resized.push({ ref: guest.ref, to, restart: options.restart });
     this.#sizes.set(guest.ref, to);
     return { ...guest, size: to };
+  }
+
+  /** Makes a stopped guest for `box` from the files in `from`, as a clone of a held copy is (070): a guest of this install that names the box. */
+  async makeGuest(box: BoxIdentity, from: string | null): Promise<Guest> {
+    const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
+    await this.#storage.set("counter", counter);
+    const guest = this.#guest(`g${counter}`, null, box.boxId, box.size);
+    await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
+    if (from) await cp(from, this.#home(guest.ref), { recursive: true });
+    else await mkdir(this.#home(guest.ref), { recursive: true });
+    return guest;
+  }
+
+  homeOf(ref: string): string {
+    return this.#home(ref);
   }
 
   /** Gives a guest the size a provider would say it has now, as after a rollback to a snapshot taken at another size. */

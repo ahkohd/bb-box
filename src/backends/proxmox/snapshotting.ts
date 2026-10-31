@@ -60,6 +60,16 @@ export function keptUntilOf(date: string | null): number | null {
   return Number.isNaN(start) ? null : start + DAY_MS - 1;
 }
 
+export interface KeptGuest {
+  readonly guest: Guest;
+  readonly owner: BoxOwner | null;
+  readonly where: "earlier" | "held-copy";
+  readonly snapshot: string | null;
+  readonly takenAt: number | null;
+  readonly kept: string | null;
+  readonly template: boolean;
+}
+
 export interface SnapshotGuests {
   readonly label: string;
   readonly type: GuestType;
@@ -73,6 +83,7 @@ export interface SnapshotGuests {
   disks(config: Record<string, unknown>): readonly string[];
   sizeOf(config: Record<string, unknown>): BoxSize | null;
   guests(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly guest: Guest; readonly owner: BoxOwner | null }[]>;
+  copies?(api: Proxmox, signal?: AbortSignal): Promise<readonly KeptGuest[]>;
 }
 
 const MiB = 1024 * 1024;
@@ -460,7 +471,7 @@ export class ProxmoxSnapshotting {
       const guest = task.vmid === null ? undefined : guests.get(task.vmid);
       if (!guest) continue;
       const ref = { ref: task.upid, host: api.node };
-      const outcome: TaskOutcome = task.status === null ? await this.task(ref, signal) : task.status === "OK" || /^WARNINGS: \d+$/.test(task.status) ? { state: "ok" } : { state: "failed", words: task.status };
+      const outcome: TaskOutcome = !task.ended || task.status === null ? await this.task(ref, signal) : task.status === "OK" || /^WARNINGS: \d+$/.test(task.status) ? { state: "ok" } : { state: "failed", words: task.status };
       found.push({ task: ref, guest: guest.ref, user: task.user, startedAt: task.start * 1000, outcome });
     }
     return found.sort((a, b) => a.startedAt - b.startedAt);
@@ -469,7 +480,26 @@ export class ProxmoxSnapshotting {
   async held(signal?: AbortSignal): Promise<HeldSnapshot[]> {
     const api = await this.#guests.client();
     const held: HeldSnapshot[] = [];
-    for (const { guest, owner } of await this.#guests.guests(api, signal)) {
+    const kept = (await this.#guests.copies?.(api, signal)) ?? [];
+    for (const copy of kept) {
+      if (copy.where !== "held-copy" || !copy.snapshot || !copy.owner) continue;
+      held.push({
+        id: copy.snapshot,
+        ref: copy.guest.ref,
+        box: copy.owner.boxId,
+        owner: copy.owner,
+        guest: copy.guest,
+        where: "held-copy",
+        state: copy.template ? "complete" : "incomplete",
+        words: copy.template ? null : "Its copy is not a template yet, so bb-box does not trust it.",
+        holds: "disk",
+        takenAt: copy.takenAt,
+        keptUntil: keptUntilOf(copy.kept),
+        storage: null,
+      });
+    }
+    const guests = [...(await this.#guests.guests(api, signal)).map((each) => ({ ...each, where: "current" as const })), ...kept.filter((copy) => copy.where === "earlier").map((copy) => ({ guest: copy.guest, owner: copy.owner, where: "earlier" as const }))];
+    for (const { guest, owner, where } of guests) {
       signal?.throwIfAborted();
       const vmid = this.#guests.vmid(guest);
       let listed: ProxmoxSnapshot[];
@@ -490,7 +520,7 @@ export class ProxmoxSnapshotting {
           box: label.box,
           owner,
           guest,
-          where: "current",
+          where,
           state: snapshot.snapstate ? (busy?.is === "idle" ? "incomplete" : "in-progress") : "complete",
           words: snapshot.snapstate ? `${snapstateWords(snapshot.snapstate)}.` : null,
           holds: snapshot.vmstate ? "disk-and-memory" : "disk",
