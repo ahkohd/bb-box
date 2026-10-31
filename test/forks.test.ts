@@ -10,7 +10,8 @@ import { OPERATOR, type BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, Standing } from "../src/core/snapshot.ts";
 import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
-import { COMMAND, THREAD, identityGuest, readIn, readyBox, rejection, standing, withIdentitySource, world, writeIn, type World } from "./snapshot-world.ts";
+import { forkCheckText, forkedText } from "../src/plugin/snapshot-words.ts";
+import { COMMAND, THREAD, flushing, identityGuest, readIn, readyBox, rejection, standing, withIdentitySource, world, writeIn, type World } from "./snapshot-world.ts";
 
 const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
 const SOURCE_MAC = "bc:24:11:aa:f1:b6";
@@ -263,4 +264,21 @@ test("070 unit 7: after a restart a fork's operation is settled by its box: done
   await state.snapshots.recover();
   assert.equal(state.store.operation(answer.operation.id)?.state, "failed");
   assert.match(state.store.operation(answer.operation.id)?.error ?? "", /its box is gone|released/);
+});
+
+test("070 unit 7: a fork of a snapshot taken without a flush says it may lack the last writes too", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: "sync: Input/output error" }));
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "unflushed" })).snapshot!;
+  assert.equal(taken.forkSafe, 5);
+  assert.equal(taken.unflushed, "sync: Input/output error");
+  const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "unflushed");
+  assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: bb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "unflushed");
+  const fork = await forked(state, answer.box);
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.match(forkedText(answer, fork), /so the fork may lack them too\.$/);
+  assert.match(state.log.events(box.id).find((event) => event.kind === "fork-asked")?.words ?? "", /The snapshot may miss the box's last writes before it\.$/);
 });

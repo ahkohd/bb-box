@@ -39,6 +39,7 @@ export interface SnapshotRowView {
   readonly picture: PictureState | null;
   readonly busyWhy: string | null;
   readonly forkWhy: string | null;
+  readonly unflushed: string | null;
 }
 
 export interface RestoredView {
@@ -149,6 +150,7 @@ function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number): Snaps
     picture: record.picture,
     busyWhy: verdict.ok ? null : verdict.why,
     forkWhy: forkWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind)),
+    unflushed: record.unflushed ?? null,
   };
 }
 
@@ -261,6 +263,7 @@ export interface ForkPreview {
     readonly bytes: number | null;
     readonly host: string | null;
     readonly storage: string;
+    readonly unflushed: string | null;
   } | null;
 }
 
@@ -285,6 +288,7 @@ export async function forkPreview(snapshots: Snapshots, box: BoxRecord, ref: str
         bytes: check.bytes,
         host: check.host,
         storage: check.storage,
+        unflushed: check.snapshot.unflushed ?? null,
       },
     };
   } catch (error) {

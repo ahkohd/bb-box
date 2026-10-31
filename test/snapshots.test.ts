@@ -22,7 +22,7 @@ import { FakeBackend } from "./fake-backend.ts";
 import { FakeSnapshots as Provider, type Held } from "./fake-snapshots.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
 
-import { COMMAND, DAY, HOUR, THREAD, identityGuest, readyBox, rejection, standing, withIdentitySource, world, type World } from "./snapshot-world.ts";
+import { COMMAND, DAY, HOUR, THREAD, identityGuest, readyBox, rejection, standing, untilHeld, withIdentitySource, world, type World } from "./snapshot-world.ts";
 
 test("a take is recorded and pinned before the backend is asked, records the provider's task before it waits, and is ready once confirmed", async () => {
   const state = world();
@@ -367,7 +367,7 @@ test("restart in the middle of a take: after its task began it is confirmed read
   const box = await readyBox(state);
   state.holds.step = "task";
   const held = state.snapshots.take(COMMAND, box, standing(box), { name: "mid-task" }).catch((error: unknown) => error);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await untilHeld(state, held);
   assert.equal(state.store.records()[0]?.state, "taking");
   await state.restart();
   await held;
@@ -378,7 +378,7 @@ test("restart in the middle of a take: after its task began it is confirmed read
 
   state.holds.step = "planned";
   const early = state.snapshots.take(COMMAND, box, standing(box), { name: "mid-plan" }).catch((error: unknown) => error);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await untilHeld(state, early);
   await state.restart();
   await early;
   await state.snapshots.recover();
@@ -675,7 +675,7 @@ test("the box log's migration for identity resets keeps every event and allows i
 async function heldAt(state: World, step: "task" | "planned", work: () => Promise<unknown>): Promise<void> {
   state.holds.step = step;
   const running = work().catch((error: unknown) => error);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await untilHeld(state, running);
   await state.restart();
   await running;
   state.holds.step = null;

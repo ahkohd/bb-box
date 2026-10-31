@@ -1,6 +1,6 @@
 import type { Backend, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, dayWords, gbWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, type SnapshotRecord } from "../core/snapshot.ts";
+import { countsAgainstLimit, dayWords, gbWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
 import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
@@ -18,6 +18,7 @@ export function takenText(answer: TakeAnswer, boxName: string, perBox: number): 
   return [
     `Took snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}${took}: it holds its ${holdsWords(snapshot)}.${leaves}`,
     `Size: ${sizeWords(snapshot.size)}. Price: ${priceWords(snapshot.price)}.`,
+    ...(snapshot.unflushed ? [`${unflushedWords(snapshot.unflushed)}.`] : []),
     `Box ${boxName} holds ${answer.counted} of ${perBox} snapshots.`,
   ].join("\n");
 }
@@ -52,6 +53,10 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
 
 export const FORK_HOLDS = "It gets its own BB machine, address and keys, and never acts as its source. Everything else on its disk comes with it: project secrets, signed-in browsers and keychains. It starts fresh: no apps are running.";
 
+export function forkMayMissWords(snapshot: Pick<SnapshotRecord, "unflushed">): string | null {
+  return snapshot.unflushed ? `The snapshot may miss what the box wrote in its last seconds before it: ${unflushedWords(snapshot.unflushed).replace(/, so it may miss .*$/, "")}, so the fork may lack them too.` : null;
+}
+
 export function forkCheckText(check: ForkCheck): string {
   const snapshot = check.snapshot;
   const where = check.asMachine ? "one of your machines" : `a box of thread ${check.threadId}`;
@@ -60,6 +65,7 @@ export function forkCheckText(check: ForkCheck): string {
     `Forking "${snapshot.name}" (${snapshot.id}) of box ${check.box.name}, taken ${dayWords(snapshot.takenAt)}, would make ${where}, with ${describeSize(check.size)}, as the snapshot holds.`,
     `bb-box copies the snapshot in full, which takes up to about ${seconds(check.aboutMs)}${space}, then starts the copy, checks that it reset its identity, and only then hands it over.`,
     FORK_HOLDS,
+    ...(forkMayMissWords(snapshot) ? [forkMayMissWords(snapshot)!] : []),
     "Nothing changed.",
   ].join("\n");
 }
@@ -73,7 +79,7 @@ export function forkedText(answer: ForkAnswer, box: BoxRecord | null): string {
   if (box.state !== "ready") return `Fork ${box.name} of ${named} is ${box.state}.${again}`;
   const where = box.threadId === OPERATOR ? "one of your machines" : `a box of thread ${box.threadId}`;
   const total = typeof box.timings.total === "number" ? ` in ${seconds(box.timings.total)}` : "";
-  return [`Forked ${named} into box ${box.name} (${box.id}), ${where}, ready${total}.${again}`, box.fork ? forkedFromWords(box.fork) : "", FORK_HOLDS].filter(Boolean).join("\n");
+  return [`Forked ${named} into box ${box.name} (${box.id}), ${where}, ready${total}.${again}`, box.fork ? forkedFromWords(box.fork) : "", FORK_HOLDS, answer.snapshot ? (forkMayMissWords(answer.snapshot) ?? "") : ""].filter(Boolean).join("\n");
 }
 
 export function restoreCheckText(check: RestoreCheck): string {

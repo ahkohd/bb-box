@@ -110,6 +110,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
     taken_at INTEGER NOT NULL
   )`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN identity TEXT`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN unflushed TEXT CHECK(unflushed IS NULL OR length(CAST(unflushed AS BLOB)) <= 1024)`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -177,6 +178,7 @@ interface SnapshotRow {
   undo_of: string | null;
   fork_safe: number | null;
   identity: string | null;
+  unflushed: string | null;
   depends_on: string;
   picture: SnapshotRecord["picture"];
   ref: string | null;
@@ -272,6 +274,7 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     undoOf: row.undo_of,
     forkSafe: row.fork_safe,
     identity: parsed<HeldIdentity | null>(row.identity, null),
+    unflushed: row.unflushed,
     dependsOn: parsed<string[]>(row.depends_on, []),
     picture: row.picture,
     ref: row.ref,
@@ -318,6 +321,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     undo_of: record.undoOf,
     fork_safe: record.forkSafe,
     identity: json(record.identity ?? null),
+    unflushed: record.unflushed?.slice(0, 500) ?? null,
     depends_on: JSON.stringify(record.dependsOn),
     picture: record.picture,
     ref: record.ref,

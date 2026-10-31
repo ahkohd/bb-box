@@ -73,6 +73,7 @@ export interface SnapshotRecord {
   readonly undoOf: string | null;
   readonly forkSafe: number | null;
   readonly identity?: HeldIdentity | null;
+  readonly unflushed?: string | null;
   readonly dependsOn: readonly string[];
   readonly picture: PictureState | null;
   readonly ref: string | null;
@@ -481,6 +482,10 @@ export function stateWords(snapshot: Pick<SnapshotRecord, "state" | "error" | "h
   }
 }
 
+export function unflushedWords(why: string): string {
+  return `bb-box could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
+}
+
 export function notForkSafe(snapshot: SnapshotRecord): boolean {
   return snapshot.forkSafe === null && snapshot.box.system === "linux" && snapshot.scope === "box";
 }
@@ -500,6 +505,7 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
     ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),
     ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),
+    ...(snapshot.unflushed ? ["may miss its last writes"] : []),
   ];
   return parts.join(" · ");
 }

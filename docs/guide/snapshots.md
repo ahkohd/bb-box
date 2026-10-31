@@ -38,6 +38,8 @@ bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 
 `--memory` holds the box's memory too, where its backend can: Proxmox QEMU can, for a box that runs; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
 
+Before it takes a snapshot of a box that runs, BB Box flushes the box's writes to its disk, with `sync` in the box, for at most 15 seconds, so the snapshot's disk holds what was just written, with or without memory. If the flush fails or takes longer, the snapshot is taken anyway, and it says it may miss the last writes: in the take's answer, in the list, on the page and in every fork of it.
+
 The command waits until the backend confirms the snapshot is complete. A box holds 5 snapshots unless you change it in the settings (below). A take is refused when the host's storage is more than 85% full, or would be with the snapshot, or when its thin metadata is more than 80% full, as a full thin pool stops every box on the host. Both numbers follow the settings.
 
 ## Listing snapshots
@@ -133,7 +135,7 @@ It never acts as its source. BB Box gives the copy new MAC addresses, so at its 
 2. writes the fork's own identity marker
 3. enrols it as a new BB machine, and gives it its thread's access, or yours
 
-A fork given its source's name still resets: the name plays no part. What a fork still holds is everything else on the disk: a project's secrets, a signed-in browser, a keychain and cloud credentials in files. It is a new BB identity, not a cleaned box. It starts fresh: no apps are running, even from a snapshot with memory. A fork of a VM's snapshot with memory has only what the VM had written to its disk then, which can miss its last half minute's writes; fork a snapshot of the disk alone for those.
+A fork given its source's name still resets: the name plays no part. What a fork still holds is everything else on the disk: a project's secrets, a signed-in browser, a keychain and cloud credentials in files. It is a new BB identity, not a cleaned box. It starts fresh: no apps are running, even from a snapshot with memory: it has what the box's disk held, which the flush before each take brings up to date.
 
 Its page's facts say where it came from: "Forked from amber-fox, "before the migration" (yesterday 23:39)". Its log starts with the same words, and its source's log says `fork-asked`, then `forked` or `fork-failed`. While the fork is made, its snapshot cannot be deleted, and its source's take, restore, stop and release wait for the copy.
 

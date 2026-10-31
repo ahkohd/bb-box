@@ -979,6 +979,11 @@ export class Snapshots {
     this.#running.add(operation.id);
     try {
       await this.#deps.hold?.(operation, "planned", this.#stopping.signal);
+      const unflushed = await this.#flushWrites(box, backend, box.guest!, this.#stopping.signal);
+      if (unflushed) {
+        record = ledger.updateRecord(record.id, { unflushed }) ?? record;
+        this.#deps.log?.(`Took snapshot ${record.id} of box ${box.name} without flushing its writes first: ${unflushed}`);
+      }
       const stillWhileTaken = record.holds === "disk" && this.offerFor(backend, box.kind)?.whileRunning === "live";
       const picturing = this.#keepPicture(record.id, box);
       if (!stillWhileTaken) await picturing;
@@ -1536,7 +1541,7 @@ export class Snapshots {
         throw error;
       }
       const started = ledger.updateOperation(operation.id, { step: "acquiring", consent: { fork: { box: made.id, threadId: made.threadId, name: made.name } } }) ?? operation;
-      this.#event(target, "fork-asked", by, `"${target.name}" (${target.id}) into box ${made.name} (${made.id})${made.threadId === OPERATOR ? ", one of your machines" : ""}, about ${seconds(plan.fork.aboutMs)} to copy.`);
+      this.#event(target, "fork-asked", by, `"${target.name}" (${target.id}) into box ${made.name} (${made.id})${made.threadId === OPERATOR ? ", one of your machines" : ""}, up to about ${seconds(plan.fork.aboutMs)} to copy.${target.unflushed ? " The snapshot may miss the box's last writes before it." : ""}`);
       this.#notify(source.threadId);
       return { box: made, snapshot: target, operation: started, repeated: false };
     });
@@ -1843,7 +1848,7 @@ export class Snapshots {
             throw new BoxError("unflushed", `${words} bb-box changed nothing.`);
           }
           ledger.updateOperation(operation.id, { consent: { ...(operation.consent as object), unflushedWhy: unflushed } });
-          undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed) }) ?? undo;
+          undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed), unflushed }) ?? undo;
         }
         await admitted(box, "planned");
         await this.#deps.hold?.(operation, "checked", signal);

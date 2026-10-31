@@ -2363,15 +2363,47 @@ lent VMIDs.
   unit 3's rate for a held copy. It said 38 s for 16 GiB disks; the copies
   took 12 to 16 s with about 2 GB used.
 
+### Takes flush first
+
+The live check found that a fork of a QEMU memory snapshot lacked what the
+VM had not written to its disk: vm-fork's reset found no BB machine to
+remove, as the source's credentials, written 18 s before the take, were not
+yet on its disk. Proxmox saves memory instead of freezing the file system,
+and a fork starts from the disk only. At the lead's request:
+
+- **Before a take of a running box**, bb-box runs `sync` in it, as unit 6's
+  restore does before its stop, with the same helper and 15 s limit, on
+  Proxmox LXC and QEMU, disk only and with memory alike. A stopped box has
+  nothing to flush.
+- **A flush that fails or times out stops nothing.** The take goes ahead,
+  and its record keeps why (`unflushed`, a new column in `snapshots.db`, by
+  migration). The take's answer says "bb-box could not flush the box's
+  writes to its disk before it (why), so it may miss what was written in
+  the last seconds before it"; the list and the page's row say "may miss
+  its last writes"; `--check`, the Fork dialog, the fork's answer and
+  `fork-asked` say the fork may lack them too. A restore's undo whose flush
+  failed records it the same way. Keep comes in unit 8 and is to say it
+  too.
+
+Tests, in `test/take-flush.test.ts`, 3: the flush before each take, disk
+and memory, and none for a stopped box; a failed flush, the take ready
+and its record, answer and list words; a flush that never answers holds a
+take 15 s at most. In `test/forks.test.ts`: the words of `--check`, the
+fork's answer and `fork-asked` for an unflushed snapshot. Two unit 1a tests
+that restarted bb-box 20 ms into a take now wait for the take's hold, as
+the flush comes first.
+
+Live, on a second separate BB set up as the first, with the same lent
+backends: src-vm (Proxmox QEMU, armed) joined BB, whose credentials were
+written at 09:59:30.82 (`host-id`) and 09:59:30.86 (`auth.json`); a file
+was written at 09:59:32, and the memory snapshot taken at once, ready in
+2.0 s, flushed (no `unflushed`). Its fork vm-fork was ready in 15 s; its
+reset at 09:59:49 removed `host_q83i4g7zfe`, the source's machine, so its
+credentials were on the snapshot's disk; the file was there too, and no
+process of the source ran in it.
+
 ### Known limits
 
-- **A fork of a QEMU memory snapshot lacks what the VM had not written to
-  its disk.** Proxmox saves memory instead of freezing the file system, and
-  a fork starts from the disk only. vm-fork's reset found no BB machine to
-  remove: the source's credentials, written 18 s before the take, were not
-  yet on its disk. A disk snapshot had everything, a file written after
-  `sync` too. A flush before each take, as unit 6 runs before a restore's
-  stop, would close it; it is outside this unit.
 - **An LXC fork whose card is late fails rather than waits**: the
   container's start waits 30 s for SSH, and the reset's own wait for a card
   is 30 s, so it is released, not handed over. A VM waits 180 s.
@@ -2381,5 +2413,3 @@ lent VMIDs.
 - **Arming production** (`general.identityResetBackends`) is the owner's
   call; until then no production snapshot is fork-safe, and every fork
   there is refused with why.
-- Should takes flush the box's writes first, so a fork of a memory snapshot
-  holds them (Known limits)?

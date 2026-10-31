@@ -6,7 +6,7 @@ import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import { RESTORE_FORM, RESTORE_FORM_TIMEOUT_MS, isRestoreYes, restoreFormPayload, restoreFormTitle, type RestoreFormPayload } from "./restore-form.ts";
 import type { BbBox } from "./setup.ts";
-import { deletedText, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, forkMayMissWords, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
 import { boxParam, failure, ready, runsOnBox, thread, using } from "./tools.ts";
 import { boxDetail, startingWords } from "./views.ts";
 import { forkedFromWords, isAcquiring } from "../core/boxes.ts";
@@ -192,7 +192,8 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
           return { content: [{ type: "text", text: `Fork ${settled.name} failed: ${settled.error ?? "no reason given"}${next("Tell the person what it says, or fork again from another snapshot.")}` }], isError: true };
         }
         const enrolled = await app.boxes.enrolled(settled, signal);
-        return `${boxDetail(enrolled, app.control(enrolled))}${next(...using(enrolled))}`;
+        const mayMiss = answer.snapshot ? forkMayMissWords(answer.snapshot) : null;
+        return `${boxDetail(enrolled, app.control(enrolled))}${mayMiss ? `\n${mayMiss}` : ""}${next(...using(enrolled))}`;
       } catch (error) {
         return snapshotFailure(error, "Forking the box");
       }

@@ -183,7 +183,7 @@ function rowLine(row: SnapshotRowView, boxName: string, now: number, titles: Thr
   const ending = row.keptUntil !== null ? `kept until ${snapshotDay(row.keptUntil)}` : null;
   return {
     attention: attentionWords(row, boxName),
-    rest: [ending, snapshotWhen(row.takenAt, now), actorWords(row.by, titles), row.state === "failed" ? null : snapshotSizeWords(row.size), snapshotPriceWords(row.price)].filter((part): part is string => !!part),
+    rest: [ending, snapshotWhen(row.takenAt, now), actorWords(row.by, titles), row.state === "failed" ? null : snapshotSizeWords(row.size), snapshotPriceWords(row.price), row.unflushed ? "may miss its last writes" : null].filter((part): part is string => !!part),
   };
 }
 
@@ -466,6 +466,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: BoxView; row: S
               <p>
                 {check.size}, as the snapshot holds. The copy takes up to about {aboutWords(check.aboutMs)}{space}, then it starts, and bb-box checks that it reset its identity before handing it over.
               </p>
+              {check.unflushed ? <p className="text-warning-text">bb-box could not flush {box.name}'s writes to its disk before this snapshot, so it, and the fork, may miss what was written in the last seconds before it.</p> : null}
             </>
           ) : current ? null : (
             <p role="status">Reading what the fork would be…</p>

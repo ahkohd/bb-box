@@ -1412,6 +1412,15 @@ On 31 October 2026, during unit 7:
 - **A fork has the snapshot's size**, read from the snapshot's config; no
   larger size is offered yet.
 - **Held copies do not fork yet**: they come with Keep (unit 8).
+- **Takes flush first** (the lead's request after the first live check).
+  Before a take of a running box, bb-box runs `sync` in it, as unit 6's
+  restore does before its stop, with the same 15 s limit, disk only and
+  with memory alike: a QEMU memory snapshot's disk otherwise lacked what
+  the guest had not written yet, so its fork lacked it too. A flush that
+  fails or times out stops nothing: the take goes ahead, and its record
+  (`unflushed`, a new column), its answer, the list, the page's row and
+  every fork of it say it may miss the last writes. Keep (unit 8) is to
+  say so too.
 
 ## Alternatives considered
 

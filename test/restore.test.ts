@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { BoxIdentity, Guest } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, SnapshotRecord } from "../src/core/snapshot.ts";
-import { COMMAND, DAY, THREAD, armedWorld, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
+import { COMMAND, DAY, THREAD, armedWorld, flushing, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
 
 const AGENT: Caller = { is: "agent", threadId: THREAD };
 
@@ -485,23 +485,6 @@ test("a check says what a restore would do, refuses what it would refuse, and ch
   assert.equal(state.store.records({ box: box.id }).length, 1);
 });
 
-function flushing(state: World, flush: () => Promise<{ exitCode: number; stdout: string; stderr: string }>): void {
-  const transports = state.backend.transports.bind(state.backend);
-  state.backend.transports = async (guest, kind) => {
-    const found = await transports(guest, kind);
-    const command = found.command!;
-    return {
-      ...found,
-      command: Object.assign(Object.create(Object.getPrototypeOf(command)), command, {
-        run: async (script: string, options?: Parameters<typeof command.run>[1]) => {
-          if (script !== "sync") return command.run(script, options);
-          state.provider.order.push("flush");
-          return flush();
-        },
-      }),
-    };
-  };
-}
 
 test("the box's writes are flushed to its disk before the restore's hard stop, so its undo holds them", async () => {
   const state = world();

@@ -228,3 +228,21 @@ export function armedWorld(): World {
   withIdentitySource(state, "eth");
   return state;
 }
+
+export function flushing(state: World, flush: () => Promise<{ exitCode: number; stdout: string; stderr: string }>): void {
+  const transports = state.backend.transports.bind(state.backend);
+  state.backend.transports = async (guest, kind) => {
+    const found = await transports(guest, kind);
+    const command = found.command!;
+    return {
+      ...found,
+      command: Object.assign(Object.create(Object.getPrototypeOf(command)), command, {
+        run: async (script: string, options?: Parameters<typeof command.run>[1]) => {
+          if (script !== "sync") return command.run(script, options);
+          state.provider.order.push("flush");
+          return flush();
+        },
+      }),
+    };
+  };
+}

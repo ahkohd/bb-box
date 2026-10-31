@@ -9551,6 +9551,7 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     picture: null,
     busyWhy: null,
     forkWhy: null,
+    unflushed: null,
     ...overrides,
   };
 }
@@ -9614,7 +9615,7 @@ test("070 unit 6: the Snapshots card sits after Activity and before the facts, w
 test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, its size, time and space and what a fork holds; Fork sends it with what was chosen and opens the new box's page", async () => {
   const preview = (asMachine: boolean): ForkPreview => ({
     refusal: null,
-    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm" },
+    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null },
   });
   const { handlers, changes } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", excludes: null, price: null } }), forkPreview: preview });
   const slot = boxPageAt(handlers, "box/box_1");
@@ -9638,14 +9639,15 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
   await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
 });
 
-test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a refused fork says why in the dialog", async () => {
+test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a row says when its take could not flush the box's writes", async () => {
   const forkable = { holds: ["disk" as const], scope: "box" as const, whileRunning: "live" as const, restore: "in-place" as const, fork: "copy" as const, excludes: null, price: null };
   const { handlers } = server([box()], {
-    snapshots: snapshotsView({ offer: forkable, records: [snapshotRow({ forkWhy: "calm-otter had no working identity reset when it was taken" })] }),
+    snapshots: snapshotsView({ offer: forkable, records: [snapshotRow({ forkWhy: "calm-otter had no working identity reset when it was taken", unflushed: "sync: Input/output error" })] }),
     forkPreview: () => ({ refusal: "No.", check: null }),
   });
   const slot = boxPageAt(handlers, "box/box_1");
   const card = await slot.findByRole("region", { name: "Snapshots" });
+  expect(card.textContent).toContain("1.2 GB · may miss its last writes");
   const off = within(card).getByRole("button", { name: "Fork: not now, as calm-otter had no working identity reset when it was taken" });
   expect((off as HTMLButtonElement).disabled).toBe(true);
 });
