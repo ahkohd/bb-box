@@ -692,6 +692,7 @@ test("an NVIDIA GPU: its tile gives its use, memory and power, its line joins th
   const table = await screen.findByRole("region", { name: "Top processes" });
   const rows = within(table).getAllByRole("row");
   expect(rows[0]!.textContent).toBe("ProcessPIDCPUMemoryGPU");
+  expect(table.textContent).toContain("GPU is the card memory a process uses for compute or drawing; processes on the GPU are always listed.");
   expect(rows[2]!.textContent).toContain("12.6 GiB");
   expect(rows[1]!.querySelector("[data-gpu-memory]")!.textContent).toBe("–");
 });
