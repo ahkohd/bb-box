@@ -10,6 +10,8 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | --- | --- | --- | --- | --- | --- |
 | Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
 | Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
+| boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | not yet: boat.dev boxes have no identity reset | not yet, as Keep needs a fork |
+| boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
 | Every other backend | no snapshots yet | | | | |
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
@@ -222,6 +224,8 @@ Undos are counted apart from the snapshots per box: a box keeps 2. Once a restor
 
 `--check` says what a restore would do, with its undo, the size the box goes back to, what it would end and the undo it would replace, and refuses what the restore would refuse. It changes nothing. While a restore runs, or one BB Box could not confirm holds the box, BB Box takes no snapshot of it, and refuses to start, stop or resize it.
 
+On boat.dev, step 5 is boat.dev's own stop, which saves the box's disk, and step 6 saves that as the undo, so it holds exactly what the restore replaces. Step 7 makes the box a new sandbox from the snapshot, which runs the box from then on with its ID, name and labels. BB Box deletes the old sandbox only once the new one has started and taken its access file; if the new one does not start, BB Box deletes it and starts the old one again. The box's snapshots live on the account, not on the sandbox, so none is left behind. It costs 2 of boat.dev's starts, which `--check` and the dialog price before you restore: free within the plan's starts, and paid from the wallet past them. A restore needs 3 starts available in each of boat.dev's windows, free or paid. If the new sandbox does not start, or its access file cannot be written, BB Box deletes it and starts the old one again, and a restart of BB Box part way through finishes that.
+
 A restore takes a few seconds. Measured on Proxmox LXC on LVM-thin, a box of 16 GiB: about 4 s, of which the stop takes about a second, the undo and the rollback under a second each, and the start about 2 s. When the snapshot was taken while the container ran, Proxmox's own start takes about 45 s instead, and BB Box waits for it.
 
 ### ZFS
@@ -277,7 +281,7 @@ A kept snapshot of a released box forks from its held copy, as one of your machi
 
 ## When a box is released
 
-A box's snapshots go with it when it is released: Proxmox deletes them with the guest. The box's log says so for each one. Kept ones outlive it as held copies, above.
+A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. Kept ones outlive it as held copies, above.
 
 A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for, in BB Box's records or in the snapshots' labels. If it cannot read the labels, it keeps the guest until it can.
 
@@ -317,9 +321,9 @@ From a terminal, `bb box option set` changes each of them: `general.snapshots.pe
 
 ### Paid snapshots
 
-The ceiling bounds the monthly rate of what is held, not the bill. The rate is every paid snapshot the provider holds, kept or not, times its daily price, times 30. A take is refused when the rate would pass the ceiling after it, with the words "It would bring snapshots held on (backend) to about $5.04 a month, past your ceiling of $5.00". When the rate is past the ceiling for another reason, such as a lower ceiling, the page warns, new paid snapshots are refused, and BB Box deletes none of them. Beside each ceiling, the page shows the rate held and what was spent this month, deleted snapshots included. A price BB Box does not know is shown as unknown, and only you can take a snapshot there.
+The ceiling bounds the monthly rate of what is held, not the bill. The rate is every paid snapshot the provider holds, kept or not, times its daily price, times 30. Where a provider's plan includes some snapshots, as boat.dev's does, the rate is what the provider bills: those past the included ones, counted from the provider's own figures for the whole account, and a take within the included ones adds nothing to it. If BB Box cannot read those figures when it would add one, it adds none, as an older count says nothing of what others on the account have added since, and the page shows an estimate at full price. Otherwise the page says how many saved snapshots the account holds and how many are billed. A take is refused when the rate would pass the ceiling after it, with the words "It would bring snapshots held on (backend) to about $5.04 a month, past your ceiling of $5.00". When the rate is past the ceiling for another reason, such as a lower ceiling, the page warns, new paid snapshots are refused, and BB Box deletes none of them. Beside each ceiling, the page shows the rate held and what was spent this month, deleted snapshots included. A price BB Box does not know is shown as unknown, and only you can take a snapshot there.
 
-No backend charges for snapshots yet, so the page says "None of your backends charges for snapshots".
+Where no backend charges for snapshots, the page says "None of your backends charges for snapshots".
 
 ## Removing a backend
 

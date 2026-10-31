@@ -40,6 +40,7 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
   }
   const processes = snapshot?.holds === "disk-and-memory" ? `It came back running, as it was then, with the credentials its apps held then; what ran since ended.` : "Every process in it ended.";
   const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. Everything on its disk since then went. ${processes}`];
+  if (answer.newGuest) lines.push("It runs on a new guest made from that snapshot, with the box's own identity, and its old guest is deleted.");
   if (typeof answer.earlier === "number") lines.push(`It runs on a new guest made from that held copy, with the box's own identity. ${answer.earlier === 1 ? "1 snapshot stays" : `${answer.earlier} snapshots stay`} on its earlier guest, which bb-box never starts: fork only.`);
   lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id})${answer.undo.guest === "held-copy" ? `, a held copy of the stopped box, guest ${answer.undo.livesOn.ref}` : ""}: restore that to undo this.` : "No undo was taken.");
   if (answer.anyway.length) lines.push(`Restored anyway, though ${answer.anyway.join(", and ")}.`);
@@ -117,18 +118,20 @@ export function restoreCheckText(check: RestoreCheck): string {
   const snapshot = check.snapshot;
   const name = check.box.name;
   const lines = [`Restoring box ${name} to "${snapshot.name}" (${snapshot.id}), taken ${dayWords(snapshot.takenAt)}, would:`];
-  lines.push(`- stop it at once, without a clean shutdown;`);
+  lines.push(check.fromSnapshot ? "- stop it, which ends every process in it;" : `- stop it at once, without a clean shutdown;`);
   if (check.undo?.kind === "held-copy") {
     const bytes = check.undo.bytes ? `, up to ${gbWords(check.undo.bytes)} on ${check.storage}` : "";
     lines.push(`- copy it in full, stopped, as its undo "${check.undo.name}": a held copy that cannot start, about ${seconds(check.undo.aboutMs)}${bytes};`);
   } else if (check.undo) {
-    lines.push(`- take its undo "${check.undo.name}", a snapshot of it stopped, about ${seconds(check.undo.aboutMs)};`);
+    lines.push(`- take its undo "${check.undo.name}", a snapshot of it stopped, about ${seconds(check.undo.aboutMs)}${check.undo.price ? `, at ${priceWords(check.undo.price)}` : ""};`);
   } else lines.push("- take no undo, so this cannot be undone;");
-  if (check.swap) {
+  if (check.fromSnapshot) {
+    lines.push(`- make it a new guest from that snapshot, with the box's own identity, start it, and delete its old guest${check.costWords ? `. ${check.costWords.replace(/\.$/, "")}` : ""};`);
+  } else if (check.swap) {
     const old = check.leavesOnEarlierGuest
       ? `${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only`
       : `its old guest holds no snapshot, so bb-box deletes it${check.undo ? "" : ", and with no undo, nothing then holds the box as it is now"}`;
-    lines.push(`- make it a new guest from that held copy, with its own identity, and start it; ${old};`);
+    lines.push(`- make it a new guest from that held copy, with the box's own identity, and start it; ${old};`);
   } else lines.push("- roll its disk back, and start it;");
   if (check.replaces) lines.push(`- once it is done, delete its oldest undo, "${check.replaces}", as a box keeps two;`);
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
@@ -173,6 +176,10 @@ export function offerSnapshotWords(offer: Snapshotting): string {
   return snapshottingWords(offer.holds, offer.whileRunning);
 }
 
+function eachWords(price: NonNullable<Snapshotting["price"]>): string {
+  return price.included ? `${priceWords({ ...price, included: 0 })} each past the plan's ${price.included}` : `${priceWords(price)} each`;
+}
+
 export function backendSnapshotsView(backend: Backend, kinds: readonly string[], snapshots: Pick<Snapshots, "offerFor" | "paidOn">): BackendSnapshotsView {
   const byWords = new Map<string, string[]>();
   let price: Snapshotting["price"] = null;
@@ -180,7 +187,7 @@ export function backendSnapshotsView(backend: Backend, kinds: readonly string[],
     const offer = snapshots.offerFor(backend, kind);
     if (!offer) continue;
     price ??= offer.price;
-    const words = `${offerSnapshotWords(offer)} · ${offer.price ? `${priceWords(offer.price)} each` : "no charge"}`;
+    const words = `${offerSnapshotWords(offer)} · ${offer.price ? eachWords(offer.price) : "no charge"}`;
     byWords.set(words, [...(byWords.get(words) ?? []), kind]);
   }
   const paid = snapshots.paidOn(backend.id);
@@ -189,7 +196,17 @@ export function backendSnapshotsView(backend: Backend, kinds: readonly string[],
     price,
     paid:
       price || paid.held.count
-        ? { currency: paid.held.currency ?? price?.currency ?? "USD", count: paid.held.count, unknown: paid.held.unknown, monthly: paid.held.monthly, spent: paid.spent, ceiling: paid.ceiling, past: paid.past }
+        ? {
+            currency: paid.held.currency ?? price?.currency ?? "USD",
+            count: paid.held.count,
+            unknown: paid.held.unknown,
+            monthly: paid.held.monthly,
+            spent: paid.spent,
+            ceiling: paid.ceiling,
+            past: paid.past,
+            included: paid.held.billed && !paid.held.estimate ? { included: paid.held.billed.included, used: paid.held.billed.used } : null,
+            billing: backend.snapshotBill ? (paid.held.estimate ? "estimate" : "billed") : null,
+          }
         : null,
   };
 }

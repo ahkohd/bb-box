@@ -87,6 +87,16 @@ boat.dev stops a sandbox by itself at its auto-stop. BB Box sets each box's auto
 
 A box can move to another of boat.dev's sizes, with a restart: BB Box stops its sandbox and boat.dev starts it again on a machine of the new size, as [resizing a box](resizing.md) describes. Cores, memory and disk change together, and a smaller size is refused when the box's files would not fit its disk.
 
+### Snapshots
+
+On a paid plan, a snapshot of a box is one of boat.dev's saved snapshots, as [snapshots](snapshots.md) describes. It holds the box's disk, not its memory, and leaves out what boat.dev's own snapshots leave out: `/tmp`, `~/.cache`, the build cache, the hostname, the address and the SSH host keys. A snapshot of a running box takes a fresh capture first, which can take a minute or more.
+
+A saved snapshot lives on your boat.dev account, not on the box, and does not expire by itself. It costs money only past what your plan includes: 10 for every $20 of plan, then $0.056 a day each, from the wallet. The count is the account's, saved snapshots BB Box did not take included. Each snapshot's row says the price, and Settings, Snapshots, Paid snapshots says how many of the included ones the account holds. Your ceiling there, $5 a month unless you set it, refuses a snapshot that would bring what boat.dev bills for them past it. Where BB Box cannot read boat.dev's count just then, it takes, restores with an undo and keeps no saved snapshot until it can, and Settings show an estimate at full price.
+
+A restore stops the box, so boat.dev saves its disk, saves that as the undo, and then makes the box a new sandbox from the snapshot, with the same box ID, name and labels, and deletes the old sandbox. boat.dev counts 2 starts for this, as it gives a sandbox deployed from a saved snapshot no labels, so BB Box deploys it, stops it and copies it with the box's labels. They are free within your plan's starts, and from $0.03 each past them, which the restore dialog says before you restore. A restore needs 3 starts left, as putting the box back if the new sandbox fails takes a third. The old sandbox stays, stopped, until the new one has started. A release deletes the box's saved snapshots with it, unless you kept one.
+
+The free trial has no saved snapshots, so a box on it has no snapshots, restores or Keep. Forks, and Keep, which needs a snapshot that can be forked after its box is released, wait until boat.dev boxes have an identity reset of their own.
+
 ## Android boxes
 
 boat.dev's machines have KVM, so they can run the Android emulator. An Android box on boat.dev is the same as on Proxmox QEMU: a phone, foldable or tablet, booted from its snapshot, with its screen in the Box panel. Using it is in [device boxes](devices.md).
@@ -115,7 +125,7 @@ BB Box labels every sandbox it makes with `bbbox-install`, and its boxes with `b
 boat list --all
 ```
 
-Each one should be a box in BB Box's Boxes page, or a template, with the label `bbbox-role=template`, stopped. BB Box checks its backends every few minutes, and deletes a box's sandbox once BB says the box's thread has ended. It deletes an old template an hour after a new one replaces it. `bb box doctor` lists any sandbox no box claims. If one stays, delete it with `boat delete` followed by its ID.
+Each one should be a box in BB Box's Boxes page, or a template, with the label `bbbox-role=template`, stopped. BB Box's saved snapshots are named after the install, the box and the snapshot, such as `abcdefghij-bx...-sn...`; `boat snapshots` lists them, and each should be a snapshot on the Boxes page's Snapshots tab. BB Box checks its backends every few minutes, and deletes a box's sandbox once BB says the box's thread has ended. It deletes an old template an hour after a new one replaces it. `bb box doctor` lists any sandbox no box claims. If one stays, delete it with `boat delete` followed by its ID.
 
 ## Turn it off
 

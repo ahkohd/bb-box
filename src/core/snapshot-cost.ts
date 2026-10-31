@@ -1,4 +1,4 @@
-import type { Price } from "../backends/types.ts";
+import type { Price, SnapshotBill } from "../backends/types.ts";
 import { heldByProvider, type SnapshotRecord, type Verdict } from "./snapshot.ts";
 
 export const DAYS_A_MONTH = 30;
@@ -23,6 +23,37 @@ export interface HeldRate {
   readonly count: number;
   readonly monthly: number;
   readonly unknown: number;
+  readonly billed?: BilledCount;
+  readonly estimate?: boolean;
+}
+
+export interface BilledCount {
+  readonly included: number;
+  readonly used: number;
+  readonly dailyEach: number;
+}
+
+export function billedRate(bill: SnapshotBill, pending: number): HeldRate {
+  const used = Math.max(bill.used, bill.refs.length) + Math.max(0, pending);
+  return { currency: bill.currency, count: used, monthly: Math.max(0, used - bill.included) * bill.dailyEach * DAYS_A_MONTH, unknown: 0, billed: { included: bill.included, used, dailyEach: bill.dailyEach } };
+}
+
+export function accountAtFullPrice(bill: SnapshotBill, pending: number): HeldRate {
+  const used = Math.max(bill.used, bill.refs.length) + Math.max(0, pending);
+  return { currency: bill.currency, count: used, monthly: used * bill.dailyEach * DAYS_A_MONTH, unknown: 0, billed: { included: 0, used, dailyEach: bill.dailyEach }, estimate: true };
+}
+
+export function pendingOn(records: readonly SnapshotRecord[], bill: SnapshotBill): number {
+  const counted = new Set(bill.refs);
+  return records.filter((record) => heldByProvider(record) && !(record.ref !== null && counted.has(record.ref))).length;
+}
+
+export function billedWords(held: HeldRate): string | null {
+  const billed = held.billed;
+  if (!billed) return null;
+  if (held.estimate) return `about ${moneyWords(held.monthly, held.currency)} a month, estimated at full price for the account's ${billed.used}`;
+  const over = Math.max(0, billed.used - billed.included);
+  return over ? `${billed.used} saved, ${over} billed, about ${moneyWords(held.monthly, held.currency)} a month` : `${billed.used} saved, none billed`;
 }
 
 export function dailyPrice(price: Price, bytes: number | null): number | null {
@@ -105,7 +136,7 @@ const ONLY_YOU_CAN: Readonly<Record<CeilingChange, string>> = {
 export interface CeilingInput {
   readonly change: CeilingChange;
   readonly backend: string;
-  readonly held: HeldRate;
+  readonly held: HeldRate | null;
   readonly price: Price | null;
   readonly bytes: number | null;
   readonly ceiling: number;
@@ -116,8 +147,10 @@ const RAISE_IT = "Delete one, or raise the ceiling in Settings, Snapshots, Paid 
 
 export function ceilingVerdict(input: CeilingInput): Verdict {
   if (!input.price) return { ok: true };
+  if (!input.held) return { ok: false, why: `bb-box cannot read what ${input.backend} bills for snapshots just now, so it cannot tell what this would cost, and does not ${ONLY_YOU_CAN[input.change]} there now. It reads the bill again each time.` };
   const addsNothing = input.change === "keep" || input.change === "renew";
-  const adds = addsNothing ? 0 : monthlyRate(input.price, input.bytes);
+  const billed = input.held.billed;
+  const adds = addsNothing ? 0 : billed ? (billed.used + 1 > billed.included ? billed.dailyEach * DAYS_A_MONTH : 0) : monthlyRate(input.price, input.bytes);
   if (adds === null) {
     if (input.byPerson) return { ok: true };
     return { ok: false, why: `bb-box does not know what a snapshot on ${input.backend} costs, so only you can ${ONLY_YOU_CAN[input.change]} there.` };
@@ -129,7 +162,8 @@ export function ceilingVerdict(input: CeilingInput): Verdict {
   if (addsNothing) {
     return { ok: false, why: `Snapshots held on ${input.backend} cost about ${moneyWords(input.held.monthly, currency)} a month, past your ceiling of ${ceiling}, so bb-box does not ${input.change} a paid snapshot there. ${RAISE_IT}` };
   }
-  return { ok: false, why: `It would bring snapshots held on ${input.backend} to about ${moneyWords(after, currency)} a month, past your ceiling of ${ceiling}. ${RAISE_IT}` };
+  const past = billed ? ` It would be saved snapshot ${billed.used + 1} there, and the plan includes ${billed.included}.` : "";
+  return { ok: false, why: `It would bring snapshots held on ${input.backend} to about ${moneyWords(after, currency)} a month, past your ceiling of ${ceiling}.${past} ${RAISE_IT}` };
 }
 
 export function pastCeiling(held: HeldRate, ceiling: number): boolean {

@@ -725,6 +725,8 @@ export interface Backend {
   copyState?(copy: Guest, signal?: AbortSignal): Promise<CopyState>;
   deleteCopy?(copy: Guest, signal?: AbortSignal): Promise<void>;
   adoptCopy?(copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  adoptSnapshot?(ref: SnapshotRef, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
+  snapshotBill?(signal?: AbortSignal): Promise<SnapshotBill>;
   retireGuest?(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest>;
   identitySource?(kind: string): IdentitySource | null;
   forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
@@ -754,6 +756,15 @@ export interface Price {
   readonly currency: "USD" | "EUR";
   readonly per: "day" | "month" | "GB-month";
   readonly known: boolean;
+  readonly included?: number;
+}
+
+export interface SnapshotBill {
+  readonly currency: "USD" | "EUR";
+  readonly included: number;
+  readonly used: number;
+  readonly dailyEach: number;
+  readonly refs: readonly string[];
 }
 
 export interface Snapshotting {
@@ -767,6 +778,7 @@ export interface Snapshotting {
   readonly price: Price | null;
   readonly excludes: string | null;
   readonly forkSafeFrom?: number;
+  readonly forkWhy?: string;
 }
 
 export interface SnapshotStorage {
@@ -801,6 +813,7 @@ export interface SnapshotPlan {
     readonly leavesOnEarlierGuest: number;
     readonly newer: number;
     readonly copyAboutMs: number | null;
+    readonly costWords?: string | null;
   };
   readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: BoxSize | null };

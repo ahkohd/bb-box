@@ -1,6 +1,6 @@
 import { OPERATOR, describeError, type BoxRecord } from "../core/boxes.ts";
 import { eligible, gbWords, heldByProvider, keepEndsWithin, KEEP_ENDS_WITHIN_DAYS, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
-import { moneyWords } from "../core/snapshot-cost.ts";
+import { billedWords, moneyWords } from "../core/snapshot-cost.ts";
 import { freedWords, standingOfRecord, type KeepInput, type Snapshots } from "../core/snapshots.ts";
 import { PERSON, rowOf, type SnapshotRowView } from "./snapshot-card.ts";
 import { keepCostWords } from "./snapshot-words.ts";
@@ -126,7 +126,7 @@ function lineOf(snapshots: Snapshots, records: readonly SnapshotRecord[], now: n
   for (const backendId of new Set(held.filter((record) => record.price).map((record) => record.backend.id))) {
     const rate = snapshots.paidOn(backendId);
     const label = held.find((record) => record.backend.id === backendId)!.backend.label;
-    paid.push(`${label} ${moneyWords(rate.held.monthly, rate.held.currency)} a month held`);
+    paid.push(`${label} ${billedWords(rate.held) ?? `${moneyWords(rate.held.monthly, rate.held.currency)} a month held`}`);
     if (rate.past) attention.push(`${label} is past its ceiling`);
   }
   const ending = held.filter((record) => keepEndsWithin(record, now, KEEP_ENDS_WITHIN_DAYS)).length;

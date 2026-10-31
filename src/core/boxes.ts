@@ -432,7 +432,7 @@ export interface BoxesDeps {
   forked?(box: BoxRecord): void;
   forkHold?(box: BoxRecord, signal: AbortSignal): Promise<void>;
   keepsGuest?(backendId: string, guestRef: string, ended?: boolean): string | null;
-  holdKeptOn?(backendId: string, guestRef: string): Promise<string | null>;
+  holdKeptOn?(backendId: string, guestRef: string, boxId: string | null): Promise<string | null>;
   leftoverReleased?(backendId: string, guestRef: string, boxId: string | null, why: string): void;
   beforeRelease?(box: BoxRecord, who: Actor): Promise<void>;
   /**
@@ -3621,7 +3621,7 @@ export class Boxes {
 
   async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal, ended = false): Promise<boolean> {
     const named = `guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}`;
-    const copying = ended ? ((await this.#deps.holdKeptOn?.(backend.id, guest.ref)) ?? null) : null;
+    const copying = ended ? ((await this.#deps.holdKeptOn?.(backend.id, guest.ref, guest.owner?.boxId ?? null)) ?? null) : null;
     const keep = copying ?? this.#deps.keepsGuest?.(backend.id, guest.ref, ended) ?? null;
     if (keep) {
       this.#deps.log?.(`Kept ${named}, which no box records and ${reason}: ${keep}.`);

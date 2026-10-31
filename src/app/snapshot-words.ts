@@ -86,7 +86,7 @@ export function snapshotPriceWords(price: Price | null): string | null {
   if (!price) return null;
   if (!price.known) return "price unknown";
   const symbol = price.currency === "USD" ? "$" : "EUR ";
-  return `${symbol}${price.amount} ${price.per === "GB-month" ? "a GB a month" : `a ${price.per}`}`;
+  return `${symbol}${price.amount} ${price.per === "GB-month" ? "a GB a month" : `a ${price.per}`}${price.included ? ` past the plan's ${price.included}` : ""}`;
 }
 
 export function holdsWords(holds: Holds, scope: "box" | "device" = "box"): string {
@@ -185,7 +185,8 @@ export function otherLosses(preview: RestorePreview): Loss[] {
 export function undoLabel(preview: RestorePreview): string {
   const undo = preview.check?.undo;
   if (undo?.kind === "held-copy") return `Copy it once stopped, so you can undo this: about ${aboutWords(undo.aboutMs)}${undo.bytes ? ` and ${gbWords(undo.bytes)}` : ""}.`;
-  return `Take a snapshot of it, once stopped, so you can undo this.${undo ? ` About ${aboutWords(undo.aboutMs)}.` : ""}`;
+  const price = undo?.price ? snapshotPriceWords(undo.price) : null;
+  return `Take a snapshot of it, once stopped, so you can undo this.${undo ? ` About ${aboutWords(undo.aboutMs)}.` : ""}${price ? ` It costs ${price} until it is deleted.` : ""}`;
 }
 
 export function requestId(): string {

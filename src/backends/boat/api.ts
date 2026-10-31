@@ -99,6 +99,7 @@ export interface StartWindow {
   readonly window: "minute" | "hour" | "day";
   readonly limit: number;
   readonly remaining: number;
+  readonly withWallet: number | null;
 }
 
 export interface BoatLimits {
@@ -111,6 +112,47 @@ export interface BoatLimits {
   readonly includedHoursLeft: number | null;
   readonly periodEndsAt: number | null;
   readonly savedSnapshots: boolean;
+  readonly planKey: string | null;
+  readonly nextStartDollars: number | null;
+  readonly paidStartDollars: number | null;
+  readonly savedSnapshotDayDollars: number | null;
+}
+
+export type SavedSnapshotStatus = "saving" | "ready" | "failed";
+
+export interface SavedSnapshot {
+  readonly name: string;
+  readonly status: SavedSnapshotStatus;
+  readonly error: string | null;
+  readonly source: string | null;
+  readonly artifact: string | null;
+  readonly size: SandboxSize | null;
+  readonly bytes: number | null;
+  readonly createdAt: number | null;
+}
+
+export interface SavedAllowance {
+  readonly included: number;
+  readonly used: number;
+  readonly extra: number;
+  readonly extraDailyDollars: number;
+  readonly dailyEach: number;
+}
+
+export interface SavedSnapshots {
+  readonly snapshots: readonly SavedSnapshot[];
+  readonly allowance: SavedAllowance | null;
+}
+
+export function isTrial(limits: Pick<BoatLimits, "tier" | "planKey">): boolean {
+  return limits.tier === "trial" || limits.planKey === "trial";
+}
+
+const PAID_TIERS = new Set(["standard"]);
+const PAID_PLAN = /^box_[1-9][0-9]*$/;
+
+export function isPaidPlan(limits: Pick<BoatLimits, "tier" | "planKey">): boolean {
+  return PAID_TIERS.has(limits.tier) && limits.planKey !== null && PAID_PLAN.test(limits.planKey);
 }
 
 export type BoatErrorKind = "gone" | "refused" | "unpaid" | "full" | "busy" | "unreachable" | "failed";
@@ -132,7 +174,7 @@ export class BoatError extends Error {
 }
 
 const FULL_CODES = new Set(["limit_reached", "member_limit_reached", "trial_compute_limit_reached", "rate_limited", "IP_RATE_LIMIT_EXCEEDED"]);
-const BUSY_CODES = new Set(["out_of_capacity", "no_ready_machine", "sandbox_starting", "sandbox_resuming", "sandbox_stopping", "idempotency_in_progress", "ssh_host_key_unavailable"]);
+const BUSY_CODES = new Set(["save_in_progress", "out_of_capacity", "no_ready_machine", "sandbox_starting", "sandbox_resuming", "sandbox_stopping", "idempotency_in_progress", "ssh_host_key_unavailable"]);
 
 function kindOf(status: number, code: string): BoatErrorKind {
   if (status === 404 || code === "not_found" || code === "snapshot_data_expired") return "gone";
@@ -153,6 +195,9 @@ const WORDS: Readonly<Record<string, string>> = {
   no_ready_machine: "boat has no machine of this size ready just now.",
   trial_machine_class_not_allowed: "the boat trial allows only the small and default sizes.",
   machine_class_plan_required: "this boat size needs a larger plan.",
+  trial_saved_snapshots_not_allowed: "boat's free trial has no saved snapshots: a payment in boat's dashboard ends the trial.",
+  credit_required: "boat's plan already holds every saved snapshot it includes, and its wallet is empty, so boat saves no more. Add money to the wallet in boat's dashboard, or delete a saved snapshot.",
+  save_in_progress: "boat is still saving a snapshot under that name.",
 };
 
 export function perWindow(window: string): string {
@@ -233,12 +278,13 @@ export function limitsFrom(raw: Readonly<Record<string, unknown>>): BoatLimits {
   const current = record(raw.currentLimits);
   const starts = record(raw.starts);
   const startLimits = record(raw.startLimits);
+  const walletLimits = record(raw.startLimitsWithWallet);
   const windows: StartWindow[] = [];
   for (const window of ["minute", "hour", "day"] as const) {
     const used = record(starts[window]);
     const limit = number(used.limit) ?? number(startLimits[`per${window[0]!.toUpperCase()}${window.slice(1)}`]);
     const remaining = number(used.remaining);
-    if (limit !== null) windows.push({ window, limit, remaining: remaining ?? limit });
+    if (limit !== null) windows.push({ window, limit, remaining: remaining ?? limit, withWallet: number(walletLimits[`per${window[0]!.toUpperCase()}${window.slice(1)}`]) });
   }
   const sizes = Array.isArray(raw.machineTypes)
     ? (raw.machineTypes as unknown[]).flatMap((entry) => {
@@ -247,7 +293,9 @@ export function limitsFrom(raw: Readonly<Record<string, unknown>>): BoatLimits {
       })
     : [];
   const included = record(raw.planIncluded);
+  const overage = record(raw.overagePrices);
   const tier = text(raw.accessTier) ?? "unknown";
+  const planKey = text(raw.sandboxPlanKey);
   return {
     tier,
     activeSandboxes: number(current.activeSandboxes) ?? number(raw.maxActiveSandboxes) ?? 0,
@@ -257,8 +305,37 @@ export function limitsFrom(raw: Readonly<Record<string, unknown>>): BoatLimits {
     computeCapSeconds: tier === "trial" ? number(raw.trialComputeCapSeconds) : null,
     includedHoursLeft: number(included.vmHoursRemaining),
     periodEndsAt: time(included.periodEnd),
-    savedSnapshots: tier !== "trial",
+    savedSnapshots: isPaidPlan({ tier, planKey }),
+    planKey,
+    nextStartDollars: number(raw.nextStartDollars),
+    paidStartDollars: Array.isArray(overage.startBrackets) ? number(record(overage.startBrackets[0]).dollars) : null,
+    savedSnapshotDayDollars: number(overage.savedSnapshotDayDollars),
   };
+}
+
+export function savedSnapshotFrom(raw: Readonly<Record<string, unknown>>): SavedSnapshot {
+  const status = raw.status === "ready" || raw.status === "failed" ? raw.status : "saving";
+  return {
+    name: String(raw.name ?? ""),
+    status,
+    error: text(raw.error),
+    source: text(raw.sourceSandboxId),
+    artifact: text(raw.snapshotId),
+    size: (SANDBOX_SIZES as readonly string[]).includes(String(raw.type)) ? (raw.type as SandboxSize) : null,
+    bytes: typeof raw.sizeBytes === "number" && Number.isFinite(raw.sizeBytes) ? raw.sizeBytes : null,
+    createdAt: time(raw.createdAt),
+  };
+}
+
+export function allowanceFrom(raw: unknown): SavedAllowance | null {
+  if (!raw || typeof raw !== "object") return null;
+  const allowance = raw as Record<string, unknown>;
+  const count = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
+  const included = count(allowance.included) ?? count(allowance.free);
+  const used = count(allowance.used);
+  const dailyEach = count(allowance.pricePerExtraDailyDollars);
+  if (included === null || used === null || dailyEach === null) return null;
+  return { included, used, extra: count(allowance.extra) ?? Math.max(0, used - included), extraDailyDollars: count(allowance.extraDailyDollars) ?? 0, dailyEach };
 }
 
 export interface MakeSandbox {
@@ -415,6 +492,51 @@ export class BoatApi {
       ...(signal ? { signal } : {}),
     });
     return response.ok ? response.text() : null;
+  }
+
+  async savedSnapshots(signal?: AbortSignal): Promise<SavedSnapshots> {
+    const answer = await this.#call("GET", "/saved-snapshots", undefined, {}, signal);
+    const snapshots = Array.isArray(answer.snapshots) ? (answer.snapshots as Record<string, unknown>[]).map(savedSnapshotFrom) : [];
+    return { snapshots, allowance: allowanceFrom(answer.allowance) };
+  }
+
+  async savedSnapshot(name: string, signal?: AbortSignal): Promise<SavedSnapshot | null> {
+    try {
+      return savedSnapshotFrom(((await this.#call("GET", `/saved-snapshots/${encodeURIComponent(name)}`, undefined, {}, signal)).snapshot ?? {}) as Record<string, unknown>);
+    } catch (error) {
+      if (error instanceof BoatError && error.kind === "gone") return null;
+      throw error;
+    }
+  }
+
+  async saveSnapshot(sandbox: string, name: string, signal?: AbortSignal): Promise<SavedSnapshot> {
+    return savedSnapshotFrom(((await this.#call("POST", "/saved-snapshots", { sandboxId: sandbox, name }, {}, signal)).snapshot ?? { name, status: "saving" }) as Record<string, unknown>);
+  }
+
+  async deleteSavedSnapshot(name: string, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#call("DELETE", `/saved-snapshots/${encodeURIComponent(name)}`, undefined, {}, signal);
+    } catch (error) {
+      if (error instanceof BoatError && error.kind === "gone") return;
+      throw error;
+    }
+  }
+
+  async captureTime(artifact: string, signal?: AbortSignal): Promise<number | null> {
+    const answer = await this.#call("GET", `/snapshots/${encodeURIComponent(artifact)}`, undefined, {}, signal);
+    const snapshot = (answer.snapshot && typeof answer.snapshot === "object" ? answer.snapshot : answer) as Record<string, unknown>;
+    return time(snapshot.createdAt) ?? time(snapshot.completedAt);
+  }
+
+  async createFrom(saved: string, make: MakeSandbox, signal?: AbortSignal): Promise<Sandbox> {
+    const answer = await this.#call(
+      "POST",
+      "/sandboxes",
+      { from: saved, type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false },
+      { "idempotency-key": make.idempotencyKey ?? randomUUID() },
+      signal,
+    );
+    return sandboxFrom((answer.sandbox ?? {}) as Record<string, unknown>);
   }
 
   async sshKey(id: string, publicKey: string, signal?: AbortSignal): Promise<SshReach> {

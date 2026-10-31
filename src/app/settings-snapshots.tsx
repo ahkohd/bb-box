@@ -52,6 +52,12 @@ function count(n: number, word: string): string {
   return `${n} ${n === 1 ? word : `${word}s`}`;
 }
 
+function billedSentence(included: { readonly included: number; readonly used: number }, monthly: string): string {
+  const over = Math.max(0, included.used - included.included);
+  const holds = `The account holds ${count(included.used, "saved snapshot")} and the plan includes ${included.included}`;
+  return over ? `${holds}, so ${over} ${over === 1 ? "is" : "are"} billed: about ${monthly} a month.` : `${holds}, so none are billed.`;
+}
+
 function PaidRow({ draft, state, config, live }: { draft: Draft; state: ConfigState; config: BackendConfig; live: BackendState }) {
   const view = live.snapshots!;
   const paid = view.paid!;
@@ -60,7 +66,17 @@ function PaidRow({ draft, state, config, live }: { draft: Draft; state: ConfigSt
   const description: ReactNode = (
     <>
       {view.price ? `${view.price.known ? `${priceWords(view.price)} for each snapshot.` : "bb-box does not know its price, so only you take snapshots there."} ` : ""}
-      Held now: {count(paid.count, "snapshot")}, about {money(paid.monthly)} a month.{unknown} Spent this month so far, deleted ones included: {money(paid.spent)}.
+      {paid.billing ? (
+        <span data-bill-slot className="block min-h-[3lh]">
+          {paid.billing === "billed" && paid.included
+            ? billedSentence(paid.included, money(paid.monthly))
+            : `bb-box could not read what ${backendLabel(state, config)} bills just now, so it counts each of the ${count(paid.count, "saved snapshot")} it knows of at full price: about ${money(paid.monthly)} a month, an estimate.`}
+        </span>
+      ) : (
+        <>
+          Held now: {count(paid.count, "snapshot")}, about {money(paid.monthly)} a month.{unknown} Spent this month so far, deleted ones included: {money(paid.spent)}.
+        </>
+      )}
       {paid.past ? <span className="mt-1 block text-warning-text">The rate held is past this ceiling: bb-box refuses new paid snapshots, undos, Keep and renewals there until you raise it or delete some. It deletes none by itself.</span> : null}
     </>
   );
@@ -170,7 +186,7 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
       </Group>
       <Group
         title="Paid snapshots"
-        description="A ceiling on the monthly rate of what is held, for each provider and account, 5 a month unless you set it: every paid snapshot held, kept or not, times its daily price, times 30. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and bb-box never deletes snapshots to get under it."
+        description="A ceiling on the monthly rate of what is held, for each provider and account, 5 a month unless you set it: every paid snapshot held, kept or not, times its daily price, times 30; where a provider's plan includes some, as boat.dev's does, only those past them, as it bills. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and bb-box never deletes snapshots to get under it."
       >
         <Card>
           {paid.length ? (

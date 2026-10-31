@@ -482,6 +482,7 @@ export function byWords(by: Actor): string {
 
 export function gbWords(bytes: number): string {
   const gb = bytes / 1e9;
+  if (gb < 1) return `${Math.max(1, Math.round(gb * 1000))} MB`;
   return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
 }
 
@@ -495,7 +496,7 @@ export function priceWords(price: Price | null): string {
   if (!price.known) return "price unknown";
   const symbol = price.currency === "USD" ? "$" : "EUR ";
   const per = price.per === "GB-month" ? "a GB a month" : `a ${price.per}`;
-  return `${symbol}${price.amount} ${per}`;
+  return `${symbol}${price.amount} ${per}${price.included ? ` past the plan's ${price.included}` : ""}`;
 }
 
 export function stateWords(snapshot: Pick<SnapshotRecord, "state" | "error" | "host" | "backend">): string {

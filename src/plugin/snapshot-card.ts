@@ -117,6 +117,7 @@ export class TakeChecks {
 }
 
 export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): string | null {
+  if (offer?.forkWhy) return offer.forkWhy;
   if (!offer || offer.fork !== "copy") return "its backend forks none";
   if (record.state === "taking") return "it is still being taken";
   if (record.state === "deleting") return "it is being deleted";
@@ -129,6 +130,7 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
 }
 
 export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pinned: string | null): string | null {
+  if (offer?.forkWhy) return `bb-box keeps only what it can fork after a release, and ${offer.forkWhy}`;
   if (!offer || offer.keepsPastRelease === "no") return "its backend keeps nothing past a release";
   if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
   if (pinned) return pinned;
@@ -247,6 +249,7 @@ function tokenOf(box: BoxRecord, preview: Omit<RestorePreview, "token" | "undoUn
     undoRefused: check?.undoRefused !== null && check?.undoRefused !== undefined,
     to: check?.to ?? null,
     swap: check?.swap ?? null,
+    fromSnapshot: check?.fromSnapshot ?? null,
     leaves: check?.leavesOnEarlierGuest ?? null,
   };
   return createHash("sha256").update(JSON.stringify(shown)).digest("hex").slice(0, 32);

@@ -16,6 +16,7 @@ import {
   type Guest,
   type HeldSnapshot,
   type OutsideRollback,
+  type SnapshotBill,
   type SnapshotHooks,
   type SnapshotPlan,
   type SnapshotRef,
@@ -75,6 +76,17 @@ export class FakeSnapshots {
   copyFault: Error | null = null;
   forkFault: Error | null = null;
   forkWhy: string | null = null;
+  onProvider: { price: Snapshotting["price"]; forkWhy: string } | null = null;
+  bill: SnapshotBill | Error | null = null;
+  billReads = 0;
+  billFrozen = false;
+  #target: Record<string, unknown> | null = null;
+  #billing: (() => Promise<SnapshotBill>) | null = null;
+
+  billed(): void {
+    if (this.#target) this.#target.snapshotBill = this.#billing;
+  }
+  adoptFault: Error | null = null;
   onForked: ((made: Guest, ref: SnapshotRef) => Promise<void>) | null = null;
   #copies = 0;
   listing: Error | null = null;
@@ -120,11 +132,35 @@ export class FakeSnapshots {
         return start(guest, signal, timing, answered);
       };
     }
-    target.snapshotting = (): Snapshotting => ({ scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null });
+    target.snapshotting = (): Snapshotting =>
+      this.onProvider
+        ? { scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "none", keepsPastRelease: "as-is", lives: "provider", price: this.onProvider.price, excludes: "/tmp", forkWhy: this.onProvider.forkWhy }
+        : { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null };
     const release = backend.release.bind(backend);
     target.release = async (guest: Guest, hooks: never) => {
       await release(guest, hooks);
+      if (this.onProvider) return;
       for (const [id, held] of this.held) if (held.guest.ref === guest.ref && !this.earlier.has(guest.ref)) this.held.delete(id);
+    };
+    this.#target = target;
+    this.#billing = async (): Promise<SnapshotBill> => {
+      this.billReads++;
+      if (this.bill instanceof Error) throw this.bill;
+      if (!this.bill) throw new Error("no bill");
+      if (this.billFrozen) return this.bill;
+      const refs = [...this.held.keys()].map((id) => `bb${id}`);
+      return { ...this.bill, used: this.bill.used + refs.length, refs: [...this.bill.refs, ...refs] };
+    };
+    target.adoptSnapshot = async (ref: SnapshotRef, box: BoxIdentity, _identity: GuestIdentity, hooks: CopyHooks): Promise<Guest> => {
+      this.order.push(`adopt snapshot ${ref.id}`);
+      if (!this.held.has(ref.id)) throw new SnapshotFailed(`the provider has no snapshot ${ref.id}`);
+      const fresh = await backend.makeGuest(box, savedOf(ref.id));
+      await hooks.claimed(fresh);
+      await hooks.submitting();
+      const fault = this.adoptFault;
+      this.adoptFault = null;
+      if (fault) throw fault;
+      return fresh;
     };
     target.planSnapshots = async (_guest: Guest, _kind: string, snapshot: SnapshotRef | null): Promise<SnapshotPlan> => ({
       storage: this.storage(),
@@ -412,7 +448,7 @@ export class FakeSnapshots {
       if (this.listingGate) await this.listingGate;
       return listed;
     };
-    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && held.guest.ref === guest.ref);
+    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && (this.onProvider ? held.box === guest.data?.box : held.guest.ref === guest.ref));
     target.providerTask = async (task: TaskRef): Promise<TaskOutcome> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return this.tasks.get(task.ref) ?? { state: "missing", words: `no task ${task.ref}` };
