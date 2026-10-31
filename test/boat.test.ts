@@ -636,3 +636,43 @@ test("a template build that fails writes the last lines of its log to bb-box's l
   assert.match(written ?? "", /which bb-box deletes now:\nthe line that says why\nthe end of the log$/);
   assert.equal([...fake.sandboxes.values()].filter((each) => each.state !== "deleted").length, 0, "the failed build is still deleted");
 });
+
+test("a boat box is resized by starting it again on a machine of the new size, as boat.dev resumes a stopped sandbox at another size, and planResize says so first", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(box("r1"), null, hooks().hooks, signal());
+  const made = fake.sandboxes.get(String(guest.data?.sandbox))!;
+  assert.deepEqual(backend.resizing("linux"), { cores: "restart", memory: "restart", disk: "restart", shrinks: true });
+  const bigger = { cores: 4, memoryMiB: 8192, diskGiB: null };
+  const plan = await backend.planResize(guest, "linux", bigger, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: 2, to: 4, way: "restart" },
+    { part: "memory", from: 4096, to: 8192, way: "restart" },
+  ]);
+  assert.equal(plan.room.ok, true);
+  assert.equal(plan.downSeconds, 60);
+  assert.match((await backend.planResize(guest, "linux", { cores: 8, memoryMiB: 16384, diskGiB: null }, [], signal())).room.message ?? "", /large/, "a size the plan does not allow has no room");
+
+  await assert.rejects(backend.resize(guest, "linux", bigger, { restart: false }, signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+  assert.equal(made.type, "small");
+  const resized = await backend.resize(guest, "linux", bigger, { restart: true }, signal());
+  assert.equal(made.type, "default");
+  assert.equal(made.state, "ready", "it runs again");
+  assert.deepEqual(resized.size, { cores: 4, memoryMiB: 8192, diskGiB: 51 });
+  const resume = fake.calls.filter((call) => call.path.endsWith("/resume")).at(-1);
+  assert.equal(resume?.body.type, "default");
+  assert.ok(fake.calls.findIndex((call) => call.path.endsWith("/stop")) < fake.calls.lastIndexOf(resume!), "stopped first, as a running sandbox keeps its size");
+
+  made.type = "large";
+  made.usedDiskGB = 80;
+  const refused = await backend.resize(guest, "linux", bigger, { restart: true }, signal()).catch((error: unknown) => error);
+  assert.ok(refused instanceof BackendError && refused.code === "unsupported");
+  assert.match((refused as Error).message, /would not fit the smaller disk\. It keeps its size\./);
+  assert.equal(made.type, "large");
+  assert.equal(made.state, "ready", "started again at its old size");
+
+  made.usedDiskGB = 0;
+  await backend.stop!(guest);
+  await backend.resize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: null }, { restart: true }, signal());
+  assert.equal(made.type, "small");
+  assert.equal(made.state, "archived", "a stopped box is stopped again at its new size");
+});

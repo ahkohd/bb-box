@@ -83,6 +83,10 @@ Stopping a box stops its sandbox: its processes end, its disk is kept, and it co
 
 boat.dev stops a sandbox by itself at its auto-stop. BB Box sets each box's auto-stop to **Auto-stop (minutes)**, 30 by default, and sets it again every few minutes while it holds the box. So a box runs while BB Box holds it, and if BB Box stops for good, its boxes stop within that time and cost nothing more. When BB Box comes back, it finds them stopped, and says why.
 
+### Resizing
+
+A box can move to another of boat.dev's sizes, with a restart: BB Box stops its sandbox and boat.dev starts it again on a machine of the new size, as [resizing a box](resizing.md) describes. Cores, memory and disk change together, and a smaller size is refused when the box's files would not fit its disk.
+
 ## Android boxes
 
 boat.dev's machines have KVM, so they can run the Android emulator. An Android box on boat.dev is the same as on Proxmox QEMU: a phone, foldable or tablet, booted from its snapshot, with its screen in the Box panel. Using it is in [device boxes](devices.md).

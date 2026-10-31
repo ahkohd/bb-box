@@ -507,3 +507,28 @@ The device server's own emulator unit (`src/device/emulator.ts`) does not
 set the launcher's wait either, so a box's stop, which saves its device,
 can be cut short the same way on a busy machine. That is left for the
 device server.
+
+### Resizing a boat box
+
+boat.dev does not resize a running sandbox. Its docs and API say to stop
+it and resume it with another `type`, at no extra cost, as a resume starts
+a fresh machine anyway; a smaller size is refused with `type_too_small`
+when the files would not fit its disk, and a resume while the sandbox is
+still stopping keeps the same machine and size. So a boat box resizes with
+a restart, cores, memory and disk together, onto the smallest of boat's
+sizes the plan allows that has what is asked for.
+
+Live on the trial, through bb-box's own `Boxes` with the boat backend, as
+the smoke test runs it, on a `linux` box from production's template:
+
+| Step | Result |
+| --- | --- |
+| Acquire, `small` | 2 cores, 4 GiB, 51 GiB; inside, `nproc` 2 and 3916 MiB |
+| Plan to 4 cores, 8 GiB | cores 2 to 4 and memory 4096 to 8192 MiB, each with a restart, about 60 s, room |
+| Resize without a restart | refused: "needs a restart for its cores and memory ... bb-box changed nothing" |
+| Resize with a restart | 29.0 s; boat's `default`; inside, `nproc` 4 and 7941 MiB |
+| Back to `small` | 32.1 s, the plan's estimate now this box's own, about 35 s; inside, `nproc` 2 and 3916 MiB |
+| Release | the sandbox gone |
+
+The file system grew from 69 to 79 GiB, as `df` shows it, with the `default` machine and kept
+that size back on `small`, both sizes having a 51 GB disk by boat's word.
