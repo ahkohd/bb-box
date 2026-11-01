@@ -46,7 +46,7 @@ export function ThreadWorking({ thread }: { thread: ThreadOnBox | null | undefin
           <Tooltip>
             <TooltipTrigger asChild>
               <span role="img" aria-label="Working" className="flex size-4 items-center justify-center">
-                <Icon name="Loading" className="size-3 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
+                <Icon name="Loading" className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
               </span>
             </TooltipTrigger>
             <TooltipContent>Working</TooltipContent>
