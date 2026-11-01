@@ -1,0 +1,15 @@
+[Unit]
+Description=bb-box: the host's GPU helper, which reports each GPU in the notes of VM bb-box-gpu-memory and answers boxes' GPU markers
+After=pve-cluster.service bb-box-nvidia-devices.service bb-box-gpu-boot.service
+Wants=pve-cluster.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/bb-box-gpu --dry-run
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

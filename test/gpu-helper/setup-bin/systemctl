@@ -1,0 +1,61 @@
+#!/bin/bash
+state=$BBBOX_ROOT/run/fake-systemd
+units=$BBBOX_ROOT/etc/systemd/system
+mkdir -p "$state"
+echo "$*" >>"$state/calls"
+now=0
+words=()
+for word; do
+  case "$word" in
+    --quiet | --no-legend) ;;
+    --now) now=1 ;;
+    *) words+=("$word") ;;
+  esac
+done
+verb=${words[0]}
+set -- "${words[@]:1}"
+
+refuse_if_asked() { [ "${FAKE_SYSTEMCTL_FAIL:-}" != "$verb $1" ] || exit 1; }
+pid_of() { cat "$state/$1.pid" 2>/dev/null; }
+alive() {
+  local pid
+  pid=$(pid_of "$1")
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+command_of() { sed -n 's/^ExecStart=//p' "$units/$1" | head -1 | sed "s#/usr/local/sbin/#$BBBOX_ROOT/usr/local/sbin/#"; }
+
+stop_unit() {
+  local unit=$1 pid
+  rm -f "$state/$unit.active"
+  pid=$(pid_of "$unit")
+  [ -n "$pid" ] || return 0
+  kill "$pid" 2>/dev/null
+  for _ in $(seq 1 200); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
+  rm -f "$state/$unit.pid"
+}
+
+start_unit() {
+  local unit=$1
+  refuse_if_asked "$unit"
+  case "$unit" in *.timer) : >"$state/$unit.active"; return 0 ;; esac
+  [ -e "$units/$unit" ] || { echo "Unit $unit not found." >&2; return 5; }
+  if grep -qx 'Type=oneshot' "$units/$unit"; then
+    bash -c "$(command_of "$unit")" >>"$state/$unit.log" 2>&1
+    return
+  fi
+  stop_unit "$unit"
+  nohup bash -c "exec $(command_of "$unit")" >>"$state/$unit.log" 2>&1 </dev/null &
+  echo $! >"$state/$unit.pid"
+}
+
+case "$verb" in
+  daemon-reload) ;;
+  list-unit-files) [ ! -e "$units/$1" ] || echo "$1 enabled enabled" ;;
+  is-enabled) [ -e "$state/$1.enabled" ] ;;
+  is-active) case "$1" in *.timer) [ -e "$state/$1.active" ] ;; *) alive "$1" ;; esac ;;
+  enable) for unit; do refuse_if_asked "$unit"; : >"$state/$unit.enabled"; done ;;
+  disable) for unit; do refuse_if_asked "$unit"; rm -f "$state/$unit.enabled"; [ "$now" = 0 ] || stop_unit "$unit"; done ;;
+  start | restart) for unit; do start_unit "$unit" || exit $?; done ;;
+  stop) for unit; do refuse_if_asked "$unit"; stop_unit "$unit"; done ;;
+  *) echo "fake systemctl: $verb" >&2; exit 1 ;;
+esac

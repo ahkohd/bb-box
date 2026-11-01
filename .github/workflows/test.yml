@@ -24,7 +24,7 @@ jobs:
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # bb-box-feature's tests run it with jq, as a box has, and the Mac
       # helper's grant tests write TCC's databases with sqlite3 (058).
-      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends jq sqlite3 xxd
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends jq sqlite3 xxd faketime
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

@@ -24,6 +24,7 @@ box or a spare is ready at once. How bb-box drives a box is in the
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for bb-box |
 | `host/setup-gpu-report.sh` | With GPU desktops: the host's report of each GPU's free memory, which bb-box reads |
+| `host/setup-gpu.sh` | Not yet for general use: the GPU helper, `bb-box-gpu`, with writes off. It writes the report in the timer's place |
 | `template/build.sh` | Builds the templates |
 | `test/smoke.sh` | Clones, starts, checks and deletes a box with bb-box's token |
 
@@ -265,6 +266,15 @@ desktop templates give it: its UUID, its PCI address or its index. A report
 under 10 minutes old stands for every GPU it names. Without one, bb-box
 reads memory in desktops. The doctor's "Host's GPU report" check says which.
 
+On a host where `host/setup-gpu.sh` has installed the GPU helper,
+`bb-box-gpu`, the helper writes the report instead of the timer, with its own
+lines added, and `setup-gpu-report.sh` makes the VM and its rights but does
+not put the timer back. This release of the helper runs with writes off: it
+changes no guest. `host/setup-gpu.sh --remove` takes it away and puts the
+timer back. The helper keeps one `nvidia-smi` running, so NVIDIA's kernel
+module cannot be unloaded, and a card cannot be reset, while it runs:
+`systemctl stop bb-box-gpu` first.
+
 ### 6. Configure bb-box
 
 On BB Box's settings page in BB, open Proxmox LXC's setup and fill in its
@@ -374,7 +384,9 @@ Its fix is the `build.sh` command that rebuilds the template.
 - **To change a tool's version**, change its pins (URL and SHA-256 for each
   architecture) and rebuild.
 - **After the host's NVIDIA driver changes**, desktops start on the CPU until
-  you rebuild the desktop templates.
+  you rebuild the desktop templates. To update the driver on a host with the
+  GPU helper, run `systemctl stop bb-box-gpu` first, as its `nvidia-smi`
+  keeps NVIDIA's module in use, and `systemctl start bb-box-gpu` after.
 - **After a bb-box update that adds a privilege**, run `host/setup-token.sh`
   again: it changes the role in place and keeps the token. Run
   `host/setup-host.sh` again if the update says so.
@@ -396,7 +408,8 @@ Its fix is the `build.sh` command that rebuilds the template.
    Delete `/etc/systemd/system/bb-box-network.*`,
    `/usr/local/sbin/bb-box-network` and, if nothing else needs forwarding,
    `/etc/sysctl.d/90-bb-box.conf`.
-5. Remove the GPU memory report: `systemctl disable --now
+5. Remove the GPU memory report: with the GPU helper, first run
+   `host/setup-gpu.sh --remove`. Then `systemctl disable --now
    bb-box-gpu-memory.timer`, delete `/etc/systemd/system/bb-box-gpu-memory.*`
    and `/usr/local/sbin/bb-box-gpu-memory`, then
    `qm set <vmid> --protection 0 && qm destroy <vmid>`. Proxmox removes the
@@ -419,7 +432,8 @@ Its fix is the `build.sh` command that rebuilds the template.
   had less than 384 MiB free when bb-box last looked. `bb box doctor` shows
   each GPU's reading. Free memory on a GPU, or ask for `linux-desktop-cpu`.
 - **The doctor says the host's GPU report is old**: run
-  `systemctl status bb-box-gpu-memory` on the host. Its log names a missing
+  `systemctl status bb-box-gpu-memory` on the host, or
+  `systemctl status bb-box-gpu` where the GPU helper is installed. Its log names a missing
   VM or an `nvidia-smi` that gave no memory. A host clock 10 minutes or more
   behind the BB server's also makes the report look old.
 - **The desktop viewer says the box refused its VNC password**: VNC runs with
