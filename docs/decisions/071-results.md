@@ -635,7 +635,12 @@ the first build and passes now, run on a box:
 | `sameSize` ignored `gpu` | It compares `gpu`; `sameMachineSize` compares the rest | `test/gpu.test.ts` |
 | NVIDIA's userspace read `unknown` for kinds that will never have a card | It reads `none` there | `test/gpu.test.ts` |
 
-Three vitest tests of 070's dialogs fail in the first hours after
-midnight, on main as on this branch, as their words say "today" of a time
-2 hours earlier. They pass at other hours, which a run with
-`TZ=Pacific/Honolulu` showed.
+Three vitest tests of 070's dialogs failed in the first 2 hours after
+midnight, on main as on this branch, as their words say "today" or
+"yesterday" of times set relative to the wall clock; a fourth, the fork's
+fact, failed in the first minute. A second commit sets each one's clock to
+noon local time on a fixed day. Full vitest runs, 443 passed each: under
+`TZ=UTC` with the clock faked to 00:30 UTC by libfaketime (on the first
+commit, the three failed), and under the default time zone at 00:09 UTC.
+At 00:00:30 UTC, faked, the four failed before and pass now, as they do
+under `TZ=Pacific/Kiritimati`.
