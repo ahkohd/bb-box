@@ -9624,7 +9624,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
     threadsUnread: null,
     control: false,
     terminals: 0,
-    check: { swap: false, fromSnapshot: false, costWords: null, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null },
+    check: { swap: false, fromSnapshot: false, costWords: null, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null, capture: "stop" },
     snapshot: snapshotRow(),
     token: "tokenone",
     undoUnflushed: null,
@@ -9777,6 +9777,19 @@ test("070 unit 6: a guarded restore names every thread, the control and a termin
   fireEvent.click(close);
   await waitFor(() => expect(document.activeElement).toBe(restore));
   expect(changes.some((change) => change.startsWith("snapshot.restore "))).toBe(false);
+});
+
+test("070 unit 9: where the backend suspends the box, the restore dialog says its undo is taken suspended and holds its memory", async () => {
+  const row = snapshotRow({ holds: "disk-and-memory" });
+  const preview = restorePreviewOf({ snapshot: row, check: { ...restorePreviewOf().check!, capture: "suspend" } });
+  const { handlers } = server([box()], { snapshots: snapshotsView({ records: [row] }), restorePreview: preview });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  fireEvent.click(within(card).getByRole("button", { name: "Restore calm-otter to before the migration" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the migration"?' });
+  expect(within(dialog).getByRole("checkbox", { name: /^Take a snapshot of it, once suspended, with its memory, so you can undo this\./ })).toBeTruthy();
+  expect(dialog.textContent).toContain("The undo holds its memory too: undoing brings it back running, as it is now, with the credentials its apps hold now.");
+  expect(dialog.textContent).not.toContain("Undo brings back its files, not its running apps.");
 });
 
 test("070 unit 6: the person restores anyway past a control and a terminal, keeps or unticks the undo, and the button says so", async () => {

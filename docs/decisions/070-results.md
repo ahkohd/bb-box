@@ -3082,6 +3082,269 @@ tests, 2,971 passed, 0 failed, 288 skipped; vitest ran 431, all passed.
 - **Rebuild the LXC template with version 7** before arming Proxmox LXC
   (unit 7's condition) also gates Keep there.
 
+## Unit 9: Tart
+
+macOS snapshots as APFS copies of the suspended VM, beside the VMs, with
+its memory; Linux VMs on Tart, disk only, while stopped; restore by putting
+a copy back; macOS's own identity reset, then forks and Keep; a guard
+against a state saved under another macOS build or Tart. Decisions are in
+070, [Decided during unit 9](070-snapshots.md#decided-during-unit-9).
+
+### What changed
+
+- **Tart's backend** offers snapshots (`src/backends/tart/snapshots.ts` and
+  the backend): `snapshotting`, `identitySource`, `planSnapshots`,
+  `snapshot`, `deleteSnapshot`, `heldSnapshots`, `snapshotsOn`,
+  `providerTask`, `findTasks`, `powerOff`, `rollbackSnapshot`,
+  `labelKept`, `guestIdentity`, `forkSnapshot`, `armFork` and `disarmFork`.
+  All are POSIX sh scripts on the Mac, as the rest of the backend's are.
+- **Where a snapshot lives.** In `bb-box-snapshots`, beside Tart's `vms`
+  folder where `~/.tart` leads, as `<snapshot>/vm/`, an APFS copy (`cp -c`)
+  of the VM folder's files, and `<snapshot>/label`: the install, box, VM,
+  snapshot, time, what it holds, the Mac's macOS build and Tart version at
+  the take, the identity reset's version and the keep date. A copy is made
+  as `<snapshot>.part` with the shell's PID, and renamed when whole; a
+  delete renames it `<snapshot>.deleting` first. The listing reads these:
+  a `.part` whose shell is gone, or a `.deleting`, is incomplete.
+- **Every copy checks first** that the snapshots folder is on the VMs'
+  volume (its device is the VM folder's) and that the volume has at least
+  `reserve-disk-gib`, or 20 GiB, free. Otherwise it refuses before anything
+  stops.
+- **A take of a running macOS box** suspends it, copies it and resumes it
+  with the backend's own start (address, identity, clock). A stopped one is
+  copied as it is. A Linux VM is copied only while stopped.
+- **A restore** uses core's in-place order: the stop is Tart's own stop, a
+  suspend for macOS and a shutdown for Linux, never a hard stop; the undo is
+  a take of the suspended VM; the "rollback" copies the snapshot into
+  `.restore-<vm>` and swaps it with the VM's folder in two renames, with a
+  journal in `.rollbacks/<vm>` ("begun", then "done"); core then starts it,
+  which resumes a macOS box as it was at the take. The snapshot stays. The
+  journal goes with its VM's release.
+- **The guard**: the plan and the rollback refuse a snapshot with saved
+  memory whose label names another macOS build or Tart than the Mac's now,
+  and say to fork it.
+- **macOS's identity reset** (`setup/tart/guest/bb-box-identity-macos.sh`,
+  version 2): the Linux program's commands and status lines, so core reads
+  both alike. bb-box installs it in each macOS VM at acquire, beside the
+  name and the grants (`src/backends/tart/identity.ts`), only in a
+  `VirtualMac`, with its LaunchDaemon, and runs its `boot` once there, so a
+  new box is `unarmed` until core writes its marker. Its marker names the
+  MAC addresses of the `AppleVirtIONetwork` cards. A copy resets: BB's
+  machine files under `/Users/*/.bb-machines`, BB's LaunchAgents
+  `app.getbb.host-daemon.*`, the access file and the SSH host keys; it
+  records a login before it decided as `raced`.
+- **Forks** copy the snapshot's files but `state.vzvmsave` into a VM of the
+  fork's own, claimed first, then `tart set --random-mac --random-serial`
+  and the fork's size. The fork's first start identifies it by the Mac's
+  ARP table, as its disk still names its source's VM, then names it after
+  its box.
+- **Core**:
+  - `outlivesGuest` on a backend's offer: its snapshots live beside the
+    guest, so a release deletes the unkept ones first, a kept one stays as
+    it is, can be kept longer and forked after its box's release, and a
+    guest is not held for a kept snapshot.
+  - A memory take of a stopped box is allowed where snapshots suspend.
+  - Forks, Keep, the identity marker and the reset's record work for
+    macOS as for Linux (`forksOn`); the fork-safety read and the check
+    before ready read macOS's paths (the hardware UUID as the machine ID,
+    `/Users/*`, LaunchAgents, `ifconfig`), and the check refuses a `raced`
+    reset.
+  - Recovery's words for a rollback whose task failed name the backend,
+    not Proxmox.
+- **Words**: Keep says what it costs on Tart ("it stays where it is until
+  ...; nothing is copied then, and from then on it takes its whole size,
+  up to ... GB on /Volumes/...") and for a released box's kept one; the
+  CLI's fork and keep help name Tart; the setting's help says Linux and
+  macOS.
+- **Docs**: the snapshots guide (the offer table, a Tart section, the macOS
+  reset, restore times, Keep and release on Tart), the Tart guide's
+  Snapshots section and clean-up, 070's decisions.
+
+### Tests
+
+New: `test/tart-snapshots.test.ts` (16 tests, against the fake Mac, whose
+scripts run in a real shell, with a fake `tart` that now does
+`--random-mac` and `--random-serial`) and `test/beside-snapshots.test.ts`
+(3 tests, core with a backend whose snapshots live beside the guest, at a
+set clock):
+
+- the offers, macOS and Linux, and `identitySource`;
+- a take of a running macOS box suspends, copies with the saved memory,
+  labels and resumes; of a stopped one, no suspend; one whose suspend
+  fails copies nothing and leaves the box running; Linux only while
+  stopped;
+- a snapshots folder on another volume refused, by the plan and by the
+  take, with nothing copied and the box resumed; too little free refused;
+- the listing: complete, cut short, delete cut short, another install's
+  never; keep dates on the label; delete refused for another install's;
+- each task's outcome from the Mac's folders and the restore journal: a
+  take or a restore the Mac has no trace of did not begin, so it fails,
+  rather than stay unsettled;
+- a restore puts the copy back and keeps the snapshot, the stop a suspend,
+  the journal gone with the VM's release;
+- the guard: another macOS build refused with "Fork it instead"; another
+  Tart; a copy with no saved memory restores;
+- a fork: claimed first, no saved state, a new MAC address and machine
+  identifier, the fork's size, its guest identity;
+- the installer: only in a VM, its LaunchDaemon, its first `boot`;
+- the macOS reset with a test root: off, unarmed, the marker, kept on the
+  same MAC, reset on another (files gone, `host-artifact.sha256` kept, new
+  host keys, the record), kept at the next boot; `raced` when someone had
+  logged in, and the fork check's refusal of it; macOS's probes read no
+  Linux path;
+- core: a memory take of a stopped box where snapshots suspend, and not
+  where they do not; a release deletes unkept ones, keeps a kept one with
+  no held copy and releases the guest; a released box's kept one renewed
+  and forked as one of your machines; Keep's words.
+
+Updated: `test/tart.test.ts`'s acquire timings name the identity reset's
+install step.
+
+On a Proxmox LXC box, on a git checkout of the branch rebased on main:
+`tsc` clean; `npm test`: the node suite, 3,356 tests, 3,068 passed, 0
+failed, 288 skipped, the docs, site and reference checks among them; then
+vitest, 443 of 443 in 5 files. `npm run reference` changed nothing more.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i` and `BB_BOX_LIVE_CHECKS=1`, in a Proxmox LXC
+box, bb-box installed from this branch with `bb plugin install path:`.
+The lead gave it a Tart backend of its own install on the production Tart
+Mac, with that backend's SSH key put in the box as a file, which was
+deleted once the backend was added; warm VMs off, the desktop kind off,
+`reserve-disk-gib` 60, `general.identityResetBackends` `tart`. The Mac:
+macOS 27.0.1, Tart 2.40.1, its VMs on an external volume of its own,
+with 1,533 GiB free by `df` at the first take. Another thread held a
+macOS VM there, so this unit ran one macOS VM at a time. Boxes were
+machines of the person's, `macos`, 6 cores and 16 GiB. As in unit 11, a BB
+with no account cannot make them BB machines, so the BB machine was stood
+in for by a random host ID in `~/.bb-machines/live-check/host-id` and a
+LaunchAgent `app.getbb.host-daemon.live-check-host_gate.plist`; a process
+writing a counter each second, from `launchctl submit`, showed memory.
+
+| Check | Result |
+| --- | --- |
+| Acquire | ready in 19.2 s: identity reset installed 1.8 s, marker 0.3 s. `bb-box-identity status`: version 2, `boot=unarmed`, `marker=matches`, `armed=yes`; the marker names `en0`'s MAC address only |
+| Take, running | 11 s as bb-box timed it, 12.0 s for the command: suspend, copy, resume. "it holds its disk and memory ... Size: 89 GB, some shared with its box. Price: no charge." The counter process, PID 983, ran on |
+| Restore | 13 s: stop (suspend) 4.0, undo 0.2, rollback (the copy put back) 0.2, start (resume) 7.8, access 0.1 s. `work.txt` back to "before"; PID 983 running, its counter back at 110, as at the take, from 128; the host ID file the same |
+| Undo | 14 s: stop 3.9, undo 0.2, rollback 0.2, start 9.4, access 0.1 s. `work.txt` "after"; PID 983 at 131, from where the restore suspended it |
+| Fork | the source suspended first (4.9 s), then forked as one of the person's machines: ready in 15 s, 16.2 s for the command, after core's check before ready. In the fork: booted 00:36:55, reset at 00:37:00, the console login at 00:37, `raced=no`; the host ID file and the BB LaunchAgent gone; a new SSH host key (`97b91907...` for `d0413a31...`), a new hardware UUID (`BBBB2925-...` for `C3396674-...`); its marker names its own MAC address and no box; named gate-fork; `work.txt` "before"; no counter process; an access file of its own (another SHA-256) |
+| The source after its fork | started (resumed) in 7.1 s: the same host ID file, LaunchAgent, hardware UUID and SSH host key, PID 983 still running, `boot=unarmed`, `marker=matches` |
+| Keep | 1.0 s, the date on the snapshot's label. `--check`: "If gate-mac is released, it stays where it is until 2026-12-01." Release 1.9 s: the two undos deleted with the box, the kept one listed "kept until 2026-11-02 · its box was released" |
+| Fork of the kept snapshot after the release | ready in 16 s, one of the person's machines: `boot=reset`, `raced=no`, a new hardware UUID, no host ID file, `work.txt` "before" |
+| Another volume | the lead pointed `bb-box-snapshots` at a 1 GB APFS disk image on the Mac. The take: refused in 0.9 s, before anything stopped: "bb-box cannot take a snapshot of box vol-mac now: the snapshots folder on mac1 is on another volume than its VMs, where a copy would be a full copy of the whole VM." The box ran on, uptime unbroken |
+| Clean up | every machine released, the kept snapshot deleted, a sweep, then: no snapshots, no machines, no boxes, the doctor counting only other installs' VMs. On the Mac, the lead counted 0 snapshot folders, 0 owner files of this install and 0 VMs of its; the disk image detached and deleted. The test backend removed from the separate BB |
+
+Found live, and fixed with a test each:
+
+- The first box's marker named `en1` as well as `en0`: macOS lists USB
+  network placeholders (`AppleUSBDeviceNCM11Data`) as `en1` and `anpi0`.
+  Version 2 reads only `AppleVirtIONetwork` cards; forks need version 2,
+  and the box was made again.
+- The first take refused with "at least NaN GiB free": the backend read the
+  disk reserve from a field that is not there. It reads
+  `reserve.diskGiB`.
+- The first fork was refused for its size: a Tart box keeps its image's
+  disk, and the plan asked for the copy's 130 GiB. A fork's size leaves the
+  disk to its copy.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| Take, restore, undo, fork and keep of a 16 GiB macOS box on a Tart Mac box, timed | passed, above, on the production Tart Mac as a second install, never a pool Mac |
+| A copy on another volume refused | passed, above |
+
+### Choices and deviations
+
+- The reset is installed at acquire, not in the image (the lead's
+  decision), so 070's "the unit is in a box's image" holds for Linux only.
+- Tart's Linux VMs neither fork nor keep yet, against 070's backend table,
+  which gave them both: their reset was not checked live. Their take and
+  restore were tested against the fake Mac only; the gate is macOS's.
+- The guard refuses rather than restore the disk alone.
+- The undo of a macOS restore is a copy of the suspended VM, so it holds
+  memory too: undoing brings the box back running, as the live check
+  showed.
+- "Your machine" boxes were used, so G17's hold on boxes threads run on
+  did not come into it; those restores stay off.
+
+### Known limits
+
+- A take of a running macOS box suspends it for about 11 s, while the box
+  still shows as ready: its desktop and commands wait.
+- If bb-box stops during a take of a running macOS box, the box stays
+  suspended: the take is settled at the next start, and the person starts
+  the box.
+- Each kept or undo copy grows as its box changes, up to the VM's disk and
+  memory: on this Mac about 89 to 92 GB whole each, shared until the box
+  changes. A box's 5 snapshots and 2 undos could take seven times that.
+- macOS gives no ordering between a LaunchDaemon and a LaunchAgent, so
+  the in-guest reset alone could only be checked to have run first. Since
+  the reviews, the Mac cleans a fork's disk before it boots (below).
+- macOS boxes made before this unit have no reset in them.
+
+### Conditions and open questions
+
+- Production forks and keeps macOS snapshots only once the owner adds the
+  Tart backend to `general.identityResetBackends`.
+- Should a restore after a macOS or Tart update put back the disk alone,
+  booting afresh, rather than refuse and point to Fork?
+- Tart's Linux identity reset: a live check would let Linux VMs on Tart
+  fork and keep.
+- Cleaning a fork's raw-format disk with `hdiutil` on a Mac without
+  `diskutil image attach` is a follow-up in 070, once a host to check it on
+  is free.
+
+### After the reviews
+
+Opus and Astra each said merge after fixes. The lead asked for these in one
+amended commit, each with a test on the fake Mac that fails before it:
+
+| Finding | What changed | Test |
+| --- | --- | --- |
+| A restore cut short between its two renames left no VM, then a release left a whole hidden VM (Opus 1, Astra 2, Opus 6) | The journal says `copying`, then `swapping` just before the first rename, with the shell's PID and start time and an attempt token per restore. Reading the box's power or task, its start and its release put back the snapshot's whole copy or the VM's own folder; a live restore holds the start and the release, and makes the power read "stopped"; the VM's state is read again just before the swap; a release deletes `.restore-`, `.replaced-` and `.fork-` folders; a PID with another start time is dead. A restore that did not happen is reported as such, and core starts the box again as it was | "cut short between its two renames", "cut short while it copied", "put right when it starts or its power is read", "a release deletes what a restore or a fork cut short left", "each restore has its own attempt" |
+| A login during the reset went unrecorded, and nothing stopped the source's credentials acting (Opus 4, Astra 1) | The Mac cleans the fork's disk before its first boot, with the guards the lead set after three probes on the Tart Mac: the fork's own image only, its container from its own store, the Data volume by role, never the Mac's container. The in-guest reset reads the console user before and after its removals and records a race only while BB's identity was on the disk | "a fork's disk loses its source's BB machine ... before its first boot", "a fork whose disk would mount from the Mac's own container ... is refused", "records a race when someone logs in while it removes BB's machine", and, from the recheck, "a login during the reset of a disk that holds nothing of BB's ... is no race" |
+| The label took the Mac's build at the copy, not at the suspend (Opus 3, Astra 3) | Each suspend notes the build and Tart beside the VM; the take copies that note; unknown provenance refuses; the start just after a restore never cold-boots | "memory saved before a macOS update is labelled with the build that saved it", "the start just after a restore never boots the VM from its disk" |
+| Same volume is no clone, and the reserve was checked after the suspend (Astra 4) | Copies go through `clonefile`, refused rather than made in full; the plan and the take check the room before any suspend | "a copy APFS cannot clone is refused", "refused ... before the suspend" |
+| A take whose resume failed said "taken, ready" (Opus 2, Astra 5) | The backend says why it did not resume; core marks the box stopped, with why, in the answer and the log | "a take whose box does not resume says the box is stopped", "a take whose box did not resume after it leaves the box stopped" |
+| A fork over a VM already there kept its source's MAC and serial (Opus 5) | Refused | "a fork is never made over a VM that is there already" |
+| A Mac without `diskutil image attach` (the lead's answer) | No macOS forks there, and no Keep, as a kept snapshot could not fork after the release; the plan and the scrub say why, naming macOS 27; the doctor's "macOS forks on <mac>" warns. No `hdiutil` path: recorded in 070 as a follow-up | "a Mac whose diskutil cannot attach a disk image makes no macOS forks" |
+| Words (Astra 6, Opus 7) | The restore's dialog, undo label and CLI follow the backend's capture: "suspend it, which saves its memory", an undo "with its memory, so undoing brings it back running"; one sentence for another volume; "does not restore it" for another Tart; the guides say kept snapshots stay on the Mac after bb-box is removed | "the restore's words follow the backend", app "where the backend suspends the box, the restore dialog says its undo is taken suspended" |
+
+Run against the reviewed commit with only the tests and fakes swapped in,
+23 of the 35 tests in the two files failed, every new one but the last
+race test, which guards a rule the recheck added.
+
+On a Proxmox LXC box, on a git checkout rebased on main with units 10 and
+11b: `tsc` clean; the node suite, 3,417 tests, 3,129 passed, 0 failed, 288
+skipped; vitest, 445 of 445; `npm run reference` changed nothing more.
+
+Found in the build: `note_disk_gb` in the Mac's shared shell code sets a
+global `_id`, which overwrote the restore repair's snapshot ID; the
+repair's variables are its own now.
+
+#### Live recheck
+
+On a new separate BB, the same second install on the production Tart Mac,
+one macOS VM at a time, 16 GiB:
+
+| Check | Result |
+| --- | --- |
+| Acquire | 20.5 s, reset version 3 installed in 1.0 s, `marker=matches` |
+| Take, running | 11 s |
+| Restore | 15 s: suspend 6.4, undo 0.4, copy back 0.3, resume 7.8, access 0.1 s; `work.txt` "before"; the counter process, PID 964, back to 12 from at least 13. The guard let it through, as its memory's note named the Mac's build |
+| Undo | `work.txt` "after", the counter on from where the restore suspended it |
+| `--check` words | "suspend it, which saves its memory: it is never stopped hard"; "a snapshot of it suspended, with its memory, so undoing brings it back running as it is now"; "put the snapshot's copy in its place, and resume it" |
+| Fork, source suspended first | ready in 28 s, 15 s in unit 9's check, the Mac's cleaning of its disk included. Its reset found "BB machines removed: none": the stand-in host ID and BB LaunchAgent were already gone before it booted; new SSH host key and hardware UUID; `raced=no`. The source came back unchanged |
+| Keep, release, fork of the kept snapshot | the first try refused the fork, and released it: its reset (version 3) saw a login during its removals and recorded a race, although the Mac had already cleaned the disk. So version 4 records a race only while BB's identity is still on the disk. On a new box with version 4: kept, released, forked in 28 s, `boot=reset`, `raced=no`, nothing of BB's on its disk |
+| Clean up | every machine released and snapshot deleted, a sweep; the backend removed. The lead checked the Mac: `bb-box-snapshots` holds an empty `.rollbacks` only; no owner file, run note or `/tmp` mount point of this install's; no disk image of this install's attached |
+
+The interrupted restore and the failed resume were not provoked live: a
+shell cannot be stopped between two renames from bb-box, and the second VM
+slot was another thread's. The fake Mac covers both.
+
 ## Unit 10: microsandbox
 
 microsandbox's own snapshots: take with or without memory, restore as a swap

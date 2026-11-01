@@ -523,8 +523,16 @@ export function unflushedWords(why: string): string {
   return `bb-box could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
 }
 
+const FORKING_SYSTEMS: readonly string[] = ["linux", "macos"];
+
+export function forksOn(system: string): boolean {
+  return FORKING_SYSTEMS.includes(system);
+}
+
+export const FORKS_ONLY = "bb-box forks Linux and macOS boxes only, as only they reset their identity at a fork's first boot";
+
 export function notForkSafe(snapshot: SnapshotRecord): boolean {
-  return snapshot.forkSafe === null && snapshot.box.system === "linux" && snapshot.scope === "box";
+  return snapshot.forkSafe === null && forksOn(snapshot.box.system) && snapshot.scope === "box";
 }
 
 export function goneWords(gone: NonNullable<SnapshotRecord["boxGone"]>): string {

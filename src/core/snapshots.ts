@@ -48,6 +48,8 @@ import {
   heldByProvider,
   holdsWords,
   isKept,
+  forksOn,
+  FORKS_ONLY,
   limitVictim,
   MACHINE_RESTORES_SHIP,
   mayAct,
@@ -189,6 +191,7 @@ export interface TakeAnswer {
   readonly repeated: boolean;
   readonly evicted?: { readonly name: string; readonly id: string } | null;
   readonly evictionRefused?: string | null;
+  readonly notResumed?: string | null;
 }
 
 export interface DeleteAnswer {
@@ -578,6 +581,7 @@ export interface RestoreCheck {
   readonly replaces: string | null;
   readonly storage: string;
   readonly undoRefused: string | null;
+  readonly capture: "suspend" | "shutdown" | "stop";
 }
 
 interface Restoring {
@@ -632,6 +636,10 @@ export function preferredById(listing: readonly HeldSnapshot[]): Map<string, Hel
 
 export function standingOfRecord(record: Pick<SnapshotRecord, "box">): Standing {
   return { box: { id: record.box.id, threadId: record.box.thread }, runsOn: false };
+}
+
+function outlivesGuest(offer: Snapshotting | null | undefined): boolean {
+  return offer?.lives === "provider" || offer?.outlivesGuest === true;
 }
 
 export class Snapshots {
@@ -907,7 +915,7 @@ export class Snapshots {
     if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
     if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
     if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too. Ask for its memory.`);
-    if (memory && box.state !== "ready") throw new BoxError("not_ready", `A snapshot with its memory needs box ${box.name} running, and it is stopped.`);
+    if (memory && box.state !== "ready" && offer.whileRunning !== "suspends") throw new BoxError("not_ready", `A snapshot with its memory needs box ${box.name} running, and it is stopped.`);
     this.#requireStore("takes");
     const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
     if (plan.locked) throw new BoxError("locked", `${backend.label} left box ${box.name} locked (${plan.locked.lock}), so it takes no snapshot. ${plan.locked.fix}`);
@@ -1103,7 +1111,7 @@ export class Snapshots {
 
   #forkableAfterRelease(record: SnapshotRecord, backend: Backend, offer: Snapshotting): void {
     const name = record.box.name;
-    if (record.box.system !== "linux") throw new BoxError("unsupported", `bb-box keeps only a snapshot it can fork after its box's release, and it forks Linux boxes only. Box ${name} runs ${record.box.system}.`);
+    if (!forksOn(record.box.system)) throw new BoxError("unsupported", `bb-box keeps only a snapshot it can fork after its box's release, and it forks Linux and macOS boxes only. Box ${name} runs ${record.box.system}.`);
     if (record.forkSafe === null) throw new BoxError("unsupported", `Taken before ${name}'s image had the identity reset: ${quoted(record)} could not be forked after a release, so bb-box does not keep it.`);
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (record.forkSafe < safeFrom) {
@@ -1337,7 +1345,7 @@ export class Snapshots {
     const ledger = this.#deps.ledger;
     const backend = this.#deps.backends.get(box.backend);
     const offer = this.offerFor(backend, box.kind);
-    if (offer?.lives === "provider" && backend && box.guest) await this.#dropWithRelease(box, backend);
+    if (outlivesGuest(offer) && backend && box.guest) await this.#dropWithRelease(box, backend);
     if (offer?.keepsPastRelease !== "held-copy" || !box.guest) return;
     if (ledger.problem) {
       const kept = await this.#keptLabelsOn(backend!, box);
@@ -1395,7 +1403,7 @@ export class Snapshots {
   }
 
   #livesOnProvider(backend: Backend): boolean {
-    return backend.kinds().some((kind) => this.offerFor(backend, kind.id)?.lives === "provider");
+    return backend.kinds().some((kind) => outlivesGuest(this.offerFor(backend, kind.id)));
   }
 
   async #listedFor(backend: Backend, boxId: string, guest: Guest): Promise<readonly HeldSnapshot[] | string> {
@@ -1792,10 +1800,11 @@ export class Snapshots {
 
   async #forkSafe(box: BoxRecord, backend: Backend): Promise<ForkSafety> {
     const none: ForkSafety = { version: null, identity: null };
-    if (box.state !== "ready" || box.capabilities.os !== "linux" || !box.guest) return none;
+    const system = box.capabilities.os;
+    if (box.state !== "ready" || (system !== "linux" && system !== "macos") || !box.guest) return none;
     try {
       const command = (await backend.transports(box.guest, box.kind)).command;
-      return command ? await readForkSafe(command, this.#stopping.signal, backend.identitySource?.(box.kind) ?? null) : none;
+      return command ? await readForkSafe(command, this.#stopping.signal, backend.identitySource?.(box.kind) ?? null, system) : none;
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.log?.(`Could not read box ${box.name}'s identity reset at a take, so the snapshot is not fork-safe: ${message(error)}`);
@@ -1848,7 +1857,9 @@ export class Snapshots {
         taken = await backend.snapshot!(box.guest!, { id: record.id, box: box.id, memory: record.holds === "disk-and-memory", forkSafe: record.forkSafe }, this.#hooks(operation), this.#stopping.signal);
       } catch (error) {
         if (this.#stopping.signal.aborted) throw error;
-        throw this.#takeFailed(record, operation, error);
+        const failed = this.#takeFailed(record, operation, error);
+        const stopped = error instanceof SnapshotFailed && error.notResumed ? await this.#leftSuspended(box, error.notResumed) : null;
+        throw stopped ? new BoxError(failed.code, `${failed.message} ${stopped}`) : failed;
       } finally {
         await picturing;
       }
@@ -1860,12 +1871,19 @@ export class Snapshots {
         return { updated, done };
       });
       const snapshot = ready.updated ?? record;
-      this.#event(snapshot, "snapshot-taken", record.by, `"${snapshot.name}" (${snapshot.id}): ${holdsWords(snapshot)}, in ${seconds(now - began)}.`);
+      const stopped = taken.notResumed ? await this.#leftSuspended(box, taken.notResumed) : null;
+      this.#event(snapshot, "snapshot-taken", record.by, `"${snapshot.name}" (${snapshot.id}): ${holdsWords(snapshot)}, in ${seconds(now - began)}.${stopped ? ` ${stopped}` : ""}`);
       this.#notify(box.threadId);
-      return { snapshot, operation: ready.done ?? operation, counted, repeated: false };
+      return { snapshot, operation: ready.done ?? operation, counted, repeated: false, notResumed: stopped };
     } finally {
       this.#running.delete(operation.id);
     }
+  }
+
+  async #leftSuspended(box: BoxRecord, why: string): Promise<string> {
+    const words = `Box ${box.name} did not resume after it: ${sentence(why).replace(/\.$/, "")}. It is stopped: start it.`;
+    await this.#deps.boxes.update(box, (current) => (current.state === "ready" ? { state: "stopped", stoppedAt: this.#now(), error: words } : {}));
+    return words;
   }
 
   #takeFailed(record: SnapshotRecord, operation: SnapshotOperation, error: unknown): BoxError {
@@ -2125,7 +2143,9 @@ export class Snapshots {
     const pins = ledger.pins();
     const using = ledger.unsettled().find((operation) => operation.guests?.old?.ref === guestRef || operation.guests?.new?.ref === guestRef);
     if (using) return `${operationWords(using)}, which bb-box has not settled, uses it`;
-    const keeps = (record: SnapshotRecord) => (ended ? (record.keptUntil !== null && record.guest !== "held-copy") || pins.has(record.id) : record.foundAt !== null || record.keptUntil !== null || record.guest !== "current" || pins.has(record.id));
+    const backend = this.#deps.backends.get(backendId);
+    const apart = backend ? this.#livesOnProvider(backend) : false;
+    const keeps = (record: SnapshotRecord) => (apart ? pins.has(record.id) : ended ? (record.keptUntil !== null && record.guest !== "held-copy") || pins.has(record.id) : record.foundAt !== null || record.keptUntil !== null || record.guest !== "current" || pins.has(record.id));
     const held = ledger.records({ backend: backendId }).filter((record) => record.livesOn.ref === guestRef && keeps(record));
     if (!held.length) return null;
     const why = held.map((record) => (pins.has(record.id) ? "in use by an operation" : record.keptUntil !== null ? "kept" : record.guest === "held-copy" ? "a held copy" : record.guest === "earlier" ? "on an earlier guest" : "found, and kept until you delete it"));
@@ -2421,7 +2441,7 @@ export class Snapshots {
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
     this.#requireStore("forks");
-    if (box.capabilities.os !== "linux") throw new BoxError("unsupported", `bb-box forks Linux boxes only, as only they reset their identity at a fork's first boot. Box ${box.name} runs ${box.capabilities.os}.`);
+    if (!forksOn(box.capabilities.os)) throw new BoxError("unsupported", `${FORKS_ONLY}. Box ${box.name} runs ${box.capabilities.os}.`);
     const holding = this.#restoreHolding(box);
     if (holding) throw holding;
     if (box.state !== "ready" || !box.guest) throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. bb-box forks a box as it is now only while it runs, so it can read its identity reset; start it first.`);
@@ -2469,7 +2489,7 @@ export class Snapshots {
     if ((!source || target.boxGone) && !heldCopy && !keptAsIs) throw new BoxError("released", `Box ${name} was released, and ${quoted(target)} has no held copy, so bb-box cannot fork it.`);
     if (target.state !== "ready") throw new BoxError(target.state === "taking" ? "try_again" : "unsupported", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not fork it.`);
     if (target.scope !== "box") throw new BoxError("unsupported", `Snapshot ${quoted(target)} holds ${name}'s device only, so it does not fork.`);
-    if (target.box.system !== "linux") throw new BoxError("unsupported", `bb-box forks Linux boxes only, as only they reset their identity at a fork's first boot. Box ${name} runs ${target.box.system}.`);
+    if (!forksOn(target.box.system)) throw new BoxError("unsupported", `${FORKS_ONLY}. Box ${name} runs ${target.box.system}.`);
     const notYet = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind)?.forkWhy;
     if (notYet) throw new BoxError("unsupported", `bb-box does not fork ${quoted(target)}: ${notYet}.`);
     if (target.forkSafe === null) {
@@ -2625,6 +2645,7 @@ export class Snapshots {
       leavesOnEarlierGuest: onGuest,
       replaces,
       storage: prepared.plan.storage.name,
+      capture: prepared.offer.whileRunning === "suspends" ? "suspend" : prepared.offer.whileRunning === "stopped-only" ? "shutdown" : "stop",
     };
   }
 
@@ -3352,7 +3373,8 @@ export class Snapshots {
       if (task?.state === "unreadable") return unsure(`It was rolling back, and bb-box could not read the rollback's task: ${sentence(task.words)}`);
       if (task?.state === "running") return unsure("It was rolling back, and Proxmox's rollback was still running when bb-box looked.");
       if (task?.state === "ok") return settle(() => this.#runRestore(context, "rolled-back"));
-      if (task?.state === "failed") return settle(() => this.#leftStopped(context, box, "rollback-task", `Proxmox's rollback task failed: ${sentence(task.words).replace(/\.$/, "")}.`, false));
+      if (task?.state === "failed" && task.unchanged) return settle(() => this.#putBack(context, box, "rollback-task", `The rollback on ${backend.label} did not happen: ${sentence(task.words).replace(/\.$/, "")}.`));
+      if (task?.state === "failed") return settle(() => this.#leftStopped(context, box, "rollback-task", `The rollback on ${backend.label} failed: ${sentence(task.words).replace(/\.$/, "")}.`, false));
       if (task === null && step === "rollback-submitting") return settle(() => this.#runRestore(context, undo?.guest === "held-copy" ? "copy-ready" : "undo-ready"));
       return unsure("It was rolling back, and Proxmox no longer has the rollback's task, so bb-box cannot tell how it ended.");
     }

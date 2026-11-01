@@ -34,8 +34,8 @@
 // - Spotlight indexes every volume, but not one ~/.fake-spotlight-off names,
 //   and `mdfind -onlyin` finds files by name there, none while
 //   ~/.fake-spotlight-excluded exists.
-import { spawn } from "node:child_process";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tool, ...args] = process.argv.slice(2);
@@ -99,6 +99,11 @@ function tart() {
       const value = config(name);
       if (option("--cpu")) value.cpuCount = Number(option("--cpu"));
       if (option("--memory")) value.memorySize = Number(option("--memory")) * 1024 * 1024;
+      if (rest.includes("--random-mac")) value.macAddress = Array.from({ length: 6 }, (_, i) => (i === 0 ? 0x02 : Math.floor(Math.random() * 256)).toString(16).padStart(2, "0")).join(":");
+      if (rest.includes("--random-serial")) {
+        if (value.os === "linux") fail("Error: --random-serial is only supported for macOS VMs");
+        value.ecid = Math.random().toString(36).slice(2);
+      }
       // As Tart's: the disk, in decimal GB, only grows.
       if (option("--disk-size")) {
         if (Number(option("--disk-size")) < diskOf(name)) fail("the disk size can only be increased");
@@ -186,6 +191,7 @@ function tart() {
       const [name] = rest;
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
       if (!running(name)) fail(`VM "${name}" is not running`);
+      if (command === "suspend" && existsSync(join(home, ".fake-tart-suspend-fails"))) fail("Error: the virtual machine could not be paused");
       if (command === "suspend") writeFileSync(join(dir(name), "state.vzvmsave"), "");
       rmSync(join(dir(name), "running"), { force: true });
       return;
@@ -230,9 +236,96 @@ function arp() {
   console.log(`? (${address}) at ${mac.split(":").map((byte) => byte.replace(/^0/, "")).join(":")} on bridge100 ifscope [ethernet]`);
 }
 
+function clonefile() {
+  const [src, dst] = args.slice(-2);
+  if (existsSync(join(home, ".fake-clone-fails"))) fail("clonefile: Operation not supported");
+  const copied = spawnSync("cp", ["--sparse=always", src, dst], { stdio: "inherit" });
+  process.exit(copied.status ?? 1);
+}
+
+const DISKS = join(home, ".fake-diskutil.json");
+const disks = () => (existsSync(DISKS) ? JSON.parse(readFileSync(DISKS, "utf8")) : {});
+const MAC_CONTAINER = "disk3";
+
+function diskutil() {
+  const [verb, ...rest] = args;
+  const attached = disks();
+  const byDevice = (name) => Object.values(attached).find((disk) => name === disk.device || name === disk.store || name === disk.container || name === disk.data);
+  if (verb === "info") {
+    const name = rest.at(-1);
+    if (name === "/") return console.log(`   APFS Container:           ${MAC_CONTAINER}`);
+    const disk = byDevice(name);
+    if (!disk) fail(`Could not find disk: ${name}`);
+    return console.log(`   APFS Container:           ${disk.container}`);
+  }
+  if (verb === "image" && existsSync(join(home, ".fake-diskutil-no-image"))) fail(`diskutil: did not recognize verb "image"; type "diskutil" for a list`);
+  if (verb === "image" && rest[0] === "attach" && rest.includes("--help")) return console.log("OVERVIEW: Attach a disk image as a device.");
+  if (verb === "image" && rest[0] === "attach") {
+    if (existsSync(join(home, ".fake-diskutil-attach-fails"))) fail("Could not attach the image");
+    const image = rest.at(-1);
+    const number = 10 + Object.keys(attached).length * 4;
+    const container = existsSync(join(home, ".fake-diskutil-container")) ? readFileSync(join(home, ".fake-diskutil-container"), "utf8").trim() : `disk${number + 3}`;
+    const disk = { image, device: `disk${number}`, store: `disk${number}s2`, container, data: `${container}s5`, mounted: null };
+    const volume = `${image}.data`;
+    if (!existsSync(volume)) {
+      if (existsSync(join(home, ".fake-data-volume"))) cpSync(join(home, ".fake-data-volume"), volume, { recursive: true });
+      else mkdirSync(join(volume, "Users"), { recursive: true });
+    }
+    attached[disk.device] = disk;
+    writeFileSync(DISKS, JSON.stringify(attached));
+    return console.log(`/dev/${disk.device}\tGUID_partition_scheme\n/dev/${disk.store}\tApple_APFS\n/dev/${disk.container}\tApple_APFS_Container`);
+  }
+  if (verb === "list") {
+    const disk = byDevice(rest.at(-1));
+    if (!disk) fail("Could not find disk");
+    return console.log(`/dev/${disk.device} (disk image):\n   #:                       TYPE NAME                    SIZE       IDENTIFIER\n   0:      GUID_partition_scheme                        +140.0 GB   ${disk.device}\n   2:                 Apple_APFS Container ${disk.container}        134.1 GB   ${disk.store}`);
+  }
+  if (verb === "apfs" && rest[0] === "list") {
+    const disk = byDevice(rest.at(-1));
+    if (!disk) fail("Could not find container");
+    return console.log(`    |   APFS Volume Disk (Role):   ${disk.container}s1 (System)\n    |   APFS Volume Disk (Role):   ${disk.data} (Data)`);
+  }
+  if (verb === "mount") {
+    const point = rest[rest.indexOf("-mountPoint") + 1];
+    const disk = byDevice(rest.at(-1));
+    if (!disk || disk.data !== rest.at(-1)) fail("Could not mount");
+    if (!existsSync(`${disk.image}.data`)) mkdirSync(`${disk.image}.data`);
+    rmSync(point, { recursive: true, force: true });
+    symlinkSync(`${disk.image}.data`, point);
+    disk.mounted = point;
+    writeFileSync(DISKS, JSON.stringify(attached));
+    return console.log(`Volume Data on ${disk.data} mounted`);
+  }
+  if (verb === "unmount") {
+    const point = rest.at(-1);
+    const disk = Object.values(attached).find((each) => each.mounted === point);
+    if (!disk) fail("Could not unmount");
+    rmSync(point, { force: true });
+    mkdirSync(point);
+    disk.mounted = null;
+    writeFileSync(DISKS, JSON.stringify(attached));
+    return;
+  }
+  if (verb === "eject") {
+    const disk = byDevice(rest.at(-1));
+    if (!disk) fail("Could not eject");
+    if (disk.mounted) fail("Volume busy");
+    delete attached[disk.device];
+    writeFileSync(DISKS, JSON.stringify(attached));
+    return;
+  }
+  fail(`fake diskutil does not know ${verb}`);
+}
+
 switch (tool) {
   case "tart":
     tart();
+    break;
+  case "python3":
+    clonefile();
+    break;
+  case "diskutil":
+    diskutil();
     break;
   case "arp":
     arp();

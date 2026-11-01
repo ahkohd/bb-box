@@ -20,7 +20,10 @@ export interface IdentityStatus {
   readonly pending: boolean;
   readonly box: string;
   readonly source: string;
+  readonly raced: boolean;
 }
+
+export type IdentitySystem = "linux" | "macos";
 
 function withTool(run: string): string {
   return [`[ -x ${IDENTITY_TOOL} ] || exit ${IDENTITY_TOOL_MISSING}`, AS_ROOT, run].join("\n");
@@ -51,6 +54,7 @@ export function parseIdentityStatus(stdout: string): IdentityStatus | null {
     pending: fields.get("pending") === "yes",
     box: fields.get("box") ?? "",
     source: fields.get("source") ?? "",
+    raced: fields.get("raced") === "yes",
   };
 }
 
@@ -69,6 +73,22 @@ const HELD_IDENTITY_FACTS = [
   `hash() { sum=$(sha256sum) || return 1; printf '%s\\n' "\${sum%% *}"; }`,
   `if [ ! -e "$r/etc/machine-id" ]; then echo missing=machine-id; elif [ -r "$r/etc/machine-id" ] && h=$(hash < "$r/etc/machine-id"); then printf 'machine_id=%s\\n' "$h"; else echo unreadable=machine-id; fi`,
   `keys=0; for f in "$r"/etc/ssh/ssh_host_*_key.pub; do [ -e "$f" ] || continue; if [ -r "$f" ] && h=$(cut -d' ' -f2 "$f" | hash); then printf 'host_key=%s\\n' "$h"; keys=$((keys + 1)); else printf 'unreadable=%s\\n' "\${f#"$r"}"; fi; done; [ "$keys" -gt 0 ] || echo missing=ssh-host-keys`,
+];
+
+const MACOS_HELD_IDENTITY_FACTS = [
+  IDENTITY_FILES_ROOT,
+  `hash() { sum=$(shasum -a 256) || return 1; printf '%s\\n' "\${sum%% *}"; }`,
+  `u=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\\(.*\\)".*/\\1/p' | head -n 1); if [ -n "$u" ] && h=$(printf '%s' "$u" | hash); then printf 'machine_id=%s\\n' "$h"; else echo unreadable=machine-id; fi`,
+  HELD_IDENTITY_FACTS[3]!,
+];
+
+const MACOS_FORK_FACTS = [
+  ...MACOS_HELD_IDENTITY_FACTS,
+  `for d in "$r"/Users/*/.bb-machines/* "$r"/Users/*/.bb-machines/.set-aside/* "$r"/var/root/.bb-machines/*; do [ -d "$d" ] || continue; for f in host-id auth.json config.json; do if [ -e "$d/$f" ]; then printf 'bb_file=%s\\n' "\${d#"$r"}/$f"; fi; done; done`,
+  `for f in "$r"/Users/*/.config/bb-box/env "$r"/var/root/.config/bb-box/env "$r"/Users/*/Library/LaunchAgents/app.getbb.host-daemon.*.plist; do if [ -e "$f" ]; then case $f in *.plist) printf 'bb_file=%s\\n' "\${f#"$r"}" ;; *) printf 'access_file=%s\\n' "\${f#"$r"}" ;; esac; fi; done`,
+  "echo tailnet_node=no",
+  `m=$r/etc/bb-box/identity; if [ -r "$m" ] && macs=$(sed -n 's/^mac /marker_mac=/p' "$m"); then printf '%s\\n' "$macs"; else echo unreadable=identity-marker; fi`,
+  `if a=$(ifconfig -a 2>/dev/null); then printf '%s\\n' "$a" | awk '$1 == "inet" && $2 != "127.0.0.1" { print "address=" $2 }'; echo addresses_read=yes; else echo unreadable=addresses; fi`,
 ];
 
 const FORK_FACTS = [
@@ -128,8 +148,8 @@ function wholeIdentity(read: IdentityRead, source: IdentitySource | null): HeldI
   return read.done && !missing.length && !read.unreadable.length && read.identity.machineId && (read.identity.hostKeys.length || keysOptional) ? read.identity : null;
 }
 
-export function forkSafetyScript(): string {
-  return withTool([`as_root ${IDENTITY_TOOL} status || exit $?`, asRootShell(HELD_IDENTITY_FACTS)].join("\n"));
+export function forkSafetyScript(system: IdentitySystem = "linux"): string {
+  return withTool([`as_root ${IDENTITY_TOOL} status || exit $?`, asRootShell(system === "macos" ? MACOS_HELD_IDENTITY_FACTS : HELD_IDENTITY_FACTS)].join("\n"));
 }
 
 export function forkSafetyOf(stdout: string, exitCode: number | null, source: IdentitySource | null = null): ForkSafety {
@@ -138,8 +158,8 @@ export function forkSafetyOf(stdout: string, exitCode: number | null, source: Id
   return identity ? { version, identity } : { version: null, identity: null };
 }
 
-export async function readForkSafe(command: CommandTransport, signal?: AbortSignal, source: IdentitySource | null = null): Promise<ForkSafety> {
-  const ran = await command.run(forkSafetyScript(), { timeoutMs: FORK_SAFE_PROBE_MS, signal, maxOutputBytes: 8192 });
+export async function readForkSafe(command: CommandTransport, signal?: AbortSignal, source: IdentitySource | null = null, system: IdentitySystem = "linux"): Promise<ForkSafety> {
+  const ran = await command.run(forkSafetyScript(system), { timeoutMs: FORK_SAFE_PROBE_MS, signal, maxOutputBytes: 8192 });
   return forkSafetyOf(ran.stdout, ran.timedOut ? null : ran.exitCode, source);
 }
 
@@ -175,8 +195,8 @@ export interface ForkExpected {
 
 export type ForkVerdict = { readonly is: "ready" } | { readonly is: "wait"; readonly why: string } | { readonly is: "refused"; readonly why: string };
 
-export function forkCheckScript(): string {
-  return withTool([`as_root ${IDENTITY_TOOL} status || exit $?`, asRootShell(FORK_FACTS)].join("\n"));
+export function forkCheckScript(system: IdentitySystem = "linux"): string {
+  return withTool([`as_root ${IDENTITY_TOOL} status || exit $?`, asRootShell(system === "macos" ? MACOS_FORK_FACTS : FORK_FACTS)].join("\n"));
 }
 
 export function parseForkSeen(stdout: string, exitCode: number | null): ForkSeen {
@@ -198,8 +218,8 @@ export function parseForkSeen(stdout: string, exitCode: number | null): ForkSeen
   };
 }
 
-export async function readForkSeen(command: CommandTransport, signal?: AbortSignal): Promise<ForkSeen> {
-  const ran = await command.run(forkCheckScript(), { timeoutMs: FORK_CHECK_MS, signal, maxOutputBytes: 64 * 1024 });
+export async function readForkSeen(command: CommandTransport, signal?: AbortSignal, system: IdentitySystem = "linux"): Promise<ForkSeen> {
+  const ran = await command.run(forkCheckScript(system), { timeoutMs: FORK_CHECK_MS, signal, maxOutputBytes: 64 * 1024 });
   return parseForkSeen(ran.stdout, ran.timedOut ? null : ran.exitCode);
 }
 
@@ -233,6 +253,7 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   if (status.boot === "unknown") return { is: "wait", why: "its first boot could not tell yet whether it is a copy, so no reset has run" };
   if (status.pending) return { is: "wait", why: "its identity reset has begun and not finished" };
   if (status.boot !== "reset" && status.boot !== "kept") return refused(`its boot's identity check says "${status.boot}", not that it reset`);
+  if (status.raced) return refused("its identity reset ran after a user had logged in, so BB's daemon may have started as its source before the reset");
   if (!status.enabled) return refused("its identity reset is off");
   if (status.version < expected.safeFrom) return refused(`it has version ${status.version} of the identity reset, and bb-box forks only from version ${expected.safeFrom} there`);
   if (seen.missing.length) return refused(`it has no ${listWords(seen.missing.map((item) => MISSING_WORDS[item] ?? item))}, which its reset makes`);

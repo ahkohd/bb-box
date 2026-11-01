@@ -77,6 +77,8 @@ export class FakeSnapshots {
   forkFault: Error | null = null;
   forkWhy: string | null = null;
   onProvider: { price: Snapshotting["price"]; forkWhy?: string; forkSafeFrom?: number } | null = null;
+  beside = false;
+  notResumed: string | null = null;
   bill: SnapshotBill | Error | null = null;
   billReads = 0;
   billFrozen = false;
@@ -147,11 +149,13 @@ export class FakeSnapshots {
             ...(this.onProvider.forkWhy ? { forkWhy: this.onProvider.forkWhy } : {}),
             ...(this.onProvider.forkSafeFrom ? { forkSafeFrom: this.onProvider.forkSafeFrom } : {}),
           }
-        : { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null };
+        : this.beside
+          ? { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "suspends", restore: "in-place", fork: "copy", keepsPastRelease: "as-is", lives: "host", outlivesGuest: true, price: null, excludes: null }
+          : { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null };
     const release = backend.release.bind(backend);
     target.release = async (guest: Guest, hooks: never) => {
       await release(guest, hooks);
-      if (this.onProvider) return;
+      if (this.onProvider || this.beside) return;
       for (const [id, held] of this.held) if (held.guest.ref === guest.ref && !this.earlier.has(guest.ref)) this.held.delete(id);
     };
     this.#target = target;
@@ -230,7 +234,7 @@ export class FakeSnapshots {
         if (outcome === "incomplete") throw new SnapshotIncomplete("Proxmox left it part-made (snapstate prepare): received interrupt.");
         if (outcome === "ok-task-failed") throw new SnapshotIncomplete("Proxmox's task failed (vmstate save failed), though it left the snapshot with no part-made state, so bb-box does not count it as taken.");
         if (outcome === "unknown") throw new Error("cannot reach the provider: timed out");
-        return { ref: `bb${take.id}`, holds: held.holds, capturedAt: held.takenAt, size: null };
+        return { ref: `bb${take.id}`, holds: held.holds, capturedAt: held.takenAt, size: null, notResumed: this.notResumed };
       } finally {
         this.running--;
       }
@@ -460,7 +464,7 @@ export class FakeSnapshots {
       if (this.listingGate) await this.listingGate;
       return listed;
     };
-    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && (this.onProvider ? held.box === guest.data?.box : held.guest.ref === guest.ref));
+    target.snapshotsOn = async (guest: Guest): Promise<HeldSnapshot[]> => listedNow().filter((held) => held.where !== "held-copy" && (this.onProvider || this.beside ? held.box === guest.data?.box : held.guest.ref === guest.ref));
     target.providerTask = async (task: TaskRef): Promise<TaskOutcome> => {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       return this.tasks.get(task.ref) ?? { state: "missing", words: `no task ${task.ref}` };

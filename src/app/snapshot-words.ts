@@ -186,7 +186,8 @@ export function undoLabel(preview: RestorePreview): string {
   const undo = preview.check?.undo;
   if (undo?.kind === "held-copy") return `Copy it once stopped, so you can undo this: about ${aboutWords(undo.aboutMs)}${undo.bytes ? ` and ${gbWords(undo.bytes)}` : ""}.`;
   const price = undo?.price ? snapshotPriceWords(undo.price) : null;
-  return `Take a snapshot of it, once stopped, so you can undo this.${undo ? ` About ${aboutWords(undo.aboutMs)}.` : ""}${price ? ` It costs ${price} until it is deleted.` : ""}`;
+  const once = preview.check?.capture === "suspend" ? "once suspended, with its memory" : "once stopped";
+  return `Take a snapshot of it, ${once}, so you can undo this.${undo ? ` About ${aboutWords(undo.aboutMs)}.` : ""}${price ? ` It costs ${price} until it is deleted.` : ""}`;
 }
 
 export function requestId(): string {

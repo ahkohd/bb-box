@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, eligible, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
+import { countsAgainstLimit, eligible, forksOn, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
 import { restoreStepWords, unflushedOf, type ForkCheck, type KeepInput, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
 import { keepCostWords } from "./snapshot-words.ts";
 import { describeSize } from "../core/sizes.ts";
@@ -124,7 +124,7 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
   if (record.state === "deleting") return "it is being deleted";
   if (record.state !== "ready") return `it is ${record.state}`;
   if (record.scope === "device") return "it holds the device only";
-  if (record.box.system !== "linux") return "bb-box forks Linux boxes only";
+  if (!forksOn(record.box.system)) return "bb-box forks Linux and macOS boxes only";
   if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
   return null;
@@ -137,7 +137,7 @@ export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pi
   if (pinned) return pinned;
   if (record.scope === "device") return "it holds the device only, which lives in the box";
   if (record.boxGone && record.guest !== "held-copy" && !(offer.keepsPastRelease === "as-is" && record.keptUntil !== null)) return "its box is gone, and bb-box keeps it until you delete it";
-  if (record.box.system !== "linux") return "bb-box keeps only what it can fork after a release, and forks Linux boxes only";
+  if (!forksOn(record.box.system)) return "bb-box keeps only what it can fork after a release, and forks Linux and macOS boxes only";
   if (record.forkSafe === null) return `taken before ${record.box.name}'s image had the identity reset: it could not be forked after a release`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `taken under version ${record.forkSafe} of ${record.box.name}'s identity reset, older than the version ${offer.forkSafeFrom} a fork needs`;
   return null;

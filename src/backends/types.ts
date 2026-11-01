@@ -802,6 +802,7 @@ export interface Snapshotting {
   readonly fork: "copy" | "none";
   readonly keepsPastRelease: KeepsPastRelease;
   readonly lives: "host" | "provider";
+  readonly outlivesGuest?: boolean;
   readonly price: Price | null;
   readonly excludes: string | null;
   readonly forkSafeFrom?: number;
@@ -866,6 +867,7 @@ export interface SnapshotTaken {
   readonly capturedAt: number;
   readonly size: SnapshotSize | null;
   readonly dependsOn?: readonly string[];
+  readonly notResumed?: string | null;
 }
 
 export interface SnapshotRef {
@@ -883,7 +885,7 @@ export interface TaskRef {
 export type TaskOutcome =
   | { readonly state: "running" }
   | { readonly state: "ok" }
-  | { readonly state: "failed"; readonly words: string }
+  | { readonly state: "failed"; readonly words: string; readonly unchanged?: boolean }
   | { readonly state: "missing"; readonly words: string };
 
 export type TaskKind = "take" | "delete" | "rollback" | "copy";
@@ -949,9 +951,11 @@ export interface HeldSnapshot {
 }
 
 export class SnapshotFailed extends Error {
-  constructor(message: string) {
+  readonly notResumed: string | null;
+  constructor(message: string, notResumed: string | null = null) {
     super(message);
     this.name = "SnapshotFailed";
+    this.notResumed = notResumed;
   }
 }
 

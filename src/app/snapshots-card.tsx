@@ -711,7 +711,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
         <p id={noteId} className="pl-5.5 text-xs text-subtle-foreground">
           {check.undo ? `Named "${check.undo.name}". Undos do not count against the ${perBox} for ${box.name}.` : "Without an undo, this cannot be undone."}
           {check.replaces && undo ? ` It replaces the oldest undo, "${check.replaces}".` : ""}
-          {memory && undo ? " Undo brings back its files, not its running apps." : ""}
+          {memory && undo ? (check.capture === "suspend" ? " The undo holds its memory too: undoing brings it back running, as it is now, with the credentials its apps hold now." : " Undo brings back its files, not its running apps.") : ""}
         </p>
       </div>
       {unflushed && undo ? (

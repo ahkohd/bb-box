@@ -19,6 +19,7 @@ export function takenText(answer: TakeAnswer, boxName: string, perBox: number): 
     `Took snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}${took}: it holds its ${holdsWords(snapshot)}.${leaves}`,
     `Size: ${sizeWords(snapshot.size)}. Price: ${priceWords(snapshot.price)}.`,
     ...(snapshot.unflushed ? [`${unflushedWords(snapshot.unflushed)}.`] : []),
+    ...(answer.notResumed ? [answer.notResumed] : []),
     `Box ${boxName} holds ${answer.counted} of ${perBox} snapshots.`,
   ].join("\n");
 }
@@ -61,8 +62,12 @@ export function forkMayMissWords(snapshot: Pick<SnapshotRecord, "unflushed">): s
 export function keepCostWords(check: KeepCheck): string {
   const on = `${check.host ? `${check.host}'s ` : ""}${check.storage ?? "its storage"}`;
   const until = utcDay(check.keptUntil);
+  if (check.gone && check.way === "as-is") return `Its box was released, and it stays where it is${check.host ? ` on ${check.host}` : ""} until bb-box deletes it after ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}.`;
   if (check.gone) return `Its box was released, so it lives on as a held copy, guest ${check.snapshot.livesOn.ref}, a template that cannot start${check.host ? ` on ${check.host}` : ""}, which bb-box deletes after ${until}.`;
-  if (check.way === "as-is") return `If ${check.snapshot.box.name} is released, it stays where it is until ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}.`;
+  if (check.way === "as-is") {
+    const whole = !check.price && check.bytes !== null ? `; nothing is copied then, and from then on it takes its whole size, up to ${gbWords(check.bytes)} on ${on}, as its box no longer shares its blocks` : "";
+    return `If ${check.snapshot.box.name} is released, it stays where it is until ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}${whole}.`;
+  }
   const space = check.usedBytes !== null ? `about ${gbWords(check.usedBytes)}${check.bytes !== null && check.bytes > check.usedBytes ? `, at most ${gbWords(check.bytes)},` : ""}` : check.bytes !== null ? `up to ${gbWords(check.bytes)}` : "the space its disk uses";
   const time = check.aboutMs !== null ? `up to about ${seconds(check.aboutMs)}` : "a while";
   return `If ${check.snapshot.box.name} is released, bb-box first copies this snapshot in full into a template that cannot start: ${time}, and ${space} on ${on} until ${until}${check.price ? `, at ${priceWords(check.price)}` : ", at no charge"}.`;
@@ -118,12 +123,21 @@ export function restoreCheckText(check: RestoreCheck): string {
   const snapshot = check.snapshot;
   const name = check.box.name;
   const lines = [`Restoring box ${name} to "${snapshot.name}" (${snapshot.id}), taken ${dayWords(snapshot.takenAt)}, would:`];
-  lines.push(check.fromSnapshot ? "- stop it, which ends every process in it;" : `- stop it at once, without a clean shutdown;`);
+  lines.push(
+    check.capture === "suspend"
+      ? "- suspend it, which saves its memory: it is never stopped hard;"
+      : check.capture === "shutdown"
+        ? "- shut it down;"
+        : check.fromSnapshot
+          ? "- stop it, which ends every process in it;"
+          : `- stop it at once, without a clean shutdown;`,
+  );
   if (check.undo?.kind === "held-copy") {
     const bytes = check.undo.bytes ? `, up to ${gbWords(check.undo.bytes)} on ${check.storage}` : "";
     lines.push(`- copy it in full, stopped, as its undo "${check.undo.name}": a held copy that cannot start, about ${seconds(check.undo.aboutMs)}${bytes};`);
   } else if (check.undo) {
-    lines.push(`- take its undo "${check.undo.name}", a snapshot of it stopped, about ${seconds(check.undo.aboutMs)}${check.undo.price ? `, at ${priceWords(check.undo.price)}` : ""};`);
+    const held = check.capture === "suspend" ? "a snapshot of it suspended, with its memory, so undoing brings it back running as it is now" : "a snapshot of it stopped";
+    lines.push(`- take its undo "${check.undo.name}", ${held}, about ${seconds(check.undo.aboutMs)}${check.undo.price ? `, at ${priceWords(check.undo.price)}` : ""};`);
   } else lines.push("- take no undo, so this cannot be undone;");
   if (check.fromSnapshot) {
     lines.push(`- make it a new guest from that snapshot, with the box's own identity, start it, and delete its old guest${check.costWords ? `. ${check.costWords.replace(/\.$/, "")}` : ""};`);
@@ -132,7 +146,7 @@ export function restoreCheckText(check: RestoreCheck): string {
       ? `${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only`
       : `its old guest holds no snapshot, so bb-box deletes it${check.undo ? "" : ", and with no undo, nothing then holds the box as it is now"}`;
     lines.push(`- make it a new guest from that held copy, with the box's own identity, and start it; ${old};`);
-  } else lines.push("- roll its disk back, and start it;");
+  } else lines.push(check.capture === "suspend" ? "- put the snapshot's copy in its place, and resume it;" : "- roll its disk back, and start it;");
   if (check.replaces) lines.push(`- once it is done, delete its oldest undo, "${check.replaces}", as a box keeps two;`);
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
   lines.push(`Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);

@@ -83,6 +83,46 @@ note_disk_gb() {
  * to make room), the state directories, and `mine`, which says whether a VM's
  * owner file names an install and a box, or no box when the box is empty.
  */
+const RESTORE_SH = String.raw`snaps_dir() { _rb_sv=$(cd "$tart_vms" 2>/dev/null && pwd -P) && printf '%s/bb-box-snapshots\n' "$(dirname "$_rb_sv")"; }
+started_at() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
+runs_still() { [ -n "$1" ] && [ -n "$2" ] && [ "$(started_at "$1")" = "$2" ]; }
+this_shell() { printf '%s %s' "$$" "$(started_at "$$")"; }
+note_saved_under() {
+  { echo "macos=$(sw_vers -buildVersion 2>/dev/null)"; echo "tart=$(tart --version 2>/dev/null | head -n 1)"; } > "$d/run/$1.saved-under.new" && mv -f "$d/run/$1.saved-under.new" "$d/run/$1.saved-under"
+}
+rollback_running() {
+  _rb_s=$(snaps_dir) || return 1
+  [ -f "$_rb_s/.rollbacks/$1" ] || return 1
+  read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_s/.rollbacks/$1" || return 1
+  case $_rb_phase in copying | swapping) runs_still "$_rb_pid" "$_rb_start" ;; *) return 1 ;; esac
+}
+heal_rollback() {
+  _rb_s=$(snaps_dir) || return 0
+  _rb_j="$_rb_s/.rollbacks/$1"
+  [ -f "$_rb_j" ] || return 0
+  read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_j" || return 0
+  case $_rb_phase in copying | swapping) ;; *) return 0 ;; esac
+  ! runs_still "$_rb_pid" "$_rb_start" || return 0
+  _rb_v="$tart_vms/$1" _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone
+  if [ "$_rb_phase" = swapping ]; then
+    if [ ! -e "$_rb_v" ]; then
+      if [ -f "$_rb_r/.complete" ]; then mv "$_rb_r" "$_rb_v" || return 1; _rb_to=done
+      elif [ -d "$_rb_a" ]; then mv "$_rb_a" "$_rb_v" || return 1
+      else return 1
+      fi
+    elif [ -f "$_rb_v/.complete" ] || [ -d "$_rb_a" ]; then _rb_to=done
+    fi
+  fi
+  rm -f "$_rb_v/.complete"
+  if [ "$_rb_to" = done ]; then
+    _rb_g=$(sed -n 's/^diskgb=//p' "$_rb_s/$_rb_id/label" 2>/dev/null | head -n 1); [ -z "$_rb_g" ] || note_disk_gb "$_rb_v" "$_rb_g"
+    grep -E '^(macos|tart)=' "$_rb_s/$_rb_id/label" 2>/dev/null > "$d/run/$1.saved-under" || :
+  fi
+  rm -rf "$_rb_r" "$_rb_a"
+  printf '%s %s %s\n' "$_rb_to" "$_rb_id" "$_rb_try" > "$_rb_j.new" && mv -f "$_rb_j.new" "$_rb_j"
+}
+`;
+
 const PRELUDE = String.raw`export PATH="${PATHS.join(":")}:$PATH" TART_NO_AUTO_PRUNE=1
 d="$HOME/.bb-box/tart"
 umask 077
@@ -92,7 +132,7 @@ mine() {
   if [ -n "$3" ]; then grep -qxF "box=$3" "$d/owners/$1"; else ! grep -q '^box=' "$d/owners/$1"; fi
 }
 ${VM_READ}
-# The guest OS in VM $1's config: darwin or linux (040).
+${RESTORE_SH}# The guest OS in VM $1's config: darwin or linux (040).
 os_of() {
   h=$HOME/.tart; [ -z "$TART_HOME" ] || h=$TART_HOME
   sed -n 's/.*"os" *: *"\([^"]*\)".*/\1/p' "$h/vms/$1/config.json" 2>/dev/null | head -n 1
@@ -445,6 +485,7 @@ grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qx 'state=f
 if [ "$(state "$vm")" = running ]; then tart suspend "$vm" || exit 1; fi
 settled "$vm" 1200 || { echo "$vm is still running a minute after tart suspend." >&2; exit 1; }
 [ "$(state "$vm")" = suspended ] || { echo "$vm did not suspend." >&2; exit 1; }
+note_saved_under "$vm"
 { sed 's/^state=filling$/state=warm/' "$f"${grants ? `; echo grants=${quote(grants)}` : ""}; echo "saved=$(date +%s)"; } > "$f.new" && mv -f "$f.new" "$f"
 echo warm
 `);
@@ -517,9 +558,11 @@ export function ownerScript(vm: string): string {
 }
 
 /** Drops a VM's saved state, so a VM whose state does not restore boots afresh from its disk. */
-export function discardStateScript(vm: string): string {
+export function discardStateScript(vm: string, keepRestored = true): string {
   return script(String.raw`home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
-rm -f "$home/vms/"${quote(vm)}"/state.vzvmsave"
+if ${keepRestored ? "" : "false && "}[ -f "$d/run/"${quote(vm)}".restored" ]; then rm -f "$d/run/"${quote(vm)}".restored"; echo kept; exit 0; fi
+rm -f "$home/vms/"${quote(vm)}"/state.vzvmsave" "$d/run/"${quote(vm)}".saved-under"
+echo discarded
 `);
 }
 
@@ -568,7 +611,9 @@ export const TART_RUN_AGAIN_SECONDS = 3;
 export function startScript(vm: string, waitSeconds: number): string {
   return script(String.raw`vm=${quote(vm)}; out="$d/run/$vm.out"; x="$d/run/$vm.exit"
 ${HOLD}
-started() { [ "$(os_of "$vm")" = linux ] || hold || :; echo started; }
+started() { rm -f "$d/run/$vm.restored"; [ "$(os_of "$vm")" = linux ] || hold || :; echo started; }
+if rollback_running "$vm"; then echo "bb-box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
+heal_rollback "$vm" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 case "$(state "$vm")" in
   running) echo running; exit 0 ;;
   "") echo "There is no VM $vm." >&2; exit 1 ;;
@@ -722,6 +767,8 @@ export function parseSpotlight(text: string): SpotlightView | null {
 export function powerScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
+if rollback_running "$vm"; then echo stopped; exit 0; fi
+heal_rollback "$vm" || :
 state "$vm" | grep . || echo gone
 `);
 }
@@ -878,6 +925,7 @@ if [ "$now" = running ]; then
     *) tart stop "$vm" --timeout 30 || exit 1 ;;
   esac
   settled "$vm" 1200 || { echo "$vm is still running two minutes after tart $how." >&2; exit 1; }
+  [ "$(state "$vm")" != suspended ] || note_saved_under "$vm"
 fi
 echo stopped
 `);
@@ -1032,6 +1080,8 @@ echo forgotten
 export function deleteScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}
 if [ -f "$d/owners/$vm" ] && ! mine "$vm" ${quote(installId)} ${quote(boxId ?? "")}; then echo gone; exit 0; fi
+if rollback_running "$vm"; then echo "bb-box is putting a snapshot in the place of $vm on the Mac, so it deletes it once that has ended." >&2; exit 1; fi
+heal_rollback "$vm" || :
 if [ -n "$(state "$vm")" ]; then
   tart stop "$vm" --timeout 0 >/dev/null 2>&1
   settled "$vm" 300 || exit 1
@@ -1039,6 +1089,8 @@ if [ -n "$(state "$vm")" ]; then
 fi
 rm -f "$d/run/$vm.out" "$d/run/$vm.out.last" "$d/run/$vm.exit" "$d/run/$vm.exit.last" "$d/run/$vm.vnc"
 rm -rf "$d/run/$vm.holder-"*
+if s=$(snaps_dir); then rm -rf "$s/.restore-$vm" "$s/.replaced-$vm" "$s/.fork-$vm"; rm -f "$s/.rollbacks/$vm"; fi
+rm -f "$d/run/$vm.saved-under" "$d/run/$vm.restored"
 rm -f "$d/owners/$vm"
 echo deleted
 `);
