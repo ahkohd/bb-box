@@ -114,6 +114,7 @@ import {
   type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
 import { CURSOR_HELPER, GPU_VIDEO_MARKER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
@@ -296,6 +297,7 @@ const POOL: Check = ["proxmox.pool", "Resource pool"];
 const BRIDGE: Check = ["proxmox.bridge", "Network bridge"];
 const VMIDS: Check = ["proxmox.vmids", "VMID range"];
 const GPU_REPORT: Check = ["proxmox.gpu-report", "Host's GPU report"];
+const GPU_HELPER: Check = ["proxmox.gpu-helper", "Host's GPU helper"];
 const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 
@@ -1791,11 +1793,17 @@ export class ProxmoxLxcBackend implements Backend {
       const gpus = gpusOf(this.#config.flavours.desktop.templates);
       if (gpus.length) {
         const setup = "Run host/setup-gpu-report.sh from the setup guide as root";
-        const fix = `Run systemctl status bb-box-gpu-memory.timer as root on ${node}, and check the host's clock.`;
+        const status = (unit: string) => `Run systemctl status ${unit} as root on ${node}, and check the host's clock.`;
         try {
           const vm = await api.vmNotes(GPU_REPORT_VM, signal);
           const report = vm ? parseGpuReport(vm.notes) : null;
+          const helper = vm ? parseGpuHelper(vm.notes) : null;
+          const fix = status(helper ? "bb-box-gpu" : "bb-box-gpu-memory.timer");
           const unnamed = report ? gpus.filter((gpu) => !report.gpus.some((reported) => namesGpu(gpu, reported))) : [];
+          if (vm && helper) {
+            const verdict = judgeGpuHelper(helper, { node, pool, vmid: vm.vmid, ageMs: report ? this.#now() - report.at : null, ago });
+            checks.push({ id: GPU_HELPER[0], name: GPU_HELPER[1], ...verdict });
+          }
           if (!vm) {
             checks.push({
               id: GPU_REPORT[0],

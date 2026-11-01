@@ -964,3 +964,249 @@ exit to the output closing.
   cannot be unloaded, nor a card reset, while the helper runs. The setup
   guide says to stop it first. Its CPU on the node is read from the hourly
   line on the day.
+
+## Unit 3: setup-gpu.sh in full, and the doctor's helper check
+
+Built on main `8ba2d1b1`, and after the reviews rebased onto `e7d934f9`.
+The helper program and its two units are not
+changed: `bb-box-gpu` stays 0.1.0, byte for byte, so unit 2's day of dry run
+holds for the program that stays installed. Nothing new is offered.
+
+### What it does
+
+- **Options.** `setup-gpu.sh [--pool <name>]... [--writes off]
+  [--downgrade]` installs or upgrades; `setup-gpu.sh --remove` removes.
+  `--pool` adds a pool to those `gpu.conf` lists and `BBBOX_POOL`, and may
+  be given more than once. A name that cannot be a pool's is refused before
+  anything changes; a pool not yet in `/etc/pve/user.cfg` is said.
+  `--writes off` is taken. `--writes on` is refused, with words, before
+  anything changes: this release runs the helper with writes off only, as
+  the lead agreed. `gpu.conf` is always written `writes off`; one that said
+  `writes on` is rewritten, and the run says so.
+- **Install** is as unit 2's: the program, both units, `gpu.conf` root's
+  alone, the ledger's folder, then the helper started, and the timer
+  retired only once the helper has written a fresh report.
+- **Upgrade** is running a newer release's `setup-gpu.sh`. It replaces the
+  program and units it finds different, restarts the helper and waits for
+  a fresh report naming the new version with writes off. It keeps
+  `gpu.conf`, the ledger and writes off, and touches no guest. It says
+  "restarted bb-box-gpu.service on 0.1.1, which was 0.1.0".
+- **A failed upgrade** puts the helper before it back as it was: its
+  program, units and `gpu.conf`, and its ledger where the new helper wrote
+  one under a newer protocol, keeping that one beside as
+  `ledger.from-<version>-<time>`. It waits for that helper's fresh, healthy
+  report and exits 1. Only if that helper writes no such report either is
+  the report handed to the timer, as a failed first install is.
+- **The timer first.** Before any run stops the helper, the timer is
+  running: a writer of the report is there whatever happens next, even a
+  SIGKILL. An upgrade retires the timer again once the new helper reports.
+- **The install from before** is copied to
+  `/var/lib/bb-box-gpu/setup-backup`, on disk and synced, before anything
+  changes: the program, units, `gpu.conf`, the ledger (copied again once the
+  old helper has stopped), its version and protocol, and whether the timer
+  was there. It is removed when the run ends settled. A run that finds one
+  left by a run that did not finish uses it for its rollback, and restarts
+  the helper unless a fresh report already names this release's version.
+- **An interruption or failure part way** (Ctrl-C, TERM, a dropped SSH
+  session, a `set -e` exit): an EXIT trap, with INT, TERM and HUP made
+  exits, keeps a writer running, starting the timer, or else the helper, if
+  neither runs, and says which writes the report and where the install
+  from before is kept. Files are put in place by rename.
+- **The version checks.** The installer reads both programs' versions
+  with `bb-box-gpu --version`, and the ledger's protocol with JSON::PP. It
+  refuses, changing nothing, an older release over a newer helper, and a
+  ledger written by a newer protocol than the release's, unless given
+  `--downgrade`. With it, a newer ledger is moved aside, as
+  `ledger.protocol-<n>-<time>`, once the newer helper has stopped, and the
+  older helper rebuilds the ledger from the guests, as for a lost ledger.
+  If the newer helper's stop fails, or says it failed, the run rolls back:
+  every file is put back and that helper runs again.
+- **pve-container.** The report's `helper` line says `tested` or
+  `untested`. The installer prints that line and the `serves` line, and on
+  an untested version says that the helper would change no guest there
+  even with writes on.
+- **A fresh, healthy report** is one read in one snapshot, naming the
+  expected version and protocol with writes off, with an `at` no older than
+  the helper's start, different from the report as it stood once the old
+  helper had stopped, and with no `error` line saying the ledger is from a
+  newer protocol, a pass could not finish, or the helper's state cannot be
+  written. A report from the same second as the start is not taken as
+  fresh.
+- **systemd's start limit.** Before each start of the helper and of the
+  timer's service, the installer runs `systemctl reset-failed`, so runs
+  close together, as reruns after an interruption are, are not refused as
+  starting too often.
+- **The wait** is 75 s, not 30. The helper writes its report when it has
+  something new and at least once a minute, so a helper started again with
+  nothing new writes on its next minute. Unit 2's installer, given a helper
+  stopped by hand, waited 30 s, took it as failed and handed the report to
+  the timer: seen under real systemd, below. The wait is read from
+  `BBBOX_GPU_REPORT_WAIT` in the process's environment only, never from
+  `bb-box.env`, and must be 1 to 9999 s.
+- **Removal** starts the timer and waits for its service to write the
+  report before it stops the helper. If the timer cannot start or write, as
+  when `nvidia-smi` fails, the helper is left running and nothing is
+  removed. After the helper stops, the timer writes once more, so no
+  stopped helper's lines are left in the report; a handover does the same.
+  It keeps `gpu.conf` and the ledger, and changes no guest.
+- **The doctor's `proxmox.gpu-helper`**, where the report VM's notes have
+  a `helper` line, in this order:
+
+  | Finds | Status | Fix |
+  | --- | --- | --- |
+  | a report dated a minute or more ahead of BB's clock | fail | `systemctl status bb-box-gpu`, and the host's clock |
+  | no report, or one 3 minutes old or more | fail | the same |
+  | a newer protocol | fail | "Update BB Box." |
+  | an older protocol | fail | "Run host/setup-gpu.sh again, from this BB Box's setup guide" |
+  | a `helper` line it cannot read, its protocol included | fail | the same |
+  | this install's pool not served | fail | `host/setup-gpu.sh --pool <pool>` |
+  | the pool not among those listed, with more not listed | warn | the same |
+  | an untested pve-container | fail | `setup-gpu.sh` from a release tested on it |
+  | writes off | warn | "Nothing to do now: a later BB Box release turns writes on" |
+  | all of these met | ok | none |
+
+  bb-box speaks protocol 1. The line is read by its protocol's grammar:
+  for another protocol only the version and the protocol are read.
+- **No helper, no check.** Decided with the lead: until unit 7 offers
+  servers with a GPU, a node with no helper has no `proxmox.gpu-helper`
+  check at all, so a node with today's GPU desktops reads exactly as
+  before. The check is read with the GPU report, so only an install with
+  GPU desktop templates has it.
+- **`proxmox.gpu-report`'s fix** names `bb-box-gpu` when the report it
+  finds old is the helper's, and `bb-box-gpu-memory.timer` when it is the
+  timer's, which closes unit 2's open item. With no helper line, every
+  word of the check is as before.
+- The setup guide has a section on the helper: install, upgrade,
+  `--downgrade`, `--remove`, the 75 s wait, and the doctor's check.
+
+### What was run
+
+On a `linux` box, in a `node:26-bookworm` container as CI runs (Perl 5.36),
+after the reviews' fixes:
+
+- `test/gpu-setup.test.ts`: 30 tests of `setup-gpu.sh` under a test root
+  with fake `systemctl`, as root, the helper running as installed. Every
+  test that installs checks every guest's config byte for byte, and that no
+  guest was written or locked. Install, a second run, `--pool`,
+  `--writes on` refused with no `systemctl` call, upgrade, an older release
+  refused then `--downgrade`, a newer ledger refused then set aside, a
+  failed upgrade rolled back, a failed rollback handed to the timer, an
+  untested pve-container, a helper stopped by hand waited for across its
+  heartbeat (60.5 s), removal and putting back. Then each review finding:
+  see "After the reviews". The fake `systemctl` can signal its caller
+  right after a given call, fail after doing a call, fail the n-th of a
+  call, and refuse starts past a start limit. Release copies differ from
+  the release in constants only: `VERSION`, `PROTOCOL`,
+  `REPORT_BEAT_SECONDS` (2 s where a restart must not wait a minute), and a
+  report VM name that does not exist, to make a helper that writes no
+  report.
+- `test/proxmox-lxc.test.ts`: 6 tests of the doctor. On reports from real
+  helper runs: a dry run, `--dry-run` with `writes on` in `gpu.conf`, writes
+  on, an untested pve-container, other pools, no pool. On edited lines: 2
+  min 59 s and 3 min old, dated 30 s, 60 s and a day ahead, a 10 minute old
+  report's fix, protocols 2 and 0, a protocol it cannot read, a line it
+  cannot read, a cut pool list. No check beside the timer's report, with no
+  report VM, or without GPU desktops, and the timer's words as before. The
+  parser alone.
+- `shellcheck -x` on `setup-gpu.sh` and the fake `systemctl`: clean.
+- `tsc` clean; the node suite, 3,493 tests, 3,198 passed, 0 failed, 295
+  skipped; vitest, 445 passed.
+
+Under real systemd, in a `debian:trixie` container with systemd 257 as its
+first process and Perl 5.40.1, as Proxmox VE 9 has, privileged, on the
+same box. The Proxmox modules were unit 2's fakes, installed in Perl's
+path; `nvidia-smi`, `qm` and `dpkg-query` were fakes; `/proc/driver` was a
+tmpfs holding unit 0's two cards. The starting state was the node's: the
+timer from `setup-gpu-report.sh`, then unit 2's own `setup-gpu.sh`.
+
+- The node steps, as the lead will run them, with the check script: all
+  printed what the steps say. The guests' configs did not change, the
+  ledger's fingerprint stayed the same throughout, and the node ended on
+  unit 2's program, byte for byte. Each install, upgrade or downgrade took
+  1.0 to 1.5 s.
+- 21 interruptions, through a wrapper of the real `systemctl` that signals
+  the installer right after a given call: an upgrade after the timer's
+  start (TERM), the helper's stop (TERM, INT, HUP, KILL), its start (TERM,
+  KILL) and the timer's retirement (HUP, KILL); a downgrade after the stop
+  (TERM) and the start (HUP); `--remove` after the timer's run (TERM) and
+  each unit's disable (HUP, KILL, TERM), each followed by putting the helper
+  back, interrupted after its start (TERM); and a broken upgrade's rollback
+  after its stop (TERM) and during its wait (KILL). After each, a writer of
+  the report ran, and the same command run again finished, or, for the
+  broken upgrade, put 0.1.0 back in its 75 s. No guest's config changed.
+  This found systemd's start limit, below.
+- Before the fixes: an upgrade to a copy whose helper writes no report
+  rolled back to 0.1.0 in 77.5 s. A helper stopped by hand, then
+  `setup-gpu.sh`: it reported again after 59.9 s, and the run succeeded;
+  the same with unit 2's `setup-gpu.sh` handed the report to the timer
+  after 31.2 s and exited 1.
+
+Limits: fake Proxmox modules and a fake `nvidia-smi`, not a node; no
+`pve-guests.service`, so the boot unit was enabled but never run. A power
+cut was not tried: the backup is synced to disk, and files are put in place
+by rename.
+
+### The live gate
+
+Waits for the lead, after unit 2's day passes. The steps and a read-only
+check script, which prints the report, the units, the program, `gpu.conf`,
+the ledger, and fingerprints of every guest's device lines and tags, are
+in the report to the lead. The live upgrade is to a copy of the release
+that says 0.1.1, then `--downgrade` back. The doctor cannot pass live in
+this release, as writes stay off: live it warns for the dry run, shows no
+check after removal, and, if the lead chooses, fails a helper stopped for
+3 minutes.
+
+### After the reviews
+
+Two reviews, Opus and Astra, said to merge after fixes. Each fix has a
+test, and each test failed when run against the reviewed commit's
+`setup-gpu.sh`, `gpu-helper.ts` and `backend.ts` (`66188103`, rebased), on
+a box: 20 of its first 29 installer tests failed, every new one among them,
+and so did the doctor's new tests.
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| Opus 1, Astra 1: an exit part way, by `set -e`, Ctrl-C, a kill or a dropped session, could leave neither the helper nor the timer writing the report, and the backup was deleted on exit | The timer runs before any stop of the helper. An EXIT trap, with INT, TERM and HUP made exits, keeps a writer running and says which. The install from before is kept on disk until the run settles, and the next run rolls back to it. Files are put in place by rename | An upgrade interrupted right after the timer's start, the helper's stop (TERM, INT, HUP, KILL), its start and the timer's retirement; `--remove`, a handover and a rollback interrupted; a rollback failing under `set -e`; a killed upgrade put right by the next run. Before: no writer ran, or the next run had nothing to put back |
+| Astra 2: removal and the handover stopped the helper before the timer ran | The timer is started, and its service must write a report, before the helper stops. If it cannot, the helper is left running and nothing is removed | The order of calls; a timer that cannot start, and one that cannot write. Before: the helper was removed and nothing ran |
+| Opus 2, Astra 3: a failed upgrade across a protocol change left a newer ledger, and the helper put back acted on nothing while the run said "with its ledger" | The backup keeps the ledger, copied again once the old helper stops. A rollback puts it back when the ledger's protocol is now newer than the old helper's, keeping the newer one beside. A fresh report must also be healthy | An upgrade to a protocol-2 copy that wrote its ledger while the installer waited. Before: the ledger stayed protocol 2, and the release before was refused |
+| Opus 1: a downgrade whose stop failed, or stopped but said it failed, said "Nothing was changed" | Any failed stop rolls back, and the helper runs again | Both kinds of failed stop. Before: the helper stayed stopped |
+| Opus 3: a handover with the timer already running left the stopped helper's lines in the report | The timer's service runs once after the helper stops, every time | The handover when the timer cannot be stopped. Before: the `helper` line stayed |
+| Opus 4: `BBBOX_GPU_REPORT_WAIT` could come from `bb-box.env`, unchecked | Read from the process's environment before `bb-box.env` is read, and checked as 1 to 9999 | `abc` in `bb-box.env`, and `abc`, 0, -5 and 10000 given. Before: the env file's value made the wait 0, and the install failed |
+| Opus 5, Astra 6: with a report VM but no report and no helper, the fix named both units | The timer's fix, word for word as before, wherever there is no `helper` line | The whole check. Before: the fix differed |
+| Astra 4: a report dated ahead of BB's clock passed as fresh | A report dated a minute or more ahead fails, with the host's clock to check | A day and 60 s ahead fail, 30 s passes. Before: ok, "just now" |
+| Astra 5: a `helper` line whose protocol it cannot read hid the check | Any `helper bb-box-gpu` line makes the check, and one it cannot read fails | `protocol broken`. Before: no check |
+| Found by the interruption rehearsal: systemd refused a sixth start within 10 s, "attempted too often", so reruns close together handed the report to the timer | `systemctl reset-failed` before each start of the helper and of the timer's service | The fake `systemctl` with a start limit of 5 in 120 s: 7 installs and 6 removals. Before: the sixth start was refused |
+
+Working the tests through also found that a rerun after an interruption
+could find the old program running beside the new one's files, and so
+restarts the helper unless a fresh report already names this release's
+version.
+
+### Deviations from the note
+
+- `--writes on` is refused in this release; writes come on in unit 5.
+- No `proxmox.gpu-helper` check with no helper, until unit 7.
+- A failed upgrade puts the helper before it back, rather than handing the
+  report to the timer; the timer only if that fails too.
+- `--downgrade` also lets an older release replace a newer helper, not
+  only use a newer ledger, which it sets aside for a rebuild.
+- The installer waits up to 75 s for a fresh report, not 30 s.
+- Removal waits for the timer's report before it stops the helper, and
+  leaves the helper running if the timer cannot write.
+- An interrupted run leaves a writer and its backup, and the next run
+  completes or rolls back from that backup.
+- The doctor fails a report dated a minute or more ahead of BB's clock.
+- The doctor warns, rather than fails, when the report cuts its pool list
+  short and does not list this install's pool.
+
+### Still open
+
+- The helper writes its report on a start only when it has something new.
+  Decided with the lead: a helper release in unit 4 writes it on its first
+  pass after a start, so unit 4's day of dry run with markers runs on that
+  program, and the program unit 5 turns writes on for has had its day.
+  0.1.0 stays installed, byte for byte, until then. The installer's 75 s
+  wait stays, as a rollback can start 0.1.0 again.
+- The doctor's pass, live, waits for writes on (unit 5). The lead agreed
+  that it warns while writes are off, and skips the gate's optional step 11.

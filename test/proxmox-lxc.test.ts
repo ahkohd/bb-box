@@ -11,6 +11,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, ty
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
+import { judgeGpuHelper, parseGpuHelper } from "../src/backends/proxmox-lxc/gpu-helper.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { CARD_A, CARD_B, FakeNode, REPORT_VMID, cardLines, marker } from "./gpu-helper/node.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
@@ -677,7 +678,8 @@ test("the doctor says when the host's report has no report yet, or does not name
   const { backend, proxmox } = setup({ "proxmox-lxc-desktop-templates": `9001 ${UUID_A}\n9002 gpu-b` });
   const report = async () => (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-report");
   reportVm(proxmox, "bb-box: each GPU's memory, from bb-box-gpu-memory.timer. It is never started.");
-  assert.deepEqual([(await report())?.status, (await report())?.detail], ["warn", "VM 9190 (bb-box-gpu-memory) has no report in its notes yet."]);
+  const empty = await report();
+  assert.deepEqual([empty?.status, empty?.detail, empty?.fix], ["warn", "VM 9190 (bb-box-gpu-memory) has no report in its notes yet.", "Run systemctl status bb-box-gpu-memory.timer as root on pve, and check the host's clock."], "as before 071 unit 3 (Opus 5, Astra 6)");
   reportVm(proxmox, reportNotes(Date.now(), [[UUID_A, "00000000:01:00.0", 6100]]));
   const unnamed = await report();
   assert.deepEqual([unnamed?.status, unnamed?.detail, unnamed?.fix], [
@@ -707,6 +709,115 @@ test("today's backend reads the report bb-box-gpu writes: the doctor's GPU repor
       ["0000:d1:00.0", CARD_B.freeMiB, CARD_B.totalMiB, "host"],
     ],
   );
+});
+
+async function doctorOnReport(notes: string, now = Date.now(), values: Record<string, unknown> = { "proxmox-lxc-desktop-templates": `9001 GPU-${CARD_A.uuid}` }) {
+  const { backend, proxmox } = setup(values, new MemoryStorage(), { now: () => now });
+  reportVm(proxmox, notes, REPORT_VMID);
+  const checks = (await backend.doctor()).checks;
+  return (id: string) => checks.find((candidate) => candidate.id === id);
+}
+
+function helperReport(node: FakeNode, args: readonly string[] = ["--once"]): string {
+  const run = node.run(args);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  return node.report();
+}
+
+const verdict = (check: { status: string; detail: string; fix: string | null } | undefined) => check && [check.status, check.detail, check.fix];
+
+test("the doctor's GPU helper check reads what real helpers report: a dry run warns, writes on passes, an untested pve-container and a pool not served fail (071 unit 3)", async () => {
+  const dryRun = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })));
+  assert.deepEqual(verdict(dryRun("proxmox.gpu-helper")), [
+    "warn",
+    "bb-box-gpu 0.1.0 on pve runs with writes off, a dry run: it writes the GPU report and changes no guest. Writes stay off until bb-box marks its guests and a day of dry run with the markers shows no write the helper would make (071).",
+    "Nothing to do now: a later BB Box release turns writes on, with host/setup-gpu.sh --writes on.",
+  ]);
+  assert.equal(dryRun("proxmox.gpu-report")?.status, "ok");
+  assert.equal(verdict((await doctorOnReport(helperReport(new FakeNode({ writes: "on" }), ["--once", "--dry-run"])))("proxmox.gpu-helper"))?.[0], "warn", "--dry-run keeps writes off whatever gpu.conf says");
+
+  const writing = await doctorOnReport(helperReport(new FakeNode({ writes: "on" })));
+  assert.deepEqual(verdict(writing("proxmox.gpu-helper")), ["ok", "bb-box-gpu 0.1.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on.", null]);
+
+  const untested = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pveContainer: "6.1.15" })));
+  assert.deepEqual(verdict(untested("proxmox.gpu-helper")), [
+    "fail",
+    "bb-box-gpu 0.1.0 on pve was not tested on pve-container 6.1.15, so it changes no guest.",
+    "Run host/setup-gpu.sh from a BB Box release tested on pve-container 6.1.15, as root on pve.",
+  ]);
+
+  const elsewhere = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pools: ["team", "lab"] })));
+  assert.deepEqual(verdict(elsewhere("proxmox.gpu-helper")), ["fail", "bb-box-gpu 0.1.0 on pve serves pools team and lab, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  const nowhere = await doctorOnReport(helperReport(new FakeNode({ writes: "off", pools: [] })));
+  assert.equal(verdict(nowhere("proxmox.gpu-helper"))?.[1], "bb-box-gpu 0.1.0 on pve serves no pool, not this install's pool bbbox.");
+});
+
+test("the doctor's GPU helper check fails a report 3 minutes old and a helper of another protocol, with each fix; the GPU report's fix names the helper where it writes the report (071 unit 3)", async () => {
+  const notes = helperReport(new FakeNode({ writes: "on" }));
+  const at = Number(/^\s*at (\d+)$/m.exec(notes)![1]) * 1000;
+  const minute = 60_000;
+  assert.equal((await doctorOnReport(notes, at + 3 * minute - 1000))("proxmox.gpu-helper")?.status, "ok");
+  const old = await doctorOnReport(notes, at + 3 * minute);
+  assert.deepEqual(verdict(old("proxmox.gpu-helper")), ["fail", "The GPU helper on pve last reported 3 minutes ago, in VM 9190.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock."]);
+  assert.equal(old("proxmox.gpu-report")?.status, "ok", "today's report still stands for 10 minutes");
+  const stale = await doctorOnReport(notes, at + 10 * minute);
+  assert.deepEqual(verdict(stale("proxmox.gpu-report")), ["warn", "The host's report in VM 9190 is from 10 minutes ago, so bb-box reads GPU memory in desktops.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock."]);
+
+  const withHelper = (line: string) => notes.replace(/^(\s*)helper bb-box-gpu .*$/m, `$1${line}`);
+  const newer = await doctorOnReport(withHelper("helper bb-box-gpu 2.0.0 protocol 2 writes on with new words"), at);
+  assert.deepEqual(verdict(newer("proxmox.gpu-helper")), ["fail", "The GPU helper on pve, bb-box-gpu 2.0.0, speaks protocol 2, newer than this BB Box's protocol 1.", "Update BB Box."]);
+  const older = await doctorOnReport(withHelper("helper bb-box-gpu 0.0.9 protocol 0 writes on pve-container 6.1.14 tested"), at);
+  assert.deepEqual(verdict(older("proxmox.gpu-helper")), ["fail", "The GPU helper on pve, bb-box-gpu 0.0.9, speaks protocol 0, older than this BB Box's protocol 1.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."]);
+  const unread = await doctorOnReport(withHelper("helper bb-box-gpu 0.1.0 protocol 1 writes maybe"), at);
+  assert.deepEqual(verdict(unread("proxmox.gpu-helper")), ["fail", "VM 9190's report has a helper line this BB Box cannot read.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."]);
+  const unreadable = await doctorOnReport(withHelper("helper bb-box-gpu 0.1.0 protocol broken"), at);
+  assert.deepEqual(verdict(unreadable("proxmox.gpu-helper")), ["fail", "VM 9190's report has a helper line this BB Box cannot read.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."], "a helper line with no protocol is not taken for no helper (Astra 5)");
+  const many = await doctorOnReport(notes.replace(/^(\s*)serves .*$/m, "$1serves p1 p2 p3 and 40 more"), at);
+  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.1.0 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+});
+
+test("the doctor's GPU helper check fails a report dated a minute or more ahead of BB's clock, as a stopped helper could pass for fresh until then (071 unit 3, Astra 4)", async () => {
+  const notes = helperReport(new FakeNode({ writes: "on" }));
+  const at = Number(/^\s*at (\d+)$/m.exec(notes)![1]) * 1000;
+  const ahead = await doctorOnReport(notes, at - 24 * 60 * 60_000);
+  assert.deepEqual(verdict(ahead("proxmox.gpu-helper")), [
+    "fail",
+    "The GPU helper's report in VM 9190 is dated 1 day ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs.",
+    "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.",
+  ]);
+  assert.equal(verdict((await doctorOnReport(notes, at - 60_000))("proxmox.gpu-helper"))?.[0], "fail");
+  assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.1.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
+});
+
+test("with no GPU helper, the doctor reads as before: no helper check beside the timer's report, none with no report VM, and none for an install without GPU desktops (071 unit 3)", async () => {
+  const now = 1_790_000_000_000;
+  const timer = await doctorOnReport(reportNotes(now, [[UUID_A, "00000000:01:00.0", 6100]]), now, { "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });
+  assert.equal(timer("proxmox.gpu-helper"), undefined);
+  assert.equal(timer("proxmox.gpu-report")?.status, "ok");
+  const { backend } = setup({ "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });
+  assert.equal((await backend.doctor()).checks.some((check) => check.id === "proxmox.gpu-helper"), false);
+  const noDesktops = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })), Date.now(), { "proxmox-lxc-desktop-templates": "" });
+  assert.equal(noDesktops("proxmox.gpu-helper"), undefined);
+});
+
+test("the GPU helper's lines are read by their protocol's grammar, and a pool list the report cut short says how many it left out (071 unit 3)", () => {
+  const notes = (rest: string) => `bb-box: each GPU's memory and its claims.\n\n    at 1790000000\n    ${rest}\n    serves bbbox lab/gpu`;
+  assert.deepEqual(parseGpuHelper(notes("helper bb-box-gpu 0.1.0 protocol 1 writes off pve-container 6.1.14 tested")), {
+    version: "0.1.0",
+    protocol: 1,
+    writes: "off",
+    pveContainer: "6.1.14",
+    tested: true,
+    serves: { listed: ["bbbox", "lab/gpu"], unlisted: 0 },
+  });
+  assert.deepEqual(parseGpuHelper(notes("helper bb-box-gpu 3.0.0 protocol 3 anything at all")), { version: "3.0.0", protocol: 3, writes: null, pveContainer: null, tested: null, serves: null });
+  assert.deepEqual(parseGpuHelper(notes("helper bb-box-gpu 0.1.0 protocol broken")), { version: null, protocol: null, writes: null, pveContainer: null, tested: null, serves: null });
+  assert.equal(parseGpuHelper("    helper bb-box-gpus are elsewhere"), null);
+  assert.equal(parseGpuHelper(reportNotes(1_790_000_000_000, [[UUID_A, "00000000:01:00.0", 6100]])), null);
+  assert.deepEqual(parseGpuHelper(`${notes("helper bb-box-gpu 0.1.0 protocol 1 writes on pve-container 6.1.14 untested")}`.replace("serves bbbox lab/gpu", "serves none"))?.serves, { listed: [], unlisted: 0 });
+  assert.deepEqual(parseGpuHelper(notes("helper bb-box-gpu 0.1.0 protocol 1 writes on pve-container 6.1.14 tested").replace("serves bbbox lab/gpu", "serves a b and 12 more"))?.serves, { listed: ["a", "b"], unlisted: 12 });
+  const seen = { node: "pve", pool: "bbbox", vmid: 9190, ageMs: 0, ago: () => "just now" };
+  assert.equal(judgeGpuHelper(parseGpuHelper(notes("helper bb-box-gpu 0.1.0 protocol 1 writes on pve-container 6.1.14 tested"))!, { ...seen, ageMs: null }).detail, "The GPU helper on pve has written no report in VM 9190.");
 });
 
 test("boxes spread across a flavour's templates", async () => {

@@ -90,7 +90,12 @@ export const CHECKS = {
   "template.<vmid>.image": { name: "Image of <flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: "The template's image record: its age, pins and tools, against this bb-box's." },
   "proxmox.android-kvm": { name: "KVM for Android", from: ["proxmox-qemu"], what: "Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM." },
   "proxmox.android-disk": { name: "Disk for Android", from: ["proxmox-qemu"], what: "The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use." },
-  "proxmox.gpu-report": { name: "Host's GPU report", from: ["proxmox-lxc"], what: "The host's report of each GPU's memory, which bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU." },
+  "proxmox.gpu-helper": {
+    name: "Host's GPU helper",
+    from: ["proxmox-lxc"],
+    what: "Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run (071).",
+  },
+  "proxmox.gpu-report": { name: "Host's GPU report", from: ["proxmox-lxc"], what: "The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU." },
   "gpu.<gpu>": { name: "GPU <gpu>", from: ["proxmox-lxc"], what: "A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs." },
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: "bb-box's SSH key reads, and, where bb-box made it, its public key to install." },
 

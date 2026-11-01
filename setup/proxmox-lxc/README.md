@@ -24,7 +24,7 @@ box or a spare is ready at once. How bb-box drives a box is in the
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for bb-box |
 | `host/setup-gpu-report.sh` | With GPU desktops: the host's report of each GPU's free memory, which bb-box reads |
-| `host/setup-gpu.sh` | Not yet for general use: the GPU helper, `bb-box-gpu`, with writes off. It writes the report in the timer's place |
+| `host/setup-gpu.sh` | Not yet for general use: installs, upgrades and removes the GPU helper, `bb-box-gpu`, with writes off. It writes the report in the timer's place |
 | `template/build.sh` | Builds the templates |
 | `test/smoke.sh` | Clones, starts, checks and deletes a box with bb-box's token |
 
@@ -266,14 +266,53 @@ desktop templates give it: its UUID, its PCI address or its index. A report
 under 10 minutes old stands for every GPU it names. Without one, bb-box
 reads memory in desktops. The doctor's "Host's GPU report" check says which.
 
-On a host where `host/setup-gpu.sh` has installed the GPU helper,
-`bb-box-gpu`, the helper writes the report instead of the timer, with its own
-lines added, and `setup-gpu-report.sh` makes the VM and its rights but does
-not put the timer back. This release of the helper runs with writes off: it
-changes no guest. `host/setup-gpu.sh --remove` takes it away and puts the
-timer back. The helper keeps one `nvidia-smi` running, so NVIDIA's kernel
-module cannot be unloaded, and a card cannot be reset, while it runs:
-`systemctl stop bb-box-gpu` first.
+#### The GPU helper
+
+Not yet for general use. `host/setup-gpu.sh` installs `bb-box-gpu`, the
+host's GPU helper, in the timer's place. The helper writes the same report,
+with its own lines added. This release runs it with writes off, a dry run: it
+changes no guest.
+
+```sh
+host/setup-gpu.sh                # install, or upgrade from an older release
+host/setup-gpu.sh --pool team    # serve another install's pool as well
+host/setup-gpu.sh --remove       # remove it, and put the timer back
+```
+
+- Install puts in `/usr/local/sbin/bb-box-gpu`, `bb-box-gpu.service`,
+  `bb-box-gpu-boot.service` and `/etc/bb-box/gpu.conf`. That file lists the
+  pools the helper serves, `BBBOX_POOL` and each `--pool`, and says
+  `writes off`. The timer is retired only once the helper has written a
+  fresh report. A second run says "nothing changed".
+- Upgrade is running a newer release's `setup-gpu.sh`. It replaces the
+  program, restarts the helper, and keeps `gpu.conf` and the ledger in
+  `/var/lib/bb-box-gpu`. If the new helper writes no fresh, healthy report
+  within 75 s, the one before is put back as it was, with its ledger. The
+  helper writes its report at least once a minute, so a restart with nothing
+  new to say can take that long.
+- An older release refuses to replace a newer helper, or to use a ledger a
+  newer protocol wrote, unless given `--downgrade`. It then sets that ledger
+  aside, and the helper rebuilds it from the guests.
+- `--writes on` is refused in this release, and changes nothing.
+- `--remove` starts the timer and waits for it to write the report before
+  it stops the helper. If the timer cannot write, as when `nvidia-smi`
+  fails, the helper is left running and nothing is removed. It keeps
+  `gpu.conf` and the ledger.
+- Whenever a run stops the helper, the timer is already running, so the
+  report always has a writer, even if the run is killed. A run that is
+  interrupted, by Ctrl-C or a dropped SSH session, or fails part way, says
+  which of the two writes the report. It keeps the install from before it in
+  `/var/lib/bb-box-gpu/setup-backup`: run the same command again, and that
+  install is put back if the helper does not report.
+- No run changes a guest's device lines or tags.
+
+Where the helper is installed, `setup-gpu-report.sh` makes the VM and its
+rights but does not put the timer back. The doctor's "Host's GPU helper"
+check says whether the helper reports, speaks this bb-box's protocol, serves
+this install's pool and has writes on; it warns while writes are off. The
+helper keeps one `nvidia-smi` running, so NVIDIA's kernel module cannot be
+unloaded, and a card cannot be reset, while it runs: `systemctl stop
+bb-box-gpu` first.
 
 ### 6. Configure bb-box
 
@@ -436,6 +475,11 @@ Its fix is the `build.sh` command that rebuilds the template.
   `systemctl status bb-box-gpu` where the GPU helper is installed. Its log names a missing
   VM or an `nvidia-smi` that gave no memory. A host clock 10 minutes or more
   behind the BB server's also makes the report look old.
+- **The doctor fails the host's GPU helper**: do what its fix says. A report
+  3 minutes old needs `systemctl status bb-box-gpu` on the host. A pool it
+  does not serve needs `host/setup-gpu.sh --pool <pool>`. A helper of an
+  older protocol needs this release's `host/setup-gpu.sh`, and one of a
+  newer protocol needs a newer BB Box.
 - **The desktop viewer says the box refused its VNC password**: VNC runs with
   another password than `/var/lib/bb-box/vnc-password`. Restart
   `bb-box-display` in the box, or release the box.
