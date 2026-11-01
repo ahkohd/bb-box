@@ -946,7 +946,7 @@ Take a snapshot of a thread's box, or with --machine one of your machines: its d
 
 ```text
 Usage:
-  bb box snapshot take <box> [--thread <value>] [--machine] [--json] [--name <value>] [--note <value>] [--memory] [--request <value>]
+  bb box snapshot take <box> [--thread <value>] [--machine] [--json] [--name <value>] [--note <value>] [--memory] [--no-memory] [--request <value>]
 
 Arguments:
   <box>  The box's name or ID. (required)
@@ -957,7 +957,8 @@ Options:
   --json             Print JSON.
   --name <value>     Its name, at most 60 characters, unique on the box. The time, such as Thu 10:42, when left out.
   --note <value>     A note, at most 1 KB.
-  --memory           Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower.
+  --memory           Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Where every snapshot holds it, as on a macOS box on Tart, a take holds it unasked.
+  --no-memory        Hold the box's disk only. Refused where every snapshot holds the memory.
   --request <value>  An ID you make, so a repeat of this command is the same take.
   --help, -h         Show this help and exit
 ```

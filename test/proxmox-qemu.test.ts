@@ -9,6 +9,9 @@ import { buildFromTags, installFromDescription, ownerFromDescription, ownerFromT
 import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
+import { vmNameScript } from "../src/backends/proxmox-lxc/backend.ts";
+import { spawnSync } from "node:child_process";
+import { quote } from "../src/transports/process.ts";
 import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
 import { proxmoxQemuDriver } from "../src/backends/proxmox-qemu/index.ts";
 import { BackendError, DEVICE_DISPLAY, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
@@ -17,7 +20,7 @@ import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
 import { generateKeyPair } from "../src/transports/ssh.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 const KIND = "windows-desktop";
@@ -348,7 +351,8 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   const guest = await backend.acquire(box, null, hook.value, signal());
   assert.deepEqual(guest.data, { template: 9120, box: box.boxId });
   assert.equal(proxmox.calls.find((call) => call.path.endsWith("/clone"))!.path, "/nodes/pve/qemu/9120/clone", "a clone of the Linux template");
-  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags"], "no warm pool, clock or display");
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "name", "network", "ssh", "start", "tags"], "no warm pool, clock or display");
+  assert.ok(ssh.log().some((entry) => entry.command.includes(quote(vmNameScript(box.name)))), "named after its box inside, not its template's build");
   assert.equal(parseTags(proxmox.guests.get(9700)!.config.tags).at(-1), "template.9120");
 
   const transports = await backend.transports(guest);
@@ -362,6 +366,7 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   const timings: Record<string, number> = {};
   await backend.start!(guest, signal(), (step, ms) => void (timings[step] = ms));
   assert.ok(!("clock" in timings), JSON.stringify(timings));
+  assert.ok("name" in timings, "a start names it after its VM again");
 
   // KVM is offered where the settings say the host allows nested virtualization.
   const withKvm = setup({ "linux-templates": "9120", "linux-kvm": true }).backend.kinds().find((kind) => kind.id === "linux");
@@ -682,6 +687,55 @@ test("a box's VM is relabelled with its new owner and name (036)", async () => {
   const tags = parseTags(vm.config.tags);
   assert.equal(ownerFromTags(tags)?.threadId, "operator");
   assert.equal(tags.at(-1), "template.9104", "the template tag stays");
+});
+
+test("a Linux VM box takes its box's name inside: at its acquire, at each start after, as a fork's first, and when relabelled; a Windows box keeps its computer name", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  rmSync(join(ssh.dir, "windows", "192.0.2.150"));
+  const box = identity(sized(), "linux");
+  const guest = await backend.acquire(box, null, hooks().value, signal());
+  const named = (name: string) => ssh.log().filter((entry) => entry.command.includes(quote(vmNameScript(name)))).length;
+  assert.equal(named(box.name), 1);
+
+  proxmox.guests.get(Number(guest.ref))!.config.name = "calm-otter";
+  await backend.stop!(guest, signal());
+  await backend.start!(guest, signal());
+  assert.equal(named("calm-otter"), 1, "named after the VM's name, as a fork's clone gives it the fork's");
+
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" }, box.name, signal());
+  assert.equal(named("build-1"), 1);
+
+  const { backend: windows, ssh: windowsSsh } = setup();
+  const desktop = await windows.acquire(identity(), null, hooks().value, signal());
+  await windows.relabel(desktop, { ...identity(), name: "build-2" }, desktop.ref, signal());
+  assert.equal(windowsSsh.log().filter((entry) => entry.command.includes("bb-box-boot")).length, 0);
+});
+
+test("vmNameScript renames a Linux VM from its template's build name, its hosts line too, and leaves a machine with no bb-box boot script, or already named, as it is", () => {
+  const dir = tempDir("vm-name");
+  const bin = join(dir, "bin");
+  const etc = join(dir, "etc");
+  const marker = join(dir, "bb-box-boot");
+  mkdirSync(bin);
+  mkdirSync(etc);
+  writeFileSync(join(bin, "hostname"), `#!/bin/sh\nif [ $# -eq 0 ]; then cat '${dir}/kernel'; else printf '%s\\n' "$1" > '${dir}/kernel'; fi\n`);
+  writeFileSync(join(bin, "sudo"), `#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n`);
+  for (const tool of ["hostname", "sudo"]) chmodSync(join(bin, tool), 0o755);
+  const run = (kernel: string) => {
+    writeFileSync(join(dir, "kernel"), `${kernel}\n`);
+    writeFileSync(join(etc, "hostname"), `${kernel}\n`);
+    writeFileSync(join(etc, "hosts"), `127.0.0.1 localhost\n127.0.1.1 ${kernel}\n`);
+    const ran = spawnSync("sh", ["-c", vmNameScript("calm-otter", etc, join(dir, "Xauthority"), marker)], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` } });
+    assert.equal(ran.status, 0, ran.stderr);
+    return [readFileSync(join(dir, "kernel"), "utf8"), readFileSync(join(etc, "hostname"), "utf8"), readFileSync(join(etc, "hosts"), "utf8")];
+  };
+  assert.deepEqual(run("bb-box-linux-build"), ["bb-box-linux-build\n", "bb-box-linux-build\n", "127.0.0.1 localhost\n127.0.1.1 bb-box-linux-build\n"], "no boot script: not a bb-box VM");
+  writeFileSync(marker, "#!/bin/sh\n");
+  chmodSync(marker, 0o755);
+  assert.deepEqual(run("bb-box-linux-build"), ["calm-otter\n", "calm-otter\n", "127.0.0.1 localhost\n127.0.1.1 calm-otter\n"]);
+  writeFileSync(join(bin, "sudo"), "#!/bin/sh\necho 'not again' >&2\nexit 1\n");
+  assert.deepEqual(run("calm-otter")[0], "calm-otter\n", "already named: nothing to do, so no sudo");
 });
 
 test("doctor passes on a complete setup, and warns that a template from build.sh lacks a key bb-box made", async () => {
@@ -1132,7 +1186,7 @@ test("with Linux desktop templates, linux-desktop-cpu boxes are VMs whose deskto
   const hook = hooks();
   const guest = await backend.acquire(box, null, hook.value, signal());
   assert.deepEqual(guest.data, { template: 9121, box: box.boxId });
-  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "display", "network", "ssh", "start", "tags"]);
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "display", "name", "network", "ssh", "start", "tags"]);
   // Its display mode and why, as box_status shows them for Proxmox LXC's desktops.
   assert.deepEqual(guest.facts?.map((fact) => fact.label), ["Display mode", "Display reason"]);
   assert.equal(guest.facts?.[0]?.value, "CPU");

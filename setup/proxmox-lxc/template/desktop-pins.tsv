@@ -4,7 +4,7 @@
 # tigervnc: SHA-256 of the file whose MD5 SourceForge lists for the release. chrome: from Google's stable Packages index, InRelease signed by EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796. virtualgl and selkies: GitHub release asset digest.
 tigervnc	tigervncserver_1.16.2-1ubuntu1_amd64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/amd64/tigervncserver_1.16.2-1ubuntu1_amd64.deb/download	55048dedc7707b9a242740711569b3ab96178f968437d29d4f86bbad7cce6162	x86_64
 virtualgl	virtualgl_3.1.5_amd64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_amd64.deb	df3f7788ce41b182a47c0d298e5cd6d2d63579522cb41825970b7726e825485e	x86_64
-chrome	google-chrome-stable_154.0.8037.92-1_amd64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_154.0.8037.92-1_amd64.deb	69e3f6ac0a4811f4689ca23f1fd5cc5b2c01550881928b3e196a97131165c4a2	x86_64
+chrome	google-chrome-stable_156.0.8078.79-1_amd64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_156.0.8078.79-1_amd64.deb	be1a1e161419f5c8272432f6860912550d8e29985e925913fa800493a0d0c955	x86_64
 cua-driver	cua-driver-rs-0.28.3-linux-x86_64-binary.tar.gz	https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.3/cua-driver-rs-0.28.3-linux-x86_64-binary.tar.gz	51de56e37e1e57cca613cff06e22a3c64bf8285ed97e518660f3d1cb2a4e6fcf	x86_64
 cua-driver-binary	cua-driver	-	5744fc102c9f75d011f0ab00f998668ba1f77a5c913c78d5f900a81c7cfe28ea	x86_64
 rustup	rustup-init	https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init	dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71	x86_64
@@ -12,7 +12,7 @@ selkies	selkies-2.0.0-ubuntu24.04-amd64.deb	https://github.com/selkies-project/s
 selkies-ubuntu26.04	selkies-2.0.0-ubuntu26.04-amd64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu26.04-amd64.deb	4f1fa49d89f7601b87480168fa38d4f879b5d609b5b3510cef25a88eb4ace753	x86_64
 tigervnc	tigervncserver_1.16.2-1ubuntu1_arm64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/arm64/tigervncserver_1.16.2-1ubuntu1_arm64.deb/download	d20c746bb7e0b2cca7c24229e9a6de2050674a550ea767ee6669f75f47e0a068	arm64
 virtualgl	virtualgl_3.1.5_arm64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_arm64.deb	9ac238e8a18c06d84ef65444a591a7a5bb4c4ce9e8cfdd92f8a2aea35edbb5d7	arm64
-chrome	google-chrome-stable_154.0.8037.92-1_arm64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_154.0.8037.92-1_arm64.deb	986610bcbc1f58eeede94921086adbb3c1df2e6d3cb4da395b1a18e71b7deb77	arm64
+chrome	google-chrome-stable_156.0.8078.79-1_arm64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_156.0.8078.79-1_arm64.deb	dc66f2d96853153e350c4a0944da4503cae39c2fcbcdb4e0057c64f6c49202ff	arm64
 cua-driver	cua-driver-rs-0.28.3-linux-arm64-binary.tar.gz	https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.3/cua-driver-rs-0.28.3-linux-arm64-binary.tar.gz	392cc554eb916b37d585c2ee2e8090cb1efe8d34b1657df77afd2e7a67d0f83b	arm64
 cua-driver-binary	cua-driver	-	197fe727f1fbe6a549bdab60f1c19534083a7011c869458c3493aed8d0ab1133	arm64
 rustup	rustup-init	https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init	15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433	arm64

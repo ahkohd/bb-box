@@ -349,14 +349,14 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async "snapshot.takeCheck"({ box: boxId, memory }) {
       try {
         const box = await pageBox(boxId);
-        return { check: await snapshots.checkTake(PERSON, box, personStanding(box), { memory: memory === true }), refusal: null };
+        return { check: await snapshots.checkTake(PERSON, box, personStanding(box), memory !== undefined ? { memory } : {}), refusal: null };
       } catch (error) {
         return { check: null, refusal: describeError(error, "Planning the snapshot") };
       }
     },
     "snapshot.take": ({ box, name, note, memory, request }) =>
       snapshotChange(box, "Taking the snapshot", (found) =>
-        snapshots.take(PERSON, found, personStanding(found), { ...(name?.trim() ? { name } : {}), ...(note?.trim() ? { note } : {}), memory: memory === true, request }),
+        snapshots.take(PERSON, found, personStanding(found), { ...(name?.trim() ? { name } : {}), ...(note?.trim() ? { note } : {}), ...(memory !== undefined ? { memory } : {}), request }),
       ),
     async "snapshot.restoreCheck"({ box: boxId, snapshot }) {
       try {

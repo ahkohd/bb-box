@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { anchor } from "../scripts/reference.ts";
 import { readdirSync } from "node:fs";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, type Page } from "../site/src/repo.ts";
 import { sidebar } from "../site/src/sidebar.ts";
+import { repositoryFiles } from "./repository-files.ts";
 
 const pages = readPages();
 
@@ -22,7 +22,7 @@ test("the site has the getting-started path and a page for every guide, backend 
   const ids = new Set(pages.map((page) => page.id));
   for (const id of ["start", "start/quick-start", "setup", "guide", "reference", "reference/tools", "reference/cli", "agent-skill"]) assert.ok(ids.has(id), `the site has no page ${id}`);
   const files = new Set(pages.map((page) => page.file));
-  const expected = execFileSync("git", ["ls-files", "docs/guide/*.md", "docs/reference/*.md", "setup/*README.md"], { cwd: repoRoot, encoding: "utf8" }).split("\n").filter(Boolean);
+  const expected = repositoryFiles(repoRoot, (path) => /^docs\/(guide|reference)\/.*\.md$/.test(path) || /^setup\/.*README\.md$/.test(path));
   assert.deepEqual(
     expected.filter((file) => !files.has(file)),
     [],

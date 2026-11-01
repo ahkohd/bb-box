@@ -110,7 +110,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
-import { displayReason } from "../proxmox-lxc/backend.ts";
+import { displayReason, vmNameScript } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
@@ -238,6 +238,10 @@ const ANDROID_IMAGE_KIND: BoxKind = {
   capabilities: LINUX_KIND.capabilities,
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
+function isLinuxVmKind(kind: string): boolean {
+  return LINUX_KINDS.some((linux) => linux.id === kind);
+}
+
 const LINUX_TEMPLATE_KINDS: readonly BoxKind[] = [...LINUX_KINDS, ANDROID_IMAGE_KIND];
 
 function androidKind(device: DeviceOffer): BoxKind {
@@ -1164,6 +1168,7 @@ export class ProxmoxQemuBackend implements Backend {
       // Read while the box comes up: the size it has, as Proxmox gives it.
       const size = api.config(id, signal).then(sizeOf, () => null);
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step, os);
+      if (isLinuxVmKind(box.kind)) await step("name", () => this.#nameLinux(id, box.name, signal));
       // A Linux template's bb-box-boot grows its root filesystem at each boot. Its desktop starts after SSH, as in Proxmox LXC.
       if (linux && this.#kindOf(template).capabilities.displays.length) {
         display = await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
@@ -1221,6 +1226,11 @@ export class ProxmoxQemuBackend implements Backend {
     if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
     await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS, signal, step, os);
+    const kind = this.#kindOf(guest.data?.template);
+    if (isLinuxVmKind(kind.id)) {
+      const name = (await api.config(vmid, signal)).name;
+      if (typeof name === "string" && name) await step("name", () => this.#nameLinux(vmid, name, signal));
+    }
     await answered?.();
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
@@ -1404,6 +1414,7 @@ export class ProxmoxQemuBackend implements Backend {
     // A spare's low CPU weight goes back as a box takes it (#888).
     await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)) }, signal);
     await this.#settle(api, vmid, signal);
+    if (isLinuxVmKind(this.#kindOf(template).id) && (await api.status(vmid, signal))?.status === "running") await this.#nameLinux(vmid, box.name, signal);
   }
 
   /** Puts back the CPU weight a box's VM had lowered while it started, as the sweep asks for a ready box (#888). */
@@ -2050,6 +2061,17 @@ export class ProxmoxQemuBackend implements Backend {
       } finally {
         this.#reserved.delete(vmid);
       }
+    }
+  }
+
+  async #nameLinux(vmid: number, name: string, signal?: AbortSignal): Promise<void> {
+    try {
+      const result = await (await this.#command(vmid, "linux")).run(vmNameScript(name), { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `exit code ${result.exitCode}`);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const why = error instanceof Error ? error.message : String(error);
+      this.#context.logError("name the box", new Error(`Naming box ${name} inside failed, so it may keep its template's hostname until it next starts: ${why}`));
     }
   }
 

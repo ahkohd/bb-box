@@ -3,9 +3,11 @@
 // The pins point at file:// URLs, which curl reads with no network.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -100,4 +102,57 @@ test("only the Wayland desktop fetches the Ubuntu 26.04 pins, which the X11 desk
   };
   assert.deepEqual(fetched("desktop-cpu", "x11"), ["selkies-2.0.0-ubuntu24.04-amd64.deb"]);
   assert.deepEqual(fetched("desktop-wayland-cpu", "wayland"), ["selkies-2.0.0-ubuntu24.04-amd64.deb", "selkies-2.0.0-ubuntu26.04-amd64.deb"]);
+});
+
+function runAsync(script: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ status: number | null; stdout: string; stderr: string; ms: number }> {
+  const began = performance.now();
+  return new Promise((resolve) => {
+    const child = spawn("bash", [script, ...args], { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (status) => resolve({ status, stdout, stderr, ms: performance.now() - began }));
+  });
+}
+
+test("a download that stalls is retried, then fails within its stall limits, naming the file, and leaves no part behind", { skip: spawnSync("jq", ["--version"]).status !== 0 && "needs jq" }, async () => {
+  const held: ServerResponse[] = [];
+  let asked = 0;
+  const server = createServer((_request, response) => {
+    asked++;
+    response.writeHead(200, { "content-type": "application/octet-stream", "content-length": "1048576" });
+    response.write("x".repeat(64));
+    held.push(response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const w = world({});
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/big-tool-1.0.tar.gz`;
+    writeFileSync(join(w.root, "template", "pins.json"), JSON.stringify({ tools: [{ name: "big", arch: "x86_64", version: "1", url, sha256: sha256("never sent") }] }));
+    const ran = await runAsync(join(w.root, "template", "fetch-artifacts.sh"), [w.art("art"), "linux", "x86_64"], {
+      ...process.env,
+      BBBOX_ENV: "/nonexistent",
+      BBBOX_BB_URL: "",
+      BBBOX_ARTIFACT_CACHE: "",
+      BBBOX_DOWNLOAD_STALL_SECONDS: "1",
+    });
+    assert.equal(ran.status, 1, ran.stderr);
+    assert.match(ran.stderr, /download failed, as it stalled, under 10240 bytes a second for 1 s, after its retries: big-tool-1\.0\.tar\.gz from http:\/\/127\.0\.0\.1:\d+\/big-tool-1\.0\.tar\.gz/);
+    assert.equal(asked, 4, "the first try and its 3 retries");
+    assert.ok(ran.ms < 60_000, `failed in ${Math.round(ran.ms)} ms, not after the build's time`);
+    assert.deepEqual(readdirSync(w.art("art")), [], "no part of the download is left");
+  } finally {
+    for (const response of held) response.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("each download has a connect timeout, a stall abort, a cap per file and its retries", () => {
+  const script = readFileSync(join(SETUP, "template", "fetch-artifacts.sh"), "utf8");
+  for (const flag of ["--connect-timeout", "--speed-limit", "--speed-time", "--max-time"]) assert.match(script, new RegExp(`download_limits=\\(.*${flag} `), flag);
+  assert.match(script, /retried_download_limits=\(.*--retry 3 /);
+  assert.equal(script.match(/curl -fsS/g)?.length, script.match(/curl -fsSL? "\$\{(retried_)?download_limits\[@\]\}"/g)?.length, "every curl has the limits");
+  assert.match(script, /download_cap_seconds=\$\{BBBOX_DOWNLOAD_CAP_SECONDS:-1800\}/);
 });

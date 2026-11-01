@@ -78,6 +78,7 @@ export class FakeSnapshots {
   forkWhy: string | null = null;
   onProvider: { price: Snapshotting["price"]; forkWhy?: string; forkSafeFrom?: number } | null = null;
   beside = false;
+  memoryOnly = false;
   notResumed: string | null = null;
   bill: SnapshotBill | Error | null = null;
   billReads = 0;
@@ -150,7 +151,7 @@ export class FakeSnapshots {
             ...(this.onProvider.forkSafeFrom ? { forkSafeFrom: this.onProvider.forkSafeFrom } : {}),
           }
         : this.beside
-          ? { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "suspends", restore: "in-place", fork: "copy", keepsPastRelease: "as-is", lives: "host", outlivesGuest: true, price: null, excludes: null }
+          ? { scope: "box", holds: this.memoryOnly ? ["disk-and-memory"] : ["disk", "disk-and-memory"], whileRunning: "suspends", restore: "in-place", fork: "copy", keepsPastRelease: "as-is", lives: "host", outlivesGuest: true, price: null, excludes: null }
           : { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null };
     const release = backend.release.bind(backend);
     target.release = async (guest: Guest, hooks: never) => {

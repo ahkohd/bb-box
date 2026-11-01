@@ -162,6 +162,7 @@ const WARM_HOSTNAME = "bb-box-warm";
 /** The tag and hostname of a box bb-box builds or tries an image in (049), which no sweep releases. */
 const IMAGE_BOX = "image-box";
 const IMAGE_HOSTNAME = "bb-box-image";
+const VM_BOOT_SCRIPT = "/usr/local/sbin/bb-box-boot";
 /** The tag that names a captured build's image (049), such as image.standard. */
 const IMAGE_TAG = "image.";
 /** The tag that names a captured build's kind. */
@@ -401,8 +402,15 @@ export function warmNameScript(name: string, etc = "/etc", auth = DISPLAY_AUTH_F
 
 /** As warmNameScript, for a guest named `from`, as a spare that changes owner and name (036). */
 export function nameScript(from: string, name: string, etc = "/etc", auth = DISPLAY_AUTH_FILE): string {
-  return String.raw`[ "$(hostname)" = ${quote(from)} ] || exit 0
-sudo -n sh -s -- ${quote(name)} ${quote(etc)} ${quote(from)} <<'NAME' || exit
+  return `[ "$(hostname)" = ${quote(from)} ] || exit 0\n${renameInside(quote(from), name, etc, auth)}`;
+}
+
+export function vmNameScript(name: string, etc = "/etc", auth = DISPLAY_AUTH_FILE, marker = VM_BOOT_SCRIPT): string {
+  return `[ -x ${quote(marker)} ] || exit 0\nfrom=$(hostname)\n[ "$from" != ${quote(name)} ] || exit 0\n${renameInside('"$from"', name, etc, auth)}`;
+}
+
+function renameInside(from: string, name: string, etc: string, auth: string): string {
+  return String.raw`sudo -n sh -s -- ${quote(name)} ${quote(etc)} ${from} <<'NAME' || exit
 set -e
 awk -v old="$3" -v new="$1" '
   $1 == "127.0.1.1" {

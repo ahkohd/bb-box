@@ -233,7 +233,7 @@ Take a snapshot of a box: its disk, or with memory its disk and running apps whe
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
 | `name` | string | no | Its name, at most 60 characters, unique on the box, such as "before the migration". The time, such as Thu 10:42, when left out. |
 | `note` | string | no | A note, at most 1 KB: what the box held, or why you took it. |
-| `memory` | boolean | no | Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false. A macOS box on Tart holds its memory in every snapshot, so pass true there. |
+| `memory` | boolean | no | Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false where its backend can leave it out, and to true where every snapshot holds it, as on a macOS box on Tart, where false is refused. |
 
 ## box_snapshot_delete
 

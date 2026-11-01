@@ -3,7 +3,6 @@
 // files lead somewhere, and the skill tells the agent of every tool.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
@@ -12,6 +11,7 @@ import { REFERENCE_DIR, anchor, referencePages, registered } from "../scripts/re
 import { DRIVERS } from "../src/backends/index.ts";
 import { KIND_INFO } from "../src/backends/kinds.ts";
 import { CHECKS } from "../src/core/checks.ts";
+import { repositoryFiles } from "./repository-files.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const page = (file: string) => readFileSync(join(REFERENCE_DIR, file), "utf8");
@@ -84,8 +84,8 @@ function anchors(text: string): Set<string> {
 }
 
 test("every link from one Markdown file to another leads to a file, and to a heading in it", () => {
-  const files = execFileSync("git", ["ls-files", "*.md"], { cwd: root, encoding: "utf8" }).split("\n").filter(Boolean);
-  assert.ok(files.length > 10, "git lists the Markdown files");
+  const files = repositoryFiles(root, (path) => path.endsWith(".md"));
+  assert.ok(files.length > 10, "the repository has the Markdown files");
   const broken: string[] = [];
   for (const file of files) {
     const text = withoutCode(readFileSync(join(root, file), "utf8")).replace(/`[^`\n]*`/g, "");

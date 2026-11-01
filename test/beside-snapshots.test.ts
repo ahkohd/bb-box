@@ -28,6 +28,21 @@ test("a memory snapshot of a stopped box is taken where the backend's snapshots 
   assert.equal(taken.snapshot?.holds, "disk-and-memory");
 });
 
+test("where every snapshot holds the memory, as on a Tart macOS box, a take that does not say holds it, the check plans it, and one that asks for none is refused in words", async () => {
+  const state = beside(world());
+  state.provider.memoryOnly = true;
+  const box = await readyBox(state);
+  const check = await state.snapshots.checkTake(COMMAND, box, standing(box));
+  assert.equal(check.storage, "fast");
+  assert.ok(check.memory, "the check plans the memory");
+  const taken = await state.snapshots.take(COMMAND, box, standing(box), { name: "unsaid" });
+  assert.equal(taken.snapshot?.holds, "disk-and-memory");
+  const refused = await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "no memory", memory: false }));
+  assert.equal(refused.code, "unsupported");
+  assert.match(refused.message, /^Every snapshot Fake host takes of a linux box holds its memory too, so a snapshot of box \S+ cannot leave it out\. Take it with its memory\.$/);
+  assert.equal(state.store.records().length, 1);
+});
+
 test("snapshots beside the guest: a release deletes the unkept ones, keeps a kept one as it is with no held copy, and deletes the guest though it had one", async () => {
   const state = beside(armedWorld());
   const box = await readyBox(state);
