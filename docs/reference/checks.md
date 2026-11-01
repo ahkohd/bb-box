@@ -105,7 +105,8 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.snapshots` | Snapshots | Whether the token may take and restore snapshots, with VM.Snapshot and VM.Snapshot.Rollback on the pool, and what each template's storage restores: any snapshot on LVM-thin, Ceph RBD, BTRFS and qcow2 files, the newest only on ZFS, none on LVM or raw files (070). |
 | `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
-| `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
+| `proxmox.gpu-helper` | Host's GPU helper | Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run (071). |
+| `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
 | `gpu.<gpu>` | GPU &lt;gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 

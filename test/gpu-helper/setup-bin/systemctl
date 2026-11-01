@@ -3,6 +3,7 @@ state=$BBBOX_ROOT/run/fake-systemd
 units=$BBBOX_ROOT/etc/systemd/system
 mkdir -p "$state"
 echo "$*" >>"$state/calls"
+caller=$PPID
 now=0
 words=()
 for word; do
@@ -14,8 +15,14 @@ for word; do
 done
 verb=${words[0]}
 set -- "${words[@]:1}"
+call="$verb${*:+ $*}"
+echo "$call" >>"$state/calls-made"
 
 refuse_if_asked() { [ "${FAKE_SYSTEMCTL_FAIL:-}" != "$verb $1" ] || exit 1; }
+if [ -n "${FAKE_SYSTEMCTL_FAIL_NTH:-}" ] && [ "${FAKE_SYSTEMCTL_FAIL_NTH%#*}" = "$call" ] &&
+  [ "$(grep -cxF -- "$call" "$state/calls-made")" = "${FAKE_SYSTEMCTL_FAIL_NTH##*#}" ]; then
+  exit 1
+fi
 pid_of() { cat "$state/$1.pid" 2>/dev/null; }
 alive() {
   local pid
@@ -34,28 +41,58 @@ stop_unit() {
   rm -f "$state/$unit.pid"
 }
 
+within_start_limit() {
+  [ -n "${FAKE_SYSTEMCTL_START_LIMIT:-}" ] || return 0
+  local burst=${FAKE_SYSTEMCTL_START_LIMIT%/*} seconds=${FAKE_SYSTEMCTL_START_LIMIT#*/} now recent
+  now=$(date +%s)
+  recent=$(awk -v since=$((now - seconds)) '$1 >= since' "$state/$1.starts" 2>/dev/null | wc -l)
+  if [ "$recent" -ge "$burst" ]; then
+    echo "Job for $1 failed because start of the service was attempted too often." >&2
+    return 1
+  fi
+  echo "$now" >>"$state/$1.starts"
+}
+
 start_unit() {
   local unit=$1
   refuse_if_asked "$unit"
   case "$unit" in *.timer) : >"$state/$unit.active"; return 0 ;; esac
   [ -e "$units/$unit" ] || { echo "Unit $unit not found." >&2; return 5; }
+  within_start_limit "$unit" || return 1
   if grep -qx 'Type=oneshot' "$units/$unit"; then
     bash -c "$(command_of "$unit")" >>"$state/$unit.log" 2>&1
     return
   fi
+  if [ "$verb" = start ] && alive "$unit"; then return 0; fi
   stop_unit "$unit"
   nohup bash -c "exec $(command_of "$unit")" >>"$state/$unit.log" 2>&1 </dev/null &
   echo $! >"$state/$unit.pid"
 }
 
-case "$verb" in
-  daemon-reload) ;;
-  list-unit-files) [ ! -e "$units/$1" ] || echo "$1 enabled enabled" ;;
-  is-enabled) [ -e "$state/$1.enabled" ] ;;
-  is-active) case "$1" in *.timer) [ -e "$state/$1.active" ] ;; *) alive "$1" ;; esac ;;
-  enable) for unit; do refuse_if_asked "$unit"; : >"$state/$unit.enabled"; done ;;
-  disable) for unit; do refuse_if_asked "$unit"; rm -f "$state/$unit.enabled"; [ "$now" = 0 ] || stop_unit "$unit"; done ;;
-  start | restart) for unit; do start_unit "$unit" || exit $?; done ;;
-  stop) for unit; do refuse_if_asked "$unit"; stop_unit "$unit"; done ;;
-  *) echo "fake systemctl: $verb" >&2; exit 1 ;;
-esac
+perform() {
+  case "$verb" in
+    daemon-reload) ;;
+    reset-failed) for unit; do rm -f "$state/$unit.starts"; done ;;
+    list-unit-files) [ ! -e "$units/$1" ] || echo "$1 enabled enabled" ;;
+    is-enabled) [ -e "$state/$1.enabled" ] ;;
+    is-active) case "$1" in *.timer) [ -e "$state/$1.active" ] ;; *) alive "$1" ;; esac ;;
+    enable) for unit; do refuse_if_asked "$unit"; : >"$state/$unit.enabled"; done ;;
+    disable) for unit; do refuse_if_asked "$unit"; rm -f "$state/$unit.enabled"; [ "$now" = 0 ] || stop_unit "$unit"; done ;;
+    start | restart) for unit; do start_unit "$unit" || return $?; done ;;
+    stop) for unit; do refuse_if_asked "$unit"; stop_unit "$unit"; done ;;
+    *) echo "fake systemctl: $verb" >&2; return 1 ;;
+  esac
+}
+
+perform "$@"
+status=$?
+[ "${FAKE_SYSTEMCTL_FAIL_AFTER:-}" != "$call" ] || status=1
+if [ -n "${FAKE_SYSTEMCTL_SIGNAL:-}" ]; then
+  wanted=${FAKE_SYSTEMCTL_SIGNAL%=*}
+  nth=1
+  if [[ "$wanted" == *"#"* ]]; then nth=${wanted##*#} wanted=${wanted%#*}; fi
+  if [ "$wanted" = "$call" ] && [ "$(grep -cxF -- "$call" "$state/calls-made")" = "$nth" ]; then
+    kill "-${FAKE_SYSTEMCTL_SIGNAL##*=}" "$caller"
+  fi
+fi
+exit "$status"
