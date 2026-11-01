@@ -4425,6 +4425,36 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
 });
 
+test("bb box snapshot take and box_snapshot hold the memory unasked where every snapshot holds it, as on a Tart macOS box, and refuse no memory there in words", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.beside = true;
+  provider.memoryOnly = true;
+  provider.keepWay = "as-is";
+  provider.attach(world.backend!, Date.now);
+  assert.equal((await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD])).exitCode, 0);
+  const box = await only(app);
+
+  const taken = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "by command"]);
+  assert.equal(taken.exitCode, 0, taken.stderr);
+  assert.match(taken.stdout ?? "", /it holds its disk and memory\./);
+  assert.match(text(await tool("box_snapshot", { box: box.name, name: "by agent" })), /^Took snapshot "by agent" .*it holds its disk and memory\./);
+  assert.deepEqual(app.snapshotStore.records({ box: box.id }).map((record) => record.holds), ["disk-and-memory", "disk-and-memory"]);
+
+  const refusal = /Every snapshot Fake host takes of a linux box holds its memory too, so a snapshot of box \S+ cannot leave it out\. Take it with its memory\./;
+  const unwanted = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--no-memory"]);
+  assert.notEqual(unwanted.exitCode, 0);
+  assert.match(unwanted.stderr ?? "", refusal);
+  const both = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--memory", "--no-memory"]);
+  assert.notEqual(both.exitCode, 0);
+  assert.match(both.stderr ?? "", /Give --memory or --no-memory, not both\./);
+  const refusedTool = await tool("box_snapshot", { box: box.name, memory: false });
+  assert.equal(typeof refusedTool === "string" ? false : refusedTool.isError, true);
+  assert.match(text(refusedTool), refusal);
+  assert.equal(app.snapshotStore.records({ box: box.id }).length, 2);
+});
+
 test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_status and box_list say what it holds and offers; the doctor checks snapshots.db (070)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

@@ -61,6 +61,13 @@ function keepInput(options: { readonly days?: unknown; readonly until?: unknown 
   return { ...(typeof options.days === "number" ? { days: options.days } : {}), ...(typeof options.until === "string" ? { until: options.until } : {}) };
 }
 
+function memoryAsked(options: { readonly memory?: unknown; readonly "no-memory"?: unknown }): { memory?: boolean } {
+  if (options.memory && options["no-memory"]) throw new BoxError("invalid_value", "Give --memory or --no-memory, not both.");
+  if (options.memory) return { memory: true };
+  if (options["no-memory"]) return { memory: false };
+  return {};
+}
+
 function shown(records: readonly SnapshotRecord[], kept: boolean): SnapshotRecord[] {
   return kept ? records.filter(isKept) : [...records];
 }
@@ -80,7 +87,8 @@ export function snapshotCommands(app: BbBox) {
         ...jsonOption,
         name: { type: "string", description: "Its name, at most 60 characters, unique on the box. The time, such as Thu 10:42, when left out." },
         note: { type: "string", description: "A note, at most 1 KB." },
-        memory: { type: "boolean", description: "Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower." },
+        memory: { type: "boolean", description: "Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Where every snapshot holds it, as on a macOS box on Tart, a take holds it unasked." },
+        "no-memory": { type: "boolean", description: "Hold the box's disk only. Refused where every snapshot holds the memory." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same take." },
       },
       run: ({ positionals, options }, ctx) =>
@@ -89,7 +97,7 @@ export function snapshotCommands(app: BbBox) {
           const answer = await snapshots.take(COMMAND, box, standingOf(box), {
             ...(options.name !== undefined ? { name: String(options.name) } : {}),
             ...(options.note !== undefined ? { note: String(options.note) } : {}),
-            ...(options.memory ? { memory: true } : {}),
+            ...memoryAsked(options),
             ...(options.request !== undefined ? { request: String(options.request) } : {}),
           });
           return options.json ? json(answer) : out(takenText(answer, box.name, app.snapshots.settings.perBox));

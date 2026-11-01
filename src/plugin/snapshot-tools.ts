@@ -106,13 +106,13 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
       box: boxParam,
       name: z.string().min(1).max(60).optional().describe('Its name, at most 60 characters, unique on the box, such as "before the migration". The time, such as Thu 10:42, when left out.'),
       note: z.string().min(1).optional().describe("A note, at most 1 KB: what the box held, or why you took it."),
-      memory: z.boolean().optional().describe("Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false. A macOS box on Tart holds its memory in every snapshot, so pass true there."),
+      memory: z.boolean().optional().describe("Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false where its backend can leave it out, and to true where every snapshot holds it, as on a macOS box on Tart, where false is refused."),
     }),
     async execute({ box: ref, name, note, memory }, { threadId, signal }) {
       try {
         const id = thread(threadId);
         const { box, standing } = await snapshotTarget(app, id, ref, signal);
-        const answer = await app.snapshots.take(agent(id), box, standing, { ...(name !== undefined ? { name } : {}), ...(note !== undefined ? { note } : {}), ...(memory ? { memory: true } : {}) });
+        const answer = await app.snapshots.take(agent(id), box, standing, { ...(name !== undefined ? { name } : {}), ...(note !== undefined ? { note } : {}), ...(memory !== undefined ? { memory } : {}) });
         const perBox = app.snapshots.settings.perBox;
         const snapshot = answer.snapshot;
         return `${takenText(answer, box.name, perBox)}${takenNote(answer, perBox)}${next(

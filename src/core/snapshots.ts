@@ -791,7 +791,7 @@ export class Snapshots {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#repeat(earlier);
     }
-    const { box, backend, offer, plan, memory } = await this.#takeContext(boxId, input.memory === true);
+    const { box, backend, offer, plan, memory } = await this.#takeContext(boxId, input.memory);
     const safety = await this.#forkSafe(box, backend);
     const spends = takeSpends(plan, memory);
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
@@ -900,7 +900,7 @@ export class Snapshots {
     return answer;
   }
 
-  async #takeContext(boxId: string, memory: boolean): Promise<TakeContext> {
+  async #takeContext(boxId: string, asked: boolean | undefined): Promise<TakeContext> {
     const box = await this.#deps.boxes.find(boxId);
     if (!box) throw new BoxError("released", "That box was released, so it takes no snapshot.");
     const restoring = this.#restoreHolding(box);
@@ -913,8 +913,9 @@ export class Snapshots {
     await this.readBill(backend);
     const offer = this.offerFor(backend, box.kind);
     if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
+    const memory = asked ?? !offer.holds.includes("disk");
     if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
-    if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too. Ask for its memory.`);
+    if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too, so a snapshot of box ${box.name} cannot leave it out. Take it with its memory.`);
     if (memory && box.state !== "ready" && offer.whileRunning !== "suspends") throw new BoxError("not_ready", `A snapshot with its memory needs box ${box.name} running, and it is stopped.`);
     this.#requireStore("takes");
     const plan = await backend.planSnapshots(box.guest, box.kind, null, this.#stopping.signal);
@@ -962,11 +963,10 @@ export class Snapshots {
   async checkTake(caller: Caller, box: BoxRecord, standing: Standing, input: { readonly memory?: boolean } = {}): Promise<TakeCheck> {
     const allowed = mayAct(caller, "take", standing);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
-    const memory = input.memory === true;
-    const context = await this.#takeContext(box.id, memory);
+    const context = await this.#takeContext(box.id, input.memory);
+    const { plan, memory } = context;
     const admission = this.#admit(caller, standing, context, takeSpends(context.plan, memory), this.#now());
     if ("refused" in admission) throw admission.refused;
-    const { plan } = context;
     return {
       aboutMs: memory ? (plan.take.memoryAboutMs ?? plan.take.aboutMs) : plan.take.aboutMs,
       addsBytes: memory && plan.take.memory ? plan.take.memory.addsBytes : plan.take.addsBytes,
