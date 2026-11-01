@@ -344,6 +344,11 @@ export interface MakeSandbox {
   readonly labels: Readonly<Record<string, string>>;
   readonly name: string;
   readonly idempotencyKey?: string;
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+function envOf(make: MakeSandbox): { readonly env?: Readonly<Record<string, string>> } {
+  return make.env ? { env: make.env } : {};
 }
 
 export class BoatApi {
@@ -437,7 +442,7 @@ export class BoatApi {
     const answer = await this.#call(
       "POST",
       "/sandboxes",
-      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false },
+      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false, ...envOf(make) },
       { "idempotency-key": make.idempotencyKey ?? randomUUID() },
       signal,
     );
@@ -448,7 +453,7 @@ export class BoatApi {
     const answer = await this.#call(
       "POST",
       `/sandboxes/${encodeURIComponent(from)}/fork`,
-      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, noEnv: true, monitoring: false },
+      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, noEnv: true, monitoring: false, ...envOf(make) },
       { "idempotency-key": make.idempotencyKey ?? randomUUID() },
       signal,
     );
@@ -496,7 +501,8 @@ export class BoatApi {
 
   async savedSnapshots(signal?: AbortSignal): Promise<SavedSnapshots> {
     const answer = await this.#call("GET", "/saved-snapshots", undefined, {}, signal);
-    const snapshots = Array.isArray(answer.snapshots) ? (answer.snapshots as Record<string, unknown>[]).map(savedSnapshotFrom) : [];
+    if (!Array.isArray(answer.snapshots)) throw new BoatError("failed", 200, "not_a_list", "boat's answer to the list of saved snapshots held no list, so bb-box changes nothing by it.");
+    const snapshots = (answer.snapshots as Record<string, unknown>[]).map(savedSnapshotFrom);
     return { snapshots, allowance: allowanceFrom(answer.allowance) };
   }
 
@@ -532,7 +538,7 @@ export class BoatApi {
     const answer = await this.#call(
       "POST",
       "/sandboxes",
-      { from: saved, type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false },
+      { from: saved, type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false, ...envOf(make) },
       { "idempotency-key": make.idempotencyKey ?? randomUUID() },
       signal,
     );

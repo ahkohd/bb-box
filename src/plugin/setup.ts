@@ -27,13 +27,13 @@ import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
 import { DeviceComputer } from "../core/device-computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
-import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
+import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig, type InUse } from "../core/document.ts";
 import { INSTALL_ID_KEY, loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
 import { Configuration, boundedDoctor, type ApplyResult, type BackendSnapshotsView } from "./configuration.ts";
-import { backendSnapshotsView } from "./snapshot-words.ts";
+import { backendSnapshotsView, providerSnapshotWords } from "./snapshot-words.ts";
 import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
@@ -631,6 +631,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   let files: BoxFiles | null = null;
   let snapshotsHeld = (): ReadonlyMap<string, { readonly count: number; readonly words: string }> => new Map();
   let snapshotsOf = (_backendId: string): BackendSnapshotsView | null => null;
+  let heldOnProvider = async (_backendIds: readonly string[]): Promise<NonNullable<InUse["onProvider"]>> => new Map();
   let monitorChanged = () => {};
   let settleChangedImages = () => {};
   const configuration = await Configuration.load({
@@ -641,6 +642,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     boxes: () => boxes.all(),
     spareCounts: () => boxes.spareCounts(),
     snapshotsHeld: () => snapshotsHeld(),
+    heldOnProvider: (backendIds) => heldOnProvider(backendIds),
     snapshotsOf: (backendId) => snapshotsOf(backendId),
     changed: () => {
       notify(null);
@@ -931,6 +933,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
     } catch (error) {
       logError("read the snapshots each backend holds", error);
+    }
+    return held;
+  };
+  heldOnProvider = async (backendIds) => {
+    const held = new Map<string, { count: number; words: string } | { unread: string }>();
+    for (const id of backendIds) {
+      const backend = backends.get(id);
+      if (!backend?.heldSnapshots || !backend.kinds().some((kind) => backend.snapshotting?.(kind.id)?.lives === "provider")) continue;
+      try {
+        const listed = (await backend.heldSnapshots()).filter((each) => each.where !== "held-copy");
+        held.set(id, { count: listed.length, words: providerSnapshotWords(listed, (snapshot) => snapshotStore.record(snapshot)) });
+      } catch (error) {
+        held.set(id, { unread: error instanceof Error ? error.message : String(error) });
+      }
     }
     return held;
   };

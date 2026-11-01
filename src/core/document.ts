@@ -992,6 +992,8 @@ export interface InUse {
   readonly hosts: ReadonlyMap<string, ReadonlyMap<string, number>>;
   /** Snapshots bb-box records by backend ID (070), with how many there are and their size and price in words. */
   readonly snapshots?: ReadonlyMap<string, { readonly count: number; readonly words: string }>;
+  /** Snapshots a provider holds on its account for this install, kept or not, by the ID of a backend being removed (070 unit 11b), or why they could not be listed. */
+  readonly onProvider?: ReadonlyMap<string, { readonly count: number; readonly words: string } | { readonly unread: string }>;
 }
 
 export const NOTHING_IN_USE: InUse = { backends: new Map(), hosts: new Map() };
@@ -1087,6 +1089,18 @@ export function checkDocument(
       problem(
         `backends.${id}`,
         `Backend ${id} holds ${held.words}, so it cannot be removed or renamed. Delete them first, or forget them with bb box snapshot forget ${id}: bb-box then drops its records of them, and they may still exist there and be billed.`,
+      );
+    }
+  }
+
+  for (const [id, held] of inUse.onProvider ?? []) {
+    if (seen.has(id)) continue;
+    if ("unread" in held) {
+      problem(`backends.${id}`, `bb-box could not list the snapshots backend ${id} holds on its provider's account (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there would go on costing, with nothing to delete it. Try again once it answers.`);
+    } else if (held.count > 0) {
+      problem(
+        `backends.${id}`,
+        `Backend ${id} has ${plural(held.count, "snapshot")} on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one bb-box records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.`,
       );
     }
   }

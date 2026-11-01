@@ -1,4 +1,4 @@
-import type { Backend, Snapshotting } from "../backends/types.ts";
+import type { Backend, HeldSnapshot, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
@@ -209,4 +209,13 @@ export function backendSnapshotsView(backend: Backend, kinds: readonly string[],
           }
         : null,
   };
+}
+
+export function providerSnapshotWords(held: readonly HeldSnapshot[], recordOf: (id: string) => SnapshotRecord | null): string {
+  const named = held.map((each) => {
+    const record = recordOf(each.id);
+    return `${record ? `"${record.name}" (${each.id}) of box ${record.box.name}` : each.ref}${each.keptUntil !== null ? `, kept until ${utcDay(each.keptUntil)}` : ""}`;
+  });
+  const shown = named.slice(0, 5);
+  return `${shown.join("; ")}${named.length > shown.length ? `; and ${named.length - shown.length} more` : ""}`;
 }

@@ -1114,3 +1114,35 @@ test("a start after the last version stopped tells how long BB took between the 
   await fresh.started();
   assert.deepEqual(lines, ["bb-box stopped in 2.50 s.", "bb-box started in 1.50 s: storage 1.50 s; BB began it 4.00 s after the last version stopped."]);
 });
+
+test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provider cannot be removed while the provider holds any of this install's, kept or not; bb-box asks the provider only when a save would remove it", async () => {
+  const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const base = app().configuration.exported();
+  const backend = world.backend! as unknown as Record<string, unknown>;
+  let lists = 0;
+  let held: unknown[] = [
+    { id: "snaaaaaaaaaaaa", ref: "earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa", box: "bxaaaaaaaaaaaa", owner: null, guest: { ref: "bbbox-bxaaaaaaaaaaaa", host: "provider", address: null, size: null, data: { box: "bxaaaaaaaaaaaa" } }, where: "current", state: "complete", words: null, holds: "disk", takenAt: null, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), storage: null },
+  ];
+  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: null, excludes: null });
+  backend.heldSnapshots = async () => {
+    lists++;
+    if (held === null) throw new Error("the provider did not answer");
+    return held;
+  };
+  const other = await rpc<ApplyResult>("config.apply", { draft: { ...base, general: { boxesPerThread: 2 } }, revision: 1 });
+  assert.ok(other.ok);
+  assert.equal(lists, 0, "a save that removes nothing asks the provider nothing");
+  const removed = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
+  assert.ok(!removed.ok && removed.reason === "problems");
+  assert.equal(
+    removed.problems[0]!.message,
+    "Backend fake has 1 snapshot on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete it: earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa, kept until 2026-11-30. Delete it first: bb box snapshot delete <box> <snapshot> deletes each one bb-box records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.",
+  );
+  held = null as unknown as unknown[];
+  const unread = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
+  assert.ok(!unread.ok && unread.reason === "problems");
+  assert.match(unread.problems[0]!.message, /^bb-box could not list the snapshots backend fake holds on its provider's account \(the provider did not answer\), so it does not remove it/);
+  held = [];
+  const gone = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
+  assert.ok(gone.ok, JSON.stringify(gone));
+});

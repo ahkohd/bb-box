@@ -188,6 +188,7 @@ export interface ConfigurationDeps {
   /** Every box record. */
   boxes(): Promise<readonly BoxRecord[]>;
   snapshotsHeld?(): ReadonlyMap<string, { readonly count: number; readonly words: string }>;
+  heldOnProvider?(backendIds: readonly string[]): Promise<NonNullable<InUse["onProvider"]>>;
   snapshotsOf?(backendId: string): BackendSnapshotsView | null;
   /** Each kind's spares now, ready and being made. */
   spareCounts?(): Promise<Readonly<Record<string, { readonly ready: number; readonly making: number }>>>;
@@ -323,7 +324,7 @@ export class Configuration {
     this.#configuredRevision = revision;
   }
 
-  async inUse(): Promise<InUse> {
+  async inUse(removing: readonly string[] = []): Promise<InUse> {
     const backends = new Map<string, number>();
     const hosts = new Map<string, Map<string, number>>();
     for (const box of await this.#deps.boxes()) {
@@ -337,7 +338,13 @@ export class Configuration {
       counts.set(host, (counts.get(host) ?? 0) + 1);
       hosts.set(box.backend, counts);
     }
-    return { backends, hosts, snapshots: this.#deps.snapshotsHeld?.() ?? new Map() };
+    const onProvider = removing.length && this.#deps.heldOnProvider ? await this.#deps.heldOnProvider(removing) : new Map();
+    return { backends, hosts, snapshots: this.#deps.snapshotsHeld?.() ?? new Map(), onProvider };
+  }
+
+  #removedBy(document: ConfigDocument): string[] {
+    const kept = new Set(document.backends.map((backend) => backend.id));
+    return this.#document.backends.map((backend) => backend.id).filter((id) => !kept.has(id));
   }
 
   /** Problems with the stored document. */
@@ -452,7 +459,7 @@ export class Configuration {
     const { drivers } = this.#deps;
     const draft = readDraft(input, drivers);
     const secrets = withSecretChanges(this.#secrets, draft.secrets, draft.document);
-    const problems = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, await this.inUse())];
+    const problems = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, await this.inUse(this.#removedBy(draft.document)))];
     if (options.read) return { problems, doctor: null, read: draft.problems.length ? null : draftRead(draft.document, draft.secrets, drivers) };
     if (test === undefined) return { problems, doctor: null };
     const backend = draft.document.backends.find((candidate) => candidate.id === test);
@@ -506,7 +513,7 @@ export class Configuration {
       const { drivers } = this.#deps;
       const draft = readDraft(input, drivers);
       const secrets = withSecretChanges(this.#secrets, draft.secrets, draft.document);
-      const inUse = await this.inUse();
+      const inUse = await this.inUse(this.#removedBy(draft.document));
       const all = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, inUse)];
       const problems = blocking(all, draft.document, inUse, drivers);
       if (problems.length) return { ok: false, reason: "problems", problems };

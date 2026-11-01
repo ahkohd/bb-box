@@ -21,6 +21,7 @@ export interface FakeSandbox {
   forkedFrom: string | null;
   idempotencyKey: string | null;
   files: Record<string, string>;
+  env: Record<string, string>;
   restoringReads: number;
   archivingReads: number;
   stopError: string | null;
@@ -52,6 +53,10 @@ interface Failure {
   readonly code: string;
   readonly details: Record<string, unknown>;
   times: number;
+}
+
+function envOf(body: Record<string, unknown>): Record<string, string> | null {
+  return body.env && typeof body.env === "object" ? { ...(body.env as Record<string, string>) } : null;
 }
 
 export class FakeBoat {
@@ -110,6 +115,7 @@ export class FakeBoat {
       forkedFrom: null,
       idempotencyKey: null,
       files: {},
+      env: {},
       restoringReads: 0,
       archivingReads: 0,
       stopError: null,
@@ -158,7 +164,10 @@ export class FakeBoat {
   }
 
   #savedRoute(method: string, name: string | null, body: Record<string, unknown>, reply: (status: number, value: Record<string, unknown>) => Awaited<ReturnType<BoatFetch>>, refuse: (status: number, code: string) => Awaited<ReturnType<BoatFetch>>): Awaited<ReturnType<BoatFetch>> {
-    if (!name && method === "GET") return reply(200, { type: "snapshot.saved.list", snapshots: [...this.saved.values()].reverse().map((each) => this.#savedView(each)), ...(this.allowanceShown ? { allowance: this.allowance() } : {}) });
+    if (!name && method === "GET") {
+      if (this.savedListBroken) return reply(200, { type: "snapshot.saved.list", snapshots: { not: "a list" }, ...(this.allowanceShown ? { allowance: this.allowance() } : {}) });
+      return reply(200, { type: "snapshot.saved.list", snapshots: [...this.saved.values()].filter((each) => !this.unlisted.has(each.name)).reverse().map((each) => this.#savedView(each)), ...(this.allowanceShown ? { allowance: this.allowance() } : {}) });
+    }
     if (!name && method === "POST") {
       if (this.tier === "trial") return refuse(403, "trial_saved_snapshots_not_allowed");
       const source = this.sandboxes.get(String(body.sandboxId));
@@ -188,6 +197,8 @@ export class FakeBoat {
   }
 
   readonly lostReplies = new Set<string>();
+  readonly unlisted = new Set<string>();
+  savedListBroken = false;
 
   readonly fetch: BoatFetch = async (url, init) => {
     const answer = await this.#answer(url, init);
@@ -259,11 +270,11 @@ export class FakeBoat {
           const repeat = [...this.sandboxes.values()].find((each) => each.idempotencyKey !== null && each.idempotencyKey === headers["idempotency-key"]);
           if (repeat) return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(repeat) });
           const source = this.sandboxes.get(from.sourceSandboxId);
-          const deployed = this.add({ labels: {}, name: String(body.name ?? from.name), type: String(body.type ?? from.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: `saved:${from.name}`, idempotencyKey: headers["idempotency-key"] ?? null, files: { ...(source?.files ?? {}) } });
+          const deployed = this.add({ labels: {}, name: String(body.name ?? from.name), type: String(body.type ?? from.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: `saved:${from.name}`, idempotencyKey: headers["idempotency-key"] ?? null, files: { ...(source?.files ?? {}) }, env: envOf(body) ?? { ...(source?.env ?? {}) } });
           deployed.archiveAfter = deployed.ttlSeconds === null ? null : this.#now() + deployed.ttlSeconds * 1000;
           return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(deployed) });
         }
-        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: String(body.name ?? ""), type: String(body.type ?? "default"), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", idempotencyKey: headers["idempotency-key"] ?? null });
+        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: String(body.name ?? ""), type: String(body.type ?? "default"), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", idempotencyKey: headers["idempotency-key"] ?? null, env: envOf(body) ?? {} });
         return reply(202, { type: "sandbox.created", status: "provisioning", sandbox: this.#view(made) });
       }
     }
@@ -294,7 +305,7 @@ export class FakeBoat {
       case "POST /sandboxes/:id/fork": {
         const repeat = [...this.sandboxes.values()].find((each) => each.idempotencyKey !== null && each.idempotencyKey === headers["idempotency-key"]);
         if (repeat) return reply(202, { type: "sandbox.forking", sandbox: this.#view(repeat) });
-        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: `${id.name} fork`, type: String(body.type ?? id.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: id.id, idempotencyKey: headers["idempotency-key"] ?? null, restoringReads: this.startsRestoreForReads });
+        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: `${id.name} fork`, type: String(body.type ?? id.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: id.id, idempotencyKey: headers["idempotency-key"] ?? null, restoringReads: this.startsRestoreForReads, files: { ...id.files }, env: envOf(body) ?? { ...id.env } });
         made.archiveAfter = made.ttlSeconds === null ? null : this.#now() + made.ttlSeconds * 1000;
         return reply(202, { type: "sandbox.forking", sandbox: this.#view(made) });
       }
@@ -310,6 +321,7 @@ export class FakeBoat {
           id.type = body.type;
         }
         id.state = "ready";
+        id.env = envOf(body) ?? id.env;
         id.restoringReads = this.startsRestoreForReads;
         id.stoppedAt = null;
         if ("ttlSeconds" in body) id.ttlSeconds = ttl(body.ttlSeconds);

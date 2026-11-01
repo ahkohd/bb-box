@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { forkSafeVersion, parseIdentityStatus } from "../src/core/identity.ts";
+import { buildEnvFor } from "../src/backends/boat/templates.ts";
 import { tempDir } from "./helpers.ts";
 
 const SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
@@ -191,7 +192,7 @@ test("a box made before the change, with the reset in its image but no marker, k
     assert.match(ran.out, /kept: bb-box has written no identity marker here/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "7", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
+  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
 });
 
 test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
@@ -220,7 +221,7 @@ test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Do
     assert.match(ran.out, /kept: the identity marker of box bxsource1 matches/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "7", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
+  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
@@ -268,7 +269,7 @@ test("a copy with new MAC addresses, as any Proxmox clone gets, resets every ite
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:5e:77:01\nreset \d{4}-\d\d-\d\dT[\d:]+Z\n$/);
   assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
-  assert.deepEqual(status(root), { version: "7", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
+  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
   const once = identityOf(root);
   assert.match(boot(root).out, /kept: the identity marker of box none matches/);
   assert.deepEqual(identityOf(root), once, "the next boot does not reset again");
@@ -931,4 +932,172 @@ test("version 7: nothing is held for the box itself with a renamed card that car
   assert.match(reset.out, /missing or unreadable/);
   assert.equal(read(unmarked, NETWORK_FILE), null, "the copied settings are not left for a card added later");
   assert.equal(existsSync(join(unmarked, "var/lib/bb-box/held-network")), false);
+});
+
+const BOAT_ENV = "run/ascii-secrets/env.sh";
+const BOAT_NICS: readonly Nic[] = [LOOP, { name: "enp0s1", mac: "02:00:00:00:00:01", device: true }];
+
+function boatGuest(): string {
+  const root = guest(BOAT_NICS, { on: false });
+  assert.equal(identity(root, ["enable", "--value-file", "/run/ascii-secrets/env.sh", "--machine-from-provider"]).code, 0);
+  return root;
+}
+
+function boatValue(root: string, value: string | null): void {
+  mkdirSync(join(root, "run/ascii-secrets"), { recursive: true });
+  writeFileSync(join(root, BOAT_ENV), `export SOME_OTHER="kept apart"\n${value === null ? "" : `export BBBOX_IDENTITY="${value}"\n`}export LAST="x"\n`);
+}
+
+test("version 8: enable can read the value from a file a provider writes, and leave the machine ID and SSH host keys to the provider; disable removes both settings, and a bad path is refused", () => {
+  const root = tempDir("identity-options");
+  assert.equal(identity(root, ["enable", "--value-file", "/run/ascii-secrets/env.sh", "--machine-from-provider"]).code, 0);
+  assert.equal(read(root, "usr/local/lib/bb-box/identity-options"), "value-file /run/ascii-secrets/env.sh\nmachine provider\n");
+  assert.equal(identity(root, ["enable"]).code, 0);
+  assert.equal(existsSync(join(root, "usr/local/lib/bb-box/identity-options")), false, "a plain enable, as every other image runs, has no options");
+  assert.equal(identity(root, ["enable", "--value-file", "relative/env.sh"]).code, 2);
+  assert.equal(identity(root, ["enable", "--value-file"]).code, 2);
+  assert.equal(identity(root, ["enable", "--value-file", "/run/env.sh"]).code, 0);
+  assert.equal(identity(root, ["disable"]).code, 0);
+  assert.equal(existsSync(join(root, "usr/local/lib/bb-box/identity-options")), false);
+  assert.equal(identity(root, ["version"]).out, "8\n");
+});
+
+test("version 8, boat: the value is read from the file boat writes, never from the boot's arguments; a stop and start, a resize and a same-box swap keep the box, as the value is the box's own", () => {
+  const root = boatGuest();
+  boatValue(root, "bxsource1");
+  assert.match(boot(root).out, /no identity marker/);
+  assert.equal(written(root, "bxsource1", "value"), "bb-box identity 1\nbox bxsource1\nsource value\nvalue bxsource1\n");
+  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "unarmed", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "value" });
+  const before = identityOf(root);
+  setNics(root, [LOOP, { name: "enp0s1", mac: "02:00:00:00:00:99", device: true }]);
+  for (let start = 0; start < 3; start++) assert.match(boot(root, "bxother9").out, /kept: the identity marker of box bxsource1 matches/, "a new machine with new MAC addresses, and an argument that is not the file's");
+  assert.deepEqual(identityOf(root), before);
+  assert.equal(forkSafeVersion(parseIdentityStatus(identity(root, ["status"]).out)), 8);
+});
+
+test("version 8, boat: a fork's new value resets BB's machine credentials and host ID, the access file and the tailnet node, and leaves the SSH host keys and machine ID, which boat makes new on every machine, alone", () => {
+  const root = boatGuest();
+  boatValue(root, "bxsource1");
+  boot(root);
+  written(root, "bxsource1", "value");
+  const before = identityOf(root);
+  boatValue(root, "bxfork1");
+  const ran = boot(root);
+  assert.match(ran.out, /this box is a copy, so it resets its identity: the value bb-box set on this guest is not the marker's/);
+  assert.match(ran.out, /its provider gives each machine its own SSH host keys and machine ID/);
+  const after = identityOf(root);
+  assert.equal(after.auth, null);
+  assert.equal(after.hostId, null);
+  assert.equal(after.daemonUnit, false);
+  assert.equal(after.access, null);
+  assert.equal(after.tailnet, 0);
+  assert.equal(after.ed25519, before.ed25519, "boat pins the host key it reported, so the reset leaves it");
+  assert.equal(after.ecdsa, before.ecdsa);
+  assert.equal(after.machineId, before.machineId);
+  assert.equal(read(root, WORKTREE_FILE), "the thread's work");
+  assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource value\nvalue bxfork1\nreset /, "the fork's own marker, naming no box");
+  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "value" });
+  assert.match(boot(root).out, /kept/, "it does not reset again");
+});
+
+test("version 8, boat: a value missing from the file never counts the box as a copy, however late it comes: the box is held, removing nothing, and says so, and settle keeps it once the value is there (Astra 1, Opus 4)", async () => {
+  const root = boatGuest();
+  boatValue(root, "bxsource1");
+  boot(root);
+  written(root, "bxsource1", "value");
+  const before = identityOf(root);
+  rmSync(join(root, BOAT_ENV));
+  const held = identity(root, ["boot"], { waitSeconds: 1 });
+  assert.equal(held.code, 0);
+  assert.match(held.out, /not knowing yet whether this box is a copy: it has found no BBBOX_IDENTITY in \/run\/ascii-secrets\/env\.sh yet, so it cannot tell\. It removes nothing; SSH, Tailscale and BB's daemon wait while it looks again/);
+  assert.equal(status(root).boot, "unknown");
+  assert.deepEqual(identityOf(root), before, "a slow start costs the box nothing");
+  const settling = settle(root);
+  const daemon = waitFor(root, "bb-host-daemon-bb-example-com-host_source.service");
+  assert.equal(await stillRunning(settling, 3_100), true, "still waiting, with no reset, past what version 8 first allowed");
+  assert.equal(await stillRunning(daemon, 10), true, "BB's daemon waits too");
+  assert.deepEqual(identityOf(root), before);
+  boatValue(root, "bxsource1");
+  assert.equal((await ended(settling)).code, 0);
+  assert.equal((await ended(daemon)).code, 0);
+  assert.equal(status(root).boot, "kept");
+  assert.deepEqual(identityOf(root), before);
+  boatValue(root, "bxother1");
+  assert.match(boot(root).out, /resets its identity: the value bb-box set on this guest is not the marker's/, "only a value that differs is a copy");
+});
+
+test("version 8, boat: a box that reset with no value to write unarms itself in words that name the value, so bb-box writes its marker again at its next start", () => {
+  const root = boatGuest();
+  boatValue(root, "bxsource1");
+  boot(root);
+  written(root, "bxsource1", "value");
+  rmSync(join(root, "etc/bb-box/identity"));
+  rmSync(join(root, BOAT_ENV));
+  const ran = boot(root);
+  assert.match(ran.out, /its identity marker is missing or unreadable/);
+  assert.match(ran.out, /found no BBBOX_IDENTITY in \/run\/ascii-secrets\/env\.sh to write a marker for, so it unarms this box until bb-box writes one at its next start/);
+  assert.doesNotMatch(ran.out, /no interface/);
+  assert.equal(status(root).armed, "no");
+});
+
+test("version 8 on Proxmox: with a plain enable, wait goes on at once when no check has run, exactly as version 7 did (Opus 3)", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  assert.equal(existsSync(join(root, "run/bb-box-identity/boot")), false);
+  const ran = await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"));
+  assert.equal(ran.code, 0);
+});
+
+test("version 8, boat: a value that is not a box ID, or sits on another variable's line, is no value", () => {
+  const root = boatGuest();
+  mkdirSync(join(root, "run/ascii-secrets"), { recursive: true });
+  for (const text of ['export BBBOX_IDENTITY="$(touch /tmp/x)"\n', 'export NOT_BBBOX_IDENTITY="bxsource1"\n', "export BBBOX_IDENTITY=\"BX-1\"\n"]) {
+    writeFileSync(join(root, BOAT_ENV), text);
+    boot(root);
+    const wrote = identity(root, ["write", "--box", "bxsource1", "--source", "value"]);
+    assert.equal(wrote.code, 3, text);
+    assert.match(wrote.err, /this boot saw no value from bb-box/);
+  }
+  writeFileSync(join(root, BOAT_ENV), "BBBOX_IDENTITY=bxsource1\n");
+  boot(root);
+  assert.equal(written(root, "bxsource1", "value"), "bb-box identity 1\nbox bxsource1\nsource value\nvalue bxsource1\n", "plain or exported, quoted or not");
+});
+
+test("version 8: with a value file, wait holds BB's daemon until this machine's own check has run, as on boat the box user's services can start before it; with the reset off it never holds", async () => {
+  const root = boatGuest();
+  boatValue(root, "bxsource1");
+  const waiting = waitFor(root, "bb-host-daemon-bb-example-com-host_source.service");
+  assert.equal(await stillRunning(waiting, 400), true, "no check has run on this machine yet");
+  boot(root);
+  assert.equal((await ended(waiting)).code, 0);
+  const off = guest([LOOP, LXC_ETH0], { on: false });
+  assert.equal((await ended(waitFor(off, "bb-host-daemon-bb-example-com-host_source.service"))).code, 0);
+});
+
+test("version 8: only boat's linux template turns the reset on with boat's settings; customize-base passes them to enable", () => {
+  assert.match(buildEnvFor("build.1", "linux"), /^BOX_IDENTITY_RESET=on\nBOX_IDENTITY_VALUE_FILE=\/run\/ascii-secrets\/env\.sh\nBOX_IDENTITY_MACHINE=provider$/m);
+  for (const kind of ["linux-desktop-cpu", "android"] as const) {
+    assert.match(buildEnvFor("build.1", kind), /^BOX_IDENTITY_RESET=off$/m, kind);
+    assert.doesNotMatch(buildEnvFor("build.1", kind), /BOX_IDENTITY_VALUE_FILE/, kind);
+  }
+  const base = readFileSync(CUSTOMIZE_BASE, "utf8");
+  assert.match(base, /identity_options\+=\(--value-file "\$BOX_IDENTITY_VALUE_FILE"\)/);
+  assert.match(base, /\[ "\$\{BOX_IDENTITY_MACHINE:-own\}" != provider \] \|\| identity_options\+=\(--machine-from-provider\)/);
+  const fake = tempDir("customize-identity");
+  const bin = join(fake, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "bb-box-identity"), `#!/bin/sh\necho "$@" >> ${join(fake, "calls")}\n`, { mode: 0o755 });
+  const lines = base.split("\n");
+  const from = lines.findIndex((line) => line.startsWith('if [ "${BOX_IDENTITY_RESET:-off}" = on ]; then'));
+  const to = lines.indexOf("fi", from);
+  const block = lines.slice(from, to + 1).join("\n").replaceAll("/usr/local/sbin/bb-box-identity", join(bin, "bb-box-identity"));
+  for (const [settings, wanted] of [
+    [{ BOX_IDENTITY_RESET: "on", runtime: "vm", BOX_IDENTITY_VALUE_FILE: "/run/ascii-secrets/env.sh", BOX_IDENTITY_MACHINE: "provider" }, "enable --value-file /run/ascii-secrets/env.sh --machine-from-provider"],
+    [{ BOX_IDENTITY_RESET: "on", runtime: "lxc" }, "enable"],
+    [{ BOX_IDENTITY_RESET: "on", runtime: "docker" }, "enable --no-unit"],
+  ] as const) {
+    rmSync(join(fake, "calls"), { force: true });
+    const ran = spawnSync("bash", ["-euo", "pipefail", "-c", block], { env: { PATH: process.env.PATH, ...settings }, encoding: "utf8" });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(read(fake, "calls"), `${wanted}\n`);
+  }
 });

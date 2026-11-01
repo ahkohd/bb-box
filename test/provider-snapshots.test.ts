@@ -7,7 +7,7 @@ import { BY_COMMAND } from "../src/core/box-log.ts";
 import { BILL_FRESH_MS } from "../src/core/snapshots.ts";
 import { accountAtFullPrice, billedRate, billedWords, ceilingVerdict, heldRate, pendingOn } from "../src/core/snapshot-cost.ts";
 import type { Guest } from "../src/backends/types.ts";
-import { COMMAND, THREAD, readyBox, rejection, standing, untilHeld, world, type World } from "./snapshot-world.ts";
+import { COMMAND, THREAD, armedWorld, readyBox, rejection, standing, untilHeld, world, type World } from "./snapshot-world.ts";
 
 const PRICE = { amount: 0.056, currency: "USD" as const, per: "day" as const, known: true, included: 2 };
 const NOT_YET = "this backend's boxes have no identity reset yet, so a fork of one could act as its source";
@@ -377,4 +377,53 @@ test("R5: a restart while putting the old guest back resumes it from its journal
   assert.equal(after.guest!.ref, old.ref);
   assert.equal(after.state, "ready");
   assert.equal(await state.backend.power(old), "running");
+});
+
+test("070 unit 11b: on a provider that keeps a snapshot as it is, Keep holds it past its box's release, a renewal still works, and it forks as one of the person's machines; one taken under an older identity reset is refused in plain words", async () => {
+  const state = armedWorld();
+  state.provider.onProvider = { price: PRICE, forkSafeFrom: 8 };
+  state.provider.restoreWay = "new-guest";
+  state.provider.bill = { currency: "USD", included: 10, used: 0, dailyEach: 0.056, refs: [] };
+  state.provider.billed();
+  const box = await readyBox(state);
+  const kept = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" })).snapshot!;
+  const older = (await state.snapshots.take(COMMAND, box, standing(box), { name: "older" })).snapshot!;
+  assert.equal(kept.forkSafe, 8);
+  state.store.updateRecord(older.id, { forkSafe: 7 });
+  const refused = await rejection(state.snapshots.keep(COMMAND, standing(box), older.id));
+  assert.equal(refused.message, `${box.name} had version 7 of the identity reset when "older" was taken, and bb-box forks ${state.backend.label}'s boxes only from version 8: it could not be forked after a release, so bb-box does not keep it.`);
+  const answer = await state.snapshots.keep(COMMAND, standing(box), kept.id);
+  assert.equal(answer.check.way, "as-is");
+  assert.ok(state.provider.labels.some((label) => label.startsWith(`snapshot ${kept.id} kept `)));
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
+  const after = state.store.record(kept.id)!;
+  assert.equal(after.boxGone?.how, "released");
+  assert.notEqual(after.keptUntil, null);
+  assert.equal(state.store.record(older.id), null, "what was not kept went with its box");
+  assert.ok(state.provider.held.has(kept.id), "the kept one stays on the provider's account as it is");
+  state.tick(24 * 60 * 60_000);
+  const renewed = await state.snapshots.keepGone(after, BY_COMMAND, { days: 30 });
+  assert.ok(renewed.snapshot.keptUntil! > after.keptUntil!, "Keep 30 more days works after the release");
+  const check = await state.snapshots.checkForkGone(state.store.record(kept.id)!);
+  assert.equal(check.asMachine, true, "a fork of a released box's kept snapshot is one of the person's machines");
+  assert.equal(check.box, null);
+});
+
+test("070 unit 11b review, Astra 6: a provider's kept snapshot found again after its records were lost, past its keep date, keeps that date, so expiry deletes it rather than leaving it costing with no end", async () => {
+  const state = armedWorld();
+  state.provider.onProvider = { price: PRICE, forkSafeFrom: 8 };
+  state.provider.restoreWay = "new-guest";
+  state.provider.bill = { currency: "USD", included: 10, used: 0, dailyEach: 0.056, refs: [] };
+  state.provider.billed();
+  const box = await readyBox(state);
+  const kept = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), kept.id, { days: 1 });
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
+  assert.ok(state.provider.held.has(kept.id));
+  state.forgetRecords();
+  state.tick(3 * 24 * 60 * 60_000);
+  await state.snapshots.sweep();
+  await state.snapshots.sweep();
+  assert.equal(state.provider.held.has(kept.id), false, "past its date, it went, as any kept snapshot does");
+  assert.equal(state.store.record(kept.id), null);
 });

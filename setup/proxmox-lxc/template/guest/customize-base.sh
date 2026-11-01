@@ -286,7 +286,11 @@ install -m 0755 "$build/guest/bb-box-feature.sh" /usr/local/bin/bb-box-feature
 install -m 0755 "$build/guest/bb-box-identity.sh" /usr/local/sbin/bb-box-identity
 /usr/local/sbin/bb-box-identity disable
 if [ "${BOX_IDENTITY_RESET:-off}" = on ]; then
-  if [ "$runtime" = docker ]; then /usr/local/sbin/bb-box-identity enable --no-unit; else /usr/local/sbin/bb-box-identity enable; fi
+  identity_options=()
+  [ "$runtime" != docker ] || identity_options+=(--no-unit)
+  [ -z "${BOX_IDENTITY_VALUE_FILE:-}" ] || identity_options+=(--value-file "$BOX_IDENTITY_VALUE_FILE")
+  [ "${BOX_IDENTITY_MACHINE:-own}" != provider ] || identity_options+=(--machine-from-provider)
+  /usr/local/sbin/bb-box-identity enable "${identity_options[@]}"
 fi
 
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it

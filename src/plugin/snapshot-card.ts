@@ -136,7 +136,7 @@ export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pi
   if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
   if (pinned) return pinned;
   if (record.scope === "device") return "it holds the device only, which lives in the box";
-  if (record.boxGone && record.guest !== "held-copy") return "its box is gone, and bb-box keeps it until you delete it";
+  if (record.boxGone && record.guest !== "held-copy" && !(offer.keepsPastRelease === "as-is" && record.keptUntil !== null)) return "its box is gone, and bb-box keeps it until you delete it";
   if (record.box.system !== "linux") return "bb-box keeps only what it can fork after a release, and forks Linux boxes only";
   if (record.forkSafe === null) return `taken before ${record.box.name}'s image had the identity reset: it could not be forked after a release`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `taken under version ${record.forkSafe} of ${record.box.name}'s identity reset, older than the version ${offer.forkSafeFrom} a fork needs`;

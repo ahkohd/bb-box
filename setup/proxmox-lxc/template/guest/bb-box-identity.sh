@@ -2,8 +2,9 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=7
+readonly VERSION=8
 readonly MARKER_HEADER="bb-box identity 1"
+readonly VALUE_NAME=BBBOX_IDENTITY
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
 readonly SETTLE_UNIT=bb-box-identity-settle.service
@@ -15,6 +16,7 @@ armed=$root/var/lib/bb-box/identity-armed
 resets=$root/var/lib/bb-box/identity-resets
 pending=$root/var/lib/bb-box/identity-reset-pending
 switch=$root/usr/local/lib/bb-box/identity-reset-on
+options=$root/usr/local/lib/bb-box/identity-options
 units=$root/etc/systemd/system
 user_units=$root/etc/systemd/user
 run=$root/run/bb-box-identity
@@ -26,6 +28,8 @@ net=$root/sys/class/net
 nic_wait_seconds=${BBBOX_IDENTITY_NIC_WAIT_SECONDS:-30}
 settle_seconds=${BBBOX_IDENTITY_SETTLE_SECONDS:-2}
 live_value=
+value_file=
+machine_from_provider=no
 marker_box=
 marker_source=
 marker_value=
@@ -41,6 +45,32 @@ flush() { sync "$@" 2>/dev/null || sync; }
 make_folder() { [ -d "$1" ] || install -d -m "$2" "$1"; }
 note_boot() { printf '%s\n' "$1" >"$boot_result" 2>/dev/null || :; }
 boot_seen() { cat "$boot_result" 2>/dev/null || echo none; }
+
+load_options() {
+  local key rest
+  value_file= machine_from_provider=no
+  [ -r "$options" ] || return 0
+  while read -r key rest || [ -n "$key" ]; do
+    case $key in
+      value-file) value_file=$root$rest ;;
+      machine) [ "$rest" != provider ] || machine_from_provider=yes ;;
+    esac
+  done <"$options"
+}
+
+value_in_file() {
+  [ -n "$value_file" ] && [ -r "$value_file" ] || return 0
+  sed -n -E "s/^(export[[:space:]]+)?$VALUE_NAME=[\"']?([a-z0-9]{4,64})[\"']?[[:space:]]*\$/\2/p" "$value_file" 2>/dev/null | tail -n 1
+}
+
+keep_boot_value() {
+  rm -f "$boot_value"
+  [ -z "$live_value" ] || (umask 077 && printf '%s\n' "$live_value" >"$boot_value") || say "could not keep the value bb-box set on this guest in $boot_value"
+}
+
+value_seen() {
+  if [ -n "$value_file" ]; then value_in_file; else cat "$boot_value" 2>/dev/null; fi
+}
 
 listed() {
   local wanted=$1 item
@@ -137,7 +167,12 @@ look_for_marker_macs() {
 
 compare_with_marker() {
   if [ "$marker_source" = value ]; then
+    [ -z "$value_file" ] || live_value=$(value_in_file)
     [ "$live_value" = "$marker_value" ] && return 0
+    if [ -n "$value_file" ] && [ -z "$live_value" ]; then
+      echo "it has found no $VALUE_NAME in ${value_file#"$root"} yet, so it cannot tell"
+      return 2
+    fi
     echo "the value bb-box set on this guest is not the marker's"
     return 1
   fi
@@ -329,7 +364,7 @@ journal_under_new_machine_id() {
 
 source_seen_now() {
   if [[ $marker_source =~ ^(eth|device|value)$ ]]; then echo "$marker_source"
-  elif [ -n "$live_value" ]; then echo value
+  elif [ -n "$live_value" ] || [ -n "$value_file" ]; then echo value
   elif [ -n "$(live_macs device)" ]; then echo device
   else echo eth; fi
 }
@@ -339,7 +374,7 @@ write_marker_after_reset() {
   if text=$(marker_text "" "$(source_seen_now)" "reset $at"); then
     write_atomically "$marker" "$text" 0644 && write_atomically "$armed" none 0644
   else
-    say "found no interface of the backend's to write a marker for, so it unarms this box until bb-box writes one"
+    if [ -n "$value_file" ]; then say "found no $VALUE_NAME in ${value_file#"$root"} to write a marker for, so it unarms this box until bb-box writes one at its next start"; else say "found no interface of the backend's to write a marker for, so it unarms this box until bb-box writes one"; fi
     rm -f "$marker" "$armed" && flush "${marker%/*}" "${armed%/*}"
   fi
 }
@@ -357,20 +392,26 @@ reset_identity() {
   forget_tailnet_node || { say "could not remove the tailnet node's state"; return 1; }
   forget_bb_machines || { say "could not remove BB's machine credentials"; return 1; }
   forget_access || { say "could not remove the thread's access file"; return 1; }
-  renew_ssh_host_keys || { say "could not make new SSH host keys"; return 1; }
-  renew_machine_id || { say "could not make a new machine ID"; return 1; }
-  journal_under_new_machine_id
+  if [ "$machine_from_provider" = no ]; then
+    renew_ssh_host_keys || { say "could not make new SSH host keys"; return 1; }
+    renew_machine_id || { say "could not make a new machine ID"; return 1; }
+    journal_under_new_machine_id
+  fi
   write_marker_after_reset "$at" || { say "could not write this box's own identity marker"; return 1; }
   { make_folder "${resets%/*}" 0755 && printf '%s\n' "$line" >>"$resets" && flush "$resets"; } || { say "could not record the reset in $resets"; return 1; }
   { rm -f "$pending" && flush "${pending%/*}"; } || { say "could not mark the reset done"; return 1; }
-  say "reset, as $reason: removed BB's machine credentials and host ID (${line##*; BB machines removed: }), the thread's access file and the tailnet node; made new SSH host keys and a new machine ID"
+  if [ "$machine_from_provider" = yes ]; then
+    say "reset, as $reason: removed BB's machine credentials and host ID (${line##*; BB machines removed: }), the thread's access file and the tailnet node; its provider gives each machine its own SSH host keys and machine ID"
+  else
+    say "reset, as $reason: removed BB's machine credentials and host ID (${line##*; BB machines removed: }), the thread's access file and the tailnet node; made new SSH host keys and a new machine ID"
+  fi
 }
 
 boot() {
   local reason at= outcome
   make_folder "$run" 0755 || say "could not make $run, so bb box status cannot say what this boot found"
-  rm -f "$boot_value"
-  [ -z "$live_value" ] || (umask 077 && printf '%s\n' "$live_value" >"$boot_value") || say "could not keep the value bb-box set on this guest in $boot_value"
+  [ -z "$value_file" ] || live_value=$(value_in_file)
+  keep_boot_value
   if [ ! -e "$switch" ]; then
     note_boot off
     say "the identity reset is off in this image"
@@ -463,6 +504,7 @@ wait_for_identity() {
   while :; do
     case $(boot_seen) in
       unknown) sleep "$settle_seconds" ;;
+      none) if [ -e "$switch" ] && [ -n "$value_file" ]; then sleep "$settle_seconds"; else break; fi ;;
       failed)
         say "this box's identity reset failed, so BB's daemon does not start"
         return 1
@@ -482,7 +524,7 @@ write_marker_for_box() {
   [[ $box =~ ^[a-z0-9]{4,64}$ ]] || fail "the box ID must be letters and digits" 2
   case $source in
     eth | device) ;;
-    value) live_value=$(cat "$boot_value" 2>/dev/null) || live_value= ;;
+    value) live_value=$(value_seen) || live_value= ;;
     *) fail "the source must be eth, device or value" 2 ;;
   esac
   [ -e "$switch" ] || fail "the identity reset is off in this image, so bb-box writes no marker" 3
@@ -495,7 +537,7 @@ write_marker_for_box() {
 status() {
   local boot=none state
   [ ! -r "$boot_result" ] || boot=$(cat "$boot_result")
-  live_value=$(cat "$boot_value" 2>/dev/null) || live_value=
+  live_value=$(value_seen) || live_value=
   nic_wait_seconds=0
   if [ ! -e "$marker" ]; then
     state=missing
@@ -560,8 +602,12 @@ requirement_of() {
 }
 
 enable() {
-  local with_unit=$1 gated unit
+  local with_unit=$1 file=$2 machine=$3 gated unit text=
   write_atomically "$switch" "on" 0644 || fail "could not write $switch"
+  [ -z "$file" ] || text="value-file $file"
+  [ "$machine" != provider ] || text="${text:+$text
+}machine provider"
+  if [ -n "$text" ]; then write_atomically "$options" "$text" 0644 || fail "could not write $options"; else rm -f "$options"; fi
   [ "$with_unit" = yes ] || return 0
   write_atomically "$units/$UNIT" "$(unit_text)" 0644 || fail "could not write the unit"
   write_atomically "$units/$SETTLE_UNIT" "$(settle_unit_text)" 0644 || fail "could not write the unit"
@@ -577,7 +623,7 @@ enable() {
 
 disable() {
   local gated
-  rm -f "$switch" "$units/$UNIT" "$units/multi-user.target.wants/$UNIT" "$units/$SETTLE_UNIT" "$units/multi-user.target.wants/$SETTLE_UNIT" "$user_units/bb-host-daemon-.service.d/10-bb-box-identity.conf"
+  rm -f "$switch" "$options" "$units/$UNIT" "$units/multi-user.target.wants/$UNIT" "$units/$SETTLE_UNIT" "$units/multi-user.target.wants/$SETTLE_UNIT" "$user_units/bb-host-daemon-.service.d/10-bb-box-identity.conf"
   rmdir "$user_units/bb-host-daemon-.service.d" 2>/dev/null || :
   for gated in $GATED_UNITS; do
     rm -f "$units/$gated.d/10-bb-box-identity.conf"
@@ -587,12 +633,13 @@ disable() {
 
 as_root_or_tested() { [ "$(id -u)" = 0 ] || [ -n "$root" ] || fail "run it as root" 2; }
 
+load_options
 command=${1:-}
 [ $# -eq 0 ] || shift
 case $command in
   boot)
     as_root_or_tested
-    [ "${1:-}" != --value ] || live_value=${2:-}
+    [ -n "$value_file" ] || [ "${1:-}" != --value ] || live_value=${2:-}
     boot
     ;;
   write)
@@ -612,7 +659,21 @@ case $command in
     ;;
   enable)
     as_root_or_tested
-    if [ "${1:-}" = --no-unit ]; then enable no; else enable yes; fi
+    with_unit=yes file= machine=own
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --no-unit) with_unit=no; shift ;;
+        --machine-from-provider) machine=provider; shift ;;
+        --value-file)
+          [ $# -ge 2 ] || fail "$1 needs a value" 2
+          [[ $2 =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "the value file must be an absolute path" 2
+          file=$2
+          shift 2
+          ;;
+        *) fail "unknown option $1" 2 ;;
+      esac
+    done
+    enable "$with_unit" "$file" "$machine"
     ;;
   disable)
     as_root_or_tested
@@ -629,5 +690,5 @@ case $command in
     ;;
   status) status ;;
   version) echo "$VERSION" ;;
-  *) fail "usage: bb-box-identity boot [--value <value>] | write --box <id> --source eth|device|value | enable [--no-unit] | disable | settle | wait [<unit>] | unarm | status | version" 2 ;;
+  *) fail "usage: bb-box-identity boot [--value <value>] | write --box <id> --source eth|device|value | enable [--no-unit] [--value-file <path>] [--machine-from-provider] | disable | settle | wait [<unit>] | unarm | status | version" 2 ;;
 esac
