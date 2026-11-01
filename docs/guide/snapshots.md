@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes, Proxmox QEMU Linux boxes, microsandbox boxes and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes, Proxmox QEMU Linux boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -13,9 +13,19 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | by a new sandbox made from the snapshot, from a snapshot taken with version 8 of the identity reset, of Linux boxes | as it is, on the account, at boat.dev's daily price past the plan's included ones |
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
+| Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
+| Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | not yet | not yet |
 | Every other backend | no snapshots yet | | | | |
 
 A microsandbox box takes snapshots only when its Docker disk is `msb`'s own, as on every box BB Box makes now. A box an earlier BB Box made keeps its Docker data on a file of the host's, which `msb` leaves out of a snapshot and cannot give a restored box, so its Snapshots say why it takes none; it works as before otherwise. BB Box takes them only with `msb` 0.7.7, the release whose snapshots it measured, and only on a Linux host: a Mac takes none yet. `bb box doctor` says so in its microsandbox Snapshots check. Each snapshot of a microsandbox box lists the one it was taken after ("after ..."), as `msb` keeps a box's snapshots in a chain; each holds its own data, so any of them can be deleted first.
+
+### Tart
+
+A Tart snapshot is an APFS clone of the VM's folder, kept beside the VMs, in `bb-box-snapshots` next to Tart's `vms` folder. A clone takes a moment and no space, and grows only as the box and its copy differ. BB Box copies only by cloning, with APFS's `clonefile`, and refuses a copy APFS cannot clone, rather than make a full copy of the whole VM: so it refuses when that folder is on another volume than the VMs. Before it suspends or stops anything, it also refuses while the volume has less free than the Mac's disk kept free, `reserve-disk-gib` (50 GiB unless set), or 20 GiB, whichever is more. A label file in each copy names the install, the box, the snapshot and its keep date.
+
+A macOS snapshot holds the VM's saved memory, and Virtualization restores a saved state only under the macOS build and Tart that saved it. So at each suspend BB Box notes beside the VM the macOS build and Tart it was saved under, and each snapshot's label carries that note. After the Mac's macOS or Tart changes, BB Box does not restore a snapshot saved before, nor one whose memory has no such note, and says to fork it instead, which starts from its disk. The start just after a restore never boots the box from its disk when the snapshot's memory does not resume: it fails and says so, and a later start does.
+
+A restore copies the snapshot beside the VM, then swaps it into the VM's place in two renames. It records each phase on the Mac first, with its shell's process and start time, and each restore has its own record. If BB Box or the Mac stops in the middle, the next look at the box, its start, or its release puts the right folder back: the snapshot's whole copy once it was in place, the VM's own folder otherwise, never neither. While a restore still runs, the box is neither started nor deleted. A release also deletes what a restore or a fork cut short left beside the VMs.
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
@@ -121,21 +131,27 @@ A boat.dev sandbox starts on a machine that already runs boat.dev's own image, a
 
 A copy made outside BB Box keeps its source's identity. boat.dev gives a fork made in its dashboard or with its API the value of the sandbox it copied, unless the request sets another, so such a copy does not reset, and can act as its source: as the same BB machine, on the same tailnet node, with the thread's access. Copy a box's sandbox only through BB Box.
 
+### On macOS
+
+A fork of a macOS box gives up its source's identity before anything in it runs. On the Mac, before the fork's first boot, BB Box attaches the fork's own copy of the disk, mounts its Data volume and removes BB's machine credentials and host ID, BB's LaunchAgent for its daemon, the thread's access file, the VM's name and the SSH host keys, then ejects it. It attaches only the fork's own image, finds its APFS container from that image's own store and its Data volume by role inside that container, and never acts on the Mac's own container. A fork whose disk it cannot clean so is not made. This needs a Mac whose `diskutil` has `image attach`, as macOS 27 has: on another Mac, macOS boxes take and restore snapshots, but make no forks and keep none past a release, and `bb box doctor` says so in "macOS forks on <mac>". Tart then gives the fork a new MAC address and a new machine identifier, so a new hardware UUID. macOS boxes do not join the tailnet, so there is no node to remove.
+
+macOS boxes also have a reset of their own, as Linux boxes do. BB Box installs it in each macOS VM as it is first ready, as `/usr/local/sbin/bb-box-identity`, with a LaunchDaemon, `dev.bb-box.identity`, that runs it at each boot. Its marker names the MAC address of the VM's network card, the VirtIO card Tart gives it, never the USB network interfaces macOS makes for itself. At a copy's first boot it removes the same again and makes new SSH host keys. macOS cannot make BB's daemon, a LaunchAgent that starts at the login, wait for it, so it reads who is logged in at the console before it removes anything and again after. If someone was, while BB's identity was still on the disk, it says so in its record, and BB Box refuses the fork. On a fork whose disk the Mac has cleaned, nothing of the source's is left to act, so a login then is no race.
+
 ### Turning it on
 
-Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU, Docker and boat.dev. Others have the program, with it off.
+Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU, Docker and boat.dev. Others have the program, with it off. macOS boxes on Tart get it when they are first ready.
 
 BB Box writes markers only on the backends you name:
 
 ```
-bb box option set general.identityResetBackends=proxmox-lxc,proxmox-qemu
+bb box option set general.identityResetBackends=proxmox-lxc,proxmox-qemu,tart
 ```
 
 Until then, no box has a marker, and no box resets. Turning a backend off again stops new markers; a box that has one keeps it until you remove it, with `sudo bb-box-identity unarm` in the box.
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU, 8 on boat.dev. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU, 8 on boat.dev, 3 on Tart's macOS. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
 
 ## Forking a snapshot
 
@@ -156,7 +172,7 @@ Who forks:
 - **You**, from a box's page or the command line, into the box's thread, or as one of your machines. A fork of one of your machines is one of your machines.
 - **A thread's agent**, with `box_fork`, from its thread's own box into its own thread. Left without a snapshot, `box_fork` checks first that the box could be forked now, then takes one of the box now, named "for a fork", and forks that. If the fork is still refused, BB Box deletes that snapshot and says so; if the take deleted an older snapshot of the agent's to make room, it says that too. An agent does not fork a box threads run on, nor makes a fork one of your machines.
 
-Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows and macOS boxes have no reset yet, so they do not fork.
+Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows boxes, and Linux VMs on Tart, have no reset checked yet, so they do not fork.
 
 The **Fork dialog** asks for the new box's name (one is made up if you leave it empty): a lower-case letter first, then lower-case letters, digits and hyphens, up to 32, not ending in a hyphen and, for a thread's box, where it goes: in the box's thread, or as one of your machines. It says what the fork holds, its size, and at most how long the copy takes and how much space it uses on the host. **Fork** opens the new box's page, starting.
 
@@ -242,6 +258,9 @@ A restore takes a few seconds. Measured on Proxmox LXC on LVM-thin, a box of 16 
 #On microsandbox, as on boat.dev, step 5 stops the box and step 6 takes the undo of its disk, so the undo holds exactly what the restore replaces. Step 7 makes the box a new microVM from the snapshot, with the box's own identity value, so it stays the same BB machine. A snapshot with memory comes back running, at the size it was taken at, as `msb` requires; a disk snapshot boots at the box's size. BB Box deletes the old microVM once the new one has started; the box's snapshots live on the host, not in the microVM, so none is lost.
 
 ## ZFS
+On Tart, a macOS box of 16 GiB took 13 to 15 s: its suspend, which saves its memory, 4 to 6 s; the undo, a clone of the suspended VM, under half a second; putting the snapshot's copy in the VM's place under half a second; and the resume 8 to 9 s. It is never stopped hard. The box comes back running as it was at the take, its processes too, and so does an undo, which holds the box's memory from just before the restore. A Linux VM on Tart is shut down instead, and boots again.
+
+### ZFS
 
 ZFS rolls a disk back only to its newest snapshot. BB Box restores nothing on ZFS yet: it says so, and changes nothing. Its restores there come once they are checked on a ZFS node. They will take a held copy of the stopped box as the undo, a full copy that cannot start, made only of a box whose [identity reset](#a-copy-of-a-box-gives-up-its-identity) works; undoing such a restore makes the box a new guest from that copy, with the box's own identity, and the box's other snapshots then stay on its earlier guest, to fork only. Until then, restoring a held copy works only in BB Box's live checks.
 
@@ -257,7 +276,7 @@ Each step is recorded before it runs, with Proxmox's task once it begins. When B
 
 Keep makes a snapshot yours and keeps it past its box's release, for 30 days from the day you keep it unless Settings say otherwise, or until a date you choose. No agent can delete a kept snapshot, and BB Box deletes it after its date, whether its box lives or not; from 3 days before, its row says "goes in 3 days" in amber, and the Snapshots tab counts it. Keep it again to renew it: **Keep 30 more days…** adds the days to its keep date, at most 365 days from today. A date you choose can shorten a keep, and the dialog says so first. Days are counted in UTC.
 
-After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
+After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, or a macOS box on Tart, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
 
 The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then. On microsandbox nothing is copied: "If amber-fox is released, it stays where it is until 2026-11-30." It stays on the host at its whole size.
 
@@ -271,6 +290,10 @@ bb box snapshot unkeep <box> <snapshot>
 ```
 
 `--check` says what keeping it would cost, changing nothing. A box that was released is named as `bb box snapshot list --all` names it; its kept snapshot can be kept longer, or deleted, not unkept.
+
+### On Tart
+
+On Tart nothing is copied at the release: the kept snapshot stays where it is, beside the VMs, and the release deletes the VM only. From then on it takes its whole size, up to the VM's disk and memory, as the box no longer shares its blocks; the Keep dialog says so. A fork of it after the release is one of your machines. Kept snapshots stay on the Mac after BB Box is removed from BB, or the Tart backend from its settings: delete them first, or remove them on the Mac as the Tart guide's Remove says.
 
 ### A held copy
 
@@ -298,7 +321,7 @@ On boat.dev a kept snapshot needs no copy: a saved snapshot lives on the account
 
 ## When a box is released
 
-A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. On microsandbox, where they live on the host apart from the microVM, BB Box deletes those nobody kept the same way, and kept ones stay as they are until their date, as on boat.dev. On Proxmox, kept ones outlive it as held copies, above.
+A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. On microsandbox, where they live on the host apart from the microVM, BB Box deletes those nobody kept the same way, and kept ones stay as they are until their date, as on boat.dev. On Tart, where they live beside the VMs, BB Box deletes those nobody kept the same way, as they would go on taking the Mac's disk, and kept ones stay as they are. On Proxmox, kept ones outlive it as held copies, above.
 
 A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for, in BB Box's records or in the snapshots' labels. If it cannot read the labels, it keeps the guest until it can.
 

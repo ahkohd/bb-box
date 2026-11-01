@@ -782,8 +782,8 @@ it. "Keep 30 more days" renews it.
 
 **Keep only what can be used after the release.** After a release the
 only way to use a kept snapshot is to fork it. So Keep is offered for a
-snapshot only when its fork plan is `ok`: its box forks (not Windows,
-not macOS until unit 9), and it was taken with `forkSafe`. Otherwise Keep is
+snapshot only when its fork plan is `ok`: its box forks (not Windows, nor
+Linux on Tart; macOS on Tart from unit 9), and it was taken with `forkSafe`. Otherwise Keep is
 disabled with why: "Taken before brisk-lake's image had the identity reset:
 it could not be forked after a release." The Keep dialog says what keeping
 costs on that backend before the person confirms:
@@ -1588,6 +1588,101 @@ probe as a regression test:
 - **"Release and delete what you kept" is offered only where it gets past
   the stop**: not while a copy is being made, a label cannot be read, or a
   held copy is not a template.
+
+## Decided during unit 9
+
+On 1 November 2026, during unit 9, with the lead's answers:
+
+- **The live check ran on the production Tart Mac as a second install**,
+  one macOS VM of the unit's at a time, as another thread held a VM there:
+  the source was suspended before its fork started.
+- **macOS's identity reset is installed over SSH when a box is first
+  ready, not baked into the image** (the lead's decision): the program,
+  `/usr/local/sbin/bb-box-identity`, and a LaunchDaemon that runs it at
+  each boot. So no image is rebuilt, and every macOS box made from this
+  unit on is fork-safe once its backend is armed
+  (`general.identityResetBackends`). A box made before has none, and its
+  snapshots neither fork nor are kept.
+- **What the reset compares is the VM's VirtIO network card only.** A
+  macOS VM also lists `en1` and `anpi0`, USB network placeholders whose
+  MAC addresses bb-box cannot show change in a copy; the first live box's
+  marker named `en1` too. Version 2 reads the cards from
+  `AppleVirtIONetwork`, and Tart forks only from version 2.
+- **A macOS reset cannot be ordered before BB's daemon**, which is a
+  LaunchAgent: launchd starts LaunchDaemons at boot, before the login that
+  starts LaunchAgents, so the reset decides first, but launchd gives no
+  ordering to rely on. So the reset records whether someone had logged in
+  when it decided, stops BB's daemon then, and bb-box's check before ready
+  refuses such a fork. It also removes BB's LaunchAgent with the
+  credentials, so a reset that fails part way leaves BB's daemon nothing to
+  start with.
+- **A fork gets a new MAC address and a new machine identifier from Tart**
+  (`tart set --random-mac --random-serial`) before its first boot, so a new
+  hardware UUID, which bb-box compares as the machine ID. It keeps the
+  snapshot's disk, as a Tart box keeps its image's, and never its memory.
+- **Tart's snapshots live beside the guest, not in it** (`outlivesGuest`),
+  as boat.dev's live on the account: a release deletes the unkept ones
+  first, a kept one stays as it is with its box marked released, it can be
+  kept longer and forked after the release, and a VM is released though it
+  had a kept snapshot.
+- **The guard against another macOS build refuses the restore**, and says
+  to fork the snapshot, which starts from its disk. It refuses when the
+  snapshot's label names another macOS build or Tart than the Mac has now,
+  for a snapshot that holds saved memory.
+- **A memory snapshot of a stopped box is taken where the backend's
+  snapshots suspend the box**, as a suspended Tart VM holds its memory on
+  its disk.
+- **Every copy checks the Mac's free disk first**: a take, a restore's
+  copy and a fork refuse while the VMs' volume has less free than the
+  backend's `reserve-disk-gib`, or 20 GiB, whichever is more.
+- **Tart's Linux VMs take and restore only**, disk only and while stopped.
+  Their identity reset is in their image but was not checked live, so they
+  fork and keep nothing yet, with why.
+
+After the two reviews of unit 9, the lead asked for these, each with a test
+that fails before it, on the fake Mac:
+
+- **A fork's disk is cleaned on the Mac before its first boot**, so the
+  source's credentials never act: bb-box attaches the fork's own copy of
+  its disk (`diskutil image attach --noMount`), finds the Data volume by
+  role in that image's own APFS container, never the Mac's, removes BB's
+  machine credentials, BB's LaunchAgent, the access file, the VM's name and
+  the SSH host keys, and ejects it. A fork whose disk cannot be cleaned is
+  not made. The in-guest reset stays, reads the console user before and
+  after its removals, and records a race only while BB's identity was still
+  on the disk; a raced reset refuses the fork. The reset is version 4, and
+  Tart forks from version 3.
+- **An interrupted restore never leaves a box with no VM**, nor a whole VM
+  nobody lists: each restore records its phases with its shell's process
+  and start time and an attempt of its own; reading the box's power or task,
+  starting it and releasing it put the right folder back; a restore still
+  running holds the start and the release; the VM's state is read again
+  just before the swap; a release deletes the staging folders; a process ID
+  reused by another process is not taken for a copy still running.
+- **Memory is labelled with the build and Tart that saved it**, noted beside
+  the VM at each suspend, so memory saved before an update is never
+  restored after; memory with no such note is not restored either; the
+  start just after a restore never boots the box from its disk when the
+  memory does not resume.
+- **Copies are clones or nothing**: through APFS's `clonefile`, which fails
+  where `cp -c` would fall back to a full copy; the room is checked before
+  anything is suspended.
+- **A take whose box does not resume leaves the box stopped**, with why, in
+  its answer and its log, never "taken, ready".
+- **A fork is never made over a VM already there**, so it always gets a new
+  MAC address and serial.
+- **A restore's words follow its backend's capture**: on Tart it suspends,
+  and its undo holds the box's memory.
+- **No other way to clean a fork's disk** (the lead's decision): a Mac whose
+  `diskutil` has no `image attach`, which macOS 27 has, makes no macOS
+  forks and keeps no macOS snapshot past a release, with words that say
+  so, and the doctor's "macOS forks on <mac>" warns. An `hdiutil` path for
+  raw disk images on older hosts would be an untested path on a guard that
+  protects credentials, so it is a follow-up, below.
+
+Follow-up, not in unit 9: cleaning a fork's raw-format disk with `hdiutil
+attach` on a Mac whose macOS has no `diskutil image attach`, with the same
+guards, once a host to check it on is free.
 
 ## Decided during unit 10
 

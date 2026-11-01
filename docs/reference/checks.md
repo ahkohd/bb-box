@@ -72,6 +72,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `tart.hosts` | Macs | At least one Mac is set up. |
 | `host.<mac>` | Mac &lt;mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
 | `image.<mac>.<kind>` | &lt;kind> image on &lt;mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
+| `forks.<mac>` | macOS forks on &lt;mac> | Whether the Mac's diskutil can attach a fork's disk, so bb-box can clean it of its source's identity before the fork first boots (070 unit 9). Without it, macOS boxes there take and restore snapshots, but make no forks and keep none past a release. |
 | `spotlight.<mac>` | Spotlight on &lt;mac> | Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12). |
 | `qemu.<mac>` | QEMU on &lt;mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
 | `qemu-video.<mac>` | Windows video on &lt;mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |

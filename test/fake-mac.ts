@@ -23,7 +23,7 @@ export function fakeMacTools(home: string): void {
   const bin = join(home, ".nix-profile", "bin");
   mkdirSync(bin, { recursive: true });
   const script = new URL("./fake-tart.mjs", import.meta.url).pathname;
-  for (const tool of ["tart", "arp", "sysctl", "sw_vers", "uname", "mdutil", "mdfind"]) {
+  for (const tool of ["tart", "arp", "sysctl", "sw_vers", "uname", "mdutil", "mdfind", "diskutil", "python3"]) {
     writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
     chmodSync(join(bin, tool), 0o755);
   }

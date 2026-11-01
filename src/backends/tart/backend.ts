@@ -68,6 +68,20 @@ import {
   type MachineSize,
   type BoxTransports,
   type Capacity,
+  type ForkArming,
+  type GuestIdentity,
+  type HeldSnapshot,
+  type IdentitySource,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type TaskKind,
+  type TaskOutcome,
+  type TaskRef,
+  SnapshotFailed,
   type ResizePlan,
   type Resizing,
   type CommandCapability,
@@ -176,6 +190,34 @@ import {
 } from "./qemu.ts";
 import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import {
+  MACOS_FORK_SAFE_FROM,
+  MIN_FREE_GIB,
+  NO_IMAGE_ATTACH,
+  deleteScript as snapshotDeleteScript,
+  roomShort,
+  forkScript,
+  heldOf,
+  labelKeptScript,
+  listScript,
+  parseListing,
+  parsePlanRead,
+  parseTaken,
+  parseTaskRef,
+  planOf,
+  planScript,
+  rollbackRecordScript,
+  rollbackScript,
+  savedUnder,
+  sizeFrom,
+  takeScript,
+  taskOutcome,
+  taskRef,
+  tartOffer,
+  type Listing,
+  type SnapshotLabel,
+} from "./snapshots.ts";
+import { identityInstallScript } from "./identity.ts";
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
@@ -1467,6 +1509,7 @@ export class TartBackend implements Backend {
         await Promise.all([
           step("name", () => this.#rename(host, address, vm, os, box.name, signal)),
           ...(fresh ? [step("grants", () => this.#vmReady(host, address, vm, signal))] : []),
+          ...(os === "macos" && this.identitySource(box.kind) ? [step("identity reset", () => this.#installIdentity(host, address, vm, signal))] : []),
         ]);
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
@@ -1824,7 +1867,9 @@ export class TartBackend implements Backend {
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, this.#vm(await this.#mac(host), address, os), os, deadline, signal);
     bootedAfresh();
-    await this.#identify(host, address, guest.ref, os, signal);
+    const copyOf = typeof guest.data?.forkOf === "string" ? guest.data.forkOf : null;
+    const named = await this.#identify(host, address, guest.ref, os, signal, copyOf);
+    if (named && typeof guest.data?.forkName === "string") await this.#rename(host, address, guest.ref, os, guest.data.forkName, signal);
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
     // A macOS VM resumes from its suspend with the time it stopped at.
     if (os === "macos") await this.#clock(host, address, signal);
@@ -1926,7 +1971,7 @@ export class TartBackend implements Backend {
     await this.#forget(host, guest.ref, "macos");
     const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked ? "shutdown" : "stop"), { timeoutMs: 240_000, signal });
     if (result.stdout.trim() === "gone") throw this.#gone(guest);
-    await this.#run(host, discardStateScript(guest.ref), { timeoutMs: 30_000, signal });
+    await this.#run(host, discardStateScript(guest.ref, false), { timeoutMs: 30_000, signal });
   }
 
   /** A running VM's Mac and size, when it is the box's and the disk asked for is not smaller (061). */
@@ -2044,6 +2089,235 @@ export class TartBackend implements Backend {
     const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, this.#owner(box)), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
     if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, this.#osOf(guest), box.name, signal);
+  }
+
+
+  #snapshotOs(kind: string): "macos" | "linux" | null {
+    if (kind === IOS_IMAGE_KIND || !this.kinds().some((offer) => offer.id === kind)) return null;
+    const os = guestOsOf(kind);
+    return os === "windows" ? null : os;
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    const os = this.#snapshotOs(kind);
+    return os ? tartOffer(os) : null;
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return this.#snapshotOs(kind) === "macos" ? "device" : null;
+  }
+
+  #snapshotGuest(guest: Guest): { host: TartHost; os: "macos" | "linux" } {
+    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no VM of its own, so bb-box takes no snapshot of it.");
+    const os = this.#osOf(guest);
+    if (os === "windows") throw new BackendError("unsupported", `${this.label} takes no snapshots of Windows boxes.`);
+    return { host: this.#hostOf(guest), os };
+  }
+
+  async #runSnapshot(host: TartHost, body: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
+    const { ssh } = await this.#keys();
+    const result = await ssh.run(await this.#mac(host), body, { timeoutMs, signal, maxOutputBytes: 1 << 20 }, "macos");
+    if (result.timedOut) throw new HostError(`${host.name} did not finish in time.`);
+    if (result.exitCode === 255) throw new HostError(`${host.name} did not answer over SSH as ${host.user}: ${result.stderr.trim() || "no reason given"}.`);
+    return result;
+  }
+
+  #said(result: RunResult): string {
+    return result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
+  }
+
+  async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    const { host, os } = this.#snapshotGuest(guest);
+    const asked = snapshot ? snapshot.ref || snapshot.id : null;
+    const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked), { timeoutMs: 30_000, signal })).stdout);
+    return planOf(host.name, os, read, asked, MACOS_FORK_SAFE_FROM, this.#copyFloorGiB());
+  }
+
+  async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const { host, os } = this.#snapshotGuest(guest);
+    const power = await this.power(guest, signal);
+    if (power === null) throw new SnapshotFailed(`The VM ${guest.ref} is no longer on ${host.name}.`);
+    const suspends = power === "running";
+    if (suspends && os === "linux") throw new SnapshotFailed("Tart cannot suspend a Linux VM, so bb-box takes its snapshot only while the box is stopped. Stop it first.");
+    const before = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal })).stdout);
+    const short = roomShort(before, this.#copyFloorGiB());
+    if (short) throw new SnapshotFailed(`${short.charAt(0).toUpperCase()}${short.slice(1)}. bb-box suspended nothing.`);
+    if (before.sameVolume === false) throw new SnapshotFailed(`The snapshots folder on ${host.name} is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume. bb-box suspended nothing.`);
+    await hooks.submitting();
+    await hooks.task({ ref: taskRef({ kind: "take", id: take.id }), host: host.name });
+    if (suspends) {
+      await this.#forget(host, guest.ref, os);
+      try {
+        await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), "suspend"), { timeoutMs: 240_000, signal });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const notResumed = await this.#resumeAfterTake(guest, signal);
+        throw new SnapshotFailed(`bb-box could not suspend ${guest.ref} on ${host.name} to copy it, so it copied nothing: ${message(error)}`, notResumed);
+      }
+    }
+    const capturedAt = Date.now();
+    let result: RunResult;
+    let notResumed: string | null = null;
+    try {
+      result = await this.#runSnapshot(host, takeScript({ vm: guest.ref, install: this.#context.installId, box: take.box, snapshot: take.id, kind: this.#kindOfGuest(guest), reset: take.forkSafe ?? null, takenAt: capturedAt, minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
+    } finally {
+      if (suspends) notResumed = await this.#resumeAfterTake(guest, signal);
+    }
+    if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result), notResumed);
+    const taken = parseTaken(result.stdout);
+    if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
+    if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but bb-box could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
+    return { ref: take.id, holds: taken.label.holds, capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, notResumed };
+  }
+
+  #copyFloorGiB(): number {
+    return Math.max(MIN_FREE_GIB, this.#config.reserve.diskGiB);
+  }
+
+  #kindOfGuest(guest: Guest): string {
+    return this.#osOf(guest) === "linux" ? "linux" : "macos";
+  }
+
+  async #resumeAfterTake(guest: Guest, signal?: AbortSignal): Promise<string | null> {
+    try {
+      await this.start(guest, signal);
+      return null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return message(error);
+    }
+  }
+
+  async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const host = this.#hostOf(ref.guest);
+    await hooks.submitting();
+    await hooks.task({ ref: taskRef({ kind: "delete", id: ref.id }), host: host.name });
+    const result = await this.#runSnapshot(host, snapshotDeleteScript(this.#context.installId, ref.id), 10 * 60_000, signal);
+    if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result));
+  }
+
+  async #listing(host: TartHost, signal?: AbortSignal): Promise<Listing> {
+    return parseListing((await this.#run(host, listScript(), { timeoutMs: 60_000, signal })).stdout);
+  }
+
+  async heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const held: HeldSnapshot[] = [];
+    const states = await this.#states(signal);
+    for (const host of this.#config.hosts) {
+      const state = states.get(host.name)!;
+      if (state instanceof Error) throw state;
+      const listing = await this.#listing(host, signal);
+      const guestOf = (label: SnapshotLabel) => {
+        const fields = state.owners.get(label.vm);
+        const owner = fields && fields.install === this.#context.installId && fields.box === label.box ? ownerOf(fields) : null;
+        const data: Readonly<Record<string, string>> = label.os === "linux" ? { box: label.box, os: "linux" } : { box: label.box };
+        return { guest: { ref: label.vm, host: host.name, address: null, size: null, data }, owner };
+      };
+      for (const entry of listing.entries) {
+        const one = heldOf(entry, host.name, this.#context.installId, guestOf, listing.volume);
+        if (one) held.push(one);
+      }
+    }
+    return held;
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const box = this.#boxOf(guest);
+    return (await this.heldSnapshots(signal)).filter((held) => held.guest.host === guest.host && (held.guest.ref === guest.ref || (box !== null && held.box === box)));
+  }
+
+  async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    const parsed = parseTaskRef(task.ref);
+    const host = this.#hostNamed(task.host);
+    if (!parsed || !host) return { state: "missing", words: `${task.ref} is not a task bb-box knows on ${this.label}` };
+    const listing = await this.#listing(host, signal);
+    const rollback = parsed.kind === "rollback" ? (await this.#run(host, rollbackRecordScript(parsed.vm), { timeoutMs: 30_000, signal })).stdout : null;
+    return taskOutcome(parsed, listing, rollback);
+  }
+
+  async findTasks(guest: Guest, kind: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
+    const host = this.#hostOf(guest);
+    if (kind === "rollback") {
+      const said = (await this.#run(host, rollbackRecordScript(guest.ref), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").at(-1) ?? "";
+      const found = /^(?:copying|swapping|done|undone) (sn[a-z2-7]{12}) ([a-z0-9]{8,32})\b/.exec(said);
+      return found ? [{ ref: taskRef({ kind: "rollback", vm: guest.ref, id: found[1]!, attempt: found[2]! }), host: host.name }] : [];
+    }
+    if (kind !== "take") return [];
+    const listing = await this.#listing(host, signal);
+    return listing.entries
+      .filter((entry) => entry.label?.install === this.#context.installId && entry.label.vm === guest.ref && (entry.label.takenAt ?? 0) >= since - 2_000)
+      .map((entry) => ({ ref: taskRef({ kind: "take", id: entry.snapshot }), host: host.name }));
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await this.stop(guest, signal);
+  }
+
+  async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const { host } = this.#snapshotGuest(guest);
+    const box = this.#boxOf(guest);
+    if (!box) throw new SnapshotFailed(`The VM ${guest.ref} names no box, so bb-box puts no snapshot in its place.`);
+    const id = ref.ref || ref.id;
+    const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, box, id), { timeoutMs: 30_000, signal })).stdout);
+    const another = savedUnder(read.snapshot?.label ?? null, read.snapshot?.saved ?? false, read);
+    if (another) throw new SnapshotFailed(`${another}.`);
+    const attempt = randomBytes(6).toString("hex");
+    await hooks.submitting();
+    await hooks.task({ ref: taskRef({ kind: "rollback", vm: guest.ref, id, attempt }), host: host.name });
+    await this.#forget(host, guest.ref, this.#osOf(guest));
+    const result = await this.#runSnapshot(host, rollbackScript(guest.ref, this.#context.installId, box, id, this.#copyFloorGiB(), attempt), 10 * 60_000, signal);
+    if (result.exitCode !== 0 || result.stdout.trim() !== "restored") throw new SnapshotFailed(result.stdout.trim() === "gone" ? `The VM ${guest.ref} on ${host.name} is not box ${box}'s any more.` : this.#said(result));
+  }
+
+  async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    const host = this.#hostOf(ref.guest);
+    const result = await this.#runSnapshot(host, labelKeptScript(this.#context.installId, ref.ref || ref.id, kept), 30_000, signal);
+    if (result.exitCode !== 0 || result.stdout.trim() !== "labelled") throw new SnapshotFailed(this.#said(result));
+  }
+
+  async guestIdentity(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity> {
+    const host = this.#hostOf(guest);
+    const mac = (await this.#state(host, signal)).configs.get(guest.ref)?.macAddress ?? null;
+    return { macs: mac ? { en0: normalMac(mac) } : {}, smbios: null };
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (guestOsOf(box.kind) !== "macos" || box.kind === IOS_IMAGE_KIND) throw new BackendError("unsupported", `${this.label} forks macOS boxes only.`);
+    const host = this.#hostOf(ref.guest);
+    const vm = vmName(box.boxId);
+    const data = { box: box.boxId, forkOf: ref.guest.ref, forkName: box.name };
+    const guest = (size: MachineSize | null): Guest => ({ ref: vm, host: host.name, address: null, size, data });
+    if (previous && previous.ref === vm) await this.#delete(host, vm, "macos", box.boxId, signal);
+    await hooks.claim(guest(null));
+    const claimed = (await this.#run(host, claimScript(vm, this.#owner(box)), { signal })).stdout.trim();
+    if (claimed !== "claimed") {
+      const fields = parseFields(claimed);
+      if (fields.install !== this.#context.installId || fields.box !== box.boxId) throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+    }
+    try {
+      const result = await this.#runSnapshot(host, forkScript({ install: this.#context.installId, snapshot: ref.ref || ref.id, vm, cpus: box.size.cores, memoryMiB: box.size.memoryMiB, macos: true, minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
+      if (result.exitCode !== 0) throw new Error(`${host.name} could not copy snapshot ${ref.id} as ${vm}: ${this.#said(result)}`);
+      const parts = sections(result.stdout);
+      const disk = Number(parts.get("disk")?.trim());
+      return guest(sizeFrom(parseConfig(parts.get("config") ?? ""), Number.isFinite(disk) && disk > 0 ? disk : null));
+    } catch (error) {
+      await this.#delete(host, vm, "macos", box.boxId).catch((cause) => this.#context.logError("delete a fork that was not made", cause));
+      throw error;
+    }
+  }
+
+  async armFork(_guest: Guest, _arming: ForkArming): Promise<void> {}
+
+  async disarmFork(_guest: Guest): Promise<void> {}
+
+  async #installIdentity(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
+    const result = await command.run(identityInstallScript(), { timeoutMs: 60_000, signal, maxOutputBytes: 16 * 1024 }).catch((error: unknown) => error);
+    if (result instanceof Error || (result as RunResult).exitCode !== 0) {
+      const why = result instanceof Error ? result.message : (result as RunResult).stderr.trim() || `exit code ${(result as RunResult).exitCode}`;
+      this.#context.logError("install the identity reset", new Error(`${vm} on ${host.name}: ${why}`));
+    }
   }
 
   /** This install's VMs on every Mac that answers, from their owner files. */
@@ -2643,6 +2917,7 @@ export class TartBackend implements Backend {
         push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
       if (tart) await this.#doctorSpotlight(host, push, signal);
+      if (images.some((kind) => this.identitySource(kind))) await this.#doctorForks(host, push, signal);
       if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push, judge);
       if (windowsImage && state.qemuVideo) this.#doctorQemuVideo(host, state.qemuVideo, push);
       for (const kind of images) {
@@ -2779,6 +3054,22 @@ export class TartBackend implements Backend {
     } else {
       const judged = judge("windows-arm64-desktop", image, qemu.image.record, host.name);
       push(imageId, imageName, judged.status, `${image}, build ${qemu.image.build}. ${judged.detail}`, judged.fix);
+    }
+  }
+
+  async #doctorForks(
+    host: TartHost,
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const id = `forks.${host.name}` as const;
+    const name = `macOS forks on ${host.name}`;
+    try {
+      const can = (await this.#run(host, script("if diskutil image attach --help >/dev/null 2>&1; then echo yes; else echo no; fi\n"), { timeoutMs: 30_000, signal })).stdout.trim() === "yes";
+      if (can) push(id, name, "ok", `${host.name}'s diskutil can attach a fork's disk, so bb-box cleans it of its source's identity before the fork first boots.`);
+      else push(id, name, "warn", `On ${host.name}, ${NO_IMAGE_ATTACH}.`, `Update ${host.name} to macOS 27 or later to make macOS forks there.`);
+    } catch (error) {
+      push(id, name, "warn", `bb-box could not ask ${host.name}'s diskutil whether it attaches disk images: ${message(error)}`, null);
     }
   }
 
@@ -2987,6 +3278,11 @@ export class TartBackend implements Backend {
       return true;
     } catch (error) {
       if (!discard || !failedRestore(error)) throw error;
+      if (os !== "windows" && (await this.#run(host, discardStateScript(vm), { timeoutMs: 30_000, signal })).stdout.trim() === "kept") {
+        throw new Error(
+          `The memory of the snapshot just put in the place of ${vm} on ${host.name} did not resume, so bb-box did not boot it from its disk, which would lose that memory without a word: ${message(error)} Start the box again to boot it from its disk, or restore another snapshot.`,
+        );
+      }
       this.#context.logError(
         "start",
         new Error(
@@ -2994,7 +3290,7 @@ export class TartBackend implements Backend {
             `After an update of macOS or ${os === "windows" ? "QEMU" : "Tart"}, every stopped box on the Mac does this once. ${message(error)}`,
         ),
       );
-      await this.#run(host, os === "windows" ? qemuDiscardScript(vm) : discardStateScript(vm), { timeoutMs: 30_000, signal });
+      if (os === "windows") await this.#run(host, qemuDiscardScript(vm), { timeoutMs: 30_000, signal });
       await this.#launch(host, vm, os, deadline, signal);
       return false;
     }
@@ -3121,12 +3417,13 @@ export class TartBackend implements Backend {
    * was removed, is named only when the Mac's ARP table, just after bb-box
    * reached the address, gives the MAC address in the VM's config.
    */
-  async #identify(host: TartHost, address: string, vm: string, os: GuestOs, signal?: AbortSignal): Promise<void> {
+  async #identify(host: TartHost, address: string, vm: string, os: GuestOs, signal?: AbortSignal, copyOf: string | null = null): Promise<boolean> {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
     const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
-    if (result.stdout.trim() !== "none") return;
+    const answersAsSource = copyOf !== null && result.exitCode === 4 && result.stderr.trim() === `The VM that answers is ${copyOf}, not ${vm}.`;
+    if (result.exitCode !== 0 && !answersAsSource) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+    if (!answersAsSource && result.stdout.trim() !== "none") return false;
     const { answered, expected } = parseMacs((await this.#run(host, macScript(vm, address), { timeoutMs: 15_000, signal })).stdout);
     if (!expected || !answered || normalMac(expected) !== normalMac(answered)) {
       throw new Error(
@@ -3135,6 +3432,7 @@ export class TartBackend implements Backend {
     }
     const remembered = await command.run(rememberScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (remembered.exitCode !== 0) throw new Error(`${host.name}: ${remembered.stderr.trim() || `exit code ${remembered.exitCode}`}`);
+    return true;
   }
 
   /** Sets a resumed macOS VM's clock from this server's (macClockScript). A box whose clock could not be set still works, so that only logs. */

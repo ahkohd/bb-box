@@ -447,6 +447,50 @@ mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu
   /Volumes/<volume>` works too, for a volume that holds nothing else
   Spotlight should index.
 
+### Snapshots
+
+bb-box keeps a box's snapshots (070) beside Tart's `vms` folder, in
+`bb-box-snapshots`, where `~/.tart` leads: each is an APFS clone of the
+VM's folder, with a `label` file that names the install, the box and the
+snapshot. Nothing is installed for them on the Mac; they use the Mac's
+`python3`, as the VNC holder does, and `diskutil`.
+
+- **Keep the folder on the VMs' volume.** There a clone takes a moment and
+  no space. bb-box copies only with APFS's `clonefile`, never with `cp`,
+  which makes a full copy when it cannot clone: measured, 1 GB of a 96 GB
+  VM in 7.5 minutes. So it refuses to take, restore or fork a snapshot when
+  the folder is on another volume, or when APFS will not clone.
+- **The disk reserve applies.** bb-box copies nothing, and suspends nothing
+  to copy, while the volume has less free than `reserve-disk-gib`, or 20
+  GiB, whichever is more. A copy grows as its box changes, up to the VM's
+  disk and memory.
+- **A macOS snapshot holds the VM's memory**, which restores only under the
+  macOS build and Tart that saved it. bb-box notes both at each suspend, in
+  `~/.bb-box/tart/run/<vm>.saved-under`, and after an update of either it
+  forks such a snapshot rather than restore it.
+- **A restore records its phases** in `bb-box-snapshots/.rollbacks/<vm>`,
+  and stages its copy in `.restore-<vm>` and the VM's own folder in
+  `.replaced-<vm>`. If it is cut short, bb-box puts the right folder back
+  the next time it reads the box, starts it or releases it; a release
+  deletes what is left, a fork's `.fork-<vm>` too.
+- **A fork's disk is cleaned on the Mac** before its first boot: bb-box
+  attaches the fork's own copy of `disk.img` with `diskutil image attach
+  --noMount`, finds the Data volume in that image's own APFS container,
+  never the Mac's, mounts it under `/tmp` as the host user, removes the
+  source's BB machine, BB's LaunchAgent, the access file, the VM's name and
+  the SSH host keys, and ejects it. The fork's VM then gets a new MAC
+  address and machine identifier with `tart set --random-mac
+  --random-serial`. A Mac whose macOS has no `diskutil image attach`, which
+  macOS 27 has, makes no macOS forks and keeps no macOS snapshot past a
+  release; `bb box doctor` warns in "macOS forks on <mac>".
+- **macOS boxes get an identity reset** when they are first ready: bb-box
+  installs `/usr/local/sbin/bb-box-identity` and the LaunchDaemon
+  `dev.bb-box.identity` in each macOS VM, which also runs at a fork's first
+  boot.
+- **Kept snapshots stay on the Mac** when bb-box, or this backend, is
+  removed: delete them in bb-box first, or remove the folder as Remove
+  says.
+
 ## Update
 
 - **macOS and Linux images rebuild each night** once the nightly run is set
@@ -495,6 +539,8 @@ mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu
 
    `tart delete` refuses a running VM, but deletes a suspended one as it is.
    An image the Tart settings name otherwise needs its own `tart delete`.
+   Then delete bb-box's snapshots, beside the VMs:
+   `rm -rf "$(dirname "$(cd ~/.tart/vms && pwd -P)")/bb-box-snapshots"`.
 3. Windows boxes are QEMU processes, not Tart VMs, and their disks are in
    `~/.bb-box`. Stop each one, then delete bb-box's files, the Windows image
    and its downloads with them:
@@ -515,7 +561,8 @@ mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu
    `sudo systemsetup -setremotelogin off`, delete the host user, and
    uninstall Tart and QEMU.
 
-bb-box installs no launch agents or daemons on the Mac. Its VNC holders end
+bb-box installs no launch agents or daemons on the Mac; it installs one in
+each macOS VM, which goes with the VM. Its VNC holders end
 with their VMs: `pgrep -fl 'bb-box.*holder.py'` shows none once the VMs have
 stopped.
 

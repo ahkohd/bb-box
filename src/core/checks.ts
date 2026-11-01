@@ -153,6 +153,7 @@ export const CHECKS = {
     from: ["tart"],
     what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together.",
   },
+  "forks.<mac>": { name: "macOS forks on <mac>", from: ["tart"], what: "Whether the Mac's diskutil can attach a fork's disk, so bb-box can clean it of its source's identity before the fork first boots (070 unit 9). Without it, macOS boxes there take and restore snapshots, but make no forks and keep none past a release." },
   "spotlight.<mac>": { name: "Spotlight on <mac>", from: ["tart"], what: "Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12)." },
   "qemu.<mac>": { name: "QEMU on <mac>", from: ["tart"], what: "QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac." },
   "qemu-video.<mac>": { name: "Windows video on <mac>", from: ["tart"], what: "bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865)." },

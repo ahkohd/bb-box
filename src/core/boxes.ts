@@ -60,6 +60,7 @@ import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName, isMachineName } from "./names.ts";
 import { FORK_SAFE_PROBE_MS, MARKER_WRITE_MS, forkVerdict, identityStatusScript, parseIdentityStatus, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
+import { forksOn } from "./snapshot.ts";
 import {
   bestAnswer,
   grantRefusal,
@@ -1642,7 +1643,7 @@ export class Boxes {
   }
 
   identityChecked(box: BoxRecord): boolean {
-    return box.capabilities.os === "linux" && !!box.identityMarkedAt;
+    return forksOn(box.capabilities.os) && !!box.identityMarkedAt;
   }
 
   async identityResetFound(box: BoxRecord, reset: { readonly at: number; readonly why: string; readonly machine: string }): Promise<BoxRecord | null> {
@@ -2344,7 +2345,7 @@ export class Boxes {
     };
     const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;
     for (let look = 1; ; look++) {
-      const verdict = forkVerdict(await readForkSeen(command, signal), expected);
+      const verdict = forkVerdict(await readForkSeen(command, signal, box.capabilities.os === "macos" ? "macos" : "linux"), expected);
       if (verdict.is === "ready") break;
       if (verdict.is === "refused" || look >= FORK_LOOKS) {
         const waited = verdict.is === "wait" ? ` after ${Math.round(waitMs / 1000)} s` : "";
@@ -2490,7 +2491,7 @@ export class Boxes {
   }
 
   async #markIdentity(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
-    const source = box.capabilities.os === "linux" ? (backend.identitySource?.(box.kind) ?? null) : null;
+    const source = forksOn(box.capabilities.os) ? (backend.identitySource?.(box.kind) ?? null) : null;
     if (!source || !(await this.#deps.general()).identityResetBackends?.includes(backend.id)) return;
     const started = this.#now();
     try {
