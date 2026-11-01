@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
 import { buildScript, recordChecks, refreshImage, trialCheck, windowsRecord } from "../src/core/refresh.ts";
+import { resolveVersions, type FetchText } from "../src/backends/versions.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../src/transports/types.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -251,6 +252,24 @@ test("a refresh writes its build's output to the build's own file, and gives the
   assert.ok(lines.includes("#14 [linux 4/9] RUN apt-get update") && lines.includes("built bbbox/linux:refresh-x"), "its steps are");
   const [file] = readdirSync(dir);
   assert.equal(readFileSync(join(dir, file!), "utf8").split("\n").filter((line) => line.includes("Get:")).length, 50, "the file has the whole output");
+});
+
+test("a desktop rebuild that cannot reach Google keeps the repository's Chrome pins, which are no older than the Chrome a resolved rebuild already gave the arm64 desktop image, so no tool older passes", async () => {
+  const unreachable: FetchText = async () => {
+    throw new TypeError("fetch failed");
+  };
+  const versions = await resolveVersions(SETUP, { fetch: unreachable, now: Date.parse("2026-10-31T10:56:30Z"), verify: async () => "" });
+  const chrome = versions.tools.filter((tool) => tool.name === "chrome");
+  assert.deepEqual(chrome.map((tool) => [tool.arch, tool.kept]), [
+    ["x86_64", "upstream could not be read: fetch failed"],
+    ["arm64", "upstream could not be read: fetch failed"],
+  ]);
+  const already = record("build.20261024-033635-7ca8", { chrome: "156.0.8078.47" }, { kind: "linux-arm64-desktop-cpu", arch: "arm64" });
+  for (const tool of chrome) {
+    const built = record("build.20261031-105630-5f45", { chrome: tool.version }, { kind: "linux-arm64-desktop-cpu", arch: "arm64" });
+    const older = recordChecks(built, already, "linux-arm64-desktop-cpu").find((check) => check.name === "no tool older")!;
+    assert.equal(older.ok, true, `${tool.arch}: ${older.detail}`);
+  }
 });
 
 test("the record's checks: whole, and no tool older or missing than in the old build", () => {
