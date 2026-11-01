@@ -33,7 +33,7 @@ function builder(options: { failOn?: string } = {}) {
 }
 
 let counter = 0;
-const box = (): BoxIdentity => ({ boxId: `bximg${String(++counter).padStart(8, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "linux", createdAt: 1_790_000_000_000, size: { cores: 2, memoryMiB: 4096, diskGiB: null } });
+const box = (): BoxIdentity => ({ boxId: `bximg${String(++counter).padStart(8, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "linux", createdAt: 1_790_000_000_000, size: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "none" } });
 
 test("a host image is built on a server of its own from the base image, with every kind's image, cleaned, shut down, snapshotted with its labels, and the server deleted", async () => {
   const { api, backend } = hetznerWorld();

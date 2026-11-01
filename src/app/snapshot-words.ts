@@ -1,4 +1,4 @@
-import type { BoxSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
+import type { MachineSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -156,7 +156,7 @@ export function freesWords(row: SnapshotRowView, boxName: string): string {
   return "Its backend does not say how much it frees.";
 }
 
-export function sizeBackWords(boxName: string, from: BoxSize | null, to: BoxSize | null): string | null {
+export function sizeBackWords(boxName: string, from: MachineSize | null, to: MachineSize | null): string | null {
   if (!from || !to) return null;
   const same = from.cores === to.cores && from.memoryMiB === to.memoryMiB && (to.diskGiB === null || from.diskGiB === to.diskGiB);
   if (same) return null;

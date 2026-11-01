@@ -21,7 +21,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type CopyHooks,
@@ -187,11 +187,11 @@ export function largestAllowed(limits: BoatLimits): SizeShape | null {
   return [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true) ?? null;
 }
 
-function partOf(size: BoxSize, part: SizePart): number | null {
+function partOf(size: MachineSize, part: SizePart): number | null {
   return part === "cores" ? size.cores : part === "memory" ? size.memoryMiB : size.diskGiB;
 }
 
-function shapeSize(shape: SizeShape): BoxSize {
+function shapeSize(shape: SizeShape): MachineSize {
   return { cores: shape.cores, memoryMiB: shape.memoryGB * 1024, diskGiB: shape.diskGB };
 }
 
@@ -258,7 +258,7 @@ function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function sizeFor(size: BoxSize, allowed: (shape: SizeShape) => boolean = () => true): SizeShape | null {
+export function sizeFor(size: MachineSize, allowed: (shape: SizeShape) => boolean = () => true): SizeShape | null {
   return SIZE_SHAPES.find((shape) => allowed(shape) && shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || shape.diskGB >= size.diskGiB)) ?? null;
 }
 
@@ -409,7 +409,7 @@ export class BoatBackend implements Backend {
     return (this.#offered() as readonly string[]).includes(kind) ? "A VM on boat.dev, forked from bb-box's template, billed by the second while it runs." : null;
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {
     const boatKind = this.#kind(kind);
     const limits = await this.#readLimits(signal);
     const allowed = (shape: SizeShape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true;
@@ -590,7 +590,7 @@ export class BoatBackend implements Backend {
     return (this.#offered() as readonly string[]).includes(kind) ? RESIZING : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, _pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, _pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<ResizePlan> {
     const sandbox = await this.#mine(guest, signal);
     if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
     const limits = await this.#readLimits(signal);
@@ -611,7 +611,7 @@ export class BoatBackend implements Backend {
     return { parts, room, downSeconds: parts.length ? RESTART_SECONDS[this.#kind(kind)] : null };
   }
 
-  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const sandbox = await this.#mine(guest, signal);
     if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
     const limits = await this.#readLimits(signal);
@@ -1072,7 +1072,7 @@ export class BoatBackend implements Backend {
     return pending;
   }
 
-  #tooBig(size: BoxSize, limits: BoatLimits): string {
+  #tooBig(size: MachineSize, limits: BoatLimits): string {
     const asked = `${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB${size.diskGiB !== null ? ` with ${size.diskGiB} GiB of disk` : ""}`;
     const largest = [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true);
     const fits = sizeFor(size);

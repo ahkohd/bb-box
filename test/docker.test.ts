@@ -12,7 +12,7 @@ import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
-import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type BoxSize, type FieldValue, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart } from "../src/core/document.ts";
 import { TransportError } from "../src/transports/types.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -20,7 +20,7 @@ import { MemoryStorage, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const MiB = 2 ** 20;
 /** The linux kinds' small preset (028). */
-const SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const SMALL: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 const GPU_A = "nvidia.com/gpu=GPU-0b1c2d3e-0000-0000-0000-000000000001";
 const GPU_B = "nvidia.com/gpu=GPU-0b1c2d3e-0000-0000-0000-000000000002";
 /** A GPU's UUID, as nvidia-smi --id takes it: its CDI name after "=". */
@@ -37,7 +37,7 @@ function setup(values: Record<string, FieldValue> = {}, host: Record<string, unk
 let counter = 0;
 function identity(kind = "linux", size = SMALL, threadId = "thr_abc123"): BoxIdentity {
   counter++;
-  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks(onClaim: (guest: Guest) => void = () => {}) {
@@ -1328,7 +1328,7 @@ test("where Docker cannot pin a container to CPUs, a box keeps its CPU limit, ge
 
 test("on a Docker host whose CPUs are 27 and 61, as one in an LXC container, boxes are pinned to those, and when the host's CPUs change, a refused create probes again and goes on (062)", async () => {
   const { fake, backend } = setup({}, { cpuList: "27,61", memoryMiB: 65536 });
-  const one: BoxSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
+  const one: MachineSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
   const pinned = (guest: Guest) => fake.inspect(guest.ref).HostConfig.CpusetCpus;
   const probes = () => readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").filter((line) => line.includes("cpuset.cpus.effective")).length;
   const a = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
@@ -1458,7 +1458,7 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
   let now = 1_000_000;
   const fake = fakeDockerHost({ cpuList: "27,61", memoryMiB: 65536 });
   const backend = new DockerBackend(dockerConfig(), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000, now: () => now });
-  const one: BoxSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
+  const one: MachineSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
   const probes = () => (existsSync(join(fake.root, "probes")) ? readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").filter((line) => line.includes("cpuset.cpus.effective")).length : 0);
 
   const empty = fakeDockerHost();

@@ -11,7 +11,7 @@ import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
 import { proxmoxQemuDriver } from "../src/backends/proxmox-qemu/index.ts";
-import { BackendError, DEVICE_DISPLAY, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
@@ -71,12 +71,12 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   return { ssh, proxmox, context, storage, make, backend: make() };
 }
 
-const sized = (size: Partial<BoxSize> = {}): BoxSize => ({ ...defaultSize(kindSizes(KIND)), ...size });
+const sized = (size: Partial<MachineSize> = {}): MachineSize => ({ ...defaultSize(kindSizes(KIND)), ...size });
 
 let boxCounter = 0;
 function identity(size = sized(), kind = KIND): BoxIdentity {
   boxCounter++;
-  return { boxId: `box_${boxCounter}`, threadId: "thr_abc123", name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `box_${boxCounter}`, threadId: "thr_abc123", name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

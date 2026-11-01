@@ -7,7 +7,7 @@ import { ProxmoxLxcBackend, displayReason, namesGpu, parseGpuReport, warmNameScr
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { installFromDescription, ownerFromDescription, ownerFromTags, templateFromTags } from "../src/backends/proxmox/owner.ts";
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
@@ -54,13 +54,13 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
 }
 
 /** The size a box of the kind gets by default. */
-const sized = (kind: string): BoxSize => defaultSize(kindSizes(kind));
+const sized = (kind: string): MachineSize => defaultSize(kindSizes(kind));
 const waiting = (...kinds: string[]) => kinds.map((kind) => ({ kind, size: sized(kind) }));
 
 let boxCounter = 0;
 function identity(kind = "linux", threadId = "thr_abc123", size = sized(kind)): BoxIdentity {
   boxCounter++;
-  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

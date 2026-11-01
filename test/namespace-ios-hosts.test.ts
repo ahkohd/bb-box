@@ -147,7 +147,7 @@ function harness(options: { report?: MacReport | null; room?: string | null; mea
 }
 
 function box(id: string): BoxIdentity {
-  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "ios", createdAt: 1, size: { cores: 6, memoryMiB: 14336, diskGiB: null } };
+  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "ios", createdAt: 1, size: { cores: 6, memoryMiB: 14336, diskGiB: null, gpu: "none" } };
 }
 
 const hooks: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };

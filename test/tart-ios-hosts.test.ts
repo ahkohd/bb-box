@@ -34,7 +34,7 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
 let counter = 0;
 function identity(): BoxIdentity {
   counter++;
-  return { boxId: `bxios${counter}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "ios", createdAt: 1_790_000_000_000, size: { cores: 6, memoryMiB: 16384, diskGiB: null } };
+  return { boxId: `bxios${counter}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind: "ios", createdAt: 1_790_000_000_000, size: { cores: 6, memoryMiB: 16384, diskGiB: null, gpu: "none" } };
 }
 
 function hooks(): { hooks: AcquireHooks; claimed: Guest[]; timings: Record<string, number> } {

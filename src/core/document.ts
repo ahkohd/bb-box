@@ -8,7 +8,7 @@
 // "kinds.linux.presets.small", so the settings page can show it by its field.
 
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
-import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
+import { isSecret, type BackendDriver, type BackendPart, type MachineSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
@@ -1151,7 +1151,7 @@ export function blocking(problems: readonly Problem[], document: ConfigDocument,
 }
 
 /** The shipped sizes of each kind, for the page's placeholders. */
-export function kindDefaults(drivers: readonly BackendDriver<any>[]): Record<string, { enabled: true; presets: Record<Preset, BoxSize>; default: Preset; largest: BoxSize }> {
+export function kindDefaults(drivers: readonly BackendDriver<any>[]): Record<string, { enabled: true; presets: Record<Preset, MachineSize>; default: Preset; largest: MachineSize }> {
   return Object.fromEntries(
     knownKinds(drivers).map((kind) => {
       const sizes = kindSizes(kind);

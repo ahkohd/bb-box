@@ -9612,6 +9612,10 @@ function snapshotsView(overrides: Partial<BoxSnapshotsView> = {}): BoxSnapshotsV
   };
 }
 
+function clockAtLocalNoon(): void {
+  vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 9, 14, 12, 0), shouldAdvanceTime: true });
+}
+
 function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePreview {
   return {
     refusal: null,
@@ -9649,6 +9653,7 @@ test("070 unit 6: the Snapshots card sits after Activity and before the facts, w
 });
 
 test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, its size, time and space and what a fork holds; Fork sends it with what was chosen and opens the new box's page", async () => {
+  clockAtLocalNoon();
   const preview = (asMachine: boolean): ForkPreview => ({
     refusal: null,
     check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null },
@@ -9689,6 +9694,7 @@ test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a row s
 });
 
 test("070 unit 7: a fork's page says where it came from among its facts", async () => {
+  clockAtLocalNoon();
   const { handlers } = server([box({ forkedFrom: { name: "amber-fox", snapshot: "before the migration", takenAt: Date.now() - 60_000 } })]);
   const slot = boxPageAt(handlers, "box/box_1");
   const facts = await slot.findByRole("region", { name: "Facts" });
@@ -9765,6 +9771,7 @@ test("070 unit 6: a guarded restore names every thread, the control and a termin
 });
 
 test("070 unit 6: the person restores anyway past a control and a terminal, keeps or unticks the undo, and the button says so", async () => {
+  clockAtLocalNoon();
   const losses = ["a person holds control of its desktop", "a BB terminal is open on it"];
   const preview = restorePreviewOf({ control: true, terminals: 1, check: { ...restorePreviewOf().check!, anyway: losses, from: { cores: 8, memoryMiB: 16384, diskGiB: 32 }, to: { cores: 4, memoryMiB: 8192, diskGiB: 32 } } });
   const { handlers, changes } = server([box()], { snapshots: snapshotsView(), restorePreview: preview });
@@ -9786,6 +9793,7 @@ test("070 unit 6: the person restores anyway past a control and a terminal, keep
 });
 
 test("070 unit 6: the restored notice says when, to what and by whom, and its Undo opens the restore dialog for the undo; restoring and an unconfirmed restore are said too", async () => {
+  clockAtLocalNoon();
   const at = Date.now() - 10 * 60_000;
   const restored = server([box()], { snapshots: snapshotsView({ restored: { operation: "opone", at, to: "before the migration", toTakenAt: Date.now() - 26 * 60 * 60_000, by: { is: "person" }, undo: { id: "snundo", name: "before the restore at 11:02", ready: true }, unflushed: null } }), restorePreview: restorePreviewOf({ snapshot: snapshotRow({ id: "snundo", name: "before the restore at 11:02" }) }) });
   let slot = boxPageAt(restored.handlers, "box/box_1");

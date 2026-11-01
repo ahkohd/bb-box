@@ -39,7 +39,10 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type CardClaim,
+  type CardPlacement,
+  type GpuPart,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -61,6 +64,7 @@ import { CommandLine, quote } from "../src/transports/process.ts";
 import { openRoute } from "../src/transports/route.ts";
 import { openTerminal } from "../src/transports/terminal.ts";
 import { IDENTITY_STATE, IDENTITY_TOOL } from "../src/core/identity.ts";
+import { machineSizeOf } from "../src/core/gpu.ts";
 import {
   TransportError,
   type BoxPointer,
@@ -110,7 +114,7 @@ export interface FakeBackendOptions {
    * every machine's size, which a box of any size up to it gets. 16 cores,
    * 64 GiB memory and 256 GiB disk by default.
    */
-  readonly largest?: BoxSize;
+  readonly largest?: MachineSize;
   /** Warm guests to keep per kind, read at each maintain, as a backend reads its context's. None by default. */
   readonly warm?: (kind: string) => number;
   /** The $SHELL that runs guests' scripts, such as FAKE_PWSH. The user's login shell by default. */
@@ -121,6 +125,19 @@ export interface FakeBackendOptions {
   readonly pointer?: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => Promise<void>;
   readonly daemonKeptByHost?: boolean;
   readonly slots?: { readonly kinds: readonly SlotKind[]; readonly most: number };
+  readonly cards?: readonly CardPlacement[];
+  readonly boxesPerCard?: number;
+}
+
+export interface FakeCardHolder {
+  readonly ref: string;
+  readonly box: string | null;
+  readonly part: GpuPart;
+  readonly power: PowerState;
+}
+
+export interface FakeCard extends CardPlacement {
+  readonly holders: readonly FakeCardHolder[];
 }
 
 export interface FakeSlotHost {
@@ -147,13 +164,14 @@ interface GuestRecord {
   readonly install: string;
   readonly owner: BoxIdentity | null;
   readonly power: PowerState;
+  readonly claim?: CardClaim | null;
 }
 
 /** A real machine's holder: the box, and the install it belongs to. */
 type Holder = BoxIdentity & { readonly install: string };
 
 const HOST = "fake";
-const LARGEST: BoxSize = { cores: 16, memoryMiB: 65536, diskGiB: 256 };
+const LARGEST: MachineSize = { cores: 16, memoryMiB: 65536, diskGiB: 256 };
 /** Where the fake `cua-driver` command is. */
 export const FAKE_CUA_BIN = fileURLToPath(new URL("./fake-cua", import.meta.url));
 /** A Windows box's fake PowerShell, for the backend's `shell`. */
@@ -282,13 +300,13 @@ export class FakeBackend implements Backend {
   /** The room planResize finds for a box's growth. */
   resizeRoom: Capacity = { ok: true, message: null, warm: null, hosts: [] };
   /** Each box resize, in order. */
-  readonly resized: { ref: string; to: BoxSize; restart: boolean }[] = [];
+  readonly resized: { ref: string; to: MachineSize; restart: boolean }[] = [];
   /** The next box resize fails with this, and changes nothing. */
   resizeFault: Error | null = null;
   /** Box resizes wait here while it is set. */
   boxResizeGate: Promise<void> | null = null;
   /** Each guest's size since its last resize, as a guest would say it. */
-  readonly #sizes = new Map<string, BoxSize>();
+  readonly #sizes = new Map<string, MachineSize>();
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
@@ -305,6 +323,7 @@ export class FakeBackend implements Backend {
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {
       this.start = async (guest, _signal, timing, answered) => {
+        await this.#placeSharedAgain(guest.ref);
         await this.#power(guest, "running");
         await answered?.();
         for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
@@ -388,7 +407,7 @@ export class FakeBackend implements Backend {
     return [...this.#kinds];
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[]): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[]): Promise<Capacity> {
     this.#kind(kind);
     const largest = this.#largest();
     const larger = size.cores > largest.cores || size.memoryMiB > largest.memoryMiB || (size.diskGiB ?? 0) > (largest.diskGiB ?? 0);
@@ -444,12 +463,13 @@ export class FakeBackend implements Backend {
         if (!member) throw new BackendError("no_capacity", "All machines are in use. Release a box to free one.");
       }
       if (!guest) {
+        const claim = await this.#claimCard(box.size.gpu);
         const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
         await this.#storage.set("counter", counter);
-        guest = this.#guest(`g${counter}`, null, box.boxId, box.size);
+        guest = { ...this.#guest(`g${counter}`, null, box.boxId, box.size), ...(claim ? { claim } : {}) };
         await hooks.claim(guest);
         signal.throwIfAborted();
-        await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
+        await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped", ...(claim ? { claim } : {}) } satisfies GuestRecord);
       }
       this.#holding.add(box.boxId);
       await mkdir(this.#home(guest.ref), { recursive: true });
@@ -502,7 +522,7 @@ export class FakeBackend implements Backend {
     return this.resizeWays && this.#kinds.some((candidate) => candidate.id === kind) ? this.resizeWays : null;
   }
 
-  async planResize(guest: Guest, _kind: string, to: BoxSize): Promise<ResizePlan> {
+  async planResize(guest: Guest, _kind: string, to: MachineSize): Promise<ResizePlan> {
     const ways = this.resizeWays!;
     const from = this.#sizes.get(guest.ref) ?? guest.size!;
     const parts: ResizePlan["parts"][number][] = [];
@@ -512,7 +532,7 @@ export class FakeBackend implements Backend {
     return { parts, room: this.resizeRoom, downSeconds: parts.some((part) => part.way === "restart") ? 8 : null };
   }
 
-  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }): Promise<Guest> {
     this.calls.push(`resize ${guest.ref}`);
     if (this.boxResizeGate) await this.boxResizeGate;
     const plan = await this.planResize(guest, kind, to);
@@ -543,11 +563,11 @@ export class FakeBackend implements Backend {
     return this.#home(ref);
   }
 
-  setSize(ref: string, size: BoxSize): void {
+  setSize(ref: string, size: MachineSize): void {
     this.#sizes.set(ref, size);
   }
 
-  sizeOf(ref: string): BoxSize | null {
+  sizeOf(ref: string): MachineSize | null {
     return this.#sizes.get(ref) ?? null;
   }
 
@@ -574,7 +594,8 @@ export class FakeBackend implements Backend {
       const generation = this.nature === "real" ? (await this.#pool.state(ref)).generation : null;
       // As a guest would say: a machine's own size, or what a guest was made at.
       const size = this.nature === "real" ? this.#largest() : (this.#sizes.get(ref) ?? owner?.size ?? null);
-      const guest = this.#guest(ref, generation, owner?.boxId ?? null, size);
+      const claim = (await this.#record(ref))?.claim ?? null;
+      const guest = { ...this.#guest(ref, generation, owner?.boxId ?? null, size), ...(claim ? { claim } : {}) };
       const power = await this.power(guest);
       if (!power) continue;
       held.push({
@@ -719,13 +740,49 @@ export class FakeBackend implements Backend {
    * a stale release cannot reset the next box's machine. A virtual guest
    * carries its box, as a reference can be reused.
    */
-  #guest(ref: string, generation: number | null, box: string | null, size: BoxSize | null): Guest {
+  #guest(ref: string, generation: number | null, box: string | null, asked: MachineSize | null): Guest {
+    const size = asked && machineSizeOf(asked);
     const address = this.machines().find((machine) => machine.ref === ref)?.address ?? null;
     if (generation !== null) return { ref, host: HOST, address, size, data: { generation } };
     return box === null ? { ref, host: HOST, address, size } : { ref, host: HOST, address, size, data: { box } };
   }
 
-  #largest(): BoxSize {
+  async cards(): Promise<FakeCard[]> {
+    const records = await Promise.all(
+      (await this.#storage.list("guest/")).map(async (key) => ({ ref: key.slice("guest/".length), record: await this.#storage.get<GuestRecord>(key) })),
+    );
+    return (this.#options.cards ?? []).map((card) => ({
+      ...card,
+      holders: records.flatMap(({ ref, record }) =>
+        record?.claim?.card === card.card && record.claim.answer === "granted" ? [{ ref, box: record.owner?.boxId ?? null, part: record.claim.part, power: record.power }] : [],
+      ),
+    }));
+  }
+
+  async #claimCard(gpu: GpuPart, starting: { readonly ref: string; readonly claim: CardClaim } | null = null): Promise<CardClaim | null> {
+    if (gpu === "none" || !this.#options.cards?.length) return null;
+    const most = this.#options.boxesPerCard ?? 4;
+    const others = (card: FakeCard) => card.holders.filter((holder) => holder.ref !== starting?.ref);
+    const holding = (card: FakeCard) => others(card).filter((holder) => holder.part === "whole" || holder.power !== "stopped");
+    const free = (await this.cards())
+      .filter((card) => !others(card).some((holder) => holder.part === "whole"))
+      .filter((card) => (gpu === "whole" ? holding(card).length === 0 : most === 0 || holding(card).length < most))
+      .sort((a, b) => holding(a).length - holding(b).length || a.index - b.index);
+    const chosen = free.find((card) => card.card === starting?.claim.card) ?? free[0];
+    if (!chosen) throw new BackendError("no_capacity", `No card on the fake host can take a ${gpu} GPU now.`);
+    if (starting && chosen.card === starting.claim.card) return starting.claim;
+    return { card: chosen.card, part: gpu, generation: (starting?.claim.generation ?? 0) + 1, answer: "granted" };
+  }
+
+  async #placeSharedAgain(ref: string): Promise<void> {
+    const record = await this.#record(ref);
+    const claim = record?.claim;
+    if (!record || record.power !== "stopped" || claim?.part !== "shared" || claim.answer !== "granted") return;
+    const placed = await this.#claimCard("shared", { ref, claim });
+    if (placed !== claim) await this.#storage.set(`guest/${ref}`, { ...record, claim: placed });
+  }
+
+  #largest(): MachineSize {
     return this.#options.largest ?? LARGEST;
   }
 

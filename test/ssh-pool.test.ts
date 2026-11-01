@@ -11,7 +11,7 @@ import { overlapChecks } from "../src/backends/index.ts";
 import { SshPoolBackend, type SshPoolBackendOptions } from "../src/backends/ssh-pool/backend.ts";
 import { hostKeysFor, parseSshPoolSettings, parseTarget, type SshPoolConfig } from "../src/backends/ssh-pool/config.ts";
 import { CUA_VERSION, TartBackend } from "../src/backends/tart/backend.ts";
-import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Capacity, type Guest } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type MachineSize, type Capacity, type Guest } from "../src/backends/types.ts";
 import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { FAKE_MAC, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -280,7 +280,7 @@ describe("SSH host pool", () => {
     machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
     machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
     const { backend } = pool("large 192.0.2.46 linux\nmedium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
-    const size = (cores: number, memoryGiB: number, diskGiB: number | null = null): BoxSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
+    const size = (cores: number, memoryGiB: number, diskGiB: number | null = null): MachineSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
     const small = await acquire(backend, "linux", size(2, 4));
     assert.equal(small.guest.ref, "medium", "tiny has less than 90% of 4 GiB");
     assert.deepEqual(small.guest.size, { cores: 4, memoryMiB: 7861, diskGiB: null }, "the machine's own cores and memory");
@@ -371,7 +371,7 @@ describe("SSH host pool", () => {
     machine("192.0.2.66", { cores: "8", memory: "15900" });
     const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux\nl 192.0.2.66 linux");
     const small = sizeOf("linux");
-    const large: BoxSize = { cores: 8, memoryMiB: 16384, diskGiB: null };
+    const large: MachineSize = { cores: 8, memoryMiB: 16384, diskGiB: null };
     const used = (capacity: Capacity) => capacity.hosts[0]!.limits[0]!.used;
 
     const before = await backend.capacity("linux", large, [{ kind: "linux", size: small }]);

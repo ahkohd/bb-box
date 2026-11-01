@@ -4,7 +4,7 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
-import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type BoxSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Snapshotting, type Windowing } from "../backends/types.ts";
+import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type CardClaim, type GpuPart, type MachineSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Snapshotting, type Windowing } from "../backends/types.ts";
 import { offerSnapshotWords } from "./snapshot-words.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
@@ -14,6 +14,7 @@ import { RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, re
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
+import { claimOf, recordedGpu, userspaceOf, type NvidiaUserspace } from "../core/gpu.ts";
 import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -64,6 +65,9 @@ export interface BoxView {
   readonly os: string;
   readonly arch: string;
   readonly gpu: boolean;
+  readonly gpuPart?: GpuPart;
+  readonly claim?: CardClaim | null;
+  readonly nvidiaUserspace?: NvidiaUserspace;
   readonly requires: readonly string[];
   /** Features beyond what the kind promises. */
   readonly extras: readonly string[];
@@ -117,7 +121,7 @@ export interface ResizeView {
 }
 
 /** What the box has, read from its guest, or else the size it was asked to be. */
-export function boxSize(box: BoxRecord): BoxSize | null {
+export function boxSize(box: BoxRecord): MachineSize | null {
   return box.guest?.size ?? box.size ?? null;
 }
 
@@ -160,6 +164,9 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     os: box.capabilities.os,
     arch: box.capabilities.arch,
     gpu: box.capabilities.gpu,
+    gpuPart: recordedGpu(box),
+    claim: claimOf(box),
+    nvidiaUserspace: userspaceOf(box),
     requires: box.requires,
     extras: extraFeatures(box),
     docker: box.capabilities.features.includes("docker"),
@@ -193,7 +200,7 @@ export interface SizeView {
   readonly words: string;
 }
 
-export function sizeView(size: BoxSize): SizeView {
+export function sizeView(size: MachineSize): SizeView {
   return { cores: size.cores, memoryGiB: size.memoryMiB / 1024, diskGiB: size.diskGiB, words: describeSize(size) };
 }
 

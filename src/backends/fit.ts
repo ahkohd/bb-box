@@ -5,13 +5,13 @@
 
 import type { CheckId } from "../core/checks.ts";
 import { describeSize, fits, formatMiB } from "../core/sizes.ts";
-import type { BoxSize, DoctorCheck, KindSettings } from "./types.ts";
+import type { MachineSize, DoctorCheck, KindSettings } from "./types.ts";
 
 /** A kind a host offers, and the largest box of it the host holds while it runs nothing else. */
 export interface KindRoom {
   readonly kind: string;
   readonly settings: KindSettings;
-  readonly largest: BoxSize;
+  readonly largest: MachineSize;
 }
 
 export interface HostRoom {
@@ -45,7 +45,7 @@ export function sizesCheck(room: HostRoom): DoctorCheck | null {
       ? `It cannot hold a ${kind} box at its default size, ${describeSize(settings.defaultSize)}, only at ${list(held.map(describeSize), "or")}.`
       : `It cannot hold a ${kind} box at any of its presets, the smallest ${describeSize(settings.presets[0]!)}.`;
   });
-  const binds = (part: (size: BoxSize) => number | null) =>
+  const binds = (part: (size: MachineSize) => number | null) =>
     short.some(({ settings, largest }) => (part(settings.defaultSize) ?? 0) > (part(largest) ?? Infinity));
   const more = [
     ...(binds((size) => size.cores) ? ["cores"] : []),

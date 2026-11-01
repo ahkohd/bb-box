@@ -495,3 +495,152 @@ Nothing else measured contradicts it.
 - EGL's GBM platform on a server that has a card's nodes but no DRM nodes.
 - The real helper's cost with its `nvidia-smi` running each second (unit
   2).
+
+## Unit 1: the size's GPU part in core
+
+Built on main `0a7af761`. Nothing new is offered: no form, tool, CLI
+option, setting or backend behaviour changes.
+
+### What it adds
+
+- `GpuPart` (`none`, `shared`, `whole`), `CardClaim` and `CardPlacement`
+  in `src/backends/types.ts`. `BoxSize` is now cores, memory, disk and
+  `gpu`. The three parts a backend reads from a guest, and the kinds'
+  presets, are `MachineSize`, which was `BoxSize` before.
+- `src/core/gpu.ts`: which kinds have a GPU part (`linux` and
+  `linux-desktop`), their GPU when not asked for (`shared` for
+  `linux-desktop`, `none` for every other kind), `linux-desktop-cpu` as
+  a name for a `linux-desktop` with no GPU, and the refusal of
+  `linux-desktop-cpu` or a kind with no GPU part asked for a card. The
+  default can be changed per kind by a map the settings will give in
+  unit 15; the configuration does not take it yet. `cardsOf` says how
+  many cards a part holds, 0 or 1, so a count can grow from it.
+- Records. A box's `size` keeps its `gpu`. `nvidiaUserspace` is on the
+  record. It reads `unknown` until a later unit reads it, for a kind that
+  can have a card (`linux-desktop-cpu` included, as Resize can give it
+  one), and `none` for every other kind. A claim is the backend's, on the
+  box's guest (`guest.claim`), as its host is.
+- Reading old records. A record with no `gpu` reads `shared` when its
+  kind is `linux-desktop` and its offer had a GPU, and `none` otherwise,
+  as section 1 says. Reading writes nothing back. A record without a size
+  reads the same way.
+- Writing. A new box records the GPU its kind gets when not asked for,
+  and `none` where its offer has no GPU, which is what it gets today. A
+  fork records what its source's offer gives, as today (unit 6 makes
+  forks `none`). A resize, a restore through bb-box or outside it, and
+  the sweep finishing a resize cut short replace only the cores, memory
+  and disk (`withRecordedGpu`): a record keeps its own `gpu`, and a record
+  from before keeps having none. Nothing writes a guessed part into it.
+- `sameSize` compares `gpu` too, so a box asked for none never takes a
+  shared spare, and a change of GPU alone is a change, for units 7 and 9.
+  `sameMachineSize` compares the three parts, for presets.
+- Backends get `gpu` in the size of the box they make (`BoxIdentity`),
+  and ignore it. Capacity, resize plans and resizes get the three parts,
+  as before.
+- Views. `bb box status --json`, `bb box list --json` and the panel's
+  box view gain `gpuPart`, `claim` and `nvidiaUserspace`. Their text,
+  `box_status` and `box_list`, does not change.
+- The fake backend takes `cards` and `boxesPerCard`. It places a shared
+  box on the card with the fewest boxes holding it, then the lowest index;
+  a whole box on a card nobody holds; and refuses when no card can take
+  it. A stopped shared box gives up its place and a stopped whole box
+  keeps its card, as the owner answered. A stopped shared box starts on
+  its last card while it has room, else on another card with a new
+  generation, and is refused when no card has room. Claims name cards by
+  UUID.
+
+### What was run
+
+- On a box, in a `node:26-bookworm` container as CI runs: `tsc` clean;
+  the node suite, 3,025 passed and 0 failed of 3,320; vitest, 443
+  passed. After the reviews' fixes: `tsc` clean; the node suite, 3,033
+  passed and 0 failed of 3,328; vitest, 443 passed. On main before the change: `tsc` clean and the same node suite
+  but for one test that needs a git checkout, which the first run lacked.
+- Seven existing tests compared a record's size with three parts; they
+  now expect `gpu: "none"` as well. Two tests compare what backends are
+  given, and pass unchanged.
+- New tests: `test/gpu.test.ts`, and three in `test/boxes.test.ts`: new
+  boxes of each kind record their GPU part; old records, with and
+  without a size, read as section 1 says through two restarts and are
+  not written; a `linux-desktop` from an offer with no GPU reads `none`;
+  a resize keeps the GPU part and gives the backend three parts; a claim
+  from the fake backend's cards is in the record and the view.
+
+### The live check
+
+A fresh `npx bb-app@0.48.1` with no account, in a Linux box with Docker,
+with bb-box installed from main. On main: Docker set up for boxes with
+the Linux and desktop images; the `linux` kind's default preset and
+largest disk changed, a `linux-desktop-cpu` preset changed; the most
+boxes a thread may hold, enrolment off; Docker's `gpu-desktops` on,
+`desktops-per-gpu` 2 and its memory kept free changed; a project with a
+thread, and a project's image for `linux` and `linux-desktop-cpu`. Boxes
+of `linux` (with the project's image, and with `standard`),
+`linux-docker`, `linux-desktop-cpu`, one stopped. The host has no card,
+so main refuses a `linux-desktop` box before it records one; a
+`linux-desktop` record with a GPU offer was written into the store by
+hand, as main writes one, with BB stopped. It reads as gone.
+
+Then `bb plugin install` from the branch over main, without removing
+it, and BB restarted twice. Before the upgrade and after the second
+restart:
+
+| Output | Same? |
+| --- | --- |
+| `bb box kinds`, text and JSON; the `kinds` RPC | yes |
+| `bb box config show --json`; the settings page's `config.get` and `backends` RPCs | yes |
+| `bb box option list`, `bb box image list` | yes |
+| `bb box list` and `bb box status` text, every box | yes |
+| `bb box status --json` and `bb box list --json` | only `gpuPart`, `claim` and `nvidiaUserspace` added, and `reach.lastAnswered`, a time that moves between captures on main too |
+| Every stored box record and the configuration, in BB's store | byte for byte |
+
+Every box read as section 1 says: the `linux-desktop` record `shared`;
+`linux`, `linux-docker` and `linux-desktop-cpu` boxes `none`; all with
+no claim and userspace `unknown`. After the restarts, new `linux`,
+`linux-docker` and `linux-desktop-cpu` boxes recorded `gpu: "none"`, a
+`linux-desktop` was refused with main's words, the stopped old box
+started, and a live resize of an old `linux-desktop-cpu` box kept `none`.
+That first build recorded the guessed `none` on the resize; after the
+reviews a resize writes no part into a record from before (see "After
+the reviews"). The upgrade path did not change, so the live check was not
+repeated.
+
+Limits: no card, so the `shared` case was a record written by hand, and
+no claim was seen live; the fake backend's cards are tested only in the
+suites. `box_list`'s and `box_status`'s tool text was compared through
+the CLI's text, which the tools share, not through an agent.
+
+### Deviations from the note
+
+- `BoxSize` gains `gpu`, as section 1 says; what backends read from a
+  guest and the kinds' presets are named `MachineSize`, as they have no
+  GPU part.
+- A claim is on the box's guest, not beside it on the record, as the
+  claim is the backend's (section 1).
+- `linux-desktop-cpu` boxes keep their kind ID, and `box_list` does not
+  yet say "also `linux-desktop-cpu`", so that nothing offered changes.
+  Core knows the name and refuses it with a GPU; the tools take `gpu` in
+  unit 7.
+
+### After the reviews
+
+Two reviews said to merge after fixes. Each fix has a test that failed on
+the first build and passes now, run on a box:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| A restore, through bb-box or outside it, dropped the record's `gpu` | Both replace only the cores, memory and disk, through `withRecordedGpu` | `test/gpu-records.test.ts`: a `whole` record and one from before, restored each way |
+| Resize, and the sweep finishing a resize cut short by an upgrade, wrote a guessed `gpu` into a record from before | The same helper, for the size and the resize's `from` and `to` | `test/gpu-records.test.ts`, an interrupted upgrade among them; `test/boxes.test.ts` |
+| The fake backend started a stopped shared box on a card now held whole | It starts it on its last card while that has room, else on another with a new generation, else refuses | `test/gpu.test.ts`, on one card and on two |
+| `sameSize` ignored `gpu` | It compares `gpu`; `sameMachineSize` compares the rest | `test/gpu.test.ts` |
+| NVIDIA's userspace read `unknown` for kinds that will never have a card | It reads `none` there | `test/gpu.test.ts` |
+
+Three vitest tests of 070's dialogs failed in the first 2 hours after
+midnight, on main as on this branch, as their words say "today" or
+"yesterday" of times set relative to the wall clock; a fourth, the fork's
+fact, failed in the first minute. A second commit sets each one's clock to
+noon local time on a fixed day. Full vitest runs, 443 passed each: under
+`TZ=UTC` with the clock faked to 00:30 UTC by libfaketime (on the first
+commit, the three failed), and under the default time zone at 00:09 UTC.
+At 00:00:30 UTC, faked, the four failed before and pass now, as they do
+under `TZ=Pacific/Kiritimati`.

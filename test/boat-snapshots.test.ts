@@ -95,7 +95,7 @@ function setup(options: { paid?: boolean } = {}) {
 }
 
 function box(id = BOX): BoxIdentity {
-  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "linux", createdAt: START, size: SMALL };
+  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind: "linux", createdAt: START, size: { ...SMALL, gpu: "none" } };
 }
 
 function acquireHooks(): AcquireHooks {

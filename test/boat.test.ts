@@ -40,7 +40,7 @@ function setup(options: { now?: () => number; config?: Partial<typeof CONFIG>; t
 }
 
 function box(id: string, kind = "linux", size = SMALL): BoxIdentity {
-  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind, createdAt: Date.parse("2030-01-01T00:00:00Z"), size };
+  return { boxId: id, threadId: "thr_1", name: `box-${id}`, kind, createdAt: Date.parse("2030-01-01T00:00:00Z"), size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

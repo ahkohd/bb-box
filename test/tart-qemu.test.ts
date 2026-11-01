@@ -11,7 +11,7 @@ import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState, qemuStartScript } from "../src/backends/tart/qemu.ts";
-import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
 import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, fakeSwift, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
@@ -20,7 +20,7 @@ const MAC = FAKE_MAC;
 /** Where the fake ssh runs what bb-box sends a Windows VM, which it reaches at 127.0.0.1 through the Mac. */
 const GUEST = "127.0.0.1";
 const KIND = "windows-arm64-desktop";
-const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
+const SMALL: MachineSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 const GiB = 1024;
 
 const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, fillQuietMs: 0 };
@@ -100,7 +100,7 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
 let counter = 0;
 function identity(size = SMALL): BoxIdentity {
   counter++;
-  return { boxId: `wx${counter}`, threadId: "thr_abc123", name: `brave-otter-${counter}`, kind: KIND, createdAt: 1_790_000_000_000, size };
+  return { boxId: `wx${counter}`, threadId: "thr_abc123", name: `brave-otter-${counter}`, kind: KIND, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {
@@ -124,7 +124,7 @@ function hooks() {
 
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
-const sized = (memoryGiB: number): BoxSize => ({ cores: 4, memoryMiB: memoryGiB * GiB, diskGiB: null });
+const sized = (memoryGiB: number): MachineSize => ({ cores: 4, memoryMiB: memoryGiB * GiB, diskGiB: null });
 
 /** The VM's config, as the clone script wrote it. */
 function config(qemu: string, vm: string): Record<string, string> {
@@ -467,7 +467,7 @@ test("the desktop resizes to the listed mode that best covers the viewer, set by
 
 test("a Windows box with a disk larger than the image's has an overlay of that size, and Windows extends C: over it", async () => {
   const { backend, qemu, ssh, build } = setup();
-  const size: BoxSize = { ...SMALL, diskGiB: 72 };
+  const size: MachineSize = { ...SMALL, diskGiB: 72 };
   const box = identity(size);
   const vm = `bb-box-${box.boxId}`;
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
@@ -503,7 +503,7 @@ test("a Windows VM resizes with a restart: Windows shuts down, its config and ov
       ``,
     ].join("\n"),
   );
-  const to: BoxSize = { cores: 6, memoryMiB: 12288, diskGiB: 80 };
+  const to: MachineSize = { cores: 6, memoryMiB: 12288, diskGiB: 80 };
 
   const plan = await backend.planResize(guest, KIND, to, [], signal());
   assert.deepEqual(plan.parts, [
@@ -556,7 +556,7 @@ test("a Windows box's disk may grow by what the Mac has free beyond the disk kep
   const reserve = FAKE_DISK_GIB.free - 4;
   const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": reserve }), context, FAKES);
   made.push(backend);
-  const disk = (diskGiB: number | null): BoxSize => ({ ...SMALL, diskGiB });
+  const disk = (diskGiB: number | null): MachineSize => ({ ...SMALL, diskGiB });
   for (const diskGiB of [null, 32, 64, 66]) assert.equal((await backend.capacity(KIND, disk(diskGiB), [], signal())).ok, true, `${diskGiB} GiB`);
   const refused = await backend.capacity(KIND, disk(72), [], signal());
   assert.equal(refused.ok, false);

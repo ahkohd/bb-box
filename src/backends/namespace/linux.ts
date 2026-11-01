@@ -7,7 +7,7 @@ import { DOCKER_KEYS, parseDockerPart, type DockerConfig } from "../docker/confi
 import { scopedStorage } from "../index.ts";
 import type { Ssh } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
-import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, BoxSize, Guest } from "../types.ts";
+import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, MachineSize, Guest } from "../types.ts";
 import { LINUX_IMAGE_TARGETS, type LinuxImageKind, type LinuxImages } from "./linux-images.ts";
 
 export const LINUX_KINDS = Object.keys(LINUX_IMAGE_TARGETS) as LinuxImageKind[];
@@ -31,7 +31,7 @@ export function isLinuxKind(kind: string): kind is LinuxImageKind {
   return (LINUX_KINDS as readonly string[]).includes(kind);
 }
 
-export function linuxShapeFor(size: BoxSize): { readonly cores: number; readonly memoryGB: number } | null {
+export function linuxShapeFor(size: MachineSize): { readonly cores: number; readonly memoryGB: number } | null {
   const cores = LINUX_CORES.find((each) => each >= size.cores);
   const memoryGB = LINUX_MEMORY_GB.find((each) => each * MIB_PER_GB >= size.memoryMiB);
   return cores === undefined || memoryGB === undefined ? null : { cores, memoryGB };

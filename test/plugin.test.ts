@@ -2728,7 +2728,7 @@ test("New box: BB's new-thread screen makes a box that is the thread's own machi
   assert.equal(created.status, "created", JSON.stringify(created));
   const [box] = await app.boxes.list(THREAD);
   assert.equal(box!.role, "machine");
-  assert.deepEqual(box!.size, { cores: 4, memoryMiB: 8192, diskGiB: null });
+  assert.deepEqual(box!.size, { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: "none" });
   assert.deepEqual(created.resource, { boxId: box!.id });
   assert.deepEqual(checkpoints, [{ boxId: box!.id }]);
   assert.deepEqual(world.bootstraps, [THREAD], "BB's daemon joins under the thread's key, once");
@@ -2993,7 +2993,7 @@ test("box_resize resizes a box live where its backend can, says first what it wo
   assert.match(status, /\nSize: 4 cores, 8 GiB memory, 30 GiB disk\n/);
   assert.match(status, /\nLast resize: to 4 cores, 8 GiB memory, 30 GiB disk, at \d{4}-\d\d-\d\d \d\d:\d\d UTC, done in /);
   const record = (await app.boxes.find(box.id))!;
-  assert.deepEqual(record.size, { cores: 4, memoryMiB: 8192, diskGiB: 30 });
+  assert.deepEqual(record.size, { cores: 4, memoryMiB: 8192, diskGiB: 30, gpu: "none" });
   assert.equal(record.resize?.state, "done");
 
   // A preset gives its cores and memory and leaves the disk; 1.2 GiB in use leaves room in 4 GiB.
@@ -3598,8 +3598,8 @@ test("box_acquire takes a preset or a custom size, and box_list shows each kind'
   assert.deepEqual(
     sizes.sort((a, b) => a!.cores - b!.cores),
     [
-      { cores: 4, memoryMiB: 8192, diskGiB: null },
-      { cores: 8, memoryMiB: 12288, diskGiB: 40 },
+      { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: "none" },
+      { cores: 8, memoryMiB: 12288, diskGiB: 40, gpu: "none" },
     ],
   );
   assert.match(text(await tool("box_list", {})), /4 cores, 8 GiB memory/);
@@ -3622,7 +3622,7 @@ test("sizes saved in the Proxmox LXC settings before 028 become the kinds' defau
   assert.equal(linux.defaultPreset, "small");
   assert.deepEqual(linux.presets.map((preset) => preset.words), ["6 cores, 6 GiB memory", "6 cores, 8 GiB memory", "8 cores, 16 GiB memory"]);
   assert.match(text(await tool("box_acquire", {})), /6 cores, 6 GiB memory/);
-  assert.deepEqual((await only(app)).size, { cores: 6, memoryMiB: 6144, diskGiB: null });
+  assert.deepEqual((await only(app)).size, { cores: 6, memoryMiB: 6144, diskGiB: null, gpu: "none" });
   const desktop = (await app.kinds()).find((kind) => kind.id === "linux-desktop")!;
   assert.equal(desktop.presets[0]!.words, "4 cores, 8 GiB memory", "a kind with nothing saved keeps the shipped sizes");
 
@@ -4409,7 +4409,7 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.equal(acquired.exitCode, 0, acquired.stderr);
   const box = await only(app);
   assert.match(acquired.stdout ?? "", new RegExp(`Box ${box.name}`));
-  assert.deepEqual(box.size, { cores: 4, memoryMiB: 8192, diskGiB: 20 });
+  assert.deepEqual(box.size, { cores: 4, memoryMiB: 8192, diskGiB: 20, gpu: "none" });
   const tooBig = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--memory-gib", "64"]);
   assert.equal(tooBig.exitCode, 1);
   assert.match(tooBig.stderr ?? "", /at most 16 cores, 32 GiB memory, 256 GiB disk, not 2 cores, 64 GiB memory.*\(invalid_size\)/s);

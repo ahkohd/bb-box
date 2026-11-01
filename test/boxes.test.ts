@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -393,15 +393,15 @@ test("a box is made at its kind's default size, a preset or a custom size, and r
   const world = setup();
   const made = async (size?: Parameters<Boxes["acquire"]>[0]["size"]) => {
     const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size }));
-    assert.deepEqual(box.guest?.size, box.size, "the backend was asked for the size");
+    assert.deepEqual({ ...box.guest?.size, gpu: "none" }, box.size, "the backend was asked for the size");
     return box.size;
   };
-  assert.deepEqual(await made(), { cores: 2, memoryMiB: 4 * GiB, diskGiB: null });
-  assert.deepEqual(await made({ preset: "large" }), { cores: 8, memoryMiB: 16 * GiB, diskGiB: null });
-  assert.deepEqual(await made({ cores: 3, diskGiB: 40 }), { cores: 3, memoryMiB: 4 * GiB, diskGiB: 40 });
-  assert.deepEqual(await made({ preset: "medium", memoryGiB: 12 }), { cores: 4, memoryMiB: 12 * GiB, diskGiB: null });
+  assert.deepEqual(await made(), { cores: 2, memoryMiB: 4 * GiB, diskGiB: null, gpu: "none" });
+  assert.deepEqual(await made({ preset: "large" }), { cores: 8, memoryMiB: 16 * GiB, diskGiB: null, gpu: "none" });
+  assert.deepEqual(await made({ cores: 3, diskGiB: 40 }), { cores: 3, memoryMiB: 4 * GiB, diskGiB: 40, gpu: "none" });
+  assert.deepEqual(await made({ preset: "medium", memoryGiB: 12 }), { cores: 4, memoryMiB: 12 * GiB, diskGiB: null, gpu: "none" });
   world.general = { ...world.general, sizes: parseSizeChanges({ linux: { default: "medium", medium: { diskGiB: 30 } } }).changes };
-  assert.deepEqual(await made(), { cores: 4, memoryMiB: 8 * GiB, diskGiB: 30 }, "the box-sizes setting changes the default");
+  assert.deepEqual(await made(), { cores: 4, memoryMiB: 8 * GiB, diskGiB: 30, gpu: "none" }, "the box-sizes setting changes the default");
   const views = (await world.boxes.all()).map((box) => boxView(box, true, { owner: "agent", holder: null }).size);
   assert.deepEqual(views.sort(), [
     "2 cores, 4 GiB memory",
@@ -468,7 +468,7 @@ test("a backend that cannot make a size refuses it through capacity, and the nex
 
 test("capacity is told each pending box's kind and size, and a box recorded before sizes counts at its kind's default (028)", async () => {
   const world = setup();
-  const asked: { size: BoxSize; pending: readonly { kind: string; size: BoxSize }[] }[] = [];
+  const asked: { size: MachineSize; pending: readonly { kind: string; size: MachineSize }[] }[] = [];
   const capacity = world.backend.capacity.bind(world.backend);
   world.backend.capacity = async (kind, size, pending) => {
     asked.push({ size, pending });
@@ -2371,7 +2371,7 @@ test("the sweep keeps spares, restores a lost one as a spare, and releases those
   world.general = { ...world.general, sizes: parseSizeChanges({ linux: { default: "medium" } }).changes };
   await world.boxes.sweep();
   await world.boxes.idle();
-  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.size), [{ cores: 4, memoryMiB: 8 * GiB, diskGiB: null }, { cores: 4, memoryMiB: 8 * GiB, diskGiB: null }]);
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.size), [{ cores: 4, memoryMiB: 8 * GiB, diskGiB: null, gpu: "none" }, { cores: 4, memoryMiB: 8 * GiB, diskGiB: null, gpu: "none" }]);
   world.general = { ...world.general, spares: {} };
   await world.boxes.sweep();
   await world.boxes.idle();
@@ -3587,4 +3587,95 @@ test("a refresh of capabilities keeps a slot box's slot capabilities, for an ios
     assert.equal(found.capabilities.command?.admin, false, `${box.kind}: no root after the refresh`);
     assert.ok(!found.capabilities.displays.some((display) => display.id === "desktop"), `${box.kind}: no desktop after the refresh`);
   }
+});
+
+const GPU_DESKTOP: BoxKind = { ...FAKE_KINDS[1]!, capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } };
+const CPU_DESKTOP: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-cpu" };
+
+test("071 unit 1: a new box records the GPU part its kind gets when not asked for, and what its offer has; old records read as section 1 says, through two restarts", async () => {
+  const world = setup({ kinds: [FAKE_KINDS[0]!, GPU_DESKTOP, CPU_DESKTOP] });
+  const control = { owner: "agent", holder: null } as const;
+  const made = await Promise.all(["linux", "linux-headless", "linux-desktop", "linux-desktop-cpu"].map(async (kind) => ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind }))));
+  await world.boxes.idle();
+  assert.deepEqual(
+    made.map((box) => [box.kind, box.size?.gpu]),
+    [
+      ["linux", "none"],
+      ["linux", "none"],
+      ["linux-desktop", "shared"],
+      ["linux-desktop-cpu", "none"],
+    ],
+  );
+  const read = async () =>
+    (await world.boxes.all())
+      .sort((a, b) => made.findIndex((box) => box.id === a.id) - made.findIndex((box) => box.id === b.id))
+      .map((box) => {
+        const view = boxView(box, true, control);
+        return { kind: view.kind, gpu: view.gpu, gpuPart: view.gpuPart, claim: view.claim, nvidiaUserspace: view.nvidiaUserspace, size: view.size, sizeNow: view.sizeNow };
+      });
+  const now = await read();
+  assert.deepEqual(
+    now.map((view) => [view.kind, view.gpu, view.gpuPart, view.claim, view.nvidiaUserspace, view.size]),
+    [
+      ["linux", false, "none", null, "unknown", "2 cores, 4 GiB memory"],
+      ["linux", false, "none", null, "unknown", "2 cores, 4 GiB memory"],
+      ["linux-desktop", true, "shared", null, "unknown", "4 cores, 8 GiB memory"],
+      ["linux-desktop-cpu", false, "none", null, "unknown", "4 cores, 8 GiB memory"],
+    ],
+  );
+
+  for (const box of made) {
+    const stored = (await world.kv.get<BoxRecord>(`box/${THREAD}/${box.id}`))!;
+    const { gpu: _, ...size } = stored.size!;
+    await world.kv.set(`box/${THREAD}/${box.id}`, box.kind === "linux-desktop-cpu" ? (({ size: _size, ...before }) => before)(stored) : { ...stored, size });
+  }
+  assert.ok((await world.boxes.all()).every((box) => box.size?.gpu === undefined), "every record is as one from before");
+  for (let restart = 0; restart < 2; restart++) {
+    world.restart();
+    await world.boxes.sweep();
+    await world.boxes.idle();
+    assert.deepEqual(await read(), now, `restart ${restart + 1}`);
+  }
+  assert.ok(
+    (await world.boxes.all()).every((box) => box.size?.gpu === undefined),
+    "reading an old record writes nothing into it",
+  );
+  assert.deepEqual(world.errors, []);
+});
+
+test("071 unit 1: a linux-desktop from an offer with no GPU records and reads none, and a resize keeps a box's GPU part", async () => {
+  const world = setup({ kinds: [FAKE_KINDS[0]!, FAKE_KINDS[1]!] });
+  const cpu = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));
+  assert.equal(cpu.size?.gpu, "none");
+  assert.equal(boxView(cpu, true, { owner: "agent", holder: null }).gpuPart, "none");
+
+  const gpuWorld = setup({ kinds: [GPU_DESKTOP] });
+  gpuWorld.backend.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  const desktop = await ready(gpuWorld.boxes, await gpuWorld.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));
+  const answer = await gpuWorld.boxes.resize(THREAD, desktop.name, { cores: 6 });
+  assert.deepEqual([answer.from.gpu, answer.to.gpu, answer.box.size], ["shared", "shared", { cores: 6, memoryMiB: 8 * GiB, diskGiB: null, gpu: "shared" }]);
+  assert.deepEqual(gpuWorld.backend.resized.map((each) => each.to), [{ cores: 6, memoryMiB: 8 * GiB, diskGiB: null }], "the backend gets the parts it resizes, as before");
+  const { gpu: _, ...size } = answer.box.size!;
+  const { gpu: _from, ...from } = answer.box.resize!.from;
+  await gpuWorld.kv.set(`box/${THREAD}/${desktop.id}`, { ...answer.box, size, resize: { ...answer.box.resize!, from, to: size } });
+  const again = await gpuWorld.boxes.resize(THREAD, desktop.name, { cores: 4 });
+  assert.equal(again.to.gpu, "shared", "a record from before reads shared");
+  assert.deepEqual([again.box.size, again.box.resize?.from, again.box.resize?.to], [{ cores: 4, memoryMiB: 8 * GiB, diskGiB: null }, { cores: 6, memoryMiB: 8 * GiB, diskGiB: null }, { cores: 4, memoryMiB: 8 * GiB, diskGiB: null }], "and a resize writes no guess into it");
+  await gpuWorld.boxes.idle();
+});
+
+test("071 unit 1: a box on a backend with cards carries the backend's claim, by the card's UUID, in its record and its view", async () => {
+  const card = { card: "GPU-3f9a2c1e-55b0-4c1d-9e2a-0b7d6c4a1f00", index: 0, model: "Fake RTX", memoryMiB: 24_576 };
+  const world = setup({ kinds: [FAKE_KINDS[0]!, GPU_DESKTOP], cards: [card] });
+  const desktop = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));
+  const server = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const claim = { card: card.card, part: "shared", generation: 1, answer: "granted" };
+  assert.deepEqual(desktop.guest?.claim, claim);
+  assert.equal(server.guest?.claim, undefined);
+  assert.deepEqual(boxView(desktop, true, { owner: "agent", holder: null }).claim, claim);
+  assert.equal(boxView(server, true, { owner: "agent", holder: null }).claim, null);
+  world.restart();
+  assert.deepEqual((await world.boxes.find(desktop.id))?.guest?.claim, claim);
+  assert.deepEqual((await world.backend.cards())[0]!.holders.map((holder) => holder.box), [desktop.id]);
+  await world.boxes.idle();
 });

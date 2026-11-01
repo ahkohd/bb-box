@@ -1,4 +1,4 @@
-import type { AcquireHooks, BoxIdentity, BoxSize, ForkArming, Guest, SnapshotRef } from "../types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, ForkArming, Guest, SnapshotRef } from "../types.ts";
 import { ProxmoxError, type Proxmox } from "./api.ts";
 import { netKeys, netWith } from "./copies.ts";
 import { describe, installFromDescription, ownerFromDescription } from "./owner.ts";
@@ -17,7 +17,7 @@ export interface ForkGuests {
   forget(vmid: number): Promise<void>;
   guest(node: string, vmid: number, template: number | null, box: string, build: string | null): Guest;
   addressed(api: Proxmox, vmid: number, made: Record<string, unknown>, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void>;
-  sizeOf(config: Record<string, unknown>): BoxSize | null;
+  sizeOf(config: Record<string, unknown>): MachineSize | null;
   logError(operation: string, error: unknown): void;
 }
 

@@ -33,6 +33,8 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxSize,
+  type GpuPart,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type DoctorCheck,
@@ -84,9 +86,10 @@ import {
   type SharedHosts,
   type SlotKind,
 } from "./device-host.ts";
-import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
+import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameMachineSize, sameSize, type SizeRequest } from "./sizes.ts";
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
+import { chooseGpu, gpuBeforeGpuParts, holdsCard, machineSizeOf, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -177,7 +180,8 @@ export interface BoxRecord {
    * was made at what is now the default preset, and for a restored box,
    * whose guest says its size.
    */
-  readonly size?: BoxSize;
+  readonly size?: RecordedSize;
+  readonly nvidiaUserspace?: NvidiaUserspace | null;
   /** Set by the backend's claim, before it makes or changes anything. */
   readonly guest: Guest | null;
   readonly state: BoxState;
@@ -218,6 +222,8 @@ export interface BoxRecord {
   readonly stoppedAt?: number | null;
 }
 
+export type { RecordedSize };
+
 export type SpareSettling = { readonly is: "settled" } | { readonly is: "settling" } | { readonly is: "failed"; readonly words: string };
 
 export interface RestoringMark {
@@ -230,8 +236,8 @@ export interface RestoringMark {
 
 /** A resize of a box (061): what it asked for, and how it went. */
 export interface ResizeRecord {
-  readonly from: BoxSize;
-  readonly to: BoxSize;
+  readonly from: RecordedSize;
+  readonly to: RecordedSize;
   /** When it began, in ms since the epoch. */
   readonly at: number;
   readonly state: "resizing" | "done" | "failed";
@@ -520,7 +526,11 @@ export interface BackendSilence {
   readonly error: string;
 }
 
-function changedParts(from: BoxSize, to: BoxSize | null): SizePart[] {
+function gpuTheOfferHas(asked: GpuPart, capabilities: Pick<KindCapabilities, "gpu">): GpuPart {
+  return holdsCard(asked) && capabilities.gpu ? asked : "none";
+}
+
+function changedParts(from: MachineSize, to: MachineSize | null): SizePart[] {
   if (!to) return [];
   const parts: SizePart[] = [];
   if (from.cores !== to.cores) parts.push("cores");
@@ -653,8 +663,8 @@ function observed(current: BoxRecord, power: PowerState | null, moving = false):
   return current.state === state ? {} : { state, error: null };
 }
 
-export function identity(box: BoxRecord, size: BoxSize): BoxIdentity {
-  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt, size, ...(box.image?.from ? { from: box.image.from } : {}) };
+export function identity(box: BoxRecord, size: MachineSize): BoxIdentity {
+  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt, size: withGpu(size, recordedGpu(box)), ...(box.image?.from ? { from: box.image.from } : {}) };
 }
 
 /** The message a user sees for an error: bb-box's and backends' own messages as they are. */
@@ -724,12 +734,12 @@ export interface ForkRequest {
   readonly backend: string;
   readonly backendLabel: string;
   readonly kind: string;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
   readonly origin: ForkOrigin;
   readonly who: Actor;
 }
 
-export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind"> & { readonly size: BoxSize | null };
+export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind"> & { readonly size: MachineSize | null };
 
 function sentenceOf(text: string): string {
   const trimmed = text.trim();
@@ -1245,6 +1255,9 @@ export class Boxes {
     const bootsDevice = askedDevice ?? ofKind.find((candidate) => candidate.kind.capabilities.device)?.kind.capabilities.device?.devices[0].model;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size, bootsDevice);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
+    const gpuChoice = chooseGpu(input.kind);
+    if (!gpuChoice.ok) throw new BoxError("unsupported", gpuChoice.message);
+    const askedGpu = gpuChoice.gpu;
     const { box, claimed } = await this.#admission.run(() =>
       this.#locked(input.threadId, async () => {
         const existing = await this.list(input.threadId);
@@ -1257,13 +1270,13 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, taken, requested, image?.name ?? null) : null);
+        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, askedGpu, taken, requested, image?.name ?? null) : null);
         const spare = slotByDefault ? null : await claimSpare();
         if (spare) return { box: spare.box, claimed: spare.from };
         const id = newBoxId(this.#random);
         const name = input.name ?? generateName(await this.#liveNames(taken), this.#random);
         const createdAt = this.#now();
-        const identity = { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size };
+        const identity = { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: withGpu(sized.size, askedGpu) };
         let noSlotWords: string | null = null;
         const slot = inSlotAsked
           ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, identity)
@@ -1305,7 +1318,7 @@ export class Boxes {
           backendLabel: chosen.backend.label,
           nature: chosen.backend.nature,
           role,
-          size: sized.size,
+          size: withGpu(sized.size, gpuTheOfferHas(askedGpu, chosen.kind.capabilities)),
           guest: slot?.guest ?? null,
           state: "acquiring",
           error: null,
@@ -1411,7 +1424,7 @@ export class Boxes {
           backendLabel: backend.label,
           nature: backend.nature,
           role: "box",
-          size: request.size,
+          size: withGpu(request.size, gpuBeforeGpuParts({ kind: kind.id, capabilities: kind.capabilities })),
           guest: null,
           state: "acquiring",
           error: null,
@@ -1442,7 +1455,8 @@ export class Boxes {
     input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null; slim: boolean | null; who?: Actor },
     offered: OfferedKind[],
     features: readonly string[],
-    size: BoxSize,
+    size: MachineSize,
+    gpu: GpuPart,
     taken: Set<string>,
     requested: number,
     /** The project's image the box gets, whose spares alone it claims; a kind's spares have none. */
@@ -1460,7 +1474,7 @@ export class Boxes {
           // A spare made before its backend's offer gained a feature lacks it.
           if (!hasFeatures(spare.capabilities, features)) continue;
           if (input.askedDevice && !offersModel(spare.capabilities.device, input.askedDevice)) continue;
-          if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
+          if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), withGpu(size, gpuTheOfferHas(gpu, spare.capabilities)))) continue;
           // A spare of an older build of its kind's image than its backend starts
           // boxes from now is not claimed, from the moment the image is
           // replaced, not only once the upkeep has replaced the spare. The
@@ -1874,7 +1888,7 @@ export class Boxes {
       // An image's spare is wanted while its build there is current and the image in use, one per backend and kind.
       const stale = !!image && wants !== null && (!want || image.state !== "baked" || image.from !== want.ref);
       const unwanted = image ? wants !== null && (stale || count >= 1) : count >= (general.spares[spare.kind] ?? 0);
-      const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
+      const resized = !sameMachineSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
       // A kind's spare from a build of its image that a refresh has replaced since (049): a claim would take the old build.
       const old = !image && !failed && !unwanted && !resized && (await this.#oldBuild(spare));
       const waitedPastRestore = !failed && !unwanted && !resized && !old ? this.#waitedPastRestore(spare) : null;
@@ -2154,7 +2168,7 @@ export class Boxes {
    * refusal gives each named provider's reason, then names the kind's
    * other providers (044).
    */
-  async #place(input: { threadId: string; named: Named | null }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
+  async #place(input: { threadId: string; named: Named | null }, offered: OfferedKind[], everywhere: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
     const choose = () => (input.threadId === SPARES ? this.#choose(offered, size, features) : this.#chooseFreeing(offered, size, features));
     if (!input.named) return choose();
     let reasons: string[];
@@ -2174,7 +2188,7 @@ export class Boxes {
   }
 
   /** The first backend with room for a box of the kind and size, and still the features asked for, or the reasons none has. */
-  async #choose(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
+  async #choose(offered: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
     const reasons: string[] = [];
     const full: string[] = [];
     let lacking = 0;
@@ -2210,7 +2224,7 @@ export class Boxes {
    * backend that had none gives its room back and the choice is made once
    * more: on a Mac a spare holds one of its two VM slots (#120).
    */
-  async #chooseFreeing(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
+  async #chooseFreeing(offered: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
     try {
       return await this.#choose(offered, size, features);
     } catch (error) {
@@ -2225,7 +2239,7 @@ export class Boxes {
 
   /** The size a box was asked to be. One recorded before sizes was made at the default preset. */
   async #size(box: BoxRecord): Promise<BoxSize> {
-    return box.size ?? defaultSize(kindSizes(box.kind, (await this.#deps.general()).sizes));
+    return withGpu(box.size ?? defaultSize(kindSizes(box.kind, (await this.#deps.general()).sizes)), recordedGpu(box));
   }
 
   #startAcquire(box: BoxRecord): void {
@@ -2842,13 +2856,13 @@ export class Boxes {
     {
       const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
       if (current.restoring || (current.state !== "ready" && current.state !== "stopped")) this.#require(current, "ready");
-      const from = current.guest!.size ?? (await this.#size(current));
+      const from = withGpu(current.guest!.size ?? (await this.#size(current)), recordedGpu(current));
       const chosen = chooseResize(current.kind, sizes, from, request, current.device?.model ?? current.askedDevice ?? current.capabilities.device?.devices[0].model);
       if (!chosen.ok) throw new BoxError("invalid_size", chosen.message);
-      const to = chosen.size;
+      const to = withGpu(chosen.size, from.gpu);
       if (sameSize(to, from)) return { box: current, from, to, plan: null, changed: false };
       const pending = await this.#pending(current.backend, current.id);
-      const planned = await backend.planResize!(current.guest!, current.kind, to, pending, options.signal);
+      const planned = await backend.planResize!(current.guest!, current.kind, machineSizeOf(to), pending, options.signal);
       // How long this box's restart took before, where it has a figure, rather than the backend's guess.
       const measured = planned.downSeconds !== null ? restartSeconds(current, backend.keepsSession?.(current.kind) ?? false) : null;
       const plan = measured !== null ? { ...planned, downSeconds: measured } : planned;
@@ -2872,18 +2886,18 @@ export class Boxes {
       }
       if (restart) await options.beforeRestart?.(current);
       const began = this.#now();
-      const record: ResizeRecord = { from, to, at: began, state: "resizing", ms: null, restart, error: null };
+      const record: ResizeRecord = { from: withRecordedGpu(from, current.size), to: withRecordedGpu(to, current.size), at: began, state: "resizing", ms: null, restart, error: null };
       // A restart takes the box down: box_run waits while it starts again, as after a start.
       const running = current.state === "ready";
       await this.update(current, () => ({ resize: record, ...(restart && running ? { state: "starting" as const } : {}) }));
       const who = options.who ?? UNKNOWN_ACTOR;
       this.#event(current, "resize-asked", who, { words: `From ${describeSize(from)} to ${describeSize(to)}${restart ? ", with a restart" : ""}.` });
       try {
-        const guest = await backend.resize!(current.guest!, current.kind, to, { restart }, options.signal);
+        const guest = await backend.resize!(current.guest!, current.kind, machineSizeOf(to), { restart }, options.signal);
         this.#event(current, "resized", who, { parts: changedParts(from, guest.size ?? to), words: `From ${describeSize(from)} to ${describeSize(guest.size ?? to)}.` });
         const done = await this.update(current, (latest) => ({
           guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
-          size: to,
+          size: withRecordedGpu(to, latest.size),
           resize: { ...record, state: "done", ms: this.#now() - began },
           ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
         }));
@@ -2909,7 +2923,7 @@ export class Boxes {
     }
   }
 
-  async #sizeNow(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+  async #sizeNow(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<MachineSize | null> {
     try {
       return (await backend.held(signal)).find((held) => held.ref === guest.ref)?.size ?? null;
     } catch {
@@ -2923,7 +2937,7 @@ export class Boxes {
     await this.update(box, (current) => {
       if (current.resize?.state !== "resizing" || !current.guest) return {};
       const size = guest.size ?? current.guest.size;
-      return { guest: { ...current.guest, size }, ...(size ? { size } : {}), resize: { ...current.resize, state: "failed", error } };
+      return { guest: { ...current.guest, size }, ...(size ? { size: withRecordedGpu(size, current.size) } : {}), resize: { ...current.resize, state: "failed", error } };
     });
     this.#deps.log?.(`${describeBox(box)}: ${error}`);
   }
@@ -2951,9 +2965,9 @@ export class Boxes {
    * acquired there, at their size, and those being resized, by what they
    * grow (061). `except` is left out.
    */
-  async #pending(backendId: string, except?: string): Promise<{ kind: string; size: BoxSize }[]> {
+  async #pending(backendId: string, except?: string): Promise<{ kind: string; size: MachineSize }[]> {
     const all = (await this.all()).filter((box) => box.backend === backendId && box.id !== except);
-    const acquiring = await Promise.all(all.filter(isAcquiring).map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
+    const acquiring = await Promise.all(all.filter(isAcquiring).map(async (box) => ({ kind: box.kind, size: machineSizeOf(await this.#size(box)) })));
     const resizing = all
       .filter((box) => box.resize?.state === "resizing")
       .map((box) => {

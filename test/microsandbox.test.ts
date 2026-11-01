@@ -10,12 +10,12 @@ import { BUILDER_IMAGE, MsbBackend, msbKinds, parseFacts, sandboxName } from "..
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart } from "../src/backends/microsandbox/config.ts";
 import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type FieldValue, type Guest, type MachineAccess, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type FieldValue, type Guest, type MachineAccess, type ReleaseHooks } from "../src/backends/types.ts";
 import { dockerConfig } from "./fake-docker.ts";
 import { fakeMsbHost, imageLabels, msbConfig } from "./fake-msb.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 
-const SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const SMALL: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 
 function setup(values: Record<string, FieldValue> = {}, options: { imported?: boolean } = {}) {
   const fake = fakeMsbHost(options);
@@ -28,7 +28,7 @@ function setup(values: Record<string, FieldValue> = {}, options: { imported?: bo
 let counter = 0;
 function identity(kind = "linux", size = SMALL, threadId = "thr_abc123"): BoxIdentity {
   counter++;
-  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 function hooks() {

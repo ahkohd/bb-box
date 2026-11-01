@@ -4,7 +4,7 @@ import {
   SnapshotFailed,
   SnapshotIncomplete,
   type Backend,
-  type BoxSize,
+  type MachineSize,
   type CopyHooks,
   type DoctorCheck,
   type Guest,
@@ -26,6 +26,7 @@ import {
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
+import { withRecordedGpu } from "./gpu.ts";
 import { readForkSafe, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
@@ -131,8 +132,8 @@ export interface RestoreAnswer {
   readonly undo: SnapshotRecord | null;
   readonly operation: SnapshotOperation;
   readonly box: BoxRecord | null;
-  readonly from: BoxSize | null;
-  readonly to: BoxSize | null;
+  readonly from: MachineSize | null;
+  readonly to: MachineSize | null;
   readonly anyway: readonly string[];
   readonly replaced: readonly string[];
   readonly earlier?: number | null;
@@ -208,7 +209,7 @@ export interface ForkCheck {
   readonly box: BoxRecord | null;
   readonly threadId: string;
   readonly asMachine: boolean;
-  readonly size: BoxSize;
+  readonly size: MachineSize;
   readonly aboutMs: number;
   readonly bytes: number | null;
   readonly host: string | null;
@@ -500,7 +501,7 @@ function threadsWords(threads: readonly ThreadOnTheBox[]): string {
   return named.length <= 1 ? (named[0] ?? "") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
 }
 
-function sizeChangeWords(from: BoxSize | null, to: BoxSize | null): string {
+function sizeChangeWords(from: MachineSize | null, to: MachineSize | null): string {
   if (!from || !to) return "";
   if (from.cores === to.cores && from.memoryMiB === to.memoryMiB && (from.diskGiB === to.diskGiB || to.diskGiB === null)) return "";
   return `; its size went from ${describeSize(from)} to ${describeSize(to)}, as it was then`;
@@ -566,8 +567,8 @@ export interface RestoreCheck {
   readonly fromSnapshot: boolean;
   readonly costWords: string | null;
   readonly undo: { readonly kind: "snapshot" | "held-copy"; readonly name: string; readonly aboutMs: number; readonly bytes: number | null; readonly price: Price | null } | null;
-  readonly from: BoxSize | null;
-  readonly to: BoxSize | null;
+  readonly from: MachineSize | null;
+  readonly to: MachineSize | null;
   readonly anyway: readonly string[];
   readonly leavesOnEarlierGuest: number;
   readonly replaces: string | null;
@@ -583,7 +584,7 @@ interface Restoring {
   readonly undo: SnapshotRecord | null;
   readonly backend: Backend;
   readonly anyway: readonly string[];
-  readonly from: BoxSize | null;
+  readonly from: MachineSize | null;
   readonly after: string;
   readonly whenStopped?: () => void;
 }
@@ -2719,7 +2720,7 @@ export class Snapshots {
     return (await this.#deps.boxes.update(box, (current) => (current.state === "releasing" ? {} : change))) ?? box;
   }
 
-  async #sizeOf(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+  async #sizeOf(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<MachineSize | null> {
     try {
       return (await backend.held(signal)).find((held) => held.ref === guest.ref)?.size ?? null;
     } catch (error) {
@@ -2969,7 +2970,7 @@ export class Snapshots {
       if (ahead("size")) {
         at("size");
         to = (await this.#sizeOf(backend, guest, signal)) ?? to;
-        box = await this.#moved(box, { guest: { ...guest, ...(to ? { size: to } : {}), ...(facts ? { facts } : {}) }, ...(to ? { size: to } : {}) });
+        box = await this.#moved(box, { guest: { ...guest, ...(to ? { size: to } : {}), ...(facts ? { facts } : {}) }, ...(to ? { size: withRecordedGpu(to, box.size) } : {}) });
       }
       if (ahead("access") && !accessWritten) {
         try {
@@ -3875,7 +3876,7 @@ export class Snapshots {
     const done: string[] = [];
     const size = await this.#sizeOf(backend, box.guest, this.#stopping.signal);
     if (size && describeSize(size) !== describeSize(box.guest.size ?? size)) {
-      await this.#deps.boxes.update(box, (current) => (current.guest ? { guest: { ...current.guest, size }, size } : {}));
+      await this.#deps.boxes.update(box, (current) => (current.guest ? { guest: { ...current.guest, size }, size: withRecordedGpu(size, current.size) } : {}));
       done.push(`read its size back, ${describeSize(size)}, as it was then`);
     }
     if (backend.relabel) {

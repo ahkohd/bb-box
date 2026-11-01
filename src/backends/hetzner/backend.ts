@@ -17,7 +17,7 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type DoctorCheck,
@@ -64,7 +64,7 @@ export interface HetznerBackendOptions {
   readonly pollMs?: number;
 }
 
-type Pending = { readonly kind: string; readonly size: BoxSize };
+type Pending = { readonly kind: string; readonly size: MachineSize };
 
 interface HostPart {
   readonly record: HostRecord;
@@ -265,7 +265,7 @@ export class HetznerBackend implements Backend {
     return architecture === "arm" ? this.#config.armServerType! : this.#config.serverType;
   }
 
-  async capacity(kind: string, size: BoxSize, _pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, _pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const rooms = await this.#rooms(kind, size, signal);
     const hosts = rooms.map((room) => room.capacity);
@@ -330,11 +330,11 @@ export class HetznerBackend implements Backend {
     return this.#kinds.some((each) => each.id === kind) ? { cores: "live", memory: "live", disk: "no", shrinks: true } : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     return (await this.#requirePart(guest, signal)).docker.planResize(guest, this.#dockerKindOf(kind), to, pending, signal);
   }
 
-  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const part = await this.#requirePart(guest, signal);
     const resized = await part.docker.resize(guest, this.#dockerKindOf(kind), to, options, signal);
     return { ...resized, host: part.record.serverName, data: { ...resized.data, [HOST_KEY]: part.record.hostId } };
@@ -497,7 +497,7 @@ export class HetznerBackend implements Backend {
     }
   }
 
-  async #rooms(kind: string, size: BoxSize, signal?: AbortSignal): Promise<HostRoom[]> {
+  async #rooms(kind: string, size: MachineSize, signal?: AbortSignal): Promise<HostRoom[]> {
     const rooms: HostRoom[] = [];
     const architecture = this.#architectureOfKind(kind);
     const dockerKind = this.#dockerKindOf(kind);
@@ -535,7 +535,7 @@ export class HetznerBackend implements Backend {
     if (record.answeredAtMs === null || this.#now() - record.answeredAtMs > ANSWERED_NOTED_EVERY_MS) await this.hostRecords.markAnswered(record.hostId);
   }
 
-  async #whyNoNewHost(size: BoxSize, architecture: Architecture, signal?: AbortSignal, options: { readonly hostLimit?: boolean } = {}): Promise<string | null> {
+  async #whyNoNewHost(size: MachineSize, architecture: Architecture, signal?: AbortSignal, options: { readonly hostLimit?: boolean } = {}): Promise<string | null> {
     const unreachable = this.#reach?.canReach() ?? null;
     if (unreachable) return unreachable;
     if (size.diskGiB !== null) return `a Docker box shares its host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
@@ -557,7 +557,7 @@ export class HetznerBackend implements Backend {
     return null;
   }
 
-  async #idleHostToFree(size: BoxSize, architecture: Architecture, signal?: AbortSignal): Promise<HostRecord | null> {
+  async #idleHostToFree(size: MachineSize, architecture: Architecture, signal?: AbortSignal): Promise<HostRecord | null> {
     const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
     if (live.length < this.#config.mostHosts) return null;
     if ((await this.#whyNoNewHost(size, architecture, signal, { hostLimit: false })) !== null) return null;

@@ -35,7 +35,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
-  type BoxSize,
+  type MachineSize,
   type BoxTransports,
   type Capacity,
   type ResizePlan,
@@ -94,7 +94,7 @@ export const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socke
 const DOCKER_COMMAND: CommandCapability = { transport: "docker", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
-type Pending = { readonly kind: string; readonly size: BoxSize };
+type Pending = { readonly kind: string; readonly size: MachineSize };
 
 export interface DockerBackendOptions {
   /** The docker CLI, instead of `docker` on the PATH. */
@@ -213,7 +213,7 @@ function powerOf(status: string): PowerState {
 }
 
 /** The size the container's limits give it. A box shares the host's disk, so its disk is null. */
-function sizeOf(container: ContainerInfo): BoxSize | null {
+function sizeOf(container: ContainerInfo): MachineSize | null {
   if (!container.cores || !container.memoryMiB) return null;
   return { cores: container.cores, memoryMiB: container.memoryMiB, diskGiB: null };
 }
@@ -610,7 +610,7 @@ export class DockerBackend implements Backend {
     return this.#info?.name || hostWords(this.#config.host);
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     // A BB machine that is offline takes no box, said at once from BB's view of it, with no call to it (042).
     const machine = this.#config.machine;
@@ -647,7 +647,7 @@ export class DockerBackend implements Backend {
   }
 
   /** Whether a box of `size` fits, and if not, why, with what to do; for a GPU desktop, the GPU it gets. */
-  #room(state: HostState, kind: string, size: BoxSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null; gpu: string | null } {
+  #room(state: HostState, kind: string, size: MachineSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null; gpu: string | null } {
     const { info, containers } = state;
     const host = info.name || this.#host;
     const listed = new Set(containers.map((container) => container.name));
@@ -861,7 +861,7 @@ export class DockerBackend implements Backend {
     } else {
       ({ host, gpu, cpus } = await step("place", () => this.#place(box, signal)));
     }
-    const guest = (address: string | null, size: BoxSize | null = null): Guest => ({
+    const guest = (address: string | null, size: MachineSize | null = null): Guest => ({
       ref: name,
       host,
       address,
@@ -954,7 +954,7 @@ export class DockerBackend implements Backend {
     return this.kinds().some((offer) => offer.id === kind) ? { cores: "live", memory: "live", disk: "no", shrinks: true } : null;
   }
 
-  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     this.#kind(kind);
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
@@ -968,7 +968,7 @@ export class DockerBackend implements Backend {
   }
 
   /** Changes a container's CPUs and memory, swap with it, as `docker update` does at once, running or stopped (061). */
-  async resize(guest: Guest, _kind: string, to: BoxSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, _kind: string, to: MachineSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     if (to.diskGiB !== null) throw new BackendError("unsupported", "A Docker box shares its host's disk, so it has no disk of its own to grow.");
     return this.#underPlacement(async () => {
       const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
@@ -1002,7 +1002,7 @@ export class DockerBackend implements Backend {
   }
 
   /** Room on the host for a container to grow from `from` to `to`: the memory it adds, kept within the reserve, and cores within the host's (061). */
-  async #resizeRoom(from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(from: MachineSize, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const state = await this.#state(signal);
     const { info, containers } = state;
     const host = info.name || this.#host;

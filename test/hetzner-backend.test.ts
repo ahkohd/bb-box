@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { billedThisMonth, nextHourOf, spentThisMonth } from "../src/backends/hetzner/spend.ts";
 import { FAKE_HETZNER_TOKEN } from "./fake-hetzner.ts";
 import { hetznerConfig, hetznerWorld } from "./fake-hetzner-world.ts";
 
 const GiB = 1024;
-const box4: BoxSize = { cores: 2, memoryMiB: 4 * GiB, diskGiB: null };
-const box4half: BoxSize = { cores: 2, memoryMiB: 4.5 * GiB, diskGiB: null };
+const box4: MachineSize = { cores: 2, memoryMiB: 4 * GiB, diskGiB: null };
+const box4half: MachineSize = { cores: 2, memoryMiB: 4.5 * GiB, diskGiB: null };
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -19,9 +19,9 @@ function hooks() {
 }
 
 let counter = 0;
-function identity(size: BoxSize = box4, kind = "linux"): BoxIdentity {
+function identity(size: MachineSize = box4, kind = "linux"): BoxIdentity {
   counter++;
-  return { boxId: `bxhz${String(counter).padStart(10, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
+  return { boxId: `bxhz${String(counter).padStart(10, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
 }
 
 async function until(done: () => Promise<boolean> | boolean): Promise<void> {

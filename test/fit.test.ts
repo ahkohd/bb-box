@@ -3,10 +3,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sizesCheck, type KindRoom } from "../src/backends/fit.ts";
-import type { BoxSize, KindSettings } from "../src/backends/types.ts";
+import type { MachineSize, KindSettings } from "../src/backends/types.ts";
 import { shippedKind } from "./helpers.ts";
 
-const size = (cores: number, memoryGiB: number): BoxSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB: null });
+const size = (cores: number, memoryGiB: number): MachineSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB: null });
 
 function room(kinds: readonly KindRoom[], keepsMiB = 0) {
   return sizesCheck({ id: "host.sizes", name: "Box sizes", host: "mini", has: "4 cores and 8 GiB memory", keepsMiB, kinds });

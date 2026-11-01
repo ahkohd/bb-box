@@ -47,7 +47,7 @@ import {
   fieldLabel,
   isSecret,
   type BackendPart,
-  type BoxSize,
+  type MachineSize,
   type EarlierBackend,
   type FieldDescriptor,
   type FieldGroup,
@@ -457,9 +457,9 @@ export function readEarlierLxc(input: Readonly<Record<string, unknown>>): Earlie
  * made then: 2 cores and 4 GiB for Linux boxes, 4 cores and 8 GiB for
  * desktops, and the template's disk.
  */
-export function earlierLxcSizes(input: Readonly<Record<string, unknown>>): Record<string, BoxSize> {
+export function earlierLxcSizes(input: Readonly<Record<string, unknown>>): Record<string, MachineSize> {
   const values = withEarlierKeys(input);
-  const sizes: Record<string, BoxSize> = {};
+  const sizes: Record<string, MachineSize> = {};
   for (const flavour of LXC_FLAVOURS) {
     const saved = SIZE_FIELDS.filter((field) => values[flavourKey(flavour, field)] !== undefined && values[flavourKey(flavour, field)] !== null);
     if (!saved.length) continue;

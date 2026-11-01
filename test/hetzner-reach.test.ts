@@ -199,7 +199,7 @@ test("with the tailnet on, a new host gets bb-box's key, its firewall and a firs
   });
   const hooksValue: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
   const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
-  const box: BoxIdentity = { boxId: "bxreach000001", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_000_000, size: { cores: 2, memoryMiB: 4096, diskGiB: null } };
+  const box: BoxIdentity = { boxId: "bxreach000001", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_000_000, size: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "none" } };
   try {
     const guest = await backend.acquire(box, null, hooksValue, signal());
     const [server] = fake.servers.values();

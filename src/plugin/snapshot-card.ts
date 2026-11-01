@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { BoxSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
+import type { MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, eligible, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
@@ -380,4 +380,4 @@ export function restoreStopped(): { readonly stopped: Promise<void>; readonly wh
   return { stopped, whenStopped };
 }
 
-export type { BoxSize, TakeCheck };
+export type { MachineSize, TakeCheck };
