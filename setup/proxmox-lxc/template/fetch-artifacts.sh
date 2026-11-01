@@ -43,6 +43,24 @@ prune_cache() {
 }
 trap 'prune_cache $?' EXIT
 
+connect_seconds=30
+stall_bytes_per_second=10240
+stall_seconds=${BBBOX_DOWNLOAD_STALL_SECONDS:-30}
+download_cap_seconds=${BBBOX_DOWNLOAD_CAP_SECONDS:-1800}
+download_limits=(--connect-timeout "$connect_seconds" --speed-limit "$stall_bytes_per_second" --speed-time "$stall_seconds" --max-time "$download_cap_seconds")
+retried_download_limits=("${download_limits[@]}" --retry 3 --retry-max-time "$download_cap_seconds")
+
+timed_out_words() {
+  local took=${1%.*}
+  if [ "${took:-0}" -ge $((download_cap_seconds - 1)) ]; then
+    echo "it took longer than its cap of $download_cap_seconds s"
+  elif [ "${2:-0}" = 0 ]; then
+    echo "nothing came within $connect_seconds s to connect and $stall_seconds s to send"
+  else
+    echo "it stalled, under $stall_bytes_per_second bytes a second for $stall_seconds s"
+  fi
+}
+
 fetch() { # url sha256 file
   local url=$1 sha=$2 name=$3
   if [ -f "$art/$name" ] && echo "$sha  $art/$name" | sha256sum -c --quiet - 2>/dev/null; then
@@ -55,20 +73,24 @@ fetch() { # url sha256 file
   fi
   # A download of its own, so builds running at the same time can fetch the
   # same file.
-  local part=$art/$name.part.$$ got
-  got=$(curl -fsSL --retry 3 -w '%{http_code} %{content_type}' -o "$part" "$url") || {
+  local part=$art/$name.part.$$ got status=0 code took size
+  got=$(curl -fsSL "${retried_download_limits[@]}" -w '%{http_code} %{time_total} %{size_download} %{content_type}' -o "$part" "$url") || status=$?
+  read -r code took size _ <<<"$got"
+  if [ "$status" != 0 ]; then
     rm -f "$part"
-    case ${got%% *} in
+    [ "$status" != 28 ] || die "download failed, as $(timed_out_words "$took" "$size"), after its retries: $name from $url"
+    case $code in
       000 | '') die "download failed (no answer): $name from $url" ;;
-      *) die "download failed (HTTP ${got%% *}): $name from $url" ;;
+      *) die "download failed (HTTP $code): $name from $url" ;;
     esac
-  }
+  fi
+  got=${got#* * * }
   # A host in an outage may answer with a web page, as SourceForge does, and
   # no artifact is one.
-  case ${got#* } in
+  case $got in
     text/html*)
       rm -f "$part"
-      die "download failed (HTTP ${got%% *}, a web page): $name from $url"
+      die "download failed (HTTP $code, a web page): $name from $url"
       ;;
   esac
   echo "$sha  $part" | sha256sum -c --quiet - || {
@@ -90,7 +112,7 @@ done < <(jq -er --arg arch "$arch" '.tools[] | select(.arch == $arch) | "\(.url)
 if [ -n "$BBBOX_BB_URL" ]; then
   resolve=()
   [ -z "$BBBOX_BB_RESOLVE" ] || resolve=(--resolve "$BBBOX_BB_RESOLVE")
-  curl -fsS "${resolve[@]}" -D "$art/bb-app.headers.$$" -o "$art/bb-app.tgz.$$" "${BBBOX_BB_URL%/}/install/bb-app.tgz"
+  curl -fsS "${download_limits[@]}" "${resolve[@]}" -D "$art/bb-app.headers.$$" -o "$art/bb-app.tgz.$$" "${BBBOX_BB_URL%/}/install/bb-app.tgz"
   digest=$(sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]\{64\}\).*/\1/Ip' "$art/bb-app.headers.$$" | tr -d '\r' | tail -1)
   echo "$digest  $art/bb-app.tgz.$$" | sha256sum -c --quiet - || die "bb-app.tgz does not match the server's digest"
   mv "$art/bb-app.tgz.$$" "$art/bb-app.tgz"
@@ -117,7 +139,7 @@ done <"$here/desktop-pins.tsv"
 version=$(cat /sys/module/nvidia/version 2>/dev/null) || die "no NVIDIA driver is loaded on this host"
 base=https://download.nvidia.com/XFree86/Linux-x86_64/$version
 run=NVIDIA-Linux-x86_64-$version.run
-curl -fsSL --retry 3 -o "$art/$run.sha256sum" "$base/$run.sha256sum"
+curl -fsSL "${retried_download_limits[@]}" -o "$art/$run.sha256sum" "$base/$run.sha256sum"
 sha=$(awk -v f="$run" '$2 == f { print $1 }' "$art/$run.sha256sum")
 [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "no SHA-256 for $run from NVIDIA"
 fetch "$base/$run" "$sha" "$run"
