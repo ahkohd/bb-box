@@ -1203,6 +1203,10 @@ version.
 ### Still open
 
 - The helper writes its report on a start only when it has something new.
-  A later helper release could write on its first pass; the installer's
-  wait could then go back to 30 s.
-- The doctor's pass, live, waits for writes on (unit 5).
+  Decided with the lead: a helper release in unit 4 writes it on its first
+  pass after a start, so unit 4's day of dry run with markers runs on that
+  program, and the program unit 5 turns writes on for has had its day.
+  0.1.0 stays installed, byte for byte, until then. The installer's 75 s
+  wait stays, as a rollback can start 0.1.0 again.
+- The doctor's pass, live, waits for writes on (unit 5). The lead agreed
+  that it warns while writes are off, and skips the gate's optional step 11.
