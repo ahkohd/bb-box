@@ -984,24 +984,37 @@ microVM only when it asks for this backend.
   size is asked for. `/run` is a tmpfs, and its network profiles are
   `public,private`, which reach BB's server on a private or tailnet address.
 - With Docker on, as by default, `/var/lib/docker` is an ext4 disk of the
-  box's own, as overlayfs cannot sit on `msb`'s root. bb-box makes it in
-  its folder's `disks`, sparse, with its inode tables and journal left for
-  the kernel to initialise (3 ms, about 5 MB), passes it with
-  `--mount-disk`, and deletes it with the box; the upkeep removes one left
-  by an acquire that stopped part way. `msb`'s own disk for a box formats
-  it whole, which made 20 creates at once 2 to 3 s slower. On a host
-  without `mkfs.ext4`, as a Mac, bb-box makes one such disk as a template
-  instead, in its folder's `templates`, from a small microVM that sees that
-  folder (with a quota above the disk's size, as `msb` gives a shared
-  folder 4 GiB), and each box's disk is a clone of it (`cp -c` on APFS,
-  reflinks elsewhere); a box made before the template exists gets `msb`'s
-  own. The image's start
+  box's own, as overlayfs cannot sit on `msb`'s root: `msb`'s own
+  (`--mount-owned`), which `msb` captures in each snapshot and gives each
+  box restored from one as a copy of its own
+  ([070](decisions/070-snapshots.md#decided-during-unit-10)). A box made by
+  an earlier bb-box has a file of the host's instead, in the folder's
+  `disks`, passed with `--mount-disk`; `msb` leaves such a disk out of a
+  snapshot and cannot give it to a restored box, so such a box takes no
+  snapshot. The file goes with its box, and the upkeep removes one no
+  microVM has. The image's start
   script starts `dockerd` with the first `docker` command
   ([041](decisions/041-every-linux-box-has-docker.md)). It needs no
   privilege on the host: each box has its own kernel.
 - `msb`'s agent runs the image's start script at the first boot only, so
   `start` runs it again through `msb exec` after `msb start`, then waits for
   `/run/bb-box/ready`.
+- Snapshots ([070](decisions/070-snapshots.md#decided-during-unit-10)) are
+  `msb snapshot create`, with `--full` for memory, in a group per box,
+  `bbbox-<box ID>`, named `<install>-<snapshot ID>-r<identity reset
+  version>` so the listing alone says whose each is. `msb` cannot change a
+  snapshot's labels once taken, so a keep date is a file in the folder's
+  `kept`. A snapshot outlives its microVM. A restore is `msb snapshot
+  restore` into a new microVM, `bbbox-<box ID>-<token>`, which keeps none
+  of the old one's settings: bb-box sets the box's labels and environment on
+  it with `msb modify`, and each start mounts `/run` in memory again and sets
+  the box's hostname. A fork restores the snapshot's disk only, never its
+  memory, under the fork's own name and identity value. Each snapshot's
+  parent is the microVM's previous capture; `msb` refuses to delete a parent
+  without `--force`, though a child holds its own data, so bb-box passes it,
+  and moves a group's head to another member before deleting the head.
+  bb-box does all this only with the `msb` release whose snapshots it
+  measured.
 - Commands, copies and the desktop's stream go through `msb exec --stream`,
   which gives output as it comes. `msb exec` of a stopped box boots it for
   the command, so the transport's probe asks `msb ping` first. As over SSH,

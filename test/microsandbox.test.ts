@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { dockerKinds } from "../src/backends/docker/backend.ts";
 import { offerChecks } from "../src/backends/index.ts";
-import { BUILDER_IMAGE, MsbBackend, msbKinds, parseFacts, sandboxName } from "../src/backends/microsandbox/backend.ts";
+import { BUILDER_IMAGE, MsbBackend, OWN_HOSTNAME, RUN_IN_MEMORY, msbKinds, parseFacts, sandboxName } from "../src/backends/microsandbox/backend.ts";
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart } from "../src/backends/microsandbox/config.ts";
 import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
@@ -109,11 +109,11 @@ test("acquires a box as a microVM labelled with its owner, at its size, with /ru
     "bbbox.thread=thr_abc123",
   ]);
   assert.deepEqual(
-    ["--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--pull", "--mount-disk"].map((flag) => after(create, flag)[0]),
-    [box.name, "2", "4096M", "32G", "/run", "public,private", "never", `${fake.dir}/disks/${guest.ref}.ext4:/var/lib/docker`],
+    ["--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--pull", "--mount-owned"].map((flag) => after(create, flag)[0]),
+    [box.name, "2", "4096M", "32G", "/run", "public,private", "never", "/var/lib/docker:kind=disk,size=64G"],
   );
+  assert.deepEqual(after(create, "--mount-disk"), [], "msb's own disk, which msb snapshots and gives a restored box, never a file of the host's (070 unit 10)");
   assert.deepEqual(after(create, "--env"), [`BBBOX_IDENTITY=${box.boxId}`, "BBBOX_DOCKERD=1"], "the value its identity marker holds, set on the guest by bb-box (070)");
-  assert.deepEqual(fake.scripts.find(([name]) => name === "disk"), ["disk", guest.ref, "64"], "bb-box makes the box's Docker disk, at the configured size");
   assert.ok(!create.includes("--replace"));
   const quiet = setup({ docker: false });
   const small = identity("linux", { cores: 1, memoryMiB: 2048, diskGiB: 8 });
@@ -122,52 +122,38 @@ test("acquires a box as a microVM labelled with its owner, at its size, with /ru
   assert.deepEqual([after(plain, "--mount-owned"), after(plain, "--mount-disk"), after(plain, "--env"), after(plain, "--root-disk")[0]], [[], [], [`BBBOX_IDENTITY=${small.boxId}`], "8G"]);
 });
 
-test("a box's Docker disk goes with the box, a host without mkfs.ext4 gets msb's own until bb-box has made a template to clone, and the upkeep removes old disks no microVM has", async () => {
+test("070 unit 10: a box made before, with its Docker disk a file of the host's, starts, resizes and releases as before, its file going with it, and the upkeep removes old disks no microVM has", async () => {
   const { fake, backend } = setup();
-  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  const disk = join(fake.dir, "disks", `${guest.ref}.ext4`);
-  assert.ok(existsSync(disk));
+  const box = identity();
+  const name = sandboxName(box.boxId);
+  const { mkdirSync, utimesSync, writeFileSync } = await import("node:fs");
+  mkdirSync(join(fake.dir, "disks"), { recursive: true });
+  const disk = join(fake.dir, "disks", `${name}.ext4`);
+  writeFileSync(disk, "");
+  await new MsbCli(null, null, undefined, { dir: fake.dir }).ok([
+    "create", "bbbox/linux:1", "--name", name, "--label", "bbbox.backend=microsandbox", "--label", "bbbox.install=test", "--label", `bbbox.box=${box.boxId}`, "--label", `bbbox.thread=${box.threadId}`,
+    "--cpus", "2", "--memory", "4096M", "--root-disk", "32G", "--tmpfs", "/run", "--mount-disk", `${disk}:/var/lib/docker`,
+  ]);
+  const guest: Guest = { ref: name, host: null, address: null, size: SMALL, data: { box: box.boxId } };
+  await backend.stop(guest);
+  await backend.start(guest);
+  assert.equal(fake.inspect(name).status, "Running");
+  const resized = await backend.resize(guest, "linux", { cores: 4, memoryMiB: 4096, diskGiB: 40 }, { restart: true }, signal());
+  assert.equal(resized.size?.cores, 4);
+  assert.deepEqual(fake.inspect(name).config.disks, [`${disk}:/var/lib/docker`], "its Docker disk stays the host's file");
   await backend.release(guest, releasing);
   assert.ok(!existsSync(disk), "released with the box");
 
-  // An acquire that fails after the disk is made removes it.
-  fake.set({ neverReady: true });
-  const failed = identity();
-  await assert.rejects(backend.acquire(failed, null, hooks().hooks, signal()), /was not ready/);
-  assert.ok(!existsSync(join(fake.dir, "disks", `${sandboxName(failed.boxId)}.ext4`)));
-  fake.set({ neverReady: false });
-
-  // A leftover: old, with no microVM of its name. A new one and a box's own stay.
   const kept = await backend.acquire(identity(), null, hooks().hooks, signal());
-  const { utimesSync, writeFileSync } = await import("node:fs");
   const old = join(fake.dir, "disks", "bbbox-bxleftover.ext4");
   writeFileSync(old, "");
   const hourAgo = new Date(Date.now() - 3600_000);
   utimesSync(old, hourAgo, hourAgo);
-  utimesSync(join(fake.dir, "disks", `${kept.ref}.ext4`), hourAgo, hourAgo);
   writeFileSync(join(fake.dir, "disks", "bbbox-bxmaking.ext4"), "");
   await backend.maintain(signal());
-  assert.deepEqual(readdirSync(join(fake.dir, "disks")).sort(), [`${kept.ref}.ext4`, "bbbox-bxmaking.ext4"].sort());
-
-  // A host without mkfs.ext4, as a Mac: msb's own disk until bb-box has made its template, then a clone of it.
-  const plain = setup();
-  plain.fake.facts({ mkfs: "0" });
-  const before = await plain.backend.doctor(signal());
-  assert.equal(before.checks.find((check) => check.id === "microsandbox.disks")?.status, "warn");
-  const first = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(after(plain.fake.calls().find((call) => call[0] === "create" && call.includes(first.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"]);
-  for (let i = 0; i < 200 && !existsSync(join(plain.fake.dir, "templates", "docker-64G.ext4")); i++) await new Promise((r) => setTimeout(r, 25));
-  const helper = plain.fake.calls().find((call) => call[0] === "create" && after(call, "--name")[0]?.startsWith("bb-box-mkfs-"))!;
-  assert.deepEqual([helper[1], after(helper, "--mount-dir")[0]], [BUILDER_IMAGE, `${plain.fake.dir}/templates:/work:quota=65G`]);
-  const { readFileSync } = await import("node:fs");
-  assert.match(readFileSync(join(plain.fake.root, "mkfs"), "utf8"), /mkfs\.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 \/work\/docker-64G\.ext4\.new/);
-  for (let i = 0; i < 100 && plain.fake.sandboxes().some((name) => name.startsWith("bb-box-mkfs-")); i++) await new Promise((r) => setTimeout(r, 25));
-  assert.ok(!plain.fake.sandboxes().some((name) => name.startsWith("bb-box-mkfs-")), "the helper goes");
-  const second = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(after(plain.fake.calls().find((call) => call[0] === "create" && call.includes(second.ref))!, "--mount-disk"), [`${plain.fake.dir}/disks/${second.ref}.ext4:/var/lib/docker`]);
-  assert.equal(readFileSync(join(plain.fake.dir, "disks", `${second.ref}.ext4`), "utf8"), "template", "a clone of the template");
-  const report = await plain.backend.doctor(signal());
-  assert.match(report.checks.find((check) => check.id === "microsandbox.disks")?.detail ?? "", /Each box's Docker disk is a clone of bb-box's template, docker-64G\.ext4/);
+  assert.deepEqual(readdirSync(join(fake.dir, "disks")).sort(), ["bbbox-bxmaking.ext4"], "the old leftover goes; a new one stays");
+  assert.ok(fake.sandboxes().includes(kept.ref));
+  assert.ok(!fake.calls().some((call) => call[0] === "create" && after(call, "--name")[0]?.startsWith("bb-box-mkfs-")), "no template of a host disk is made any more");
 });
 
 test("installs msb on a host that lacks it, once, and imports a kind's image from Docker when msb lacks it, and again when Docker's changes", async () => {
@@ -216,7 +202,7 @@ test("a kind whose image neither msb nor Docker has is refused for now, and bb-b
 
 test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framework, builds there for arm64, and leaves the reclaim alone (053)", async () => {
   const { fake, backend } = setup({}, { imported: false });
-  fake.facts({ os: "Darwin", arch: "arm64", mkfs: "0", docker: "" });
+  fake.facts({ os: "Darwin", arch: "arm64", docker: "" });
   fake.docker.clear();
   const report = await backend.doctor(signal());
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-desktop-cpu"]);
@@ -240,7 +226,7 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   // The builder goes in the background after its image is in msb: the next box waits for that, so no fake reads a sandbox as it is removed.
   for (let i = 0; i < 200 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
   const box = await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
-  assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"], "msb's own disk, as a Mac has no mkfs.ext4");
+  assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"], "msb's own disk");
   await backend.maintain(signal());
   assert.ok(!fake.calls().some((call) => call[0] === "exec" && call.some((arg) => arg.includes("drop_caches"))), "a Mac keeps what a guest has used, so no reclaim");
 });
@@ -397,7 +383,7 @@ test("the doctor checks the host, msb, KVM and the images, warns in LXC, and say
   assert.equal(report.ok, true, JSON.stringify(report.checks.filter((check) => check.status !== "ok")));
   assert.equal(report.summary, "msb 0.7.7 on BB's server");
   // The largest desktop preset has more cores than the fake host, which sizes warns of.
-  assert.deepEqual(report.checks.map((check) => check.id).filter((id) => id !== "microsandbox.sizes"), ["microsandbox.host", "microsandbox.msb", "microsandbox.kvm", "image.bbbox/linux:1", "image.bbbox/linux-desktop:1", "microsandbox.capacity"]);
+  assert.deepEqual(report.checks.map((check) => check.id).filter((id) => id !== "microsandbox.sizes"), ["microsandbox.host", "microsandbox.msb", "microsandbox.kvm", "microsandbox.snapshots", "image.bbbox/linux:1", "image.bbbox/linux-desktop:1", "microsandbox.capacity"]);
   assert.match(report.notes.join("\n"), /msb's state and images take 3 GiB in .+\/home on BB's server\. Its file system has no reflinks, so msb copies a box's disk to fork or snapshot it\./);
 
   fake.facts({ kvm: "denied", lxc: "1", installed: "" });
@@ -492,7 +478,8 @@ test("each boot sets the guest's page reporting to its smallest blocks, gives th
   await backend.stop!(stopped);
   const theirs = await make("other").acquire(identity(), null, hooks().hooks, signal());
   const launch = fake.calls().find((call) => call[0] === "exec" && call.some((arg) => arg.includes("bb-box-start")))!;
-  assert.match(launch.at(-1)!, /^echo 0 >\/sys\/module\/page_reporting\/parameters\/page_reporting_order 2>\/dev\/null; /);
+  assert.ok(launch.at(-1)!.startsWith(`${RUN_IN_MEMORY}; ${OWN_HOSTNAME}; `), "first /run in memory and the box's hostname, which a restored box lacks (070 unit 10)");
+  assert.match(launch.at(-1)!, /; echo 0 >\/sys\/module\/page_reporting\/parameters\/page_reporting_order 2>\/dev\/null; /);
   assert.match(launch.at(-1)!, /; chmod 0666 \/dev\/net\/tun 2>\/dev\/null; \[ -e \/run\/bb-box-started \]/, "the box user may open TUN (#595)");
   await backend.maintain(signal());
   const { readFileSync } = await import("node:fs");

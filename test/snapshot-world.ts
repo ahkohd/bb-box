@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { scopedStorage } from "../src/backends/index.ts";
-import type { Backend, Price } from "../src/backends/types.ts";
+import type { Backend, BackendStorage, Price } from "../src/backends/types.ts";
 import { BY_COMMAND, type BoxEventKind } from "../src/core/box-log.ts";
 import { BoxError, Boxes, type BoxRecord } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
@@ -26,7 +26,7 @@ export const COMMAND: Caller = { is: "command" };
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 
-export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number } = {}) {
+export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number; readonly backend?: (storage: BackendStorage) => Backend } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -52,7 +52,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     unenrolled: [] as string[],
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
-    backend: new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}), ...(options.identityRoot ? { identityRoot: options.identityRoot } : {}) }),
+    backend: (options.backend?.(backendStorage) as FakeBackend | undefined) ?? new FakeBackend({ root, storage: backendStorage, ...(options.identityTool ? { identityTool: options.identityTool } : {}), ...(options.identityRoot ? { identityRoot: options.identityRoot } : {}) }),
     log: new BoxLogStore({ file: files.log, now }),
     store: new SnapshotStore({ file: files.snapshots, now }),
     boxes: null as unknown as Boxes,
@@ -75,7 +75,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
       files = openBoxFiles(source, { log: BOX_LOG_MIGRATIONS, history: [], snapshots: SNAPSHOT_MIGRATIONS });
       state.log = new BoxLogStore({ file: files.log, now });
       state.store = new SnapshotStore({ file: files.snapshots, now });
-      state.backend = new FakeBackend({ root, storage: backendStorage });
+      state.backend = (options.backend?.(backendStorage) as FakeBackend | undefined) ?? new FakeBackend({ root, storage: backendStorage });
       build();
     },
     source,
@@ -95,7 +95,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
   };
   const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"] } as unknown as GeneralConfig;
   const build = () => {
-    provider.attach(state.backend, now, root);
+    if (!options.backend) provider.attach(state.backend, now, root);
     provider.ledger = state.store;
     const boxes: Boxes = new Boxes({
       kv,

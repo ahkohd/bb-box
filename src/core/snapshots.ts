@@ -84,7 +84,7 @@ const ROOM_DELETES_PER_SWEEP = 5;
 const OUTSIDE_LOOK_BACK_MS = 24 * 60 * 60_000;
 const OUTSIDE_SLACK_MS = 60_000;
 
-export type HoldStep = "planned" | "task" | "checked" | "stopped" | "copied" | "undo" | "rolled-back" | "adopted" | "started";
+export type HoldStep = "planned" | "task" | "checked" | "stopped" | "copied" | "undo" | "rolled-back" | "adopted" | "answered" | "started";
 
 export interface SnapshotBoxes {
   find(boxId: string): Promise<BoxRecord | null>;
@@ -264,6 +264,10 @@ export interface KeepAnswer {
 export interface HeldOnBackend {
   readonly count: number;
   readonly words: string;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, at) => id === b[at]);
 }
 
 function message(error: unknown): string {
@@ -1368,7 +1372,7 @@ export class Snapshots {
 
   async #dropWithRelease(box: BoxRecord, backend: Backend): Promise<void> {
     const stays = (why: string) =>
-      new ReleaseWaits("unreachable", `Box ${box.name}'s snapshots live on ${backend.label}'s account, not on the box, and would go on costing after its release, so bb-box released nothing: ${why} Release the box again.`);
+      new ReleaseWaits("unreachable", `Box ${box.name}'s snapshots live ${this.#apart(backend).where}, not on the box, and ${this.#apart(backend).stays} after its release, so bb-box released nothing: ${why} Release the box again.`);
     const words = await this.#dropProviderSnapshots(backend, box.id, box.guest!, byBbBox("its box was released"));
     if (words) throw stays(words);
   }
@@ -1376,6 +1380,16 @@ export class Snapshots {
   #onProvider(record: SnapshotRecord): boolean {
     const backend = this.#deps.backends.get(record.backend.id);
     return backend ? this.#livesOnProvider(backend) : false;
+  }
+
+  #apart(backend: Backend): { readonly where: string; readonly stays: string } {
+    const charges = backend.kinds().some((kind) => this.offerFor(backend, kind.id)?.price);
+    return charges ? { where: `on ${backend.label}'s account`, stays: "would go on costing" } : { where: `on ${backend.label}'s host, apart from the box's guest`, stays: "would stay there and take its room" };
+  }
+
+  #apartOf(record: SnapshotRecord): { readonly where: string } {
+    const backend = this.#deps.backends.get(record.backend.id);
+    return backend ? this.#apart(backend) : { where: `on ${record.backend.label}` };
   }
 
   #livesOnProvider(backend: Backend): boolean {
@@ -1458,7 +1472,7 @@ export class Snapshots {
     if (boxId && this.#livesOnProvider(backend)) {
       const guest = listing.find((held) => held.guest.ref === guestRef)?.guest ?? { ref: guestRef, host: null, address: null, size: null, data: { box: boxId } };
       const words = await this.#dropProviderSnapshots(backend, boxId, guest, by);
-      return words ? `its box's snapshots live on ${backend.label}'s account and would go on costing, and ${words.charAt(0).toLowerCase()}${words.slice(1).replace(/\.$/, "")}; bb-box tries again at its next sweep` : null;
+      return words ? `its box's snapshots live ${this.#apart(backend).where} and ${this.#apart(backend).stays}, and ${words.charAt(0).toLowerCase()}${words.slice(1).replace(/\.$/, "")}; bb-box tries again at its next sweep` : null;
     }
     for (const held of listing.filter((each) => each.guest.ref === guestRef && each.where !== "held-copy" && each.keptUntil !== null && each.keptUntil > now)) {
       const record = ledger.record(held.id);
@@ -1779,7 +1793,7 @@ export class Snapshots {
     if (box.state !== "ready" || box.capabilities.os !== "linux" || !box.guest) return none;
     try {
       const command = (await backend.transports(box.guest, box.kind)).command;
-      return command ? await readForkSafe(command, this.#stopping.signal) : none;
+      return command ? await readForkSafe(command, this.#stopping.signal, backend.identitySource?.(box.kind) ?? null) : none;
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.log?.(`Could not read box ${box.name}'s identity reset at a take, so the snapshot is not fork-safe: ${message(error)}`);
@@ -1839,7 +1853,7 @@ export class Snapshots {
       const now = this.#now();
       const evicting = consentOf(operation).evicts !== null;
       const ready = ledger.transaction(() => {
-        const updated = ledger.updateRecord(record.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - began, stateAt: now, error: null });
+        const updated = ledger.updateRecord(record.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - began, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] });
         const done = ledger.updateOperation(operation.id, evicting ? { step: "evicting", error: null } : { state: "done", step: "done", endedAt: now, error: null });
         return { updated, done };
       });
@@ -1992,6 +2006,7 @@ export class Snapshots {
       const now = this.#now();
       const done = ledger.transaction(() => {
         ledger.removeRecord(record.id);
+        for (const child of ledger.records({ box: record.box.id })) if (child.dependsOn.includes(record.id)) ledger.updateRecord(child.id, { dependsOn: child.dependsOn.filter((parent) => parent !== record.id) });
         return ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null });
       });
       this.#event(record, "snapshot-deleted", operation.by, `"${record.name}" (${record.id}): ${record.guest === "held-copy" ? `its held copy, guest ${record.livesOn.ref}, is deleted` : freedWords(record)}.`);
@@ -2071,7 +2086,7 @@ export class Snapshots {
         }
       });
       for (const record of gone) if (heldByProvider(record)) this.#event(record, "snapshot-deleted", byBbBox("its box was released"), `"${record.name}" (${record.id}): it went with its box.`);
-      if (outlives.length) this.#deps.log?.(`Box ${box.name} was ${how} with ${outlives.length} of its snapshots still on its provider's account: bb-box deletes them at its next sweep.`);
+      if (outlives.length) this.#deps.log?.(`Box ${box.name} was ${how} with ${outlives.length} of its snapshots still ${this.#apartOf(outlives[0]!).where}: bb-box deletes them at its next sweep.`);
       this.#notify(box.threadId);
     } catch (error) {
       this.#deps.logError(`settle the snapshots of box ${box.name}`, error);
@@ -2448,7 +2463,8 @@ export class Snapshots {
     const source = await this.#deps.boxes.find(target.box.id);
     const heldCopy = target.guest === "held-copy";
     const name = target.box.name;
-    if ((!source || target.boxGone) && !heldCopy) throw new BoxError("released", `Box ${name} was released, and ${quoted(target)} has no held copy, so bb-box cannot fork it.`);
+    const keptAsIs = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind)?.keepsPastRelease === "as-is" && target.keptUntil !== null;
+    if ((!source || target.boxGone) && !heldCopy && !keptAsIs) throw new BoxError("released", `Box ${name} was released, and ${quoted(target)} has no held copy, so bb-box cannot fork it.`);
     if (target.state !== "ready") throw new BoxError(target.state === "taking" ? "try_again" : "unsupported", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not fork it.`);
     if (target.scope !== "box") throw new BoxError("unsupported", `Snapshot ${quoted(target)} holds ${name}'s device only, so it does not fork.`);
     if (target.box.system !== "linux") throw new BoxError("unsupported", `bb-box forks Linux boxes only, as only they reset their identity at a fork's first boot. Box ${name} runs ${target.box.system}.`);
@@ -2738,7 +2754,7 @@ export class Snapshots {
     const took: [string, number][] = [];
     let stepBegan = this.#now();
     let timed: string | null = null;
-    const at = (step: RestoreStep, also: Partial<SnapshotOperation> = {}) => {
+    const timePart = (step: RestoreStep): boolean => {
       const part = TIMED_PARTS[step];
       const begins = part !== undefined && part !== timed;
       if (begins) {
@@ -2746,6 +2762,10 @@ export class Snapshots {
         timed = part;
         stepBegan = this.#now();
       }
+      return begins;
+    };
+    const at = (step: RestoreStep, also: Partial<SnapshotOperation> = {}) => {
+      const begins = timePart(step);
       ledger.updateOperation(operation.id, { step, stepAt: this.#now(), ...(BEGINS_A_TASK.has(step) ? { task: null } : {}), ...also });
       if (begins) this.#notify(target.box.thread);
     };
@@ -2811,7 +2831,7 @@ export class Snapshots {
           throw this.#restoreUnsure(context, box, "undo-task", words);
         }
         const now = this.#now();
-        undo = ledger.updateRecord(undo.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - takenAt, stateAt: now, error: null }) ?? undo;
+        undo = ledger.updateRecord(undo.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - takenAt, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] }) ?? undo;
         at("undo-ready");
         this.#event(undo, "snapshot-taken", undo.by, `"${undo.name}" (${undo.id}): ${holdsWords(undo)}, the undo of the restore to ${quoted(target)}, in ${seconds(now - takenAt)}.`);
         await this.#deps.hold?.(operation, "undo", signal);
@@ -2942,8 +2962,7 @@ export class Snapshots {
       const startParts: string[] = [];
       let accessWritten = false;
       let accessFailed: unknown = null;
-      const accessFirst = async (): Promise<void> => {
-        at("access");
+      const writeAccess = async (): Promise<void> => {
         try {
           await this.#deps.boxes.writeAccess(box!, signal);
         } catch (error) {
@@ -2952,11 +2971,20 @@ export class Snapshots {
         }
         accessWritten = true;
       };
+      const accessFirst = async (): Promise<void> => {
+        at("access");
+        await writeAccess();
+      };
       if (ahead("starting")) {
         at("starting");
         box = await this.#moved(box, { state: "starting" });
         try {
-          facts = (await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), accessFirst))?.facts;
+          const answered = async (): Promise<void> => {
+            timePart("access");
+            await writeAccess();
+            await this.#deps.hold?.(operation, "answered", signal);
+          };
+          facts = (await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered))?.facts;
         } catch (error) {
           if (signal.aborted) throw error;
           if (accessFailed && context.fromSnapshot) return await this.#swapBack(context, box, `bb-box could not write its new guest's access file: ${sentence(message(accessFailed))}`);
@@ -3082,7 +3110,7 @@ export class Snapshots {
   async #dropOldGuest(box: BoxRecord, backend: Backend, old: Guest): Promise<void> {
     try {
       await backend.release(old, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
-      this.#deps.log?.(`Deleted guest ${old.ref}, box ${box.name}'s guest before its restore: its snapshots live on ${backend.label}'s account, not on it.`);
+      this.#deps.log?.(`Deleted guest ${old.ref}, box ${box.name}'s guest before its restore: its snapshots live ${this.#apart(backend).where}, not on it.`);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.logError(`delete guest ${old.ref}, box ${box.name}'s guest before its restore; the sweep releases it as a leftover`, error);
@@ -3604,6 +3632,7 @@ export class Snapshots {
           ...(record.ref === null ? { ref: held.ref } : {}),
           ...(record.storage === null && held.storage ? { storage: held.storage } : {}),
           ...(later ? { keptUntil: held.keptUntil, keptAt: record.keptAt ?? now, owner: "person" as const } : {}),
+          ...(held.dependsOn && !sameIds(held.dependsOn, record.dependsOn) ? { dependsOn: held.dependsOn } : {}),
           ...back,
         };
         if (Object.keys(change).length) {
@@ -3684,7 +3713,7 @@ export class Snapshots {
       keptAt: null,
       undoOf: null,
       forkSafe: held.forkSafe ?? null,
-      dependsOn: [],
+      dependsOn: held.dependsOn ?? [],
       picture: null,
       ref: held.ref,
       state: held.state === "incomplete" ? "incomplete" : "ready",

@@ -3082,6 +3082,205 @@ tests, 2,971 passed, 0 failed, 288 skipped; vitest ran 431, all passed.
 - **Rebuild the LXC template with version 7** before arming Proxmox LXC
   (unit 7's condition) also gates Keep there.
 
+## Unit 10: microsandbox
+
+microsandbox's own snapshots: take with or without memory, restore as a swap
+to a new microVM, fork from a snapshot's disk only, Keep as it is on the
+host, and `msb`'s chain of dependent snapshots, with microsandbox's identity
+source for the reset. The lead's two answers are in 070, [Decided during
+unit 10](070-snapshots.md#decided-during-unit-10).
+
+### What `msb` 0.7.7 does
+
+Probed before building, with the release bb-box pins, in a Proxmox QEMU
+Linux box with nested KVM (8 cores, 16 GiB), by
+[microsandbox-unit-10.sh](../research/box-snapshots/microsandbox-unit-10.sh)
+([output](../research/box-snapshots/microsandbox-unit-10-results.txt)):
+
+- A Docker disk that is a file of the host's (`--mount-disk`) is left out
+  of every snapshot, dropped on any restore, even with
+  `--dangerously-inherit-resources`, and makes `--full` fail ("additional
+  block resource ... has no immutable-generation provider"). A disk of
+  `msb`'s own (`--mount-owned`) is captured, restored as a private copy, and
+  works with `--full`.
+- A snapshot outlives its sandbox, and restores after it is removed.
+- Each capture's parent is the sandbox's previous capture. `msb` refuses to
+  remove a parent without `--force`, and a group's head while it has other
+  members. With both parents of a chain of three force-removed, the last
+  restored byte-identical: 60 MB on the root and 15 MB on an owned disk.
+- A restore keeps none of the old sandbox's settings: no labels, no
+  environment, no hostname, no `/run` tmpfs, msb's default memory and
+  network. A memory restore must keep the captured CPUs and memory.
+  `--disk-only` boots a memory snapshot's disk at another size.
+
+### What changed
+
+- **microsandbox's backend** (`src/backends/microsandbox/backend.ts`,
+  `snapshots.ts`) offers snapshots: `snapshotting`, `planSnapshots`,
+  `snapshot`, `deleteSnapshot`, `heldSnapshots`, `snapshotsOn`,
+  `providerTask`, `labelKept`, `powerOff`, `adoptSnapshot`, `forkSnapshot`,
+  `armFork`, `disarmFork`, `guestIdentity` and `identitySource` (`value`).
+  Each box's snapshots are the group `bbbox-<box ID>`, named
+  `<install>-<snapshot ID>-r<reset version>`, with labels for the box, the
+  snapshot and its size. A keep date is a file in `msb`'s folder's `kept`,
+  written by a new host script, `keep`; another, `snapshots`, gives each
+  snapshot's size and keep date.
+- **The restore** restores into `bbbox-<box ID>-<token>`, at the box's size,
+  or the captured size for memory, with the box's network profiles, then
+  sets its labels, environment (`BBBOX_IDENTITY`, `BBBOX_HOSTNAME`) and disk
+  size with `msb modify` before anything of the box runs there. Core's
+  new-guest restore from unit 11 does the rest: the stop, the undo of the
+  stopped box, the swap, the access file first, the old microVM deleted once
+  the new one has started.
+- **Each start** mounts `/run` in memory again when it is not, and sets the
+  box's hostname from `BBBOX_HOSTNAME`.
+- **The fork** restores the snapshot's disk only (`--disk-only` for a
+  memory snapshot) under the fork's own name, labels and identity value; a
+  part-made sandbox of that name with no bb-box labels is removed first.
+- **New boxes get a Docker disk of `msb`'s own.** bb-box no longer makes a
+  Docker disk file or a template of one; a box made before keeps its file
+  and works as before, and takes no snapshot, saying why.
+- **Only with `msb` 0.7.7**: every snapshot operation is refused with any
+  other, and a new doctor check, `microsandbox.snapshots`, says so.
+- **Core**: `dependsOn` from the backend at each take, undo and reconcile,
+  cleared from a child when its parent is deleted, and shown as "after ..."
+  on a row and "taken after ..." in `bb box snapshot list`; the fork check
+  reads a value marker (`forkValue`) and, where an image has no `ip`,
+  addresses from `hostname -I`; a value-source box is fork-safe without SSH
+  host keys; a kept snapshot of a released box forks from the snapshot on a
+  backend that keeps it as is; the release's words no longer speak of an
+  account and cost where nothing is charged.
+- **Docs**: the microsandbox guide's Snapshots section, the snapshots
+  guide, the architecture, the reference's checks, and 070.
+
+### Tests
+
+New: `test/microsandbox-snapshots.test.ts` (13 tests, `msb`'s recorded
+answers from the probes, a set clock, and the fake msb, which now models
+`msb`'s snapshots as the probes found them: parents, heads, `--force`, a
+restore that keeps no settings, and `--full` refused beside a host's disk
+file), among them one through bb-box's own `Snapshots` and `Boxes`: take,
+restore, undo, delete a parent, keep, release and a fork check of the kept
+snapshot. One app test (the row's "after"). Changed: the microsandbox
+tests for the owned Docker disk, a box made before, and the launch script.
+
+On the QEMU box (8 cores, 16 GiB, Node 24.21), in a copy whose git tree is
+this unit's commit over main `cacc1dcb` before these notes (`bb136463`):
+`npx tsc` passes, and the reference is current (`node scripts/reference.ts
+--check`); the node suite ran 3,331 tests, 3,043 passed, 0 failed, 288
+skipped; vitest ran 444, all passed with `TZ=Pacific/Auckland`. With the
+box's own UTC clock at 01:17, 3 app tests failed, the same 3 on main
+`cacc1dcb`: they expect "today" of a snapshot taken 2 hours before, and
+"yesterday" of one 26 hours before, which is not so between midnight and
+about 02:00. That is not this unit's to fix.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i` and `BB_BOX_LIVE_CHECKS=1`
+([live-setup.sh](070-snapshots/unit-10/live-setup.sh)), in the same QEMU
+box, bb-box installed from this branch with `bb plugin install path:`, and a
+microsandbox backend on BB's server, the box itself, with
+`bbbox/linux:1` built from this branch by `setup/docker/build.sh linux` and
+`general.identityResetBackends=microsandbox`, then the steps of
+[live-gates.sh](070-snapshots/unit-10/live-gates.sh), run one at a time. No
+credentials were needed.
+Boxes were machines of the person's, and joined BB as machines. Times are
+bb-box's own, from its record or the CLI's answer.
+
+| Check | Result |
+| --- | --- |
+| A box | ready in 14.7 s (importing the image 12.7 s, create 1.5 s), a BB machine 12.8 s later; identity marker 0.3 s, version 7, `source value`; Docker on `/dev/vdc`, `msb`'s own disk |
+| Take with memory | 1.8 s, 2.1 GB; a counter process in the box ran on through it. The first try was "not fork-safe": the image has no SSH host keys (fixed, below) |
+| Take, disk | 1.1 s, 149 MB; listed "taken after" the memory snapshot |
+| Delete a parent | the memory snapshot, which the disk one was taken after: 0.39 s, with `--force`; the child then restored |
+| Restore, memory | 2.08 s and, again, 2.03 s. The counter process (the same PID) was running and counting, `work.txt` "before", Docker's images as then, one microVM, the same host ID `host_qga2n8kqq9`; BB's daemon connected again 5.5 s after the restore began. The first try left the machine disconnected: the new microVM had `msb`'s default network, which does not reach BB's private address (fixed, below) |
+| Undo, disk | 2.41 s: `work.txt` "after", no counter, `boot=kept` (the check ran, no reset), `/run` in memory and the hostname set by bb-box, the same host ID; the daemon connected 1.3 s after the box was ready. A box keeps two undos: the oldest was deleted |
+| Fork of the memory snapshot | ready in 1.9 s, a new BB machine `host_9bh7fxzjny` 2.9 s later; the source stayed `host_qga2n8kqq9`, connected. The counter's PID was not running and its file stood still; every process was 12 s old. `boot=reset`, "the value bb-box set on this guest is not the marker's; BB machines removed: host_qga2n8kqq9"; a new machine ID and new SSH host keys; its own marker and hostname; Docker's images came with it. The first try was refused, as the image has no `ip` to read addresses, and released (fixed, below) |
+| Keep | "If msb-src is released, it stays where it is until 2026-12-01." |
+| Release | 0.73 s; its two undos were deleted from `msb`, the kept snapshot stayed |
+| Fork of the kept snapshot after the release | ready in 2.0 s, a new BB machine `host_ye5wb5pe7g`, `boot=reset`. The first try was refused, as core forked a released box only from a held copy (fixed, below) |
+| A box made before | made by `origin/main`'s bb-box (`cacc1dcb`) in the same BB, its Docker disk a host's file; then under this branch: Take refused, "It was made before bb-box could snapshot a box's Docker disk: ..."; a stop and start, a resize to 3 cores with a restart in 1.7 s, its Docker image still there, its BB machine connected; its release removed its disk file |
+| Clean up | every box released; every snapshot deleted; `msb ls` and `msb snapshot list` empty for bb-box's `msb` and the probes'; no keep file; BB stopped |
+
+### Found live, and fixed
+
+Each with a test that fails without it:
+
+- The images microsandbox runs have no SSH server, so no SSH host keys, and
+  a take recorded no `forkSafe`. A box whose identity is a value is now
+  fork-safe without them; the fork's check still requires the keys its
+  reset makes.
+- A restore gave the new microVM `msb`'s default network. It now gets the
+  box's profiles as rules, which `msb` records as its create does.
+- The fork's check could not read addresses in an image with no `ip`; it
+  falls back to `hostname -I`.
+- Core refused to fork a kept snapshot of a released box without a held
+  copy.
+- The restored microVM's disk size was not recorded, so its size read back
+  without a disk; the snapshot now carries it in a label.
+- A child named its deleted parent until the next sweep.
+
+### Choices and deviations
+
+- **The undo is of the stopped box**, as on boat.dev, not taken live
+  (decided during unit 10).
+- **Dependent snapshots are deleted with `--force`**, not refused (decided
+  during unit 10).
+- **New boxes' Docker disks are `msb`'s own**, and old boxes take no
+  snapshot (decided during unit 10). The template of a Docker disk for a
+  host without `mkfs.ext4` is gone, so a Mac's box formats its disk whole
+  again, which 053 measured at about 0.65 s more a box with 20 at once.
+- **No live check on a Mac.** Only x86_64 Linux was checked, so after the
+  reviews a Mac host takes no snapshots yet.
+- The fork of a kept snapshot of a released box was checked live; the
+  reconcile of `msb`'s snapshots after `snapshots.db` is lost was checked on
+  the fake only.
+
+### After the reviews
+
+Two reviews, by Opus and by Astra, each said merge after fixes. The lead
+asked for all of them in one amended commit, rebased onto main `a0420ab3`
+(071 unit 1, whose GPU part of a box's size the unit now uses). Each fix
+has a test that fails on the reviewed sources and passes now: run with the
+reviewed `src` (and only the one new constant the tests import), the 5 new
+tests below failed.
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| Astra 1 (high): a restored box's start wrote its access file and recorded the step `access`, past `starting`, before the box's own start command ran. bb-box restarting there left recovery to skip the start, mark the box ready, and delete the old guest | an access file written within a start keeps the restore's record at `starting`, so recovery starts the box again, and the old guest is deleted only after; its time is still said as `access`. A hold for live checks, `answered`, stops a restore at that moment | "070 unit 10 review (Astra 1): bb-box restarting after a restore's new microVM took its access file ..." |
+| Astra 2: the version guard read the host's facts, kept for a minute, so an `msb` changed meanwhile could still `--force` a delete | a take, a restore, a fork, Keep and a delete each run `msb --version` first, and a delete again right before `--force` | "... (Astra 2): msb changed under a running backend is read again before every change ..." |
+| Opus 1: snapshots were offered on a Mac host, where nothing was measured | refused there with "bb-box takes no snapshots of microsandbox boxes on a Mac yet: what they rest on, such as each snapshot holding its own data, was measured on Linux only", and the doctor's Snapshots check warns; a follow-up in 070 | "... (Opus 1): on a Mac host microsandbox boxes take no snapshots yet ..." |
+| Opus 2: a restore put back the snapshot's disk size when the box's had grown since | the larger of the two, as a fork does | "... (Opus 2): a restore keeps the box's disk when it has grown ..." |
+| Opus 3: the probe and the live script did not cover all the results claim | the reviewer's checks A to C are in the probe, and passed on a fresh box ([output](../research/box-snapshots/microsandbox-unit-10-results.txt)): a running sandbox restored from a snapshot, the snapshot and the source then deleted, the same before and after a restart; a capture of it naming the deleted snapshot as its parent, restoring the same after its own parent went with `--force`; a parent removed with `--force` while a sandbox restored from it runs, the same after a restart. [live-gates.sh](070-snapshots/unit-10/live-gates.sh) now takes a disk snapshot and deletes a parent; "A box made before" was run by hand, as the table above says, as it needs `origin/main`'s bb-box | |
+| Opus 4: the old Docker disk template folder was never removed, and was counted | the upkeep's sweep of Docker disks removes it, and the status script no longer counts it | "... (Opus 4): the upkeep removes the Docker disk template ..." |
+
+On a fresh Proxmox QEMU box with nested KVM (8 cores, 16 GiB, Node 24.21),
+in a copy whose git tree is this commit's before this section: `npx tsc`
+passes, and the reference is current; the node suite ran 3,355 tests, 3,067 passed, 0 failed, 288 skipped
+(`8d0e12d6`); vitest ran 444, all passed, with `TZ=Pacific/Auckland`, for
+the 3 clock-bound app tests said above. A first node run beside the image
+build failed one timing test in `test/device-delivery.test.ts`, which this
+unit does not touch, and G4's wording in `test/restore.test.ts`, which the
+Astra 1 fix had changed: the in-start access is timed as `access` again, and
+both passed after.
+
+The live recheck, on a separate BB as before (`npx bb-app` 0.48.1, no
+account, `BB_BOX_LIVE_CHECKS=1`, bb-box from this commit, microsandbox on
+the box itself), with [live-gates.sh](070-snapshots/unit-10/live-gates.sh)
+and [live-interrupt.sh](070-snapshots/unit-10/live-interrupt.sh):
+
+| Check | Result |
+| --- | --- |
+| Take with memory, take of the disk | 5.1 s and 1.3 s from the command line |
+| Restore, memory | 3.6 s; the counter process running, `work.txt` "before", the same host ID, one microVM; BB's daemon connected again 7.0 s after the restore began |
+| Undo, disk | 3.1 s; `work.txt` "after", `boot=kept`, the same host ID; the daemon connected 4.4 s after it began |
+| A restore interrupted after the new microVM took its access file | held there with `hold-next --at answered`: the new microVM had its access file and no ready file, the old one was stopped. bb-box restarted (`bb plugin reload`); recovery (`bb box sweep`, 0.64 s) started the same new microVM, which ran its start command and said it was ready, with `work.txt` "before", `boot=kept`, its BB machine connected, and only then deleted the old one. One microVM was left |
+| Fork of the memory snapshot | 2.6 s; no process of its source |
+| Delete a parent | 0.40 s |
+| Keep, release, fork of the kept snapshot | 0.45 s, 1.1 s, 2.9 s; the fork `boot=reset` with a new host ID |
+| Clean up | every box released, every snapshot deleted, `msb ls` and `msb snapshot list` empty for bb-box's `msb` and the probe's, no keep file, BB stopped, the box released |
+
 ## Unit 11: boat.dev's saved snapshots
 
 boat.dev's saved snapshots on a paid plan, within the ceiling, and a

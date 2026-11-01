@@ -37,9 +37,7 @@ the boxes. How bb-box drives a box is in the
   distributions, in the `kvm` group. On a BB machine that is the user BB's
   app runs as; over SSH, the user bb-box logs in as; on BB's server, the user
   BB runs as.
-- `curl` and `tar` on the host, with which bb-box installs `msb`, and
-  `mkfs.ext4` (e2fsprogs), with which it makes each box's Docker disk. Without
-  it, boxes start more slowly.
+- `curl` and `tar` on the host, with which bb-box installs `msb`.
 - Docker on the host, to build the images, as for the Docker backend: about
   28 GB free to build both. bb-box imports them from Docker into `msb`.
 - Disk for `msb`: about 6 GB for both images once imported, and what each box
@@ -118,14 +116,8 @@ them in the backend order. msb uses the Hypervisor framework, so the Mac
 needs nothing installed: reach it as a BB machine, `bb:<machine ID>`, or over
 `ssh://` as Tart's backend does. bb-box keeps `msb`, its state and the
 images in its data folder on the Mac, about 2.4 GiB with the linux image and
-6 GiB with both. A Mac has no `mkfs.ext4`, so bb-box makes one Docker disk
-as a template, in a small microVM in about a second, about 8 MB in its
-folder's `templates`, and each box's Docker disk is an APFS clone of it,
-which takes milliseconds and only what Docker writes. Until the template is
-made, a box gets `msb`'s own disk, which formats it whole: with 20 boxes at
-once the median box was ready in 1.84 s that way, against 1.19 s with a
-clone. A Mac does not take back memory a box has used, so count each box at
-its full size there.
+6 GiB with both. A Mac does not take back memory a box has used, so count
+each box at its full size there.
 
 ### 3. Configure bb-box
 
@@ -139,7 +131,7 @@ fields, press Check, then Save and turn on.
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu boxes. Empty turns them off |
 | `linux-arm64-image` | `bbbox/linux:1-arm64` | The image of linux-arm64 boxes, on an arm64 host such as a Mac. Empty turns them off |
 | `desktop-arm64-image` | `bbbox/linux-desktop:1-arm64` | The image of linux-arm64-desktop-cpu boxes, on an arm64 host. Empty turns them off |
-| `docker` | on | Each box has a Docker daemon of its own, with its data on an ext4 disk of the box's own. Off, boxes have no Docker |
+| `docker` | on | Each box has a Docker daemon of its own, with its data on an ext4 disk of `msb`'s own, which a snapshot holds too. Off, boxes have no Docker |
 | `docker-disk-gib` | 64 | The most each box's Docker disk may grow to |
 | `disk-gib` | 32 | The most a box's root disk may grow to, when no disk size is asked for |
 | `network` | `public,private` | `msb`'s network profiles for each box: `public` reaches the internet, `private` the host's local networks and tailnet |
@@ -166,7 +158,9 @@ about 2 s. It keeps `msb`, its state and the images in a folder of its own:
 | A BB machine | `microsandbox` in bb-box's data folder on the machine, such as `~/.bb-machines/<BB server>/plugins/bb-box/host-data/microsandbox` |
 | Over SSH, or BB's server | `~/.local/share/bb-box/microsandbox` |
 
-Each box's Docker disk is in the folder's `disks`, and goes with the box.
+Each box's Docker disk is `msb`'s own, and goes with the box. A box an
+earlier bb-box made has its Docker disk in the folder's `disks` instead,
+which also goes with it.
 
 A box keeps the files it reads cached in its own memory, which the host
 cannot share. Every 3 minutes bb-box has each idle box drop that cache, so
@@ -218,9 +212,43 @@ does not keep a box's session.
   `linux-arm64` box, for as long as it waits. Keep spares there at 0 unless
   the Mac has room to spare.
 - bb-box does not fork spares from a prepared box. On a Mac, a fork took
-  1.75 s against 1.8 s for a new box, and `msb` refuses to fork a box whose
-  Docker disk is a clone of bb-box's template; on an ext4 host a fork copies
-  the box's disk and is slower still (053).
+  1.75 s against 1.8 s for a new box; on an ext4 host a fork copies the
+  box's disk and is slower still (053).
+
+### Snapshots
+
+bb-box takes, restores, forks, keeps and deletes snapshots of microsandbox
+boxes with `msb`'s own snapshots
+([Snapshots](../../docs/guide/snapshots.md)). They live in `msb`'s folder on
+the host, apart from each box's microVM, and outlive it.
+
+- **What one holds.** The box's disk with its Docker data, or with
+  `--memory` its memory and running processes too. `/run` is in memory, so
+  a disk snapshot leaves it out. A take is under a second; with memory the
+  box pauses for about a second.
+- **A restore** makes the box a new microVM from the snapshot, with the
+  box's ID, name, labels and identity value, so it stays the same BB machine,
+  then deletes the old one. The undo is a snapshot of the box once stopped.
+- **A fork** boots a new microVM from the snapshot's disk only, never its
+  memory and never with `msb fork`, so nothing of its source runs in it. Its
+  identity value is new, so its identity reset runs before its daemons
+  start. Forks need the identity reset turned on for the backend
+  (`general.identityResetBackends`), as for the other backends.
+- **Chains.** `msb` keeps each box's snapshots in a chain, each taken after
+  the one before, and refuses to delete one that others were taken after.
+  Each holds its own data, so bb-box deletes any of them with `--force`, and
+  says on each which one it was taken after.
+- **Keep** writes the keep date in the folder's `kept`, as `msb` cannot
+  change a snapshot's labels. A kept snapshot stays on the host after its
+  box's release, at its whole size, until its date.
+- **Only with `msb` 0.7.7**, the release whose snapshots bb-box measured.
+  With any other, the doctor's Snapshots check warns and boxes take none.
+- **Not on a box an earlier bb-box made**: its Docker disk is a file of the
+  host's, which `msb` leaves out of a snapshot. Such a box says why, and
+  works as before otherwise.
+- **Not in LXC**, as above.
+- **Not on a Mac yet.** What snapshots rest on was measured on Linux only,
+  so a Mac host takes none, and the doctor says so.
 
 ## Check it worked
 
@@ -231,6 +259,7 @@ Run `bb box doctor`. For the microsandbox backend it checks:
 - `/dev/kvm` is there and the user may use it;
 - each image is in `msb`, or in Docker for bb-box to import, and how old it
   is;
+- whether the host's `msb` is the release whose snapshots bb-box measured;
 - whether the host is an LXC container;
 - the room on the host for a box at each kind's default size.
 

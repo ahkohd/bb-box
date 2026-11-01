@@ -15,7 +15,8 @@
 // does. Running bb-box-start writes the ready file, as the image's command
 // does; neither create nor start runs it, as msb's do not. Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { constants } from "node:os";
 import { join } from "node:path";
 
@@ -95,6 +96,11 @@ function create(rest) {
     labels[key] = value.join("=");
   }
   const sizeMiB = (text, unit) => Number.parseInt(text, 10) * (unit === "G" ? 1024 : 1);
+  const mounts = [
+    ...(values["--tmpfs"] ? [{ guest: values["--tmpfs"], type: "Tmpfs" }] : []),
+    ...many["--mount-owned"].map((spec) => ({ guest: spec.split(":")[0], type: "Owned", storage: { kind: spec.includes("kind=disk") ? "disk" : "dir" } })),
+    ...many["--mount-disk"].map((spec) => ({ guest: spec.split(":")[1], host: spec.split(":")[0], type: "DiskImage" })),
+  ];
   save({
     name,
     status: "Running",
@@ -102,7 +108,8 @@ function create(rest) {
       name,
       labels,
       env: many["--env"],
-      mounts: many["--mount-owned"],
+      mounts,
+      owned: many["--mount-owned"],
       disks: many["--mount-disk"],
       mountDir: values["--mount-dir"] ?? null,
       network: values["--net"],
@@ -182,10 +189,139 @@ function exec(rest) {
   child.on("exit", (code, signal) => process.exit(code ?? 128 + (constants.signals[signal] ?? 0)));
 }
 
+const snapshotsFile = join(root, "snapshots.json");
+const snapshots = () => read("snapshots.json", []);
+const saveSnapshots = (list) => writeFileSync(snapshotsFile, JSON.stringify(list, null, 2));
+const heads = () => read("heads.json", {});
+const snapshotDir = (id) => join(root, "snapshot-data", id);
+const findSnapshot = (selector) => {
+  const list = snapshots();
+  const [group, member] = selector.split(":");
+  return list.find((each) => each.id === selector || (member !== undefined && each.group === group && each.name === member)) ?? null;
+};
+
+function snapshot(rest) {
+  const [sub, ...more] = rest;
+  if (sub === "list" || sub === "ls") {
+    console.log(JSON.stringify(snapshots().map((each) => ({ ...each.listed }))));
+    return;
+  }
+  if (sub === "create") {
+    const positional = more[0] && !more[0].startsWith("-") ? more[0] : null;
+    const { values, many } = flags(positional ? more.slice(1) : more, ["--sandbox", "--group", "--name"]);
+    const name = positional ?? values["--name"] ?? `snap-${randomBytes(3).toString("hex")}`;
+    const sandbox = found(values["--sandbox"]);
+    const group = values["--group"] ?? sandbox.name;
+    if (host.failSnapshot) fail(host.failSnapshot);
+    if (values["--full"]) {
+      if (sandbox.status !== "Running") fail(`full snapshot requires a running sandbox: '${sandbox.name}' is ${sandbox.status}`);
+      const disk = (sandbox.config.mounts ?? []).find((mount) => mount.type === "DiskImage");
+      if (disk) fail(`control client error: control operation rejected by peer: additional block resource var_lib_doc_00000000 has no immutable-generation provider`);
+    }
+    const list = snapshots();
+    if (list.some((each) => each.group === group && each.name === name)) fail(`snapshot ${group}:${name} already exists; installed members are immutable`);
+    const id = `snap_${randomBytes(16).toString("hex")}`;
+    mkdirSync(snapshotDir(id), { recursive: true });
+    for (const part of ["home", "var-lib", ...(values["--full"] ? ["run"] : [])]) if (existsSync(join(dir(sandbox.name), part))) cpSync(join(dir(sandbox.name), part), join(snapshotDir(id), part), { recursive: true });
+    const labels = Object.fromEntries(many["--label"].map((label) => [label.split("=")[0], label.split("=").slice(1).join("=")]));
+    const parent = sandbox.lastSnapshot ?? sandbox.config.snapshot_parent ?? null;
+    const at = new Date(Date.now() + list.length).toISOString();
+    list.unshift({
+      id,
+      group,
+      name,
+      labels,
+      source: sandbox.name,
+      config: { resources: { ...sandbox.config.resources }, owned: sandbox.config.owned ?? [], disk_mib: sandbox.config.image.Oci.root_disk.size_mib, image: sandbox.config.image.Oci.reference },
+      listed: { artifact_path: snapshotDir(id), availability: host.snapshotAvailability ?? "ready", created_at: at, group, name, parent_digest: parent, scope: values["--full"] ? "full" : "disk", size_bytes: values["--full"] ? null : 4294967296, snapshot_id: id },
+    });
+    saveSnapshots(list);
+    const allHeads = heads();
+    if (!allHeads[group] || allHeads[group] === parent) allHeads[group] = id;
+    writeFileSync(join(root, "heads.json"), JSON.stringify(allHeads));
+    sandbox.lastSnapshot = id;
+    save(sandbox);
+    if (!values["--quiet"]) console.log(id);
+    return;
+  }
+  if (sub === "head") {
+    const [group, member] = more[0].split(":");
+    const allHeads = heads();
+    const previous = allHeads[group] ?? null;
+    if (member !== undefined) {
+      const chosen = findSnapshot(`${group}:${member}`) ?? fail(`snapshot not found: ${more[0]}`);
+      allHeads[group] = chosen.id;
+      writeFileSync(join(root, "heads.json"), JSON.stringify(allHeads));
+    }
+    console.log(JSON.stringify({ group, previous, head: allHeads[group] ?? null, reason: member === undefined ? "unchanged" : "selected", changed: member !== undefined && previous !== allHeads[group] }));
+    return;
+  }
+  if (sub === "remove" || sub === "rm") {
+    const { values, rest: positional } = flags(more, []);
+    const target = findSnapshot(positional[0]) ?? fail(`snapshot not found: ${positional[0]}`);
+    const list = snapshots();
+    const members = list.filter((each) => each.group === target.group && each.id !== target.id);
+    if (heads()[target.group] === target.id && members.length) fail(`invalid config: cannot remove current head ${target.id}; first select another snapshot with 'msb snapshot head ${target.group}:<snapshot>'`);
+    const children = list.filter((each) => each.listed.parent_digest === target.id);
+    if (children.length && !values["--force"]) fail(`snapshot ${target.id} has ${children.length} indexed child snapshot(s); pass --force to remove anyway`);
+    saveSnapshots(list.filter((each) => each.id !== target.id));
+    rmSync(snapshotDir(target.id), { recursive: true, force: true });
+    if (!members.length) {
+      const allHeads = heads();
+      delete allHeads[target.group];
+      writeFileSync(join(root, "heads.json"), JSON.stringify(allHeads));
+    }
+    return;
+  }
+  if (sub === "inspect") {
+    const target = findSnapshot(more[0]) ?? fail(`snapshot not found: ${more[0]}`);
+    const labels = Object.entries(target.labels).map(([key, value]) => `${key}=${value}`).join(", ");
+    process.stdout.write(`Snapshot ID:          ${target.id}\nScope:                ${target.listed.scope}\nParent:               ${target.listed.parent_digest ?? "-"}\nVirtual Size:         ${(target.config.disk_mib / 1024).toFixed(1)} GiB\nSource Sandbox:       ${target.source}\nLabels:               ${labels || "-"}\n`);
+    return;
+  }
+  if (sub === "restore") {
+    const { values } = flags(more.slice(1), ["--name", "--cpus", "--memory", "--net-default", "--net-rule"]);
+    const target = findSnapshot(more[0]) ?? fail(`snapshot not found: ${more[0]}`);
+    const name = values["--name"];
+    if (load(name)) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
+    if (host.failRestore) fail(host.failRestore);
+    const full = target.listed.scope === "full" && !values["--disk-only"];
+    const memoryMiB = values["--memory"] ? Number.parseInt(values["--memory"], 10) * (values["--memory"].endsWith("G") ? 1024 : 1) : null;
+    if (full && ((values["--cpus"] && Number(values["--cpus"]) !== target.config.resources.cpus) || (memoryMiB !== null && memoryMiB !== target.config.resources.memory_mib))) fail("invalid config: a full snapshot must restore with its captured CPU and memory geometry");
+    rmSync(dir(name), { recursive: true, force: true });
+    mkdirSync(dir(name), { recursive: true });
+    for (const part of ["home", "var-lib", ...(full ? ["run"] : [])]) if (existsSync(join(snapshotDir(target.id), part))) cpSync(join(snapshotDir(target.id), part), join(dir(name), part), { recursive: true });
+    mkdirSync(join(dir(name), "home"), { recursive: true });
+    mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
+    const resources = full ? { ...target.config.resources } : { cpus: Number(values["--cpus"] ?? 1), memory_mib: memoryMiB ?? 512 };
+    save({
+      name,
+      status: "Running",
+      config: {
+        name,
+        labels: {},
+        env: [],
+        mounts: target.config.owned.map((spec) => ({ guest: spec.split(":")[0], type: "Owned", storage: { kind: "disk" } })),
+        owned: target.config.owned,
+        disks: [],
+        network: "public",
+        tmpfs: null,
+        runtime: { hostname: null },
+        resources,
+        snapshot_parent: target.id,
+        restoredFrom: target.id,
+        image: { Oci: { reference: target.config.image, root_disk: { kind: "managed", size_mib: target.config.disk_mib } } },
+      },
+    });
+    return;
+  }
+  fail(`fake msb: unknown command snapshot ${sub}`, 2);
+}
+
 const [command, ...rest] = args;
 switch (command) {
   case "--version":
-    console.log("msb 0.7.7");
+    console.log(`msb ${host.version ?? "0.7.7"}`);
     break;
   case "create":
     create(rest);
@@ -262,9 +398,16 @@ switch (command) {
       const [key, ...value] = label.split("=");
       sandbox.config.labels[key] = value.join("=");
     }
+    for (const each of many["--env"]) {
+      const key = each.split("=")[0];
+      sandbox.config.env = [...sandbox.config.env.filter((other) => other.split("=")[0] !== key), each];
+    }
     save(sandbox);
     break;
   }
+  case "snapshot":
+    snapshot(rest);
+    break;
   case "exec":
     exec(rest);
     break;

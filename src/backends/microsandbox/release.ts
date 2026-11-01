@@ -40,7 +40,7 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag";
+export type MsbScript = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag" | "snapshots" | "keep";
 
 /** A builder microVM's name (#build in backend.ts). */
 export const BUILDER_NAME = /^bb-box-builder-[a-z0-9]{1,32}$/;
@@ -50,6 +50,10 @@ export const OOM_SCORE_ADJ = 500;
 
 /** A box's Docker disk's name: its microVM's. */
 export const DISK_NAME = /^bbbox-[A-Za-z0-9_.-]{1,80}$/;
+
+export const MSB_SNAPSHOT_ID = /^snap_[0-9a-f]{32}$/;
+
+export const KEEP_DATE = /^([0-9]{4}-[0-9]{2}-[0-9]{2}|none)$/;
 
 /** Sets `dir` to bb-box's msb folder: BBBOX_MSB_DIR, or MSB_DEFAULT_DIR. */
 const PRELUDE = `set -eu
@@ -150,12 +154,11 @@ else
   if [ "$(sysctl -n kern.hv_support 2>/dev/null)" = 1 ]; then echo "kvm=ok"; else echo "kvm=missing"; fi
   echo "lxc=0"
 fi
-mkdir -p "$dir/home" "$dir/templates"
+mkdir -p "$dir/home"
 # The volume msb's images and build files are on, through any link to another volume.
 echo "free_kib=$(df -Pk "$dir/home/." | awk 'NR==2 {print $4}')"
-echo "templates=$(cd "$dir/templates" && ls -- *.ext4 2>/dev/null | tr '\n' ' ')"
-echo "used_kib=$(du -sk "$dir/home" "$dir/disks" "$dir/templates" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
-if PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 >/dev/null; then echo "mkfs=1"; else echo "mkfs=0"; fi
+echo "disk_kib=$(df -Pk "$dir/home/." | awk 'NR==2 {print $2}')"
+echo "used_kib=$(du -sk "$dir/home" "$dir/disks" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 probe=$(mktemp "$dir/home/.reflink.XXXXXX")
 echo bb-box >"$probe"
 if cp --reflink=always "$probe" "$probe.copy" 2>/dev/null || cp -c "$probe" "$probe.copy" 2>/dev/null; then echo "reflink=1"; else echo "reflink=0"; fi
@@ -175,43 +178,34 @@ done
    * reference, with `docker save` and `msb load`. Prints Docker's ID of what
    * it imported.
    */
-  /**
-   * Makes box $1's Docker disk, $2 GiB, sparse, as ext4 with its inode
-   * tables and journal left for the kernel to initialise: 3 ms and about
-   * 5 MB, where msb's own disk for a box formats it whole. Prints its path.
-   */
-  disk: () => `${PRELUDE}PATH=$PATH:/sbin:/usr/sbin
-mkdir -p "$dir/disks"
-file=$dir/disks/$1.ext4
-template=$dir/templates/docker-$2G.ext4
-if [ ! -e "$file" ]; then
-  if command -v mkfs.ext4 >/dev/null; then
-    truncate -s "$2G" "$file.new"
-    mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 "$file.new"
-  elif [ -s "$template" ]; then
-    # A host without mkfs.ext4, as a Mac: a clone of the template bb-box made
-    # once, which shares its blocks on APFS or a file system with reflinks.
-    cp -c "$template" "$file.new" 2>/dev/null || cp --reflink=auto "$template" "$file.new"
-  else
-    echo "no template $template" >&2
-    exit 4
-  fi
-  mv "$file.new" "$file"
-fi
-echo "disk=$file"
-`,
-
   /** Removes the Docker disks of the boxes named. */
   undisk: () => `${PRELUDE}for name in "$@"; do rm -f "$dir/disks/$name.ext4" "$dir/disks/$name.ext4.new"; done
 `,
 
   /** Each box's Docker disk, `<name>=<age in seconds>`. */
-  disks: () => `${PRELUDE}now=$(date +%s)
+  disks: () => `${PRELUDE}rm -rf "$dir/templates"
+now=$(date +%s)
 for file in "$dir"/disks/*.ext4; do
   [ -e "$file" ] || continue
   name=$(basename "$file" .ext4)
   echo "$name=$(( now - $(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file") ))"
 done
+`,
+
+  snapshots: () => `${PRELUDE}set +e
+for folder in "$dir"/home/snapshots/*/snap_*; do
+  [ -d "$folder" ] || continue
+  echo "size:$(basename "$folder")=$(du -sk "$folder" | awk '{print $1}')"
+done
+for file in "$dir"/kept/snap_*; do
+  [ -f "$file" ] || continue
+  echo "kept:$(basename "$file")=$(cat "$file")"
+done
+`,
+
+  keep: () => `${PRELUDE}mkdir -p "$dir/kept"
+if [ "$2" = none ]; then rm -f "$dir/kept/$1"; else printf '%s\\n' "$2" >"$dir/kept/$1.new" && mv "$dir/kept/$1.new" "$dir/kept/$1"; fi
+echo "kept=$2"
 `,
 
   /** The host's memory available now, `available_kib`: MemAvailable on Linux, free, inactive and speculative pages on macOS (#557). */
@@ -277,9 +271,9 @@ export function msbScript(name: MsbScript): string {
 export function scriptArgsOk(name: string, args: readonly string[]): name is MsbScript {
   if (name === "install" || name === "status") return args.length === 0;
   if (name === "import") return args.length === 1 && IMAGE_REF.test(args[0]!);
-  if (name === "disk") return args.length === 2 && DISK_NAME.test(args[0]!) && /^[1-9][0-9]{0,3}$/.test(args[1]!);
   if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
-  if (name === "disks" || name === "memory" || name === "oom") return args.length === 0;
+  if (name === "disks" || name === "memory" || name === "oom" || name === "snapshots") return args.length === 0;
+  if (name === "keep") return args.length === 2 && MSB_SNAPSHOT_ID.test(args[0]!) && KEEP_DATE.test(args[1]!);
   if (name === "retag") return args.length === 2 && args.every((arg) => IMAGE_REF.test(arg)) && /:refresh-[a-z0-9]+$/.test(args[0]!);
   if (name === "transfer") return args.length === 2 && BUILDER_NAME.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));

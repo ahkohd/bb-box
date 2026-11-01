@@ -29,7 +29,9 @@ export interface FakeMsbHost {
   /** The scripts run so far, with their arguments. */
   readonly scripts: string[][];
   sandboxes(): string[];
-  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: string[]; disks: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number } } };
+  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: { guest: string; type: string }[]; owned: string[]; disks: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number }; restoredFrom?: string } };
+  snapshots(): { id: string; group: string; name: string; labels: Record<string, string>; listed: { parent_digest: string | null; scope: string } }[];
+  heads(): Record<string, string>;
   /** msb's images, by reference, with their labels. */
   images(): Record<string, Record<string, string>>;
   home(name: string): string;
@@ -73,10 +75,10 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     kvm: "ok",
     lxc: "0",
     free_kib: String(500 * 1024 * 1024),
+    disk_kib: String(1000 * 1024 * 1024),
     used_kib: String(3 * 1024 * 1024),
     reflink: "0",
     docker: "29.0.0",
-    mkfs: "1",
     // What the memory script says the host has available now (#557).
     available_kib: String(48 * 1024 * 1024),
   };
@@ -91,23 +93,22 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     script: async (name, args) => {
       scripts.push([name, ...args]);
       if (name === "status") {
-        const templates = existsSync(join(dir, "templates")) ? readdirSync(join(dir, "templates")).filter((file) => file.endsWith(".ext4")).join(" ") : "";
-        return { exitCode: 0, stdout: lines({ ...facts, templates }), stderr: "" };
+        return { exitCode: 0, stdout: lines(facts), stderr: "" };
       }
       if (name === "install") {
         facts = { ...facts, installed: "0.7.7" };
         return { exitCode: 0, stdout: "installed=0.7.7\n", stderr: "" };
       }
-      if (name === "disk") {
-        mkdirSync(join(dir, "disks"), { recursive: true });
-        const file = join(dir, "disks", `${args[0]}.ext4`);
-        const template = join(dir, "templates", `docker-${args[1]}G.ext4`);
-        if (!existsSync(file)) {
-          // As the script: mkfs.ext4 when the host has it, else a clone of the template, else exit 4.
-          if (facts.mkfs !== "1" && !existsSync(template)) return { exitCode: 4, stdout: "", stderr: `no template ${template}\n` };
-          writeFileSync(file, facts.mkfs === "1" ? "" : readFileSync(template));
-        }
-        return { exitCode: 0, stdout: `disk=${file}\n`, stderr: "" };
+      if (name === "snapshots") {
+        const listed = existsSync(join(root, "snapshots.json")) ? (JSON.parse(readFileSync(join(root, "snapshots.json"), "utf8")) as { id: string }[]) : [];
+        const kept = existsSync(join(dir, "kept")) ? readdirSync(join(dir, "kept")).filter((file) => file.startsWith("snap_")) : [];
+        return { exitCode: 0, stdout: [...listed.map((each) => `size:${each.id}=2048\n`), ...kept.map((file) => `kept:${file}=${readFileSync(join(dir, "kept", file), "utf8").trim()}\n`)].join(""), stderr: "" };
+      }
+      if (name === "keep") {
+        mkdirSync(join(dir, "kept"), { recursive: true });
+        if (args[1] === "none") rmSync(join(dir, "kept", args[0]!), { force: true });
+        else writeFileSync(join(dir, "kept", args[0]!), `${args[1]}\n`);
+        return { exitCode: 0, stdout: `kept=${args[1]}\n`, stderr: "" };
       }
       if (name === "undisk") {
         for (const disk of args) rmSync(join(dir, "disks", `${disk}.ext4`), { force: true });
@@ -154,6 +155,8 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     sandboxes: () => (existsSync(join(root, "sandboxes")) ? readdirSync(join(root, "sandboxes")).filter((name) => existsSync(join(root, "sandboxes", name, "config.json"))).sort() : []),
     inspect: (name) => JSON.parse(readFileSync(join(root, "sandboxes", name, "config.json"), "utf8")),
     images: readImages,
+    snapshots: () => (existsSync(join(root, "snapshots.json")) ? JSON.parse(readFileSync(join(root, "snapshots.json"), "utf8")) : []),
+    heads: () => (existsSync(join(root, "heads.json")) ? JSON.parse(readFileSync(join(root, "heads.json"), "utf8")) : {}),
     home: (name) => join(root, "sandboxes", name, "home"),
   };
 }

@@ -862,6 +862,7 @@ export interface SnapshotTaken {
   readonly holds: Holds;
   readonly capturedAt: number;
   readonly size: SnapshotSize | null;
+  readonly dependsOn?: readonly string[];
 }
 
 export interface SnapshotRef {
@@ -905,6 +906,7 @@ export interface OutsideRollback {
 export interface GuestIdentity {
   readonly macs: Readonly<Record<string, string>>;
   readonly smbios: string | null;
+  readonly value?: string | null;
 }
 
 export interface HeldCopyLabel {
@@ -940,6 +942,7 @@ export interface HeldSnapshot {
   readonly keptUntil: number | null;
   readonly storage: { readonly name: string; readonly type: string } | null;
   readonly forkSafe?: number | null;
+  readonly dependsOn?: readonly string[];
 }
 
 export class SnapshotFailed extends Error {
@@ -1223,7 +1226,7 @@ export interface MachineAccess {
 }
 
 /** The scripts bb-box runs on an msb host (src/backends/microsandbox/release.ts). */
-export type MsbScriptName = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag";
+export type MsbScriptName = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag" | "snapshots" | "keep";
 
 /** How a backend runs bb-box's msb on a BB machine, through bb-box's msb relay (053). */
 export interface MsbAccess {
