@@ -1,0 +1,7 @@
+#!/bin/bash
+[ "$1" = set ] && [ "$3" = --description ] || exit 0
+file=$BBBOX_ROOT/etc/pve/qemu-server/$2.conf
+{
+  while IFS= read -r line; do printf '#%s\n' "${line//:/%3A}"; done <<<"$4"
+  grep -v '^#' "$file"
+} >"$file.tmp" && mv "$file.tmp" "$file"

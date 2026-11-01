@@ -1,0 +1,13 @@
+[Unit]
+Description=bb-box: put each claimed box's NVIDIA device lines right from its card's UUID before guests start
+After=pve-cluster.service bb-box-nvidia-devices.service
+Before=pve-guests.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bb-box-gpu --boot --dry-run
+TimeoutStartSec=45
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=pve-guests.service

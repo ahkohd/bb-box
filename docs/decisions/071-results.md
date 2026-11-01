@@ -644,3 +644,323 @@ noon local time on a fixed day. Full vitest runs, 443 passed each: under
 commit, the three failed), and under the default time zone at 00:09 UTC.
 At 00:00:30 UTC, faked, the four failed before and pass now, as they do
 under `TZ=Pacific/Kiritimati`.
+
+## Unit 2: the host's GPU helper, dry run
+
+Built on main `a0420ab3`. The helper is `setup/proxmox-lxc/host/bb-box-gpu`,
+a Perl program on Proxmox's own modules, with `bb-box-gpu.service`,
+`bb-box-gpu-boot.service` and `setup-gpu.sh`. This unit installs it with
+writes off only: both units run it with `--dry-run`, so it writes the report
+and logs each change it would make to a guest's device lines, and changes no
+guest, whatever `gpu.conf` says. Nothing in bb-box reads its new lines yet.
+
+### What it does
+
+- **What it reads.** Once a second: every container config on the node,
+  through `PVE::LXC::Config->load_config`; which containers run, from one
+  `PVE::LXC::list_active_containers` call; the pools in
+  `/etc/pve/user.cfg`; and its own settings, `/etc/bb-box/gpu.conf`
+  (`pools ...` and `writes on|off`). The cards come from one
+  `nvidia-smi --query-gpu=... -l 1` that runs on beside it. Each card's
+  minor comes from `/proc/driver/nvidia/gpus/<pci>/information` and its DRM
+  nodes from `/dev/dri/by-path`, read again from the card's UUID inside the
+  lock before any write.
+- **What it acts on.** A guest is written only if it is unprivileged, not a
+  template, in a pool `gpu.conf` lists, has a description naming a bb-box
+  install, and carries exactly one well-formed marker, or the helper has
+  granted it a claim before. Every other guest with a `gpu.` tag gets one
+  refusal: `not-served`, `privileged`, `template`, `not-bb-box` or
+  `malformed`. An unmarked guest is never written, and still counts as
+  holding the cards its lines name: `devN` lines, raw
+  `lxc.mount.entry` lines and `lxc.cgroup2.devices.allow` rules, current
+  and pending.
+- **The marker.** `gpu.none.gN`, `gpu.shared.<uuid>.gN` or
+  `gpu.whole.<uuid>.gN`, the UUID in lower case without `GPU-`, N from 1
+  with no leading zero and at most 9 digits. Any other tag that starts
+  `gpu.`, in any case, or two of them, is `malformed`. A UUID the helper did
+  not list is `unknown-card`.
+- **How it writes.** With writes on, inside
+  `PVE::LXC::Config->lock_config_full`, with a 2 s wait: load the config, check the marker is still the one asked,
+  refuse `locked` or `pending` (a device line or a device delete in the
+  pending section), work out the card's nodes now, refuse `running` if the
+  lines would change, replace only the current section's `devN` lines that
+  name `/dev/nvidia*` or `/dev/dri/*`, write, then the ledger, then the
+  answer. A server gets the card's `/dev/nvidiaN`, `nvidiactl`,
+  `nvidia-uvm` and `nvidia-uvm-tools`; a desktop (`kind.linux-desktop*`,
+  or a warm desktop) also `nvidia-modeset` and the card's render and card
+  nodes, in `build.sh`'s order, each `mode=0666`. Raw `lxc.*` lines, other
+  device lines (`/dev/net/tun`), the pending section and snapshot sections
+  stay as they are. With writes off it takes no guest's config lock at
+  all: it decides from a fresh read of the config, and the write is the step
+  not taken. That is logged once to the journal ("would write CT 214 for
+  request g3: remove ...; add ...") and listed in the report as a `would`
+  line, and the request stays unanswered. Nothing is logged while any lock
+  is held, Proxmox's or the helper's own: lines wait until the last lock is
+  let go, so a stalled journal never holds a lock.
+- **The helper decides.** Requests are taken one at a time, under a lock
+  file the service, the boot pass and `--once` share. It refuses whole on a
+  card another guest has the devices of (`card-held`), other than stopped
+  shared boxes it manages, which yield; shared or whole on a card another
+  guest holds whole (`whole-taken`); a device change on a running guest; and
+  a claim for a box another guest holds (`copy`). Running guests are asked
+  first, then guests whose hostname is their box's name, so a copy in its
+  re-arm window never wins its source's claim in the same pass.
+- **Yielding.** The yielding guest's ledger entry says `yielded` before its
+  lines come out, so a crash between the two never leaves the ledger
+  claiming a card the guest lost. A yielded box is not given its lines back.
+- **The ledger.** `/var/lib/bb-box-gpu/ledger`, JSON, root's, written whole
+  through a temporary file, `fsync` and `rename`. Per guest, by VMID: the box
+  its description names, the highest generation answered, the claim
+  (generation, part, card, `granted` or `yielded`) and, for a copy, that its
+  lines come out. The answers of the last 10 minutes and every refusal in
+  force, 300 at most. With writes off, nothing it would carry out with
+  writes on is stored: a copy's or a conflict's lines coming out are kept
+  apart, as a proposal, no yield is recorded, and a whole grant that waits
+  on other boxes' lines coming out is left to its request. When writes are
+  first on, claims granted with writes off stand, and every request refused
+  or left waiting with writes off is decided again.
+- **Each generation is answered once.** A generation at or below the one
+  answered is never decided again, refused or granted. A stopped guest whose
+  lines differ from its granted claim, after a rollback or a hand edit, gets
+  the claim's lines back; a running one is reported as a `mismatch`.
+- **A lost or unreadable ledger** is rebuilt from the guests on the next
+  pass; an unreadable one is moved aside first. A marked guest whose lines
+  match its marker is granted. Two guests naming one box: the running one,
+  then the one named as its box, keeps it, and the others are refused
+  `copy` and lose their lines. Any other guest of the box whose answered
+  generation is the same or higher counts as the source, granted or not. A whole claim with another guest on its card:
+  stopped shared boxes yield; otherwise the running guest keeps its lines,
+  the stopped whole box loses them, and the whole claim is not granted. A
+  marked guest whose lines do not match is refused `ledger-lost` and waits
+  for bb-box's next request. A ledger from a newer protocol stops all
+  decisions and says so in the report.
+- **The boot pass**, `bb-box-gpu --boot --dry-run`, from
+  `bb-box-gpu-boot.service` (`Before=pve-guests.service`, wanted by it, at
+  most 45 s), puts each claimed guest's
+  lines right from its card's UUID now, and takes out the lines of a card
+  nvidia-smi does not list. It answers no request and writes no report.
+  With no ledger at boot, a marked guest whose lines do not match its marker
+  loses its lines, so it starts with no card rather than perhaps the wrong
+  one.
+- **The report** keeps today's header style, `at` and `gpu` lines first, so
+  today's bb-box reads it unchanged. New lines:
+
+  ```text
+  helper bb-box-gpu 0.1.0 protocol 1 writes off pve-container 6.1.14 tested
+  serves bbbox
+  driver 580.142 since 1793450000
+  card <uuid> pci 0000:21:00.0 minor 1 drm card2 renderD129
+  remapped <uuid> was minor 0 drm card1 renderD128
+  error <why>
+  holder <uuid> <vmid> <shared|whole> <running|stopped> <install <id>|other> <managed|unmanaged>
+  mismatch <vmid> <uuid|none>
+  would <vmid> lines <uuid> <server|desktop>|lines none for <request gN|claim gN|copy of <vmid>|yield to <vmid> gN>
+  claim <vmid> g<N> granted <part> [<uuid>]
+  claim <vmid> g<N> refused <reason> <uuid|none|-> [<vmid or lock>]
+  claim <vmid> g<N> yielded <uuid> <vmid>
+  omitted <n> refusals in force, <n> answers
+  ```
+
+  It is written directly with `PVE::QemuConfig`'s lock, load and write, as
+  unit 0's throwaway did: within about a second of any change but memory,
+  at most every 15 s for a card's free memory moving a 64 MiB step, at least
+  once a minute, and at once when its `at` is ahead of the clock. It stays
+  under 8,000 characters whatever the settings say: the `serves` line and
+  each required line at most 300 characters, at most 6 `error` lines and a
+  count of the rest, then holders, mismatches, `would` lines, refusals in
+  force and the newest answers, an `omitted` line when some do not fit, and
+  a last cut to 8,000. `remapped` shows when a card's minor or DRM nodes
+  differ from the last boot's, by boot ID. If a pass cannot finish, for
+  example as the ledger cannot be saved, the report is still written, with
+  an `error` line saying why, and `--once` exits 1.
+- **When the node's container configs cannot be read**, as with
+  pve-cluster stopped, a pass decides nothing, drops no claim and writes no
+  report, so the report goes stale rather than show cards with no holders.
+  If the list of running containers cannot be read, each is asked on its
+  own.
+- **When nvidia-smi fails**, the report has `at` and no `gpu` or `card`
+  lines, and an `error` line; a shared or whole request is refused
+  `no-cards`; lines already written stay. The service waits up to 10 s for
+  nvidia-smi's first reading before its first pass. An `nvidia-smi` that
+  gives no line for 30 s is sent TERM, then KILL 2 s later, and started
+  again. The helper never waits on it: it reads a pipe of its own and reaps
+  the process without blocking, so a stuck `nvidia-smi` delays neither a
+  pass nor a stop. A one-off reading, as the boot pass takes, gives up
+  after 15 s.
+- **Time.** Passes, the watchdog and the hourly line run on the monotonic
+  clock, so a clock stepped back or forward stops nothing. The report's
+  `at` and the ledger's times are the wall clock's.
+- **Writes are on** only when the helper runs without `--dry-run`, and
+  `gpu.conf` says so, is owned by the helper's user and writable by no one
+  else, and `dpkg-query` gives a pve-container version this release was
+  tested on (6.1.14, from unit 0). Otherwise the report says why. The units
+  this release installs run it with `--dry-run`.
+- **Cost.** Once an hour, and when it stops, the service logs its passes'
+  mean and worst time, how often it wrote the report and why (a change,
+  memory alone, a heartbeat, a clock step), its own and nvidia-smi's CPU,
+  and how often it started nvidia-smi. It exits when pve-container's version changes, so
+  systemd starts it on the new modules.
+- **`setup-gpu.sh`** installs the program and both units, writes
+  `gpu.conf` with the pools already there and this install's, and
+  `writes off`, makes the ledger's folder, and starts the helper. Only once
+  the helper has written a fresh report (its `helper` line with writes off,
+  and an `at` no older than the start) does it stop, disable and remove
+  `bb-box-gpu-memory.timer` and its service, then wait for the helper's
+  report again. If the report does not come within 30 s, or the timer
+  cannot be stopped, it stops and disables the helper, keeps or puts back
+  the timer, and exits 1. It prints each change, and "nothing changed" on a
+  second run. `--remove` stops and removes the helper and its units, and
+  always puts back the timer from the same folder, driver loaded or not. It
+  keeps `gpu.conf` and the ledger and changes no guest.
+  `setup-gpu-report.sh` no longer puts the timer back where the helper is
+  installed, and the setup guide says the helper replaces the timer, and to
+  stop it before a driver update or a card reset, as its `nvidia-smi` keeps
+  NVIDIA's module in use.
+
+### What was run
+
+On a `linux` box, in a `node:26-bookworm` container as CI runs (Perl 5.36;
+the node has 5.40):
+
+- `test/gpu-helper.test.ts`: 31 tests, on fake Proxmox modules
+  (`test/gpu-helper/PVE`) that take a real `flock` per guest, refuse a write
+  made without the guest's lock, log every lock and write, can trace each
+  lock to the output, refuse a write when asked, and can end the process
+  just after a write. The node is unit 0's: index 0 is `/dev/nvidia1` and
+  `card2`, and the BMC takes `card0`.
+  - Section 14: guests outside the pools, privileged, a template, running,
+    locked, with pending device lines or a pending device delete, malformed
+    markers (`GPU-` prefix and capitals, `g0`, `g01`, `GPU.`), two markers,
+    not bb-box's, an unknown card, and unmarked guests with NVIDIA lines:
+    each config byte for byte as it was, each answered once over two passes.
+  - Writes off: a request, a yield, a copy's lines, a rollback, a lost
+    ledger's conflicts and the boot pass each logged and reported as a
+    write it would make; no guest written; requests that need no write
+    granted.
+  - The gate's cases: two requests racing for one card, whole and whole,
+    whole and shared, from two helpers started at once: one granted, one
+    refused, one write. A start holding the guest's config lock while the
+    helper waits for it: refused `running`, nothing written. A lost ledger,
+    and an unreadable one. A write cut short after the config and before the
+    ledger: granted on the next pass with no second write. A rollback to an
+    older marker and another card's lines, locked and then not, and to a
+    config with no marker: the claim's lines put back. A copy naming another
+    box, stopped and running; a held copy's `gpu.none`; a swap.
+  - Also: only NVIDIA and DRM lines replaced, part-only changes live,
+    yields, the boot pass after the cards' numbers move and with a card
+    missing, the report against today's `parseGpuReport` and under
+    8,000 characters with 60 holders and 120 refusals, nvidia-smi failing,
+    the node's configs unreadable, a newer ledger, `--help`, and the
+    service: an answer in under 2.5 s,
+    a `would` logged once over several passes, the report following a
+    64 MiB step, and a clean stop that ends nvidia-smi.
+- `test/proxmox-lxc.test.ts`: today's backend given the helper's report:
+  `proxmox.gpu-report` passes ("The host reports 2 GPUs in VM 9190, written
+  just now.") and both GPUs' room comes from the host.
+- `test/gpu-setup.test.ts`: 4 tests of `setup-gpu.sh` and
+  `setup-gpu-report.sh` under a temporary root (`BBBOX_ROOT`), as root as CI
+  runs, with a fake `systemctl` that runs each unit's own `ExecStart`, so the
+  helper runs as installed, with `--dry-run`. See "After the reviews".
+
+### The live day
+
+Waits for the lead: install with `setup-gpu.sh` on the node, a day with
+writes off, every guest's config SHA-256 before and after, and today's
+bb-box reading the report throughout.
+
+### Deviations from the note
+
+- Version 0.1.0, not the note's 1.0.0, as this release has never written a
+  guest on the node.
+- The ledger is kept per guest, by VMID, with the box it names, not per box.
+  "One guest per box" is the copy rule. A guest whose description comes to
+  name another box starts again with no claim, so a fork re-armed as its own
+  box, or a reused VMID, is never taken for its old box.
+- With writes off, a request that needs no write is granted and recorded,
+  and one that needs a write is left unanswered with a `would` line. The note
+  does not say which. Unit 4's marking relies on the first: today's desktops'
+  lines already match their markers.
+- A lost ledger refuses, as `ledger-lost`, a marked guest whose lines do not
+  match, rather than deciding its request again; at boot that guest also
+  loses its lines.
+- Outside the boot pass too, a stopped claimed guest whose card nvidia-smi
+  no longer lists loses its NVIDIA lines.
+- The report has more line types than the note's example, listed above, and
+  `holder` lines say running or stopped and managed or not. Holders leave
+  out templates, held copies and earlier guests, as section 3's table says.
+- With writes on, a guest's config lock is waited for 2 s, not Proxmox's 10,
+  so a held lock delays a pass by at most 2 s; the request is tried on the
+  next pass. With writes off no guest lock is taken at all.
+- Memory alone writes the report at most every 15 s, not within a second,
+  so it is written about as often as the timer wrote it.
+- `setup-gpu.sh` does only an install with writes off and `--remove`. Unit 3
+  adds `--pool`, `--writes`, upgrade, `--downgrade` and the version checks.
+
+### After the reviews
+
+Two reviews, Opus and Astra, said to install for the day only after fixes.
+Each fix has a test, and each of these tests failed when run against the
+first build's host scripts (`0203459b`), on a box:
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| Astra 1: with writes off it took a guest's config lock, and logged while holding it | No guest lock with writes off: a fresh read decides. No line is logged while any lock is held | A dry pass took 2,050 ms while another process held the guest's lock, and did not report its `would` line. With the lock traced to the output, nothing may be logged between locked and unlocked |
+| Astra 2, Opus 1: the installer retired the timer first, and took an old `helper` line as success | Start the helper, wait for a report of its own (`at` no older than the start), then retire the timer; else stop the helper, keep the timer, exit 1. A timer that cannot be stopped stops the helper too | Three tests in `test/gpu-setup.test.ts`: the order of `systemctl` calls, a helper that cannot write the report, a timer that cannot be stopped. The first build's script cannot run under a test root, so they failed on that; both reviews reproduced the defects with fake systemd |
+| Astra 3: `--remove` left no timer when the driver was unloaded | The timer is always put back; a failed first run is said apart | `--remove` with `/proc/driver/nvidia` gone |
+| Astra 4, Opus 3: a stalled `nvidia-smi` was never restarted, and a blocking close could hang a pass, a stop or the boot pass | A pipe of its own, TERM then KILL after 2 s, reaped without blocking; restarted after 30 s with no line; the one-off reading gives up after 15 s; the boot unit's timeout is 45 s | A one-off pass with a silent `nvidia-smi` that ignores TERM hung until the test's 60 s limit; it now exits 17.1 s after the reading begins. The service probe below |
+| Opus 2: memory moving about a step wrote the report every second | Memory alone at most every 15 s; anything else at once; the hourly line counts writes by cause | Memory changed twice within 15 s wrote the report twice; now once |
+| Astra 5, Opus 6: with writes off, recovery stored strips, yields and whole grants that writes on would carry out | Kept apart as proposals, never carried out; the first pass with writes on decides afresh | The ledger held a strip, a yield and a whole grant. Now a copy whose source went away before writes were on keeps its card |
+| Astra 6: 400 pools made a 17,812-character report | Each required line at most 300 characters, at most 6 errors, a last cut to 8,000 | The same settings now give a report under 8,000 |
+| Opus 4: a ledger that could not be saved left no report | The decisions run in their own `eval`; the report is written with an `error` line, and `--once` exits 1 | No report was written; now it is, naming `ledger.new` |
+| Opus 5: writes off rested on a settings file alone | `--dry-run`, in both units, keeps writes off whatever `gpu.conf` says | `--dry-run` was refused as unknown |
+| Opus 7: a copy of a box whose request was refused could be granted a card | Any other guest of the box with the same or a higher answered generation is the source | The copy was granted a whole card |
+| Opus 8: passes ran on the wall clock | The monotonic clock; a report whose `at` is ahead of the clock is written again | With the clock stepped back an hour by libfaketime, no pass ran and nothing was answered; now an answer comes within 5 s. CI now installs `faketime` |
+| Opus 10: `setup-gpu-report.sh` put the timer back beside the helper; existing pools lost this install's | It leaves the timer off where the helper is installed; the pool is added; the guide says so | `setup-gpu-report.sh` after the install |
+
+The four service probes from Opus's review, run at once on four fake nodes
+for 67 s, on a box, with what each measured:
+
+| Probe | First build, as Opus measured it | Now |
+| --- | --- | --- |
+| A. `nvidia-smi` prints once, then stalls, ignoring TERM | started once in 16 s; no `gpu` lines while it blocks | started again 30.8 s after the service started; the service stops 2.1 s after SIGTERM |
+| B. a card's free memory moves 4 MiB either side of a 64 MiB step every 1.1 s | 19 report writes in 20 s | 1 report write in 19.8 s |
+| C. the ledger cannot be saved | no report in 5 s | a report naming `ledger.new` after 1.8 s |
+| D. nothing changes | 1 report write in 65 s | 2 in 65 s: the first and the heartbeat |
+
+A one-off pass with a silent `nvidia-smi` that ignores TERM exits 17.1 s
+after the reading begins: the 15 s wait, TERM, and KILL 2 s later. Limits: a
+fake node on a box, not Proxmox.
+
+**CI failed that test once**, at 20,051 ms against a bound of 20 s on the
+whole run. Measured on a box with all 8 cores busy (load average 45 to 71),
+10 runs each, with the fake `nvidia-smi` stamping its start:
+
+| | Start to `nvidia-smi` | `nvidia-smi` to exit | Exit to output closed | In all |
+| --- | --- | --- | --- | --- |
+| The fake as it was | 34 to 81 ms | 17,075 to 17,117 ms | 0 to 1,601 ms; over 900 ms in 7 runs | 17,117 to 18,780 ms |
+| The fake fixed | 52 to 83 ms | 17,073 to 17,106 ms | 0 ms | 17,137 to 17,178 ms |
+
+The helper keeps to its design: 15 s, then 2 s to KILL. Nothing in it waits
+on the child, and it takes one reading. The rest was the test's: its fake
+stalled in a loop of `sleep 1`, so KILL ended the shell but left a `sleep`
+holding the helper's output open for up to a second, and the test waited
+for that output to close. Its bound also counted the time before the
+reading began, which on CI, with the whole suite running, is longer than
+on an idle box. The fake now stalls with `exec sleep`, so KILL ends it, and
+the test reads the reading's wait and the wait to KILL from the helper's own
+constants: it bounds the time from the reading's start to the helper's exit
+at 15 s plus 2 s plus 1.5 s, the time for its output to close after it exits
+at 0.5 s, and the whole run at 30 s. With all cores busy it passed 10 times
+in 10, at 17,087 to 17,100 ms from the reading to the exit and 0 ms from the
+exit to the output closing.
+
+### Still open
+
+- The doctor's fix for an old report still names `bb-box-gpu-memory.timer`
+  (unit 3 changes the doctor).
+- `nvidia-smi -l 1` keeps a client open on the driver all the time, as
+  agreed. With persistence mode off, as on this node, that keeps the cards'
+  driver state set up between the timer's old 15 s runs, and NVIDIA's module
+  cannot be unloaded, nor a card reset, while the helper runs. The setup
+  guide says to stop it first. Its CPU on the node is read from the hourly
+  line on the day.

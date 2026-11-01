@@ -16,11 +16,12 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=common.sh
 . "$here/common.sh"
-[ -d /proc/driver/nvidia/gpus ] || die "no NVIDIA driver loaded: there is no GPU to report"
+root=${BBBOX_ROOT:-}
+[ -d "$root/proc/driver/nvidia/gpus" ] || die "no NVIDIA driver loaded: there is no GPU to report"
 name=bb-box-gpu-memory
 tokenid="$BBBOX_API_USER!$BBBOX_API_TOKEN"
 
-conf=$(grep -lx "name: $name" /etc/pve/qemu-server/*.conf 2>/dev/null | head -1) || true
+conf=$(grep -lx "name: $name" "$root"/etc/pve/qemu-server/*.conf 2>/dev/null | head -1) || true
 if [ -n "$conf" ]; then
   vmid=$(basename "$conf" .conf)
 else
@@ -36,8 +37,12 @@ fi
 pveum acl modify "/vms/$vmid" --users "$BBBOX_API_USER" --roles PVEAuditor
 pveum acl modify "/vms/$vmid" --tokens "$tokenid" --roles PVEAuditor
 
-install -m 0755 "$here/bb-box-gpu-memory" /usr/local/sbin/bb-box-gpu-memory
-install -m 0644 "$here/bb-box-gpu-memory.service" "$here/bb-box-gpu-memory.timer" /etc/systemd/system/
+if [ -e "$root/usr/local/sbin/bb-box-gpu" ] || [ -e "$root/etc/systemd/system/bb-box-gpu.service" ]; then
+  echo "GPU report: VM $vmid ($name), read-only for $tokenid; bb-box-gpu writes it on this host (setup-gpu.sh), so bb-box-gpu-memory.timer is not put back"
+  exit 0
+fi
+install -m 0755 "$here/bb-box-gpu-memory" "$root/usr/local/sbin/bb-box-gpu-memory"
+install -m 0644 "$here/bb-box-gpu-memory.service" "$here/bb-box-gpu-memory.timer" "$root/etc/systemd/system/"
 systemctl daemon-reload
 systemctl enable --quiet bb-box-gpu-memory.timer
 systemctl start bb-box-gpu-memory.service bb-box-gpu-memory.timer

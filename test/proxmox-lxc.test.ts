@@ -12,6 +12,7 @@ import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
+import { CARD_A, CARD_B, FakeNode, REPORT_VMID, cardLines, marker } from "./gpu-helper/node.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
@@ -684,6 +685,28 @@ test("the doctor says when the host's report has no report yet, or does not name
     "The host's report has no GPU gpu-b, so bb-box reads its memory in desktops.",
     "Name each GPU in bb-box's settings by the UUID nvidia-smi -L shows on the host.",
   ]);
+});
+
+test("today's backend reads the report bb-box-gpu writes: the doctor's GPU report check passes, and each GPU's room comes from the host (071 unit 2)", async () => {
+  const host = new FakeNode({ writes: "off" });
+  host.guest(214, { box: "bx214", kind: "linux-desktop", marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "desktop"), running: true });
+  host.guest(215, { box: "bx215", marker: marker("shared", CARD_B, 1) });
+  host.guest(216, { box: "bx216", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop") });
+  assert.equal(host.run().status, 0);
+  const notes = host.report();
+  assert.ok(["holder ", "claim ", "would ", "card ", "helper "].every((line) => notes.includes(`\n    ${line}`)), notes);
+  const { backend, proxmox } = setup({ "proxmox-lxc-desktop-templates": `9001 GPU-${CARD_A.uuid}\n9002 0000:d1:00.0` });
+  reportVm(proxmox, notes, REPORT_VMID);
+  const checks = (await backend.doctor()).checks;
+  const check = (id: string) => checks.find((candidate) => candidate.id === id);
+  assert.deepEqual([check("proxmox.gpu-report")?.status, check("proxmox.gpu-report")?.detail], ["ok", `The host reports 2 GPUs in VM ${REPORT_VMID}, written just now.`]);
+  assert.deepEqual(
+    (await backend.gpuRoom("linux-desktop")).readings.map((reading) => [reading.id, reading.freeMiB, reading.totalMiB, reading.source]),
+    [
+      [`GPU-${CARD_A.uuid}`, CARD_A.freeMiB, CARD_A.totalMiB, "host"],
+      ["0000:d1:00.0", CARD_B.freeMiB, CARD_B.totalMiB, "host"],
+    ],
+  );
 });
 
 test("boxes spread across a flavour's templates", async () => {
