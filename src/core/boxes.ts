@@ -2327,8 +2327,10 @@ export class Boxes {
     const began = this.#now();
     const command = (await backend.transports(guest, box.kind)).command;
     if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
+    const own = await backend.guestIdentity!(guest, signal);
     const expected = {
-      forkMacs: Object.values((await backend.guestIdentity!(guest, signal)).macs),
+      forkMacs: Object.values(own.macs),
+      forkValue: own.value ?? null,
       sourceMacs: fork.source.macs,
       sourceBox: fork.source.id,
       sourceName: fork.source.name,

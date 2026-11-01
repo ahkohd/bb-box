@@ -234,6 +234,15 @@ export interface SandboxInfo {
   readonly memoryMiB: number | null;
   readonly diskGiB: number | null;
   readonly image: string | null;
+  readonly dockerDisk: DockerDisk;
+}
+
+export type DockerDisk = "owned" | "host-file" | "none";
+
+function dockerDiskOf(mounts: unknown): DockerDisk {
+  const docker = (Array.isArray(mounts) ? mounts : []).map(record).find((mount) => mount.guest === "/var/lib/docker");
+  if (!docker) return "none";
+  return docker.type === "Owned" ? "owned" : "host-file";
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -260,5 +269,6 @@ export function parseSandbox(text: string): SandboxInfo {
     memoryMiB: Number(resources.memory_mib) || null,
     diskGiB: Number.isFinite(disk) && disk > 0 ? Math.round(disk / 1024) : null,
     image: typeof oci.reference === "string" ? oci.reference : null,
+    dockerDisk: dockerDiskOf(config.mounts),
   };
 }

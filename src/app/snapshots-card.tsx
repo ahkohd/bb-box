@@ -226,6 +226,7 @@ function rowLine(row: SnapshotRowView, place: RowPlace, now: number, titles: Thr
     rest: [
       soon ? null : (keep?.words ?? null),
       snapshotWhen(row.takenAt, now),
+      row.after.length ? `after ${row.after.map((name) => `"${name}"`).join(" and ")}` : null,
       actorWords(row.by, titles),
       place.wide ? holdsWords(row.holds, row.scope) : null,
       row.state === "failed" ? null : snapshotSizeWords(row.size),

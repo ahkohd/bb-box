@@ -143,7 +143,7 @@ start, stop, resize and release go on (see [Decided during unit
 | `keptUntil`, `keptAt` | times, or null | 29 Nov | set only by the person; the snapshot is then the person's |
 | `undoOf` | an operation ID, or null | the restore at 11:02 | marks an undo, which section 8 counts apart; a kept undo is an ordinary kept snapshot |
 | `forkSafe` | the version of the identity reset found in the box at the take, or null | 1 | see [section 9](#9-a-fork-is-a-new-box-with-a-new-identity); a snapshot without it neither forks nor is kept |
-| `dependsOn` | snapshot IDs, or none | | microsandbox's chain: a snapshot others depend on cannot be deleted first |
+| `dependsOn` | snapshot IDs, or none | | microsandbox's chain: the snapshot this one was taken after, shown on its row; each holds its own data, so any is deleted first (changed during unit 10) |
 | `picture` | the picture's state | `taken`, `none` (headless), `off`, `failed` | the image is in its own table, see [section 10](#10-a-picture-of-the-screen) |
 | `ref` | the backend's reference | `bbsn7kq2m9xa4pd` on Proxmox | opaque to the core |
 | `state` | see below | `ready` | |
@@ -385,7 +385,7 @@ boat's new-guest restores keep the box the same machine.
 | Proxmox QEMU, Windows | box; disk | live | in-place; by storage | as LXC | none until a unit builds Windows' reset | no: with no fork, a kept copy could not be used | none | 3 |
 | Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 9 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 9 |
 | Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 9 |
-| microsandbox | box; disk, or disk and memory | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot | copy: a disk snapshot restored as a new sandbox; never `msb fork`, which copies memory | as-is, if unit 10 confirms a snapshot outlives its sandbox | none | 10 |
+| microsandbox | box; disk with the box's Docker disk, or disk and memory; none on a box whose Docker disk is a file of the host's | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot of the stopped box (decided during unit 10) | copy: the snapshot's disk restored as a new sandbox; never `msb fork`, which copies memory | as-is: a snapshot outlives its sandbox (confirmed in unit 10) | none | 10 |
 | boat.dev, paid plan | box; disk | live; `capturedAt` is the fresh capture a saved snapshot makes | new-guest, a swap | a saved snapshot of the stopped sandbox (decided during unit 11) | copy, from unit 11b | as-is, from unit 11b | $0.056 a day past the plan's | 11, 11b |
 | boat.dev, trial | box; disk | | none: no saved snapshots on the trial, and a stopped fork's capture can be a minute old, so it cannot be an exact undo | | copy, of the newest capture | no | | 11 |
 | Docker on a host of the person's | box; disk, with the box's own Docker volume, both captured while the container is paused | pauses (15 s for 1 GiB changed) | new-guest, a swap | a snapshot | copy | as-is | none | 12 |
@@ -792,7 +792,7 @@ costs on that backend before the person confirms:
 | --- | --- | --- |
 | Proxmox LXC and QEMU | **A held copy** (section 2), made at the release before the guest is deleted. A memory snapshot's copy holds the disk only, and its row says "disk" from the release on | At the release: about 9 s for each 4 GiB used, and the snapshot's used disk in space (the dialog says "13 GB on pve-1"), plus a VMID from bb-box's range, until the keep date |
 | Tart | As is: the snapshot's folder stays beside the VMs; bb-box deletes the VM only | Nothing at the release; then its whole size, up to the VM's disk, as APFS no longer shares its blocks |
-| microsandbox | As is, if unit 10 confirms a snapshot outlives its sandbox; otherwise no Keep | |
+| microsandbox | As is: a snapshot outlives its sandbox, on the host (confirmed in unit 10); its keep date is a file of bb-box's beside `msb`'s snapshots | its whole size on the host, until the keep date |
 | boat.dev, paid | As is: a saved snapshot never expires | its daily price, until the keep date |
 | Docker on a host of the person's | As is: the commit and the volume's copy stay on the host | their size |
 | Windows, boat.dev trial, Hetzner, Namespace, Android devices | **No Keep.** No fork on Windows yet; a stopped fork lasts 14 days; a Hetzner host and a Namespace instance go when their boxes go; a device snapshot lives in the box | |
@@ -1588,6 +1588,111 @@ probe as a regression test:
 - **"Release and delete what you kept" is offered only where it gets past
   the stop**: not while a copy is being made, a label cannot be read, or a
   held copy is not a template.
+
+## Decided during unit 10
+
+On 1 November 2026, during unit 10, from probes of `msb` 0.7.7 (the
+release bb-box pins) in a nested-KVM box, the lead decided:
+
+- **New microsandbox boxes get a Docker disk of `msb`'s own**
+  (`--mount-owned`), in place of the file of the host's bb-box made
+  (`--mount-disk`). `msb` leaves a host's file out of every snapshot, drops
+  it on any restore, even with `--dangerously-inherit-resources`, and
+  refuses `--full` for a box that has one ("additional block resource ...
+  has no immutable-generation provider"). Its own disk is captured, restored
+  as a private copy, and works with `--full`. A create took 0.54 s with its
+  own 64 GiB disk against 0.45 s with a host's file, one at a time. A box
+  made before keeps working as it does, Docker, resizes and release
+  included, and takes no snapshot: "it was made before bb-box could
+  snapshot a box's Docker disk: its Docker data is on a file of the host's,
+  which msb leaves out of a snapshot and cannot give a restored box. A new
+  box can". So the template of a Docker disk that bb-box made on a host
+  without `mkfs.ext4` is no longer made.
+- **Dependent snapshots are recorded and shown, and deleted with
+  `--force`.** Each `msb` capture's parent is its sandbox's previous
+  capture, or the snapshot a restored sandbox came from, and `msb` refuses
+  to delete a parent without `--force`. But the data is not shared: in a
+  chain of three, with both parents force-deleted, the last restored
+  byte-identical (60 MB on the root and 15 MB on an owned disk). Section
+  1's "a snapshot others depend on cannot be deleted first" would let only
+  the newest go, which breaks the limit of 5, undo replacement and the room
+  sweep. So `dependsOn` names the parent, the row says "after ...", and a
+  delete passes `--force` when others depend on it. The one rule of `msb`'s
+  that holds is kept: a group's head cannot be deleted while it has other
+  members, so bb-box makes another member the head first.
+- **Only with the `msb` those probes measured.** bb-box takes, restores,
+  forks and deletes microsandbox snapshots only when the host's `msb` is
+  0.7.7. With any other, every snapshot operation is refused with the words,
+  and the doctor's Snapshots check warns. A test fails if bb-box pins
+  another release without the probes run again
+  ([microsandbox-unit-10.sh](../research/box-snapshots/microsandbox-unit-10.sh)).
+- **The undo is taken of the stopped box**, as on boat.dev (decided during
+  unit 11), not of the running box as section 5's capture order says: the
+  undo then holds exactly what the restore replaces.
+
+Built so:
+
+- **A snapshot's name says whose it is.** Each box's snapshots are one
+  group, `bbbox-<box ID>`, named `<install>-<snapshot ID>-r<version of the
+  identity reset>`, so `msb snapshot list` alone gives the install, box,
+  snapshot and `forkSafe`, as a label carries them on Proxmox. `msb` cannot
+  change a snapshot's labels once taken, so Keep writes the keep date in a
+  file of bb-box's, `kept/<msb snapshot ID>`, beside `msb`'s folder.
+- **A restore keeps nothing of the old sandbox's settings.** `msb snapshot
+  restore` gives the new sandbox none of the old one's labels, environment,
+  hostname, `/run` tmpfs or memory size. So bb-box restores a disk snapshot
+  at the box's size and a memory snapshot at its captured size (`msb`
+  refuses another), then sets the box's labels and environment on it with
+  `msb modify` before anything of the box runs there. Each start of a box
+  mounts `/run` in memory again when it is not, and sets the box's hostname
+  from `BBBOX_HOSTNAME`.
+- **The identity source is a value**, `BBBOX_IDENTITY`, as on Docker (unit
+  2): bb-box sets the box's ID on each sandbox, passes it on in a same-box
+  swap, and sets the fork's own ID on a fork, so the reset runs in a fork
+  and in no swap. A fork's check reads the marker's value, not MAC
+  addresses. A fork restores a memory snapshot's disk only
+  (`--disk-only`), and nothing of the box runs in it until bb-box starts its
+  image's command, which runs the reset first. Forks from version 7 of the
+  identity program, as on Proxmox LXC.
+- **A restored sandbox is `bbbox-<box ID>-<token>`**, and a part-made one,
+  before its labels are set, is still the box's to delete: a release and a
+  restore's clean-up remove a sandbox of that name with no bb-box labels.
+- **A restore gives the new sandbox the box's network profiles** as rules
+  (`--net-default deny --net-rule allow@dns,allow@public,allow@private,allow:ingress@any`
+  for `public,private`), which msb records as its create does. Without
+  them the restored box could not reach BB on a private address (found
+  live). Its disk size, from a label taken with the snapshot, is set on it
+  too, so its size reads back whole.
+- **A box with no SSH server is fork-safe without SSH host keys.** The
+  images microsandbox runs have none, so a take there records the machine
+  ID alone; the reset makes new keys, and the fork's check still requires
+  them. A box compared by MAC address still needs its keys at the take. The
+  fork's check reads addresses with `hostname -I` where an image has no
+  `ip` (found live).
+- **A kept snapshot of a released box forks from the snapshot itself** on a
+  backend that keeps it as is, as a held copy does on Proxmox.
+
+After the two reviews of unit 10, the lead asked for these:
+
+- **No snapshots on a Mac host yet.** Everything above was measured on
+  Linux, ext4 and KVM; a Mac runs `msb` on another hypervisor and file
+  system. Until the probe, with the reviewers' checks, runs on a Mac, every
+  snapshot operation there is refused: "bb-box takes no snapshots of
+  microsandbox boxes on a Mac yet: what they rest on, such as each snapshot
+  holding its own data, was measured on Linux only", and the doctor says
+  so. Follow-up: run
+  [microsandbox-unit-10.sh](../research/box-snapshots/microsandbox-unit-10.sh)
+  on a Mac, then lift it.
+- **The version is read fresh before every change**: a take, a restore, a
+  fork, Keep and a delete each run `msb --version` first, and a delete reads
+  it again right before a `--force`, never from the host's facts, which are
+  kept for a minute.
+- **An access file written as a restored box starts is part of its start.**
+  The restore's record stays at its start until the start has finished, so
+  bb-box restarting before the box's own start command ran starts it again,
+  and deletes the old guest only after.
+- **A restore keeps the larger of the snapshot's disk and the box's**, as a
+  fork does.
 
 ## Decided during unit 11
 

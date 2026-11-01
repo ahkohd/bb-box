@@ -1,0 +1,51 @@
+  ✓ Pulled              alpine:3.20 (1.3s)
+== a Docker disk that is a file of the host's
+error: control client error: control operation rejected by peer: additional block resource data_bd47413b has no immutable-generation provider
+TIME 0.04 s rc=1 :: msb snap create full --sandbox hostdisk --full
+  ✓ Snapshotted         hostdisk
+group hostdisk: head snap_2cd9ee1120506aba7290fd0ce1eadbc6 (Initialized)
+snap_2cd9ee1120506aba7290fd0ce1eadbc6
+/home/box/.microsandbox/snapshots/hostdisk/snap_2cd9ee1120506aba7290fd0ce1eadbc6
+TIME 0.21 s rc=0 :: msb snap create disk --sandbox hostdisk
+TIME 0.58 s rc=0 :: msb snap restore hostdisk:disk --name hostdisk-r --quiet --dangerously-inherit-resources
+cat: can't open '/data/d.txt': No such file or directory
+no /data mount
+== msb's own disk, a chain of three, both parents force-removed
+TIME 0.37 s rc=0 :: msb snap create c0 --sandbox chain --quiet
+TIME 0.55 s rc=0 :: msb snap create c1 --sandbox chain --quiet
+TIME 1.27 s rc=0 :: msb snap create c2 --sandbox chain --quiet
+c2 snap_c5cd08b25d3d33b829e3e839a843b604 parent snap_3b08d733252e9431eedc1817e298f04f
+c1 snap_3b08d733252e9431eedc1817e298f04f parent snap_4e3f8acc360429d2c7833f3b295e72f7
+c0 snap_4e3f8acc360429d2c7833f3b295e72f7 parent None
+error: snapshot snap_4e3f8acc360429d2c7833f3b295e72f7 has 1 indexed child snapshot(s); pass --force to remove anyway
+  ✓ Removed             chain:c0
+TIME 0.08 s rc=0 :: msb snap rm --force chain:c0
+  ✓ Removed             chain:c1
+TIME 0.13 s rc=0 :: msb snap rm --force chain:c1
+TIME 0.97 s rc=0 :: msb snap restore chain:c2 --name chain-r --quiet
+SAME: the leaf holds its own data
+== the head, and a full snapshot booted from its disk only at another size
+error: invalid config: cannot remove current head snap_9efb19662c4f192289d5f62aefde64c5; first select another snapshot with 'msb snapshot head head:<snapshot>'
+TIME 1.97 s rc=0 :: msb snap restore head:two --name head-r --quiet --disk-only --cpus 2 --memory 2048M
+x
+error: invalid config: a full snapshot must restore with its captured CPU and memory geometry
+  ✓ Removed             head:two
+TIME 0.06 s rc=0 :: msb snap rm head:two
+labels {} env ['PATH'] mounts [] resources 2 2048
+== a running sandbox restored from a snapshot that is then deleted
+  ✓ Removed             a-src:s1
+TIME 0.30 s rc=0 :: msb snap rm a-src:s1
+A SAME running, after its snapshot and source went
+A SAME after a stop and start
+== B: a capture of that sandbox names the deleted snapshot as its parent
+t1 parent snap_38c6d8235a05da9f8d65d964abb4b9ad
+t0 parent snap_3fba5c3d05706727952750bb5d249730
+  ✓ Removed             a-r:t0
+TIME 0.09 s rc=0 :: msb snap rm --force a-r:t0
+TIME 1.11 s rc=0 :: msb snap restore a-r:t1 --name b-r --quiet
+B SAME after its parent was removed with --force
+== C: a parent removed with --force while a sandbox restored from it runs
+  ✓ Removed             c-src:p0
+TIME 0.11 s rc=0 :: msb snap rm --force c-src:p0
+C SAME after a restart
+left: sandboxes 0, snapshots 0

@@ -125,7 +125,7 @@ export const CHECKS = {
   "microsandbox.host": { name: "Host <host>", from: ["microsandbox"], what: "The host answers, runs Linux on x86_64, and its cores, memory and free disk." },
   "microsandbox.msb": { name: "msb", from: ["microsandbox"], what: "bb-box's msb is installed on the host at the release this bb-box pins." },
   "microsandbox.kvm": { name: "KVM", from: ["microsandbox"], what: "The host has /dev/kvm, and BB's user may use it." },
-  "microsandbox.disks": { name: "Docker disks", from: ["microsandbox"], what: "The host has mkfs.ext4, with which bb-box makes each box's Docker disk quickly." },
+  "microsandbox.snapshots": { name: "Snapshots", from: ["microsandbox"], what: "The host's msb is the release whose snapshots bb-box's checks measured, so bb-box takes, restores, forks and deletes snapshots there." },
   "microsandbox.lxc": { name: "LXC", from: ["microsandbox"], what: "The host is an LXC container, where msb's snapshots and flat roots fail." },
   "microsandbox.overcommit": { name: "Memory overcommit", from: ["microsandbox"], what: "Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so bb-box counts each box there at its full size." },
   "microsandbox.capacity": { name: "Room on <host>", from: ["microsandbox"], what: "Room on the host for a box at its default size." },

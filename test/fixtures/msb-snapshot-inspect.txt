@@ -1,0 +1,25 @@
+Snapshot ID:          snap_1fc72f81f175e9d0c91ab294001be6fe
+Descriptor Digest:    sha256:1064477279c0520358a9fbb843d0551ac7e04c3074a1d4af56f0ca0c916da21a
+Reference:            /home/box/.microsandbox/snapshots/ox/snap_1fc72f81f175e9d0c91ab294001be6fe
+Image:                ubuntu:24.04
+Image Manifest:       sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d
+Scope:                disk
+Root Disk:            managed
+Parent:               -
+Created:              2026-11-01 00:15:50
+State:                file
+Format:               raw
+Filesystem:           ext4
+Virtual Size:         4.0 GiB
+Layers:               1
+Head Integrity:       not recorded
+Requires:             microsandbox.owned-volumes
+Source Sandbox:       ox
+
+Storage
+  Logical size:       8.0 GiB
+  Allocated blocks:   2.8 MiB
+  In use:             -
+  Reclaimable:        -
+  Durable snapshot; external linked payloads are excluded. Active readers and retention eligibility are unknown.
+  Allocated blocks may include shared extents; they are not exclusive physical usage.

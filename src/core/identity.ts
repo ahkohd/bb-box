@@ -76,8 +76,8 @@ const FORK_FACTS = [
   `for d in "$r"/home/*/.bb-machines/* "$r"/home/*/.bb-machines/.set-aside/* "$r"/root/.bb-machines/* "$r"/root/.bb-machines/.set-aside/*; do [ -d "$d" ] || continue; for f in host-id auth.json config.json; do if [ -e "$d/$f" ]; then printf 'bb_file=%s\\n' "\${d#"$r"}/$f"; fi; done; done`,
   `for f in "$r"/home/*/.config/bb-box/env "$r"/root/.config/bb-box/env; do if [ -e "$f" ]; then printf 'access_file=%s\\n' "\${f#"$r"}"; fi; done`,
   `s=$r/var/lib/tailscale/tailscaled.state; if [ ! -e "$s" ]; then echo tailnet_node=no; elif [ ! -r "$s" ]; then echo unreadable=tailscale-state; else grep -q -e '"_current-profile"' -e '"profile-' "$s"; g=$?; if [ "$g" -eq 0 ]; then echo tailnet_node=yes; elif [ "$g" -eq 1 ]; then echo tailnet_node=no; else echo unreadable=tailscale-state; fi; fi`,
-  `m=$r/etc/bb-box/identity; if [ -r "$m" ] && macs=$(sed -n 's/^mac /marker_mac=/p' "$m"); then printf '%s\\n' "$macs"; else echo unreadable=identity-marker; fi`,
-  `if a=$(ip -o -4 addr show scope global 2>/dev/null); then printf '%s\\n' "$a" | awk '{ for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), part, "/"); print "address=" part[1] } }'; echo addresses_read=yes; else echo unreadable=addresses; fi`,
+  `m=$r/etc/bb-box/identity; if [ -r "$m" ] && macs=$(sed -n -e 's/^mac /marker_mac=/p' -e 's/^value /marker_value=/p' "$m"); then printf '%s\\n' "$macs"; else echo unreadable=identity-marker; fi`,
+  `if command -v ip >/dev/null 2>&1; then if a=$(ip -o -4 addr show scope global 2>/dev/null); then printf '%s\\n' "$a" | awk '{ for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), part, "/"); print "address=" part[1] } }'; echo addresses_read=yes; else echo unreadable=addresses; fi; elif a=$(hostname -I 2>/dev/null); then for each in $a; do case $each in *.*) printf 'address=%s\\n' "$each" ;; esac; done; echo addresses_read=yes; else echo unreadable=addresses; fi`,
 ];
 
 function asRootShell(lines: readonly string[]): string {
@@ -122,23 +122,25 @@ function identityRead(stdout: string): IdentityRead {
   };
 }
 
-function wholeIdentity(read: IdentityRead): HeldIdentity | null {
-  return read.done && !read.missing.length && !read.unreadable.length && read.identity.machineId && read.identity.hostKeys.length ? read.identity : null;
+function wholeIdentity(read: IdentityRead, source: IdentitySource | null): HeldIdentity | null {
+  const keysOptional = source === "value";
+  const missing = read.missing.filter((item) => !(keysOptional && item === "ssh-host-keys"));
+  return read.done && !missing.length && !read.unreadable.length && read.identity.machineId && (read.identity.hostKeys.length || keysOptional) ? read.identity : null;
 }
 
 export function forkSafetyScript(): string {
   return withTool([`as_root ${IDENTITY_TOOL} status || exit $?`, asRootShell(HELD_IDENTITY_FACTS)].join("\n"));
 }
 
-export function forkSafetyOf(stdout: string, exitCode: number | null): ForkSafety {
+export function forkSafetyOf(stdout: string, exitCode: number | null, source: IdentitySource | null = null): ForkSafety {
   const version = exitCode === 0 ? forkSafeVersion(parseIdentityStatus(stdout)) : null;
-  const identity = version === null ? null : wholeIdentity(identityRead(stdout));
+  const identity = version === null ? null : wholeIdentity(identityRead(stdout), source);
   return identity ? { version, identity } : { version: null, identity: null };
 }
 
-export async function readForkSafe(command: CommandTransport, signal?: AbortSignal): Promise<ForkSafety> {
+export async function readForkSafe(command: CommandTransport, signal?: AbortSignal, source: IdentitySource | null = null): Promise<ForkSafety> {
   const ran = await command.run(forkSafetyScript(), { timeoutMs: FORK_SAFE_PROBE_MS, signal, maxOutputBytes: 8192 });
-  return forkSafetyOf(ran.stdout, ran.timedOut ? null : ran.exitCode);
+  return forkSafetyOf(ran.stdout, ran.timedOut ? null : ran.exitCode, source);
 }
 
 export const FORK_CHECK_MS = 20_000;
@@ -147,6 +149,7 @@ export interface ForkSeen {
   readonly status: IdentityStatus | null;
   readonly exitCode: number | null;
   readonly markerMacs: readonly string[];
+  readonly markerValue: string | null;
   readonly bbFiles: readonly string[];
   readonly accessFiles: readonly string[];
   readonly tailnetNode: boolean | null;
@@ -159,6 +162,7 @@ export interface ForkSeen {
 
 export interface ForkExpected {
   readonly forkMacs: readonly string[];
+  readonly forkValue: string | null;
   readonly sourceMacs: readonly string[];
   readonly sourceBox: string;
   readonly sourceName: string;
@@ -182,6 +186,7 @@ export function parseForkSeen(stdout: string, exitCode: number | null): ForkSeen
     status: exitCode === 0 ? parseIdentityStatus(stdout) : null,
     exitCode,
     markerMacs: values(stdout, "marker_mac").map((mac) => mac.toLowerCase()),
+    markerValue: values(stdout, "marker_value")[0] ?? null,
     bbFiles: values(stdout, "bb_file"),
     accessFiles: values(stdout, "access_file"),
     tailnetNode: tailnet === "yes" ? true : tailnet === "no" ? false : null,
@@ -235,7 +240,10 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
     return refused(`it does not hold its own address ${expected.ownAddress}${seen.addresses.length ? `, only ${listWords(seen.addresses)}` : ", nor any other"}`);
   }
   if (status.marker !== "matches" || !status.armed) return refused(`its identity marker ${status.marker === "matches" ? "is not armed" : `is ${status.marker}`}, so no reset of its own wrote it`);
-  if (!seen.markerMacs.length || seen.markerMacs.some((mac) => !forkMacs.has(mac))) {
+  if (expected.forkValue !== null) {
+    if (seen.markerValue === expected.sourceBox) return refused(`its identity marker holds ${expected.sourceName}'s value, so its identity reset did not tell it is a copy`);
+    if (seen.markerValue !== expected.forkValue) return refused(`its identity marker holds ${seen.markerValue ? `the value ${seen.markerValue}` : "no value"}, not its own ${expected.forkValue}, so no reset of its own wrote it`);
+  } else if (!seen.markerMacs.length || seen.markerMacs.some((mac) => !forkMacs.has(mac))) {
     return refused(`its identity marker names ${seen.markerMacs.length ? listWords(seen.markerMacs) : "no MAC address"}, not its own ${listWords([...forkMacs])}, so no reset of its own wrote it`);
   }
   if (status.box) return refused(`its identity marker names box ${status.box}${status.box === expected.sourceBox ? `, ${expected.sourceName}` : ""}, which a reset would have removed`);

@@ -543,6 +543,7 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.keptUntil !== null ? [`kept until ${utcDay(snapshot.keptUntil)}`] : []),
     ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
+    ...(snapshot.dependsOn.length ? [`taken after ${snapshot.dependsOn.join(" and ")}`] : []),
     ...(snapshot.boxGone ? [goneWords(snapshot.boxGone)] : []),
     ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
     ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),

@@ -167,7 +167,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `microsandbox.host` | Host &lt;host> | The host answers, runs Linux on x86_64, and its cores, memory and free disk. |
 | `microsandbox.msb` | msb | bb-box's msb is installed on the host at the release this bb-box pins. |
 | `microsandbox.kvm` | KVM | The host has /dev/kvm, and BB's user may use it. |
-| `microsandbox.disks` | Docker disks | The host has mkfs.ext4, with which bb-box makes each box's Docker disk quickly. |
+| `microsandbox.snapshots` | Snapshots | The host's msb is the release whose snapshots bb-box's checks measured, so bb-box takes, restores, forks and deletes snapshots there. |
 | `microsandbox.lxc` | LXC | The host is an LXC container, where msb's snapshots and flat roots fail. |
 | `microsandbox.overcommit` | Memory overcommit | Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so bb-box counts each box there at its full size. |
 | `microsandbox.capacity` | Room on &lt;host> | Room on the host for a box at its default size. |

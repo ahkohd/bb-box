@@ -9587,6 +9587,7 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     keepWhy: null,
     boxGone: null,
     unflushed: null,
+    after: [],
     ...overrides,
   };
 }
@@ -9691,6 +9692,14 @@ test("070 unit 7: Fork is off with why where a snapshot cannot fork, and a row s
   expect(card.textContent).toContain("1.2 GB · may miss its last writes");
   const off = within(card).getByRole("button", { name: "Fork: not now, as calm-otter had no working identity reset when it was taken" });
   expect((off as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("070 unit 10: a row says which snapshot it was taken after, in msb's chain", async () => {
+  const { handlers } = server([box()], { snapshots: snapshotsView({ records: [snapshotRow({ id: "snsecond", name: "after the build", after: ["before the migration"] }), snapshotRow()] }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  await waitFor(() => expect(card.textContent).toContain('after "before the migration"'));
+  expect(card.textContent?.match(/after "/g)?.length).toBe(1);
 });
 
 test("070 unit 7: a fork's page says where it came from among its facts", async () => {

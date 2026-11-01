@@ -74,7 +74,7 @@ export const hostContract = defineRpcContract({
    * folder, in the plugin's data folder.
    */
   microsandbox: {
-    input: z.object({ script: z.enum(["install", "status", "images", "import", "disk", "undisk", "disks", "memory", "oom", "transfer", "retag"]), args: z.array(z.string().max(512)).max(4) }).strict(),
+    input: z.object({ script: z.enum(["install", "status", "images", "import", "undisk", "disks", "memory", "oom", "transfer", "retag", "snapshots", "keep"]), args: z.array(z.string().max(512)).max(4) }).strict(),
     output: z.object({ dir: z.string(), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string() }).strict(),
   },
   /**

@@ -309,7 +309,7 @@ function seenLines(lines: readonly string[]): string {
 const STATUS_RESET = "version=7\nenabled=yes\nboot=reset\nmarker=matches\narmed=yes\npending=no\nbox=\nsource=eth";
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
-const EXPECTED = { forkMacs: ["BC:24:11:0F:01:2C"], sourceMacs: ["BC:24:11:AA:F1:B6"], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddress: "10.0.0.5", ownAddress: "10.0.0.6", boxAddresses: ["10.0.0.5", "10.0.0.6", "10.0.0.7"], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 7 };
+const EXPECTED = { forkMacs: ["BC:24:11:0F:01:2C"], forkValue: null, sourceMacs: ["BC:24:11:AA:F1:B6"], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddress: "10.0.0.5", ownAddress: "10.0.0.6", boxAddresses: ["10.0.0.5", "10.0.0.6", "10.0.0.7"], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 7 };
 const WHOLE = [STATUS_RESET, `machine_id=${HASH_B}`, `host_key=${HASH_B}`, "tailnet_node=no", "marker_mac=bc:24:11:0f:01:2c", "address=10.0.0.6", "addresses_read=yes"];
 
 test("070 unit 7 reviews: the check before ready needs every observation read, its own address and no other box's, an armed marker, and a version the backend forks from; an address or MAC of another box refuses at once, before any wait", () => {

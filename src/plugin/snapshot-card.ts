@@ -43,6 +43,7 @@ export interface SnapshotRowView {
   readonly keepWhy: string | null;
   readonly boxGone: { readonly at: number; readonly how: string } | null;
   readonly unflushed: string | null;
+  readonly after: readonly string[];
 }
 
 export interface RestoredView {
@@ -171,6 +172,10 @@ export function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number)
     keepWhy: keepWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind), pin ? (eligible(record, "keep", { pin, now }) as { why?: string }).why ?? null : null),
     boxGone: record.boxGone,
     unflushed: record.unflushed ?? null,
+    after: record.dependsOn.flatMap((id) => {
+      const parent = ledger.record(id);
+      return parent ? [parent.name] : [];
+    }),
   };
 }
 

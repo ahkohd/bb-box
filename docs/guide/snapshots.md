@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes and Proxmox QEMU Linux boxes. Only you keep one.
+You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes, Proxmox QEMU Linux boxes, microsandbox boxes and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -12,7 +12,10 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
 | boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | not yet: boat.dev boxes have no identity reset | not yet, as Keep needs a fork |
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
+| microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Every other backend | no snapshots yet | | | | |
+
+A microsandbox box takes snapshots only when its Docker disk is `msb`'s own, as on every box BB Box makes now. A box an earlier BB Box made keeps its Docker data on a file of the host's, which `msb` leaves out of a snapshot and cannot give a restored box, so its Snapshots say why it takes none; it works as before otherwise. BB Box takes them only with `msb` 0.7.7, the release whose snapshots it measured, and only on a Linux host: a Mac takes none yet. `bb box doctor` says so in its microsandbox Snapshots check. Each snapshot of a microsandbox box lists the one it was taken after ("after ..."), as `msb` keeps a box's snapshots in a chain; each holds its own data, so any of them can be deleted first.
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
@@ -228,7 +231,9 @@ On boat.dev, step 5 is boat.dev's own stop, which saves the box's disk, and step
 
 A restore takes a few seconds. Measured on Proxmox LXC on LVM-thin, a box of 16 GiB: about 4 s, of which the stop takes about a second, the undo and the rollback under a second each, and the start about 2 s. When the snapshot was taken while the container ran, Proxmox's own start takes about 45 s instead, and BB Box waits for it.
 
-### ZFS
+#On microsandbox, as on boat.dev, step 5 stops the box and step 6 takes the undo of its disk, so the undo holds exactly what the restore replaces. Step 7 makes the box a new microVM from the snapshot, with the box's own identity value, so it stays the same BB machine. A snapshot with memory comes back running, at the size it was taken at, as `msb` requires; a disk snapshot boots at the box's size. BB Box deletes the old microVM once the new one has started; the box's snapshots live on the host, not in the microVM, so none is lost.
+
+## ZFS
 
 ZFS rolls a disk back only to its newest snapshot. BB Box restores nothing on ZFS yet: it says so, and changes nothing. Its restores there come once they are checked on a ZFS node. They will take a held copy of the stopped box as the undo, a full copy that cannot start, made only of a box whose [identity reset](#a-copy-of-a-box-gives-up-its-identity) works; undoing such a restore makes the box a new guest from that copy, with the box's own identity, and the box's other snapshots then stay on its earlier guest, to fork only. Until then, restoring a held copy works only in BB Box's live checks.
 
@@ -246,9 +251,9 @@ Keep makes a snapshot yours and keeps it past its box's release, for 30 days fro
 
 After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
 
-The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then.
+The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then. On microsandbox nothing is copied: "If amber-fox is released, it stays where it is until 2026-11-30." It stays on the host at its whole size.
 
-The keep date is written on the provider first, in the snapshot's own label on Proxmox (`reset 7 kept 2026-11-30` in its description, with the version of the box's identity reset), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date and its version. Each change is recorded before the label is written; if BB Box stops between the two, its next sweep reads the label and settles the change before any expiry or release. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
+The keep date is written on the provider first, in the snapshot's own label on Proxmox (`reset 7 kept 2026-11-30` in its description, with the version of the box's identity reset), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date and its version. Each change is recorded before the label is written; if BB Box stops between the two, its next sweep reads the label and settles the change before any expiry or release. On microsandbox, whose snapshots' labels cannot change once taken, the keep date is a file of BB Box's beside `msb`'s snapshots, in the folder's `kept`. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
 
 On the command line:
 
@@ -281,7 +286,7 @@ A kept snapshot of a released box forks from its held copy, as one of your machi
 
 ## When a box is released
 
-A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. Kept ones outlive it as held copies, above.
+A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. On microsandbox, where they live on the host apart from the microVM, BB Box deletes those nobody kept the same way, and kept ones stay as they are until their date. On Proxmox, kept ones outlive it as held copies, above.
 
 A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for, in BB Box's records or in the snapshots' labels. If it cannot read the labels, it keeps the guest until it can.
 
