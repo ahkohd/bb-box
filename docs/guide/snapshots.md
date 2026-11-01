@@ -10,7 +10,7 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | --- | --- | --- | --- | --- | --- |
 | Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
 | Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
-| boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | not yet: boat.dev boxes have no identity reset | not yet, as Keep needs a fork |
+| boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | by a new sandbox made from the snapshot, from a snapshot taken with version 8 of the identity reset, of Linux boxes | as it is, on the account, at boat.dev's daily price past the plan's included ones |
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Every other backend | no snapshots yet | | | | |
@@ -84,7 +84,7 @@ A Linux box can tell when it is a copy of another box, such as a Proxmox clone. 
 
 ### How it works
 
-When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/identity`. It holds the box's ID and the MAC addresses of the network cards its backend gives it. On Docker it holds a value BB Box sets on the box instead, as Docker gives a container new MAC addresses at each start.
+When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/identity`. It holds the box's ID and the MAC addresses of the network cards its backend gives it. On Docker and boat.dev it holds a value BB Box sets on the box instead, the box's ID in `BBBOX_IDENTITY`, as Docker gives a container new MAC addresses at each start, and boat.dev a sandbox new ones on each machine it starts on. BB Box sets the box's own ID on every sandbox of the box, and a fork's own ID on the fork's, and boat.dev keeps it through a stop and start and a resize.
 
 At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's daemon start, the box compares the marker with what it has:
 
@@ -99,7 +99,7 @@ A reset removes what made the box its source:
 - BB's machine credentials and host ID, so it joins BB as a new machine
 - the thread's access file, `~/.config/bb-box/env`
 - its Tailscale node
-- its SSH host keys and machine ID, which it makes again
+- its SSH host keys and machine ID, which it makes again; on boat.dev it leaves both to boat.dev, which gives every machine its own and tells BB Box the host key to expect
 
 The rest of its disk stays, threads' files included. A restart, a resize, a rename and a spare given to a thread change nothing.
 
@@ -115,9 +115,15 @@ If BB removes a machine while its box does not answer, BB Box keeps the box unti
 
 A copy made outside BB Box is not one of its boxes, so it stays out of BB.
 
+### On boat.dev
+
+A boat.dev sandbox starts on a machine that already runs boat.dev's own image, and boat.dev lays the sandbox's own files over it once it answers. So the check cannot run before the network or boat.dev's own SSH there. It runs when boat.dev starts the box's own services, a second or two after the sandbox is ready, and reads the value from `/run/ascii-secrets/env.sh`, which boat.dev writes before that. Only a value that differs from the marker's makes the box a copy. If the value is not there yet, as on a slow start, the box removes nothing and says it cannot tell yet; SSH, Tailscale and BB's daemon wait while it looks again every 2 seconds, however long that takes. BB Box waits for the check, and starts it itself if boat.dev has not 10 seconds on, before it lets the box user in over SSH, joins the tailnet or gives the box its access file; a start whose check has not decided after 5 minutes fails, saying why. If a reset ever leaves a box with no marker, BB Box writes it again at the box's next start.
+
+A copy made outside BB Box keeps its source's identity. boat.dev gives a fork made in its dashboard or with its API the value of the sandbox it copied, unless the request sets another, so such a copy does not reset, and can act as its source: as the same BB machine, on the same tailnet node, with the thread's access. Copy a box's sandbox only through BB Box.
+
 ### Turning it on
 
-Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU and Docker. Others have the program, with it off.
+Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU, Docker and boat.dev. Others have the program, with it off.
 
 BB Box writes markers only on the backends you name:
 
@@ -129,7 +135,7 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU, 8 on boat.dev. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
 
 ## Forking a snapshot
 
@@ -161,6 +167,8 @@ bb box snapshot fork <box> <snapshot> [--as-machine] [--name <name>] [--check]
 ```
 
 `--check` says what the fork would be and refuses what it would refuse, changing nothing. Like the other snapshot commands, `--thread` or `--machine` say where the source box is.
+
+On boat.dev a fork is a new sandbox made from the saved snapshot, with the fork's own ID as its identity value, so it resets at its first start. As boat.dev labels no sandbox made from a saved snapshot, BB Box makes one under a name of its own, stops it and copies it with the fork's labels, then deletes the first: 2 of boat.dev's starts, free within the plan's starts. A fork goes no further than its identity check until BB Box's check before it is handed over has passed: BB Box reads it as boat.dev's own user, and a fork whose boot says it has no marker is refused. Only then does the box user get in, does the fork join the tailnet, and get its access file. The check is the one above, with its marker naming its own value in place of MAC addresses; the address and the SSH host keys are boat.dev's. Its source's sandbox is not touched.
 
 ## Agents' snapshots
 
@@ -253,7 +261,7 @@ After its box's release, the only way to use a kept snapshot is to fork it. So K
 
 The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then. On microsandbox nothing is copied: "If amber-fox is released, it stays where it is until 2026-11-30." It stays on the host at its whole size.
 
-The keep date is written on the provider first, in the snapshot's own label on Proxmox (`reset 7 kept 2026-11-30` in its description, with the version of the box's identity reset), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date and its version. Each change is recorded before the label is written; if BB Box stops between the two, its next sweep reads the label and settles the change before any expiry or release. On microsandbox, whose snapshots' labels cannot change once taken, the keep date is a file of BB Box's beside `msb`'s snapshots, in the folder's `kept`. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
+The keep date is written on the provider first, in the snapshot's own label on Proxmox (`reset 7 kept 2026-11-30` in its description, with the version of the box's identity reset), then in BB Box's record. So a lost `snapshots.db` loses no keep: the snapshot is found again as kept, with its date and its version. Each change is recorded before the label is written; if BB Box stops between the two, its next sweep reads the label and settles the change before any expiry or release. boat.dev's saved snapshots take no labels and cannot be renamed, so there BB Box writes the date in its own storage for the backend, apart from `snapshots.db`, with what a fork of it needs: the version of the box's identity reset, and the box's kind and name. On microsandbox, whose snapshots' labels cannot change once taken, the keep date is a file of BB Box's beside `msb`'s snapshots, in the folder's `kept`. If the provider refuses the label, nothing is kept. **Stop keeping** takes the date off the label and the record, and the snapshot goes with its box again.
 
 On the command line:
 
@@ -284,9 +292,13 @@ If a copy cannot be made, the release stops and deletes nothing, and the box sta
 
 A kept snapshot of a released box forks from its held copy, as one of your machines, from the Snapshots tab or with `bb box snapshot fork <box> <snapshot>`. The fork resets at its first boot and is checked as any fork is.
 
+### As it is, on boat.dev
+
+On boat.dev a kept snapshot needs no copy: a saved snapshot lives on the account, not on the sandbox, and does not expire. A release deletes the box's other saved snapshots and leaves the kept ones as they are. Each costs boat.dev's daily price past the plan's included ones until its keep date, as the Keep dialog says, and counts against your ceiling. It forks as one of your machines, and **Keep 30 more days…** renews it after the release too.
+
 ## When a box is released
 
-A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. On microsandbox, where they live on the host apart from the microVM, BB Box deletes those nobody kept the same way, and kept ones stay as they are until their date. On Proxmox, kept ones outlive it as held copies, above.
+A box's snapshots go with it when it is released: Proxmox deletes them with the guest. On boat.dev, where they live on the account, BB Box deletes each of the box's saved snapshots before it deletes the sandbox; if one cannot be deleted, the release stops, deletes nothing more, and tries again at the next sweep, as a saved snapshot left behind would go on costing. The box's log says so for each one. On microsandbox, where they live on the host apart from the microVM, BB Box deletes those nobody kept the same way, and kept ones stay as they are until their date, as on boat.dev. On Proxmox, kept ones outlive it as held copies, above.
 
 A guest BB Box has no box record for, whose thread BB says ended, goes at the next sweep, with its snapshots: first BB Box makes held copies of any it carries a keep date for, in BB Box's records or in the snapshots' labels. If it cannot read the labels, it keeps the guest until it can.
 

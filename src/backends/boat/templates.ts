@@ -6,7 +6,7 @@ import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { BoatError, isRunning, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
-import type { BoatKind } from "./config.ts";
+import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 
 export const TEMPLATE_ROLE = "template";
 export const TRIAL_ROLE = "template-trial";
@@ -139,12 +139,21 @@ export interface TemplateDeps {
   readonly sizeFor?: (kind: BoatKind) => Promise<SandboxSize>;
 }
 
+export const IDENTITY_VALUE_FILE = "/run/ascii-secrets/env.sh";
+export const IDENTITY_RESET_KINDS: readonly BoatKind[] = ["linux"];
+
+export function identityBuildSettings(kind: BoatKind): readonly string[] {
+  if (!IDENTITY_RESET_KINDS.includes(kind)) return ["BOX_IDENTITY_RESET=off"];
+  return ["BOX_IDENTITY_RESET=on", `BOX_IDENTITY_VALUE_FILE=${IDENTITY_VALUE_FILE}`, "BOX_IDENTITY_MACHINE=provider"];
+}
+
 export function templateFingerprint(setup = setupDir()): string {
   const hash = createHash("sha256");
   for (const file of TEMPLATE_FILES) {
     const path = join(setup, file);
     hash.update(file).update("\0").update(existsSync(path) ? readFileSync(path) : "").update("\0");
   }
+  for (const kind of BOAT_TEMPLATE_KINDS) hash.update(kind).update("\0").update(identityBuildSettings(kind).join("\n")).update("\0");
   return hash.digest("hex").slice(0, 12);
 }
 
@@ -160,8 +169,8 @@ export function templateArchive(setup = setupDir()): Promise<Buffer> {
   });
 }
 
-export function buildEnvFor(buildId: string): string {
-  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ""].join("\n");
+export function buildEnvFor(buildId: string, kind: BoatKind): string {
+  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ...identityBuildSettings(kind), ""].join("\n");
 }
 
 export function buildWaitWords(kind: BoatKind, lastBuildMs: number | null): string {
@@ -356,7 +365,7 @@ export class BoatTemplates {
       const archive = await (this.#deps.setupArchive ?? templateArchive)();
       await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
       const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
-      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? (() => buildEnvFor(buildId)))(kind), timeoutMs: 30_000 }), "write the build's settings");
+      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
       await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
       if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
       await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");

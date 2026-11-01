@@ -3514,3 +3514,267 @@ On a Proxmox LXC box, in a copy whose git tree is this commit's
 (`fdb3ca7c`, before this paragraph): `npx tsc` passes, the reference is
 current; the node suite ran 3,309 tests, 3,021 passed, 0 failed, 288
 skipped; vitest ran 442, all passed.
+
+## Unit 11b: boat.dev's identity reset, then its forks and Keep
+
+boat.dev's identity source, its `linux` template built with the reset on,
+gate G14 on boat.dev, then forks from a saved snapshot and Keep as it is,
+on the paid plan. Built on 1 November 2026, on main `a0420ab3`, after a
+live probe the lead read first (070, [Decided during unit
+11b](070-snapshots.md#decided-during-unit-11b)).
+
+### The probe
+
+Stock `small` sandboxes on the paid account, called through boat.dev's
+API from a Proxmox LXC box, each with a probe unit enabled at boot,
+ordered before `network-pre.target`, SSH and the users' services, that
+logged what it could read when boat.dev started it.
+
+| Question | Per-sandbox `env` | Create-time `files` |
+| --- | --- | --- |
+| Where it lands | `/run/ascii-secrets/env.sh`, on tmpfs, owned by `user`, mode 600, as `export NAME="value"`; a systemd unit does not inherit it | under `/home/user`; one under `/tmp` is gone on a new machine |
+| A fork | takes the value the request gives; with none, its source's | accepted with 202 and ignored: the fork kept its source's file |
+| A deploy from a saved snapshot | the value the request gives | the file the request gives |
+| A resume on a new machine (a resize) | kept, written again | kept, on the disk |
+| Before boat.dev starts the sandbox's own services | yes: 0.6 s on a fork, 0.8 s on a deploy, 2.6 s on a resume | yes on a deploy, 0.7 s |
+
+Two more findings shaped the build. A resume 2 s and one 3 minutes after
+a stop came back on the same running machine (the same boot ID, its
+uptime unbroken), so nothing started again. And boat.dev gives every new
+machine its own machine ID and SSH host keys, and the host key it reports
+to pin is the one in those files: a fork's were not its source's. So on
+boat.dev the reset leaves both to boat.dev; renewing the keys would break
+bb-box's pinned SSH.
+
+### What changed
+
+- **The guest program, version 8** (`bb-box-identity.sh`), for every
+  image. `enable --value-file <path>` reads the value from a file, with a
+  strict pattern for a box ID, never sourcing it; at a boot of an armed
+  box it waits up to 30 s for the value, then compares as before, so a
+  missing value counts as a copy. `enable --machine-from-provider` leaves
+  the SSH host keys and machine ID to the provider in a reset, and says
+  so. `wait` holds BB's daemon while the reset is on and no check has run
+  on this machine. Both options live in
+  `/usr/local/lib/bb-box/identity-options`; a plain `enable`, as every
+  other image runs, writes none, so Proxmox's and Docker's boots are as
+  they were. `customize-base.sh` passes them from the build's settings.
+- **boat.dev's `linux` template turns the reset on** with
+  `BOX_IDENTITY_VALUE_FILE=/run/ascii-secrets/env.sh` and
+  `BOX_IDENTITY_MACHINE=provider` (`buildEnvFor`), and the template's
+  fingerprint covers those settings, so a change to them rebuilds it.
+  Desktop and Android templates keep it off.
+- **Every sandbox bb-box makes for a box carries `BBBOX_IDENTITY`**, the
+  box's ID: the fork from the template, a restore's deployed sandbox and
+  its copy, and a fork's two, with the fork's own ID. A resume passes
+  none, so boat.dev keeps it. `identitySource` is `value` for `linux`.
+- **bb-box waits for the check before the box user**: at each acquire and
+  start, as boat.dev's user, it reads `bb-box-identity status` until the
+  boot says `kept`, `unarmed` or `reset` (or `off` on an image without
+  the reset), starts `bb-box-identity-settle.service` itself 10 s on,
+  and fails the start on `failed`. Only then does it give the box user
+  its key and SSH in, join the tailnet and write the access file.
+- **Forks** (`forkSnapshot`): as a restore does, it deploys the saved
+  snapshot under a staging name with the fork's value, stops it, copies
+  it with the fork's labels and a token, and deletes the staging sandbox;
+  a fork asked again after a restart goes on with the sandbox it made, and
+  one cut short before its copy settled is released first, then made
+  again.
+  `guestIdentity` gives no MAC addresses, and `armFork` and `disarmFork`
+  do nothing, as boat.dev has no `onboot` or links. The plan offers a fork
+  at the snapshot's size, needing 2 starts (`forkStartWords`), also of a
+  saved snapshot whose box's sandbox is gone. The offer forks from version
+  8 (`BOAT_FORK_SAFE_FROM`).
+- **Core's check before ready, for a value**: where the backend's source
+  is `value`, the marker must name the fork's own box ID
+  (`marker_value=`), and the provider's addresses are not compared;
+  everything else is unit 7's check. A MAC marker reads as before.
+- **Keep as it is**: boat.dev's saved snapshots take no labels and
+  cannot be renamed, so `labelKept` writes the keep date in the backend's
+  own storage (`kept-saved-snapshots`), apart from `snapshots.db`;
+  `heldSnapshots` gives it back as `keptUntil`, and a delete or a name
+  boat.dev no longer lists clears it. Core forks a kept snapshot of a
+  released box whose backend keeps it as it is, and renews it after the
+  release; the card offers Keep 30 more days there too.
+- **Docs**: the snapshots guide (the offer table, the value on boat.dev,
+  the order there, the outside copy, forks and Keep on boat.dev), the
+  boat guide's Snapshots section, and 070's decisions.
+
+### Tests
+
+New or changed, each with a set clock and boat.dev's recorded answers
+where it calls boat.dev:
+
+- `test/identity-reset.test.ts`, 7 for version 8: the options and their
+  refusals; a boat.dev box kept at three boots on new machines with the
+  file's value, not the boot's argument; a fork's value resetting BB's
+  machine, the access file and the tailnet node and leaving the host keys
+  and machine ID; a missing value waited for, then a reset; values that
+  are not box IDs; `wait` holding while no check has run, and not when the
+  reset is off; the build's settings and `customize-base.sh`'s calls.
+- `test/boat-snapshots.test.ts`, 7 new: the value on every sandbox and
+  through a stop and start; the fork's two sandboxes; a kept snapshot
+  forking with its box's sandbox gone; the 2 starts; the keep date in the
+  backend's storage; the identity check before the box user, its start
+  after 10 s and a failed check; `off` on an image without the reset.
+  Four changed for the offer, the plan and the restore's value.
+- `test/forks.test.ts`: the value check's verdict table, with Proxmox's
+  MAC check unchanged; `test/provider-snapshots.test.ts`: Keep as it is
+  past a release, its renewal and its fork, and a version 7 snapshot's
+  Keep refused in plain words.
+- `test/fake-boat.ts` keeps each sandbox's `env` as boat.dev does.
+
+Proxmox's behaviour does not change: its identity tests pass unchanged,
+but for the version the real program reports, 7 before and 8 now, in 3
+status lines of `identity-reset.test.ts`, 4 of `forks.test.ts` (one of
+them now sets `forkSafeFrom` 9 to stay one above it) and 3 of
+`snapshots.test.ts`. Proxmox LXC still forks from 7 and QEMU from 5.
+
+On a Proxmox LXC box, in a clone whose git tree is this commit's
+(`84fc8d64`, before this paragraph), over main `a0420ab3`: `npx tsc`
+passes, and the reference is current (`node scripts/reference.ts
+--check`); the node suite, which holds the docs and site checks, ran
+3,353 tests, 3,065 passed, 0 failed, 288 skipped; vitest ran 443, all
+passed.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and
+ports, started with `env -i` and `BB_BOX_LIVE_CHECKS=1`, in a Proxmox LXC
+box, bb-box from this branch with `bb plugin install path:`, the boat
+backend added with `--secrets-file` from a key file `box_copy` put in the
+box, and `general.identityResetBackends=boat` in that BB only. Boxes were
+machines of the person's. As this BB cannot make boat.dev boxes BB
+machines, a stand-in BB machine folder, `~/.bb-machines/live-check`, with
+a random `host-id` and an `auth.json`, and a Tailscale state with a
+profile, were written in the source before the take; the access file was
+bb-box's own.
+
+| Check | Result |
+| --- | --- |
+| Template, first box | this install built its own `linux` template in 6 minutes; the box was ready in 402 s (fork 0.5, ready 4.5, ssh 12.0 with the check, settle 4.2 s), its marker `value` its box ID, written in 83 ms |
+| The order | the check finished at 00:48:49.824, when boat.dev's agent started the enabled units; bb-box read it at 00:48:54.199; the box user's first login 00:48:54.799; `user@1001` 00:48:55.191 |
+| Stop and start | 8 and 2 s; boat.dev gave back the same machine (the same boot ID), so no check ran; the same host ID |
+| Resize, `small` to `medium` | 82 s, a new machine (new boot ID, machine ID and host key, boat.dev's); `boot=kept`, the same host ID, credentials, access file and tailnet state |
+| Take | 144 s, a fresh capture; `forkSafe` 8 |
+| Restore swap | 178 s, a new sandbox; `boot=kept`, the same host ID; `work.txt` back to "before". The undo was deleted at once |
+| Fork | ready in 34 s (start 14.5, check 0.4 s): the staging sandbox reset at 00:57:03 and removed `host_317bc0fa833d`; on the fork the host ID, credentials and tailnet state were gone, the machine ID and host key new, the marker its own; bb-box wrote its own access file at 00:57:44. The source was untouched |
+| Keep | `--check`: "If src-boat is released, it stays where it is until 2026-12-01, at $0.056 a day past the plan's 10"; kept until 2026-11-03 |
+| Release, then BB restarted | the source removed in 1 s; its kept snapshot listed under it, released; BB's server stopped and started again |
+| Fork of the kept snapshot | ready in 30 s (check 99 ms): the staging sandbox was stopped part way through its reset, and the fork's first boot resumed it from its pending record ("resuming the reset that began at 00:58:58"), `boot=reset`, the source's host ID removed |
+| Clean-up | the kept snapshot deleted, both forks removed, the backend removed, this install's template deleted through boat.dev's API; boat.dev then listed only the three templates of another install that were there before, and no saved snapshots |
+
+The live check ran this unit's code over main `cacc1dcb`. The rebase onto
+`a0420ab3` and one change after it, a fork cut short before its copy
+settled now released before it is made again (with its test), came
+later; neither touches what the check ran.
+
+**G14 on boat.dev passed**: a fork resets with a new host ID, tailnet
+node, SSH host keys, machine ID and access file; a stop and start, a
+resize and a restore swap each keep the box's host ID with no reset; then
+Keep, a release and a fork of the kept snapshot. The tailnet item was
+checked as unit 7 checked it, by the reset removing Tailscale's state.
+
+**What it cost, from boat.dev's figures**, the probe and the live check
+together: the wallet went from $14.48 to $14.47; boat.dev's used credit
+rose by 1,416 s, about $0.014 at its 100,000 s a dollar; starts today went
+from 42 to 51 by boat.dev's counter, all within the plan's 200, at no
+charge. At most 2 saved snapshots at once, within the 10 included: the
+probe's for 3 minutes, the live check's for 8 and its undo for 3.
+
+### Choices and deviations
+
+- **Not before the network on boat.dev.** Section 9's order cannot hold
+  there; bb-box gates what it controls (the box user's SSH, Tailscale, the
+  access file) on the check, and BB's daemon waits by its own unit.
+- **The reset leaves the SSH host keys and machine ID to boat.dev**,
+  which makes both new on every machine.
+- **A stop and start on boat.dev** came back on the same machine, as
+  boat.dev keeps one a while after a stop, so the check did not run
+  again; the resize and the restore swap showed a new machine kept.
+- **The keep date lives in bb-box's storage for the backend**, not on
+  boat.dev, which has no labels for saved snapshots.
+- **Docker's words are as they were**: a missing value still says "the
+  value bb-box set on this guest is not the marker's".
+
+### Known limit
+
+- **A copy made outside bb-box keeps its source's identity.** boat.dev
+  gives a fork made in its dashboard or API its source's value, so it
+  does not reset. The guides say so in plain words.
+
+### Conditions and open questions
+
+- **Arming boat.dev in production** stays the owner's call, after merge
+  and a smoke test; until then no boat.dev snapshot is fork-safe there.
+- **boat.dev's desktop and Android templates** have no reset, so their
+  boxes neither fork nor keep; a later unit could check them.
+- **A fork's plan says no price in starts** in the Fork dialog, as the
+  fork plan has no cost words; the 2 starts are said in the guides.
+
+### After the reviews
+
+Two reviews, by Opus and by Astra, read `98c1154c`, and each said merge
+after fixes. The lead asked for all of them in one amended commit on main
+`a0420ab3`. This section is what holds now where it differs from the
+sections above. Each fix has a test that fails on `98c1154c` and passes
+now: run against that commit's `src` and `setup`, the 7 new core and guest
+tests failed, and `boat-snapshots.test.ts` did not load, as it uses what
+the fixes add.
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| Astra 1, Opus 4: a slow start wiped a good box's identity after 30 s | only a value that differs is a copy; a value not there yet holds the box as unknown, removing nothing, while SSH, Tailscale and BB's daemon wait, and `settle` reads the file again every 2 s; bb-box's start waits, and fails after 5 minutes with why | "version 8, boat: a value missing from the file never counts the box as a copy ..." |
+| Opus 4: a box that reset with no marker stayed unarmed, and the words named interfaces | the unarm names `BBBOX_IDENTITY`; at the box's next start bb-box writes the marker again, on a value-source backend that is armed, only after a reset (`boot=reset`, marker missing), never for a box unarmed by hand or a Proxmox box | "version 8, boat: a box that reset with no value ..."; "Opus 4: a value-source box that a reset left with no marker ..." |
+| Astra 2, Opus 5: a fork joined the tailnet and let the box user in before core's check | a boat fork starts only as far as its identity check (`startForForkCheck`), as boat.dev's `user`, and refuses a boot of `unarmed` or `off`; core reads the check through `forkCheckCommand`, as that user; the box user's SSH, settle and the tailnet join run only at `armFork("boot")`, after the check; the access file comes after | "Astra 2 and Opus 5: a fork starts only as far as its identity check ..." (boat) and "... core checks it through the backend's own check command ..." (core) |
+| Opus 3: with a plain `enable`, `wait` held BB's daemon when no check had run | `wait` holds on no result only with a value file, so Proxmox's `wait` is version 7's | "version 8 on Proxmox: with a plain enable, wait goes on at once ..." |
+| Opus 1: removing the backend left saved snapshots costing | a save that removes a backend whose snapshots live on its provider lists the provider's snapshots of this install first, kept or not, and refuses, naming them and how to delete them, or refuses if it cannot list them; only such a save asks the provider; the boat guide's "Turn it off" says so | "Opus 1: a backend whose snapshots live on its provider cannot be removed ..." |
+| Astra 4, Opus 2: Keep dates could be lost | every change to the backend's record of saved snapshots goes through one queue; a name is cleared only when boat.dev answers that it has no saved snapshot by that name; a list answer with no array is an error, and changes nothing | "Astra 4 and Opus 2: Keep dates go through one queue ..." |
+| Astra 3: upkeep deleted a fork's staging sandbox while the fork was made | upkeep skips a staging sandbox this process is still using, and counts one as done only when its copy exists, labelled with its box and token | "Astra 3: upkeep never deletes a fork's staging sandbox ..." |
+| Astra 5: a kept snapshot found again could not fork | the backend's record of each saved snapshot (`saved-snapshot-facts`) holds the keep date, the identity reset's version from the take and the box's owner (kind, name, thread), and boat.dev's list gives them back after the box's sandbox is gone | "Astra 5: what a fork of a kept snapshot needs ..." |
+| Astra 6: found again past its keep date, a paid snapshot stayed with no end | a snapshot found again on a backend whose snapshots live on its provider keeps its keep date even when it has passed, so expiry deletes it; Proxmox's found snapshots are as they were | "Astra 6: a provider's kept snapshot found again ... past its keep date ..." |
+
+The fork's start changed: on boat.dev, a fork's timings say "identity
+check" for its start up to the check, and a start of any boat box says it
+before "ssh". So a short live recheck of a fork, a Keep and a release was
+run, below.
+
+The live recheck, on a separate BB as before (`npx bb-app` 0.48.1, no
+account, `BB_BOX_LIVE_CHECKS=1`, bb-box from this commit, boat armed in
+that BB only):
+
+| Check | Result |
+| --- | --- |
+| Template, first box | this install built its own `linux` template; boat.dev's machine was slow (a load of 15 while it installed packages), so the box was ready in 1,243 s; the box's marker its own value |
+| Take | 128 s; `forkSafe` 8 |
+| Fork | ready in 224 s, most of it boat.dev's capture of the staging sandbox as it stopped (start 13.2, of which identity check 4.1, check 0.3 s); the fork reset at its first boot (`boot=reset`, the stand-in host ID removed); the order: boat.dev's `user` in at 02:25:27.202, the reset finished at 02:25:30.164, bb-box's gate and core's check read it as `user` at 02:25:30.227 and 02:25:30.415, the box user's first login at 02:25:30.941 and its manager at 02:25:31.315; the fork's own access file written at 02:25:44 |
+| Keep, then release | kept until 2026-11-03; the source removed in 1 s, the kept snapshot listed under it, released |
+| Removing the backend | refused twice, naming the snapshot: by its record, and by boat.dev's list ("Backend boat has 1 snapshot on its provider's account, kept or not, ... "before-change" ... kept until 2026-11-03"); with its records forgotten (`bb box snapshot forget`), still refused by boat.dev's list, by its saved name and keep date; once it was deleted, removed |
+| Clean-up | the fork removed, the saved snapshot deleted, this install's template deleted; boat.dev then listed only the three templates of another install, and no saved snapshots |
+
+What it cost, from boat.dev's figures: the wallet went from $14.47 to
+$14.45; used credit rose by 1,441 s, about $0.014, most of it the slow
+template build; starts within the plan, at no charge. One saved snapshot,
+held for 6 minutes.
+
+On a Proxmox LXC box, in a git tree of this commit's files (`a54fcae4`,
+before these notes): `npx tsc` passes, the reference is current; the node
+suite ran 3,363 tests, 3,075 passed, 0 failed, 288 skipped; vitest ran
+443, all passed.
+
+**Rebased onto unit 10** (main `cbad0e4d`, microsandbox's snapshots),
+which had added the same check of a value marker in core. This unit now
+uses unit 10's: the fork's value comes from `guestIdentity`, which on
+boat.dev gives the box's ID, and a marker holding its source's value is
+refused at once. A backend now says its guest's address is the provider's
+endpoint (`addressIsAnEndpoint`), as boat.dev does, so only there are
+the addresses left out of the check; microsandbox's are compared as unit
+10 has them. The guides' Keep and release paragraphs name both backends.
+Nothing in the fork or Keep path changed in what it does on boat.dev, so
+the live recheck above stands.
+
+On a Proxmox LXC box, in a git tree of the rebased commit's files: `npx
+tsc` passes, the reference is current; the node suite ran 3,381 tests,
+3,092 passed, 1 failed, 288 skipped, the failure a boat test that pinned
+`guestIdentity`'s answer without its value, since updated and passing
+with its file (27 of 27); vitest ran 444, all passed.

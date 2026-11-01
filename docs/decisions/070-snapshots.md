@@ -1775,6 +1775,52 @@ Built so:
   `BB_BOX_LIVE_CHECKS=1`, until bb-box restarts, so the ceiling's refusal is
   seen with a few snapshots.
 
+## Decided during unit 11b
+
+On 1 November 2026, during unit 11b, after a live probe of boat.dev's
+per-sandbox `env` and create-time `files` (070 results, unit 11b), the lead
+decided:
+
+- **boat.dev's identity source is the per-sandbox `env`**, `BBBOX_IDENTITY`
+  set to the box's ID. boat.dev writes it to `/run/ascii-secrets/env.sh`
+  at each start, before it starts the sandbox's own services; a fork or a
+  deploy takes the value the request gives, and inherits its source's
+  otherwise; a stop and start and a resize keep it. Create-time `files`
+  are not used: a fork accepts them and ignores them, so a fork would keep
+  its source's file.
+- **Version 8 of the identity program, for every image.** It can read the
+  value from a file (`enable --value-file`), never sourcing it. Only a
+  value that differs is a copy; a value not there yet holds the box as
+  unknown, removing nothing, while SSH, Tailscale and BB's daemon wait
+  (after the reviews). It can leave the SSH
+  host keys and machine ID to the provider (`--machine-from-provider`), as
+  boat.dev gives every machine its own and pins the host key it reports
+  from those files. With a value file, `wait` holds BB's daemon while no
+  check has run on this machine. Proxmox's behaviour does not change: its
+  images run `enable` with no options, `wait` is version 7's there, and
+  Proxmox's `forkSafeFrom` stays 7 for LXC
+  and 5 for QEMU. boat.dev forks from version 8.
+- **Section 9's order holds on boat.dev for what bb-box controls.** The
+  check cannot run before the network or boat.dev's own SSH there. bb-box
+  waits for it, as boat.dev's user, before it lets the box user in, joins
+  the tailnet or writes the access file, and starts it itself if boat.dev
+  has not 10 s on; BB's daemon waits for it by its own unit.
+- **Only boat.dev's `linux` template turns the reset on**, as on Proxmox.
+  Desktop and Android boxes there neither fork nor keep.
+- **A copy made outside bb-box keeps its source's identity**, a known
+  limit: boat.dev gives a fork made in its dashboard or API its source's
+  value. The guides say so in plain words.
+- **G14's tailnet item is checked as unit 7 checked it**: by the reset
+  removing Tailscale's state, as the test BB has no account.
+- **Keep on boat.dev is as it is**, at the daily price past the plan's
+  included ones, until the keep date. Its keep date lives in the backend's
+  own storage, apart from `snapshots.db`, as boat.dev's saved snapshots
+  take no labels. A kept snapshot of a released box forks, and renews.
+  Keep is offered only for snapshots taken under version 8 or later, and
+  says why otherwise.
+- **Arming boat.dev stays off in production** until the owner arms it after
+  merge and a smoke test.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

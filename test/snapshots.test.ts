@@ -973,8 +973,8 @@ test("a box is first ready with its identity marker, written with its backend's 
   assert.equal(typeof box.identityMarkedAt, "number", "bb-box records that it armed the box, so only armed boxes are checked for a reset");
   assert.deepEqual(state.boxLogs.filter((line) => line.includes("identity marker")), []);
   const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
-  assert.equal(taken.forkSafe, 7);
-  assert.equal(state.store.record(taken.id)?.forkSafe, 7, "kept on the record, so a restart keeps it");
+  assert.equal(taken.forkSafe, 8);
+  assert.equal(state.store.record(taken.id)?.forkSafe, 8, "kept on the record, so a restart keeps it");
   assert.doesNotMatch(snapshotLine(taken), /identity reset/);
 });
 
@@ -1025,6 +1025,37 @@ test("a take is not fork-safe, and says so, when the box's image has no identity
   await notForkSafe(image, imageBox, "an image whose build left the reset off");
 });
 
+test("070 unit 11b review, Opus 4: a value-source box that a reset left with no marker gets it written again at its next start; a box unarmed by hand and a MAC-source box are left as they are", async () => {
+  const unmark = (root: string, boot: string) => {
+    for (const file of ["etc/bb-box/identity", "var/lib/bb-box/identity-armed"]) spawnSync("rm", ["-f", join(root, file)]);
+    mkdirSync(join(root, "run/bb-box-identity"), { recursive: true });
+    writeFileSync(join(root, "run/bb-box-identity/boot"), `${boot}\n`);
+  };
+  const restart = async (state: World, box: BoxRecord) => {
+    await state.boxes.stop(THREAD, box.id);
+    await state.boxes.start(THREAD, box.id);
+  };
+  const guest = identityGuest({ booted: false });
+  assert.equal(spawnSync(guest.tool, ["boot", "--value", "bxpending"]).status, 0);
+  const state = world({ identityTool: guest.tool, identityRoot: guest.root });
+  withIdentitySource(state, "value");
+  const box = await readyBox(state);
+  unmark(guest.root, "reset");
+  await restart(state, box);
+  assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource value\nvalue bxpending\n`);
+  assert.ok(state.boxLogs.some((line) => line === `Wrote box ${box.name}'s identity marker again: a reset had left it none, as it found no value to write one with.`), state.boxLogs.join("\n"));
+  unmark(guest.root, "unarmed");
+  await restart(state, box);
+  assert.equal(existsSync(join(guest.root, "etc/bb-box/identity")), false, "unarmed by hand, it stays unarmed");
+  const lxc = identityGuest();
+  const proxmox = world({ identityTool: lxc.tool, identityRoot: lxc.root });
+  withIdentitySource(proxmox, "eth");
+  const lxcBox = await readyBox(proxmox);
+  unmark(lxc.root, "reset");
+  await restart(proxmox, lxcBox);
+  assert.equal(existsSync(join(lxc.root, "etc/bb-box/identity")), false, "Proxmox's boxes are as they were");
+});
+
 test("a Docker box's marker holds the value its start saw, and a box whose start saw none is not armed", async () => {
   const guest = identityGuest({ booted: false });
   assert.equal(spawnSync(guest.tool, ["boot", "--value", "bxpending"]).status, 0);
@@ -1032,7 +1063,7 @@ test("a Docker box's marker holds the value its start saw, and a box whose start
   withIdentitySource(state, "value");
   const box = await readyBox(state);
   assert.equal(readFileSync(join(guest.root, "etc/bb-box/identity"), "utf8"), `bb-box identity 1\nbox ${box.id}\nsource value\nvalue bxpending\n`);
-  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 7);
+  assert.equal((await state.snapshots.take(COMMAND, box, standing(box))).snapshot?.forkSafe, 8);
 
   const before = identityGuest();
   const old = world({ identityTool: before.tool, identityRoot: before.root });

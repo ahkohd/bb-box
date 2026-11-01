@@ -136,7 +136,7 @@ test("a desktop box checks Cua Driver only once boat has finished restoring the 
   const steps: string[] = [];
   await backend.start!(guest, undefined, (step) => void steps.push(step));
   assert.equal(made.restoringReads, 0, "the start waited until boat said the sandbox was restored");
-  assert.deepEqual(steps, ["resume", "ssh", "settle", "display", "restore", "computer use"]);
+  assert.deepEqual(steps, ["resume", "identity check", "ssh", "settle", "display", "restore", "computer use"]);
 });
 
 test("a Linux box without a desktop does not wait for boat's restore", async () => {
@@ -218,7 +218,7 @@ test("stop is boat's stop, and start resumes the sandbox and pins its new host k
   assert.match((await backend.stopped(guest))?.reason ?? "", /auto-stop/);
   const steps: string[] = [];
   await backend.start!(guest, undefined, (step) => void steps.push(step));
-  assert.deepEqual(steps, ["resume", "ssh", "settle"]);
+  assert.deepEqual(steps, ["resume", "identity check", "ssh", "settle"]);
   assert.equal(made.state, "ready");
   assert.equal(made.ttlSeconds, 30 * 60);
   assert.deepEqual((await backend.transports(guest, "linux")).access?.ssh?.hostKeys, [`${made.host} ${made.hostKey}`]);

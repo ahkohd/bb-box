@@ -59,7 +59,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName, isMachineName } from "./names.ts";
-import { MARKER_WRITE_MS, forkVerdict, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
+import { FORK_SAFE_PROBE_MS, MARKER_WRITE_MS, forkVerdict, identityStatusScript, parseIdentityStatus, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
 import {
   bestAnswer,
   grantRefusal,
@@ -2274,7 +2274,8 @@ export class Boxes {
     await backend.armFork(made, "network", signal);
     await hooks.starting();
     const booting = this.#now();
-    await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
+    if (backend.startForForkCheck) await backend.startForForkCheck(made, signal, hooks.timing);
+    else await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
     timings.start = this.#now() - booting;
     await this.#checkFork(box, made, backend, timings, signal);
     await backend.armFork(made, "boot", signal);
@@ -2325,17 +2326,18 @@ export class Boxes {
   async #checkFork(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
     const fork = box.fork!;
     const began = this.#now();
-    const command = (await backend.transports(guest, box.kind)).command;
+    const command = backend.forkCheckCommand ? await backend.forkCheckCommand(guest, signal) : (await backend.transports(guest, box.kind)).command;
     if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
     const own = await backend.guestIdentity!(guest, signal);
+    const byEndpoint = backend.addressIsAnEndpoint === true;
     const expected = {
       forkMacs: Object.values(own.macs),
       forkValue: own.value ?? null,
       sourceMacs: fork.source.macs,
       sourceBox: fork.source.id,
       sourceName: fork.source.name,
-      sourceAddress: fork.source.address ?? null,
-      ownAddress: guest.address,
+      sourceAddress: byEndpoint ? null : (fork.source.address ?? null),
+      ownAddress: byEndpoint ? null : guest.address,
       boxAddresses: backend.boxAddresses?.() ?? [],
       held: fork.snapshot.identity,
       safeFrom: backend.snapshotting?.(box.kind)?.forkSafeFrom ?? 1,
@@ -2500,6 +2502,27 @@ export class Boxes {
       else this.#deps.log?.(`Wrote no identity marker in box ${box.name}, so a copy of it would not reset, and its snapshots cannot be forked: ${written.why}.`);
     } catch (error) {
       if (!signal.aborted) this.#deps.logError("identity marker", error);
+    }
+  }
+
+  async #markIdentityAgain(box: BoxRecord, signal?: AbortSignal): Promise<void> {
+    const backend = this.#deps.backends.get(box.backend);
+    if (!box.identityMarkedAt || !box.guest || !backend || backend.identitySource?.(box.kind) !== "value") return;
+    if (!(await this.#deps.general()).identityResetBackends?.includes(backend.id)) return;
+    try {
+      const command = (await backend.transports(box.guest, box.kind)).command;
+      if (!command) return;
+      const read = await command.run(identityStatusScript(), { timeoutMs: FORK_SAFE_PROBE_MS, maxOutputBytes: 4096, ...(signal ? { signal } : {}) });
+      const status = read.exitCode === 0 ? parseIdentityStatus(read.stdout) : null;
+      if (!status?.enabled || status.pending || status.armed || status.marker !== "missing" || status.boot !== "reset") return;
+      const written = await writeIdentityMarker(command, box.id, "value", signal);
+      this.#deps.log?.(
+        written.written
+          ? `Wrote box ${box.name}'s identity marker again: a reset had left it none, as it found no value to write one with.`
+          : `Could not write box ${box.name}'s identity marker again, so a copy of it would not reset, and its snapshots cannot be forked: ${written.why}.`,
+      );
+    } catch (error) {
+      if (!signal?.aborted) this.#deps.logError("identity marker", error);
     }
   }
 
@@ -2787,6 +2810,7 @@ export class Boxes {
     timings["start.total"] = this.#now() - began;
     const started = (await this.#move(current, "ready", timings, facts)) ?? current;
     this.#event(current, "started", who);
+    if (started.state === "ready") await this.#markIdentityAgain(started, signal);
     if (started.state === "ready" && started.restoredAt) {
       await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
       return (await this.#read(started.threadId, started.id)) ?? started;

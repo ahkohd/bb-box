@@ -117,7 +117,7 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   const box = await readyBox(state);
   writeIn(state, box, "work/state.txt", "set up");
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" })).snapshot!;
-  assert.equal(taken.forkSafe, 7);
+  assert.equal(taken.forkSafe, 8);
   assert.deepEqual(taken.identity, { machineId: createHash("sha256").update(`${SOURCE_MACHINE_ID}\n`).digest("hex"), hostKeys: [createHash("sha256").update("AAAAC3NzaC1lZDI1NTE5AAAAIsourcekey\n").digest("hex")] });
   assert.deepEqual(state.store.record(taken.id)?.identity, taken.identity, "kept on the record");
   writeIn(state, box, "work/state.txt", "changed after the take");
@@ -289,7 +289,7 @@ test("070 unit 7: a fork starts with up to 180 s for its first boot, and a fork 
   const box = await readyBox(state);
   flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: "sync: Input/output error" }));
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "unflushed" })).snapshot!;
-  assert.equal(taken.forkSafe, 7);
+  assert.equal(taken.forkSafe, 8);
   assert.equal(taken.unflushed, "sync: Input/output error");
   const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "unflushed");
   assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: bb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
@@ -349,14 +349,14 @@ test("070 unit 7 reviews: a snapshot from an identity reset older than its backe
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "older" })).snapshot!;
   const backend = state.backend as Backend;
   const offered = backend.snapshotting!(box.kind)!;
-  (state.backend as unknown as Record<string, unknown>).snapshotting = () => ({ ...offered, forkSafeFrom: 8 });
+  (state.backend as unknown as Record<string, unknown>).snapshotting = () => ({ ...offered, forkSafeFrom: 9 });
   const refused = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "older"));
   assert.equal(refused.code, "unsupported");
-  assert.match(refused.message, new RegExp(`^${box.name} had version 7 of the identity reset when "older" was taken, and bb-box forks .+ only from version 8`));
+  assert.match(refused.message, new RegExp(`^${box.name} had version 8 of the identity reset when "older" was taken, and bb-box forks .+ only from version 9`));
   assert.equal(state.provider.order.some((step) => step.startsWith("fork")), false);
-  assert.match(forkWhyOf(state.store.record(taken.id)!, backend.snapshotting!(box.kind)) ?? "", /had an identity reset older than version 8 when it was taken/);
+  assert.match(forkWhyOf(state.store.record(taken.id)!, backend.snapshotting!(box.kind)) ?? "", /had an identity reset older than version 9 when it was taken/);
   const ofBox = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box)));
-  assert.match(ofBox.message, /has version 7 of the identity reset, and bb-box forks .+ only from version 8/);
+  assert.match(ofBox.message, /has version 8 of the identity reset, and bb-box forks .+ only from version 9/);
 });
 
 test("070 unit 7 reviews: a fork whose guest cannot be deleted keeps its guest and its operation unsettled, says so, and the sweep deletes it later", async () => {
@@ -565,7 +565,7 @@ test("070 unit 8, G15: Keep, release, restart bb-box, then fork the kept snapsho
   await state.snapshots.sweep();
   const kept = state.snapshots.findGone(box.name, "release candidate");
   assert.equal(kept.guest, "held-copy");
-  assert.equal(kept.forkSafe, 7, "a held copy keeps its snapshot's identity reset version");
+  assert.equal(kept.forkSafe, 8, "a held copy keeps its snapshot's identity reset version");
   const agent: Caller = { is: "agent", threadId: THREAD };
   assert.match((await rejection(state.snapshots.fork(agent, { id: box.id }, standing(box), taken.id))).message, /has no snapshot/, "an agent cannot see a released box's kept snapshot");
   const answer = await state.snapshots.forkGone(kept, { is: "command" }, { name: "from-kept" });
@@ -597,4 +597,54 @@ test("070 unit 8: a fork's release disarms its guest before every attempt to del
   const order = state.backend.calls.filter((call) => call.startsWith("disarm ") || call.startsWith("release "));
   assert.deepEqual(order, [`disarm ${fork.guest!.ref}`, `release ${fork.guest!.ref}`, `disarm ${fork.guest!.ref}`, `release ${fork.guest!.ref}`], "disarmed before the first delete and before the sweep's retry");
   assert.equal(await state.backend.power(fork.guest!), null);
+});
+
+test("070 unit 11b: on a backend whose identity source is a value, the check before ready compares the marker's value with the fork's own box ID, not MAC addresses or addresses the provider gives", () => {
+  const status = "version=8\nenabled=yes\nboot=kept\nmarker=matches\narmed=yes\npending=no\nbox=\nsource=value";
+  const whole = [status, `machine_id=${HASH_B}`, `host_key=${HASH_B}`, "tailnet_node=no", "marker_value=bxfork00000001", "address=203.0.113.9", "addresses_read=yes"];
+  const expected = { forkMacs: [], sourceMacs: [], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddress: null, ownAddress: null, boxAddresses: [], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 8, forkValue: "bxfork00000001" };
+  assert.deepEqual(forkVerdict(parseForkSeen(seenLines(whole), 0), expected), { is: "ready" });
+  const cases: readonly [string, readonly string[], RegExp][] = [
+    ["the source's value", whole.map((line) => line.replace("marker_value=bxfork00000001", "marker_value=bxsource")), /its identity marker holds amber-fox's value, so its identity reset did not tell it is a copy/],
+    ["no value", whole.filter((line) => !line.startsWith("marker_value=")), /its identity marker holds no value, not its own bxfork00000001/],
+    ["the marker still names a box", whole.map((line) => line.replace("box=", "box=bxsource")), /its identity marker names box bxsource, amber-fox, which a reset would have removed/],
+    ["BB's machine still there", [...whole, "bb_file=/home/box/.bb-machines/bb.example.com/host-id"], /BB's machine credentials are still on its disk/],
+    ["the access file still there", [...whole, "access_file=/home/box/.config/bb-box/env"], /the thread's access file is still on its disk/],
+    ["a tailnet node", whole.map((line) => line.replace("tailnet_node=no", "tailnet_node=yes")), /its Tailscale state still holds a tailnet node/],
+    ["the source's machine ID", whole.map((line) => line.replace(`machine_id=${HASH_B}`, `machine_id=${HASH_A}`)), /its machine ID is amber-fox's/],
+    ["the source's host key", whole.map((line) => line.replace(`host_key=${HASH_B}`, `host_key=${HASH_A}`)), /it has amber-fox's SSH host keys/],
+    ["version 7", whole.map((line) => line.replace("version=8", "version=7")), /it has version 7 of the identity reset, and bb-box forks only from version 8 there/],
+  ];
+  for (const [name, lines, why] of cases) {
+    const verdict = forkVerdict(parseForkSeen(seenLines(lines), 0), expected);
+    assert.equal(verdict.is, "refused", name);
+    assert.match((verdict as { why: string }).why, why, name);
+  }
+  assert.equal(parseForkSeen(seenLines(WHOLE), 0).markerValue, null, "a MAC marker has no value line");
+  assert.deepEqual(forkVerdict(parseForkSeen(seenLines(WHOLE), 0), EXPECTED), { is: "ready" }, "Proxmox's MAC check is as it was");
+});
+
+test("070 unit 11b review, Astra 2 and Opus 5: where the backend can, a fork starts only as far as its identity check, core checks it through the backend's own check command, and only then arms it to finish its start", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  const backend = state.backend as unknown as Record<string, unknown> & Backend;
+  const start = backend.start!.bind(backend);
+  const transports = backend.transports.bind(backend);
+  backend.startForForkCheck = async (guest: Guest, signal: AbortSignal) => {
+    state.provider.order.push("start up to the check");
+    await start(guest, signal);
+  };
+  backend.forkCheckCommand = async (guest: Guest) => {
+    state.provider.order.push("the check's own command");
+    return (await transports(guest, box.kind)).command!;
+  };
+  state.provider.order.length = 0;
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+  const fork = await forked(state, answer.box);
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  const order = state.provider.order.filter((step) => step.startsWith("start ") || step.startsWith("the check") || step.startsWith("arm boot"));
+  assert.deepEqual(order, ["start up to the check", "the check's own command", `arm boot ${fork.guest!.ref}`], state.provider.order.join(", "));
+  assert.equal(state.provider.order.includes("start within 180 s"), false, "core never starts the fork whole before its check");
 });

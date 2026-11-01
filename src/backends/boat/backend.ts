@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { IDENTITY_TOOL, IDENTITY_VARIABLE } from "../../core/identity.ts";
 import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type Display, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, type CommandTransport, type Display, type SshAccess } from "../../transports/types.ts";
 import { deviceModels, type DeviceOffer } from "../../core/device.ts";
 import { fitsDevice, leastSize } from "../../core/sizes.ts";
 import { setupDir } from "../setup-dir.ts";
@@ -25,7 +26,9 @@ import {
   type BoxTransports,
   type Capacity,
   type CopyHooks,
+  type ForkArming,
   type GuestIdentity,
+  type IdentitySource,
   type HeldSnapshot,
   type SnapshotBill,
   type SnapshotHooks,
@@ -52,9 +55,9 @@ import {
   type WithheldKind,
 } from "../types.ts";
 import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type SavedAllowance, type SavedSnapshot, type Sandbox, type SandboxSize, type SizeShape, type SshReach } from "./api.ts";
-import { BOAT_STORAGE, FORK_NOT_YET, SAVE_POLL_MS, SAVE_RUNNING_ABOUT_MS, SAVE_STOPPED_ABOUT_MS, SAVE_WAIT_MS, billOf, boatOffer, heldFrom, heldStateOf, parseSavedName, savedName, savedPrice, savedRefusal, startCostWords } from "./snapshots.ts";
+import { BOAT_STORAGE, SAVED_FACTS_KEY, SAVE_POLL_MS, SAVE_RUNNING_ABOUT_MS, SAVE_STOPPED_ABOUT_MS, SAVE_WAIT_MS, billOf, boatOffer, factsWith, forkStartWords, heldFrom, heldStateOf, parseSavedName, savedName, savedPrice, savedRefusal, startCostWords, type SavedFactsByName } from "./snapshots.ts";
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
-import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
+import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, IDENTITY_RESET_KINDS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 
@@ -102,6 +105,13 @@ export const BOAT_READY_FILE = "/run/bb-box/boat-ready";
 const SETTLED_SCRIPT = `test -e ${BOAT_READY_FILE} && docker info >/dev/null 2>&1`;
 const SETTLE_KICK_AFTER_MS = 20_000;
 const SETTLE_KICK = "sudo -n systemctl daemon-reload; sudo -n systemctl start --no-block bb-box-boat-ready.service docker.service";
+const IDENTITY_SWITCH = "/usr/local/lib/bb-box/identity-reset-on";
+export const IDENTITY_BOOT_SCRIPT = [`if [ ! -x ${IDENTITY_TOOL} ] || [ ! -e ${IDENTITY_SWITCH} ]; then echo boot=off; exit 0; fi`, `sudo -n ${IDENTITY_TOOL} status`].join("\n");
+const IDENTITY_KICK = "sudo -n systemctl daemon-reload; sudo -n systemctl start --no-block bb-box-identity-settle.service";
+const IDENTITY_KICK_AFTER_MS = 10_000;
+const IDENTITY_DECIDED: ReadonlySet<string> = new Set(["off", "kept", "unarmed", "reset"]);
+const FORK_IDENTITY_DECIDED: ReadonlySet<string> = new Set(["kept", "reset"]);
+const FORK_IDENTITY_REFUSED: ReadonlySet<string> = new Set(["off", "unarmed"]);
 const NAME_PREFIX = "bb-box:";
 const MIB_PER_GB = 1024;
 const RESIZING: Resizing = { cores: "restart", memory: "restart", disk: "restart", shrinks: true };
@@ -246,8 +256,20 @@ export interface BoatBackendOptions {
   readonly resolve?: (host: string) => Promise<readonly string[]>;
   readonly ownKeyScript?: (publicKey: string) => string;
   readonly settledScript?: string;
+  readonly identityBootScript?: string;
   readonly kinds?: readonly BoatKind[];
   readonly cuaReadyScript?: string;
+}
+
+function stepTimer(timing: (step: string, ms: number) => void) {
+  return async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const started = performance.now();
+    try {
+      return await run();
+    } finally {
+      timing(name, Math.round(performance.now() - started));
+    }
+  };
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -277,6 +299,17 @@ export function stagingName(boxId: string, token: string): string {
 export function stagingOf(name: string): { readonly box: string; readonly token: string } | null {
   const found = /^bb-box:restoring:(bx[a-z2-7]{12}):([a-z2-9]{8})$/.exec(name);
   return found ? { box: found[1]!, token: found[2]! } : null;
+}
+
+interface FromSaved {
+  readonly claim: (guest: Guest) => Promise<void>;
+  readonly submitting: () => Promise<void>;
+  readonly refused: (words: string) => Error;
+  readonly failed: (error: unknown) => unknown;
+}
+
+export function identityEnv(boxId: string): Readonly<Record<string, string>> {
+  return { [IDENTITY_VARIABLE]: boxId };
 }
 
 export function sandboxName(box: Pick<BoxIdentity, "threadId" | "name">): string {
@@ -324,6 +357,8 @@ export class BoatBackend implements Backend {
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #reaches = new Map<string, SshReach>();
   readonly #acquiring = new Set<string>();
+  readonly #making = new Set<string>();
+  #factsQueue: Promise<unknown> = Promise.resolve();
   readonly templates: BoatTemplates;
   #knownHostsPath: string | null = null;
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
@@ -461,7 +496,7 @@ export class BoatBackend implements Backend {
         const template = await this.templates.forBox(kind, signal, async (words) => hooks.waiting?.(words));
         made = await step("fork", () =>
           this.#whileBusy(signal, () =>
-            this.#api.fork(template.sandbox, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: this.#labels(box, kind), name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}` }, signal),
+            this.#api.fork(template.sandbox, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: this.#labels(box, kind), name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}`, env: identityEnv(box.boxId) }, signal),
           ),
         );
         await hooks.claim(this.#guest(box.boxId, made, shape));
@@ -473,6 +508,7 @@ export class BoatBackend implements Backend {
       await step("ssh", async () => {
         await this.#reach(sandbox.id, signal, true);
         await this.#answers(sandbox.id, "user", this.#now() + this.#readyMs(), signal);
+        await this.#identityDecided(sandbox.id, IDENTITY_DECIDED, this.#now() + this.#readyMs(), signal);
         const owned = await (await this.#command(sandbox.id, "user", signal)).run((this.#options.ownKeyScript ?? ownKeyScript)((await this.#keys()).publicKey), { timeoutMs: 30_000, signal });
         if (owned.exitCode !== 0) throw new Error(`boat's sandbox ${sandbox.id} did not take bb-box's key for its box user: ${owned.stderr.trim().slice(-300) || `exit ${owned.exitCode}`}`);
         await this.#answers(sandbox.id, BOX_USER, this.#now() + this.#readyMs(), signal);
@@ -555,16 +591,24 @@ export class BoatBackend implements Backend {
   }
 
   async #start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, size?: SandboxSize): Promise<void> {
+    const sandbox = await this.#upToIdentityCheck(guest, IDENTITY_DECIDED, signal, timing, size);
+    await this.#afterIdentityCheck(sandbox, signal, timing);
+  }
+
+  async startForForkCheck(guest: Guest, signal: AbortSignal, timing: (step: string, ms: number) => void = () => {}): Promise<void> {
+    await this.#upToIdentityCheck(guest, FORK_IDENTITY_DECIDED, signal, timing);
+  }
+
+  async forkCheckCommand(guest: Guest, signal?: AbortSignal): Promise<CommandTransport> {
     const sandbox = await this.#mine(guest, signal);
     if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
-    const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
-      const started = performance.now();
-      try {
-        return await run();
-      } finally {
-        timing(name, Math.round(performance.now() - started));
-      }
-    };
+    return this.#command(sandbox.id, "user", signal);
+  }
+
+  async #upToIdentityCheck(guest: Guest, decided: ReadonlySet<string>, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, size?: SandboxSize): Promise<Sandbox> {
+    const sandbox = await this.#mine(guest, signal);
+    if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
+    const step = stepTimer(timing);
     if (sandbox.state === "archiving") await this.#api.waitFor(sandbox.id, (each) => each.state === "archived", this.#now() + STATE_WITHIN_MS, signal);
     if (!isRunning(sandbox.state)) {
       await this.#forget(sandbox.id);
@@ -573,10 +617,17 @@ export class BoatBackend implements Backend {
         await this.#api.waitFor(sandbox.id, (each) => isRunning(each.state), this.#now() + this.#readyMs(), signal);
       });
     }
-    await step("ssh", async () => {
+    await step("identity check", async () => {
       await this.#reach(sandbox.id, signal, true);
-      await this.#answers(sandbox.id, BOX_USER, this.#now() + this.#readyMs(), signal);
+      await this.#answers(sandbox.id, "user", this.#now() + this.#readyMs(), signal);
+      await this.#identityDecided(sandbox.id, decided, this.#now() + this.#readyMs(), signal);
     });
+    return sandbox;
+  }
+
+  async #afterIdentityCheck(sandbox: Sandbox, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}): Promise<void> {
+    const step = stepTimer(timing);
+    await step("ssh", () => this.#answers(sandbox.id, BOX_USER, this.#now() + this.#readyMs(), signal));
     await step("settle", () => this.#settled(sandbox.id, this.#now() + this.#readyMs(), signal));
     const kind = (this.#offered() as readonly string[]).includes(sandbox.labels[LABELS.kind] ?? "") ? (sandbox.labels[LABELS.kind] as BoatKind) : null;
     if (kind && desktopDisplays(KINDS[kind].capabilities.displays).length) await step("display", () => this.#display(sandbox.id, signal));
@@ -694,9 +745,16 @@ export class BoatBackend implements Backend {
     const takeWhy = refused ?? gone ?? failed;
     const saved = target && !refused ? await this.#api.savedSnapshot(target.ref, signal) : null;
     const starts = startCostWords(limits);
+    const forkStarts = forkStartWords(limits);
     const restoreWhy = refused ?? gone ?? failed ?? (target && !saved ? `boat has no saved snapshot ${target.ref} any more.` : saved && saved.status !== "ready" ? `boat's saved snapshot ${saved.name} is ${saved.status}${saved.error ? `: ${saved.error}` : ""}.` : null) ?? (starts.ok ? null : `${starts.words}.`);
     const price = refused ? null : savedPrice(limits, this.#lastAllowance);
     const back = saved?.size ? shapeOf(saved.size) : null;
+    const forkShape = target ? back : shapeOf(sandbox?.size ?? null);
+    const forkWhy =
+      refused ??
+      (target && !saved ? `boat has no saved snapshot ${target.ref} any more.` : saved && saved.status !== "ready" ? `boat's saved snapshot ${saved.name} is ${saved.status}${saved.error ? `: ${saved.error}` : ""}.` : null) ??
+      (forkShape ? null : `bb-box could not read the size of ${target ? `boat's saved snapshot ${target.ref}` : `box ${guest.ref}'s sandbox`}.`) ??
+      (forkStarts.ok ? null : `${forkStarts.words}.`);
     return {
       storage: BOAT_STORAGE,
       take: { ok: takeWhy === null, why: takeWhy, aboutMs: sandbox && isRunning(sandbox.state) ? SAVE_RUNNING_ABOUT_MS : SAVE_STOPPED_ABOUT_MS, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: "boat.dev saves a sandbox's disk only." },
@@ -712,8 +770,8 @@ export class BoatBackend implements Backend {
         copyAboutMs: null,
         costWords: refused ? null : `${starts.words}.`,
       },
-      keep: { way: refused ? "no" : "as-is", why: refused ?? `${FORK_NOT_YET}.`, aboutMs: null, bytes: null, price },
-      fork: { ok: false, why: `${FORK_NOT_YET}.`, aboutMs: 0, bytes: null, size: null },
+      keep: { way: refused ? "no" : "as-is", why: refused, aboutMs: null, bytes: null, price },
+      fork: { ok: forkWhy === null, why: forkWhy, aboutMs: RESTART_SECONDS[this.#kind(kind)] * 1000, bytes: null, size: forkShape ? shapeSize(forkShape) : null },
       locked: null,
       busy: !refused && !gone && !failed ? moving : null,
     };
@@ -747,6 +805,7 @@ export class BoatBackend implements Backend {
       throw new SnapshotFailed(`${failed}.`);
     }
     const capturedAt = (saved.artifact ? await this.#api.captureTime(saved.artifact, signal).catch(() => null) : null) ?? saved.createdAt ?? this.#now();
+    await this.#changeFacts((facts) => factsWith(facts, name, { forkSafe: take.forkSafe ?? null, owner: ownerOf(sandbox) })).catch((error: unknown) => this.#context.logError(`keep what a fork of boat's saved snapshot ${name} needs`, error));
     return { ref: name, holds: "disk", capturedAt, size: saved.bytes !== null ? { bytes: saved.bytes, means: "own" } : null };
   }
 
@@ -763,14 +822,12 @@ export class BoatBackend implements Backend {
   }
 
   async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
-    const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
-    const name = ref.ref || (box ? savedName(this.#context.installId, box, ref.id) : "");
-    const parsed = parseSavedName(name);
-    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so bb-box does not delete it.`);
+    const name = this.#ownSavedName(ref);
     await hooks.submitting();
     await hooks.task({ ref: `${DELETE_TASK}${name}`, host: BOAT_HOST });
     await this.#whileBusy(signal, () => this.#api.deleteSavedSnapshot(name, signal));
     if (await this.#api.savedSnapshot(name, signal)) throw new Error(`boat still lists the saved snapshot ${name} after deleting it.`);
+    await this.#changeFacts((facts) => (name in facts ? factsWith(facts, name, null) : facts));
   }
 
   async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
@@ -790,12 +847,15 @@ export class BoatBackend implements Backend {
       const parsed = parseSavedName(saved.name);
       return parsed && parsed.install === this.#context.installId ? [{ saved, parsed }] : [];
     });
+    await this.#forgetGoneFacts(new Set(listed.snapshots.map((saved) => saved.name)), signal);
+    const facts = await this.#facts();
     if (!mine.length) return [];
     const sandboxes = await this.#held(signal);
     return mine.map(({ saved, parsed }) => {
       const sandbox = sandboxes.find((each) => each.labels[LABELS.box] === parsed.box && (isRunning(each.state) || isStarting(each.state) || isStopped(each.state))) ?? null;
       const guest = sandbox ? this.#guest(parsed.box, sandbox, shapeOf(sandbox.size)) : this.#guest(parsed.box, null, null);
-      return heldFrom(saved, parsed.box, parsed.snapshot, guest, sandbox ? ownerOf(sandbox) : null);
+      const known = facts[saved.name] ?? null;
+      return heldFrom(saved, parsed.box, parsed.snapshot, guest, sandbox ? ownerOf(sandbox) : (known?.owner ?? null), known);
     });
   }
 
@@ -809,48 +869,140 @@ export class BoatBackend implements Backend {
   }
 
   async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, _identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    return this.#fromSaved(ref, box, {
+      claim: (guest) => hooks.claimed(guest),
+      submitting: () => hooks.submitting(),
+      refused: (words) => new SnapshotFailed(words),
+      failed: (error) => (error instanceof BoatError && error.kind !== "unreachable" ? new SnapshotFailed(error.message) : error),
+    }, signal);
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    const earlier = previous ? await this.#mine(previous, signal) : null;
+    if (previous && earlier && typeof previous.data?.staging !== "string") return previous;
+    if (previous) await this.release(previous, { resetting: async () => {}, timing: () => {} }, signal);
+    return this.#fromSaved(ref, box, {
+      claim: (guest) => hooks.claim(guest),
+      submitting: async () => {},
+      refused: (words) => new BackendError("unsupported", words),
+      failed: (error) => this.#asBackendError(error),
+    }, signal);
+  }
+
+  async #fromSaved(ref: SnapshotRef, box: BoxIdentity, ways: FromSaved, signal?: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
     const limits = await this.#readLimits(signal, true);
     const refused = savedRefusal(limits);
-    if (refused) throw new SnapshotFailed(refused);
+    if (refused) throw ways.refused(refused);
     const saved = await this.#api.savedSnapshot(ref.ref, signal);
-    if (!saved || saved.status !== "ready") throw new SnapshotFailed(saved ? `boat's saved snapshot ${ref.ref} is ${saved.status}.` : `boat has no saved snapshot ${ref.ref}.`);
+    if (!saved || saved.status !== "ready") throw ways.refused(saved ? `boat's saved snapshot ${ref.ref} is ${saved.status}.` : `boat has no saved snapshot ${ref.ref}.`);
     const allowed = (each: SizeShape) => limits.sizes.find((size) => size.size === each.size)?.available ?? true;
     const shape = (saved.size ? shapeOf(saved.size) : null) ?? sizeFor(box.size, allowed);
-    if (!shape) throw new SnapshotFailed(this.#tooBig(box.size, limits));
+    if (!shape) throw ways.refused(this.#tooBig(box.size, limits));
     const token = guestToken();
+    const making = `${box.boxId}:${token}`;
+    this.#making.add(making);
+    try {
+      return await this.#deployAndCopy(ref, box, kind, shape, token, ways, signal);
+    } finally {
+      this.#making.delete(making);
+    }
+  }
+
+  async #deployAndCopy(ref: SnapshotRef, box: BoxIdentity, kind: BoatKind, shape: SizeShape, token: string, ways: FromSaved, signal?: AbortSignal): Promise<Guest> {
+    const env = identityEnv(box.boxId);
     const claimed = (sandbox: Sandbox | null, staging: string | null) => {
       const guest = this.#guest(box.boxId, sandbox, shape, [], token);
       return staging ? { ...guest, data: { ...guest.data, staging } } : guest;
     };
-    await hooks.claimed(claimed(null, null));
-    await hooks.submitting();
-    const refusal = (error: unknown) => (error instanceof BoatError && error.kind !== "unreachable" ? new SnapshotFailed(error.message) : error);
+    await ways.claim(claimed(null, null));
+    await ways.submitting();
     const staging = await this.#whileBusy(signal, () =>
-      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}-staging` }, signal),
+      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}-staging`, env }, signal),
     ).catch((error: unknown) => {
-      throw refusal(error);
+      throw ways.failed(error);
     });
-    await hooks.claimed(claimed(null, staging.id));
+    await ways.claim(claimed(null, staging.id));
     await this.#api.waitFor(staging.id, (each) => isRunning(each.state), this.#now() + this.#readyMs(), signal);
     await this.#whileBusy(signal, () => this.#api.stop(staging.id, signal));
     await this.#api.waitArchived(staging.id, this.#now() + STATE_WITHIN_MS, signal);
     const made = await this.#whileBusy(signal, () =>
-      this.#api.fork(staging.id, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: { ...this.#labels(box, kind), [LABELS.guest]: token }, name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}` }, signal),
+      this.#api.fork(staging.id, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: { ...this.#labels(box, kind), [LABELS.guest]: token }, name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}`, env }, signal),
     ).catch((error: unknown) => {
-      throw refusal(error);
+      throw ways.failed(error);
     });
-    await hooks.claimed(claimed(made, staging.id));
+    await ways.claim(claimed(made, staging.id));
     try {
       await this.#dropStaging(box.boxId, token, staging.id, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
-      this.#context.logError(`delete boat's sandbox ${staging.id}, deployed to restore box ${box.boxId}; bb-box's upkeep deletes it later`, error);
+      this.#context.logError(`delete boat's sandbox ${staging.id}, deployed to make box ${box.boxId}'s sandbox from a saved snapshot; bb-box's upkeep deletes it later`, error);
       return claimed(made, staging.id);
     }
     const guest = claimed(made, null);
-    await hooks.claimed(guest);
+    await ways.claim(guest);
     return guest;
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return (IDENTITY_RESET_KINDS as readonly string[]).includes(kind) ? "value" : null;
+  }
+
+  readonly addressIsAnEndpoint = true;
+
+  async guestIdentity(guest: Guest): Promise<GuestIdentity> {
+    return { macs: {}, smbios: null, value: typeof guest.data?.box === "string" ? guest.data.box : null };
+  }
+
+  async armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    if (arming !== "boot") return;
+    const sandbox = await this.#mine(guest, signal);
+    if (!sandbox) throw new BackendError("gone", `boat's sandbox for box ${guest.ref} is gone.`);
+    await this.#afterIdentityCheck(sandbox, signal);
+  }
+
+  async disarmFork(_guest: Guest): Promise<void> {}
+
+  async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    const name = this.#ownSavedName(ref);
+    const saved = await this.#api.savedSnapshot(name, signal);
+    if (!saved) {
+      if (kept !== null) throw new SnapshotFailed(`boat has no saved snapshot ${name} any more.`);
+      await this.#changeFacts((facts) => (name in facts ? factsWith(facts, name, null) : facts));
+      return;
+    }
+    const sandbox = await this.#mine(ref.guest, signal).catch(() => null);
+    await this.#changeFacts((facts) => factsWith(facts, name, { kept, ...(sandbox && !facts[name]?.owner ? { owner: ownerOf(sandbox) } : {}) }));
+  }
+
+  async #facts(): Promise<SavedFactsByName> {
+    await this.#factsQueue;
+    return (await this.#context.storage.get<SavedFactsByName>(SAVED_FACTS_KEY)) ?? {};
+  }
+
+  #changeFacts(change: (facts: SavedFactsByName) => SavedFactsByName): Promise<void> {
+    const next = this.#factsQueue.then(async () => {
+      const facts = (await this.#context.storage.get<SavedFactsByName>(SAVED_FACTS_KEY)) ?? {};
+      const changed = change(facts);
+      if (changed !== facts) await this.#context.storage.set(SAVED_FACTS_KEY, changed);
+    });
+    this.#factsQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  async #forgetGoneFacts(listed: ReadonlySet<string>, signal?: AbortSignal): Promise<void> {
+    const unlisted = Object.keys(await this.#facts()).filter((name) => !listed.has(name));
+    const gone: string[] = [];
+    for (const name of unlisted) if ((await this.#api.savedSnapshot(name, signal).catch(() => undefined)) === null) gone.push(name);
+    if (gone.length) await this.#changeFacts((facts) => gone.reduce((left, name) => (name in left ? factsWith(left, name, null) : left), facts));
+  }
+
+  #ownSavedName(ref: SnapshotRef): string {
+    const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
+    const name = ref.ref || (box ? savedName(this.#context.installId, box, ref.id) : "");
+    const parsed = parseSavedName(name);
+    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so bb-box does not change it.`);
+    return name;
   }
 
   async #dropStaging(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<void> {
@@ -885,10 +1037,12 @@ export class BoatBackend implements Backend {
   }
 
   async #dropOldStaging(recordedGuests: ReadonlySet<string> | undefined, signal?: AbortSignal): Promise<void> {
-    for (const sandbox of await this.#api.list({}, signal)) {
+    const all = await this.#api.list({}, signal);
+    for (const sandbox of all) {
       const found = stagingOf(sandbox.name);
-      if (!found || Object.keys(sandbox.labels).length) continue;
-      const done = recordedGuests?.has(`bbbox-${found.box}-${found.token}`) ?? false;
+      if (!found || Object.keys(sandbox.labels).length || this.#making.has(`${found.box}:${found.token}`)) continue;
+      const copied = all.some((each) => each.labels[LABELS.install] === this.#context.installId && each.labels[LABELS.box] === found.box && tokenOf(each) === found.token && each.state !== "error");
+      const done = copied && (recordedGuests?.has(`bbbox-${found.box}-${found.token}`) ?? false);
       const abandoned = sandbox.createdAt !== null && this.#now() - sandbox.createdAt > STAGING_ABANDONED_MS;
       if (!done && !abandoned) continue;
       await this.#api.delete(sandbox.id, signal);
@@ -1233,6 +1387,30 @@ export class BoatBackend implements Backend {
       await this.#sleep(250, signal);
     }
     throw new Error(`boat's sandbox ${sandbox} did not finish restoring its template in time: ${BOAT_READY_FILE} is missing or Docker does not answer${last ? ` (${last})` : ""}. Check bb-box-boat-ready.service and docker.service in the box.`);
+  }
+
+  async #identityDecided(sandbox: string, decided: ReadonlySet<string>, deadline: number, signal?: AbortSignal): Promise<void> {
+    const command = await this.#command(sandbox, "user", signal);
+    const kickAt = this.#now() + IDENTITY_KICK_AFTER_MS;
+    let kicked = false;
+    let last = "";
+    while (this.#now() < deadline) {
+      const read = await command.run(this.#options.identityBootScript ?? IDENTITY_BOOT_SCRIPT, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: message(error) }));
+      const boot = /^boot=(\S+)$/m.exec(read.stdout)?.[1] ?? null;
+      if (read.exitCode === 0 && boot && decided.has(boot)) return;
+      if (read.exitCode === 0 && boot && decided === FORK_IDENTITY_DECIDED && FORK_IDENTITY_REFUSED.has(boot)) {
+        throw new Error(`boat's sandbox ${sandbox}, a fork, says its identity check is ${boot === "off" ? "off" : "unarmed, with no marker"}, so it has not shown that it gave up its source's identity, and bb-box lets nothing use it.`);
+      }
+      if (read.exitCode === 0 && boot === "failed") throw new Error(`boat's sandbox ${sandbox} could not finish its identity reset, so bb-box does not let its box user in, and BB's daemon and Tailscale stay off. The next start tries again; bb-box-identity.service in the box says why.`);
+      last = boot ? `its identity check says ${boot}` : read.stderr.trim();
+      if (!kicked && this.#now() >= kickAt) {
+        kicked = true;
+        await command.run(IDENTITY_KICK, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 }).catch(() => undefined);
+        this.#context.log?.(`boat: sandbox ${sandbox} had not run its identity check ${Math.round(IDENTITY_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
+      }
+      await this.#sleep(250, signal);
+    }
+    throw new Error(`boat's sandbox ${sandbox} did not finish checking whether it is a copy in time${last ? ` (${last})` : ""}, so bb-box does not let its box user in. bb-box-identity.service in the box says why.`);
   }
 
   async #restored(sandbox: string, deadline: number, signal?: AbortSignal): Promise<void> {

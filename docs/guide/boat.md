@@ -95,7 +95,11 @@ A saved snapshot lives on your boat.dev account, not on the box, and does not ex
 
 A restore stops the box, so boat.dev saves its disk, saves that as the undo, and then makes the box a new sandbox from the snapshot, with the same box ID, name and labels, and deletes the old sandbox. boat.dev counts 2 starts for this, as it gives a sandbox deployed from a saved snapshot no labels, so BB Box deploys it, stops it and copies it with the box's labels. They are free within your plan's starts, and from $0.03 each past them, which the restore dialog says before you restore. A restore needs 3 starts left, as putting the box back if the new sandbox fails takes a third. The old sandbox stays, stopped, until the new one has started. A release deletes the box's saved snapshots with it, unless you kept one.
 
-The free trial has no saved snapshots, so a box on it has no snapshots, restores or Keep. Forks, and Keep, which needs a snapshot that can be forked after its box is released, wait until boat.dev boxes have an identity reset of their own.
+A snapshot of a Linux box forks when it was taken with version 8 or later of the [identity reset](snapshots.md#on-boatdev) working, which boxes have from a Linux template built with it, once `general.identityResetBackends` names boat.dev's backend. The fork is a new sandbox made from the saved snapshot, with the fork's own identity value, and costs 2 of boat.dev's starts. Keep holds a saved snapshot past the box's release as it is, at boat.dev's daily price past the plan's included ones, until its keep date. Linux desktop and Android boxes have no identity reset on boat.dev yet, so their snapshots neither fork nor are kept.
+
+A copy of a box's sandbox made outside BB Box, in boat.dev's dashboard or with its API, keeps its source's identity: it comes up as the same BB machine, with the same tailnet node and the thread's access. Copy a box's sandbox only through BB Box.
+
+The free trial has no saved snapshots, so a box on it has no snapshots, restores, forks or Keep.
 
 ## Android boxes
 
@@ -130,6 +134,7 @@ Each one should be a box in BB Box's Boxes page, or a template, with the label `
 ## Turn it off
 
 1. Release the boxes on boat.dev.
-2. Turn the boat.dev backend off in BB Box's settings. Boxes it already has keep working until they are released.
-3. Delete the templates with `boat delete`, and check that `boat list --all` lists nothing of BB Box's.
-4. Revoke the key in boat.dev's dashboard.
+2. Delete the saved snapshots BB Box took, kept ones included: `bb box snapshot list --all` names them, and `bb box snapshot delete` deletes each one. A saved snapshot outlives its box and goes on costing past the plan's included ones, so BB Box refuses to remove the backend while boat.dev holds any of this install's, and names them; delete any it has no record of in boat.dev's dashboard.
+3. Turn the boat.dev backend off in BB Box's settings. Boxes it already has keep working until they are released.
+4. Delete the templates with `boat delete`, and check that `boat list --all` lists nothing of BB Box's.
+5. Revoke the key in boat.dev's dashboard.

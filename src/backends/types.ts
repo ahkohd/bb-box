@@ -755,6 +755,9 @@ export interface Backend {
   identitySource?(kind: string): IdentitySource | null;
   forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
+  readonly addressIsAnEndpoint?: boolean;
+  startForForkCheck?(guest: Guest, signal: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
+  forkCheckCommand?(guest: Guest, signal?: AbortSignal): Promise<CommandTransport>;
   disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;
   boxAddresses?(): readonly string[];
 

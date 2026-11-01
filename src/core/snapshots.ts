@@ -1149,6 +1149,8 @@ export class Snapshots {
       if (!backend.copyPlan) throw new BoxError("unsupported", `${backend.label} cannot read its held copies, so bb-box does not keep ${quoted(current)} longer.`);
       const copy = await backend.copyPlan(current.livesOn, this.#stopping.signal);
       if (copy.state !== "template") throw new BoxError("failed", `${quoted(current)}'s held copy, guest ${current.livesOn.ref}, is ${copy.state === "gone" ? "gone" : "not a template"}, so bb-box does not keep it longer. Delete it.`);
+    } else if (gone && way === "as-is" && current.keptUntil !== null) {
+      storage = current.storage?.name ?? null;
     } else {
       if (gone) throw new BoxError("unsupported", `Box ${current.box.name} is gone and ${quoted(current)} has no held copy, so there is nothing a keep date would hold: bb-box keeps such a snapshot until you delete it.`);
       const box = await this.#deps.boxes.find(current.box.id);
@@ -3685,6 +3687,7 @@ export class Snapshots {
     const takenAt = held.takenAt ?? now;
     const names = new Set(this.#deps.ledger.records({ box: held.box }).map((record) => record.name));
     const kept = held.keptUntil !== null && held.keptUntil > now;
+    const dated = held.keptUntil !== null && (kept || this.#livesOnProvider(backend));
     const owner = held.owner;
     return {
       id: held.id,
@@ -3708,8 +3711,8 @@ export class Snapshots {
       excludes: null,
       size: null,
       price: this.#priceOfFound(backend, live ? box.kind : (owner?.kind ?? null)),
-      owner: kept || (live ? box.threadId === OPERATOR : owner?.threadId === OPERATOR) ? "person" : "thread",
-      keptUntil: kept ? held.keptUntil : null,
+      owner: dated || (live ? box.threadId === OPERATOR : owner?.threadId === OPERATOR) ? "person" : "thread",
+      keptUntil: dated ? held.keptUntil : null,
       keptAt: null,
       undoOf: null,
       forkSafe: held.forkSafe ?? null,
@@ -3720,7 +3723,7 @@ export class Snapshots {
       error: held.state === "incomplete" ? held.words : null,
       stateAt: now,
       missingSince: null,
-      foundAt: live || kept ? null : now,
+      foundAt: live || dated ? null : now,
     };
   }
 

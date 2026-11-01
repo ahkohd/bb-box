@@ -76,7 +76,7 @@ export class FakeSnapshots {
   copyFault: Error | null = null;
   forkFault: Error | null = null;
   forkWhy: string | null = null;
-  onProvider: { price: Snapshotting["price"]; forkWhy: string } | null = null;
+  onProvider: { price: Snapshotting["price"]; forkWhy?: string; forkSafeFrom?: number } | null = null;
   bill: SnapshotBill | Error | null = null;
   billReads = 0;
   billFrozen = false;
@@ -134,7 +134,19 @@ export class FakeSnapshots {
     }
     target.snapshotting = (): Snapshotting =>
       this.onProvider
-        ? { scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "none", keepsPastRelease: "as-is", lives: "provider", price: this.onProvider.price, excludes: "/tmp", forkWhy: this.onProvider.forkWhy }
+        ? {
+            scope: "box",
+            holds: ["disk"],
+            whileRunning: "live",
+            restore: "new-guest",
+            fork: this.onProvider.forkWhy ? "none" : "copy",
+            keepsPastRelease: "as-is",
+            lives: "provider",
+            price: this.onProvider.price,
+            excludes: "/tmp",
+            ...(this.onProvider.forkWhy ? { forkWhy: this.onProvider.forkWhy } : {}),
+            ...(this.onProvider.forkSafeFrom ? { forkSafeFrom: this.onProvider.forkSafeFrom } : {}),
+          }
         : { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", keepsPastRelease: this.keepWay, lives: "host", price: null, excludes: null };
     const release = backend.release.bind(backend);
     target.release = async (guest: Guest, hooks: never) => {
