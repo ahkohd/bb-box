@@ -226,7 +226,7 @@ privilege, and what each template's storage restores:
 | Storage | Snapshots |
 | --- | --- |
 | LVM-thin, Ceph RBD, BTRFS | restores any snapshot |
-| ZFS | restores only the newest snapshot |
+| ZFS | takes and deletes snapshots, but restores none yet: Proxmox rolls ZFS back only to the newest, and bb-box's restore there is not checked yet |
 | directory, NFS or CIFS | VMs with qcow2 disks: restores any snapshot. Containers and raw disks: takes none |
 | LVM (thick) | none: Proxmox VE 9 takes snapshots of VMs on it only as a preview |
 

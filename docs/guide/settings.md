@@ -103,6 +103,10 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 - Rebuild now: lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date).
 - Projects' images: the images projects set with `bb box image set`.
 
+### Snapshots
+
+How many snapshots each box holds, how long Keep keeps one, how full a host's storage may get, a ceiling on paid snapshots for each backend that charges, whether agents may restore their own boxes and memory snapshots, and whether a picture of the screen is kept with each snapshot. The page also says what each backend's snapshots hold and cost. See [snapshots' settings](snapshots.md#settings).
+
 ### Devices
 
 Each setting here acts at once.
