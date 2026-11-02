@@ -38,7 +38,15 @@ fi
 root=$(findmnt -no SOURCE /)
 part=$(cat "/sys/class/block/${root#/dev/}/partition" 2>/dev/null || true)
 disk=$(lsblk -no PKNAME "$root" 2>/dev/null || true)
-if [ -n "$part" ] && [ -n "$disk" ] && growpart "/dev/$disk" "$part" >/dev/null 2>&1; then
-  resize2fs "$root" >/dev/null && log "grew $root to fill /dev/$disk"
+if [ -n "$part" ] && [ -n "$disk" ]; then
+  growpart_dir_outside_tmp=$(mktemp -d /run/bb-box-boot.XXXXXX)
+  TMPDIR=$growpart_dir_outside_tmp growpart "/dev/$disk" "$part" >"$growpart_dir_outside_tmp.out" 2>&1
+  grown=$?
+  if [ "$grown" -eq 0 ]; then
+    resize2fs "$root" >/dev/null && log "grew $root to fill /dev/$disk"
+  elif [ "$grown" -gt 1 ]; then
+    log "growpart /dev/$disk $part failed with exit code $grown: $(tail -n 3 "$growpart_dir_outside_tmp.out" | tr '\n' ' ')"
+  fi
+  rm -rf "$growpart_dir_outside_tmp" "$growpart_dir_outside_tmp.out"
 fi
 exit 0
