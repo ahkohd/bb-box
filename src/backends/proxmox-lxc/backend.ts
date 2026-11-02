@@ -80,6 +80,8 @@ import {
   type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
+  type GpuMarkRequest,
+  type GpuMarking,
   type GpuRoom,
   type Guest,
   type GuestFact,
@@ -115,6 +117,8 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
+import { judgeGpuMigration, parseHelperLines, withGpuTagsOf } from "./gpu-marking.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
 import { CURSOR_HELPER, GPU_VIDEO_MARKER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
@@ -174,6 +178,7 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 30_000;
 /** How long new desktops avoid a GPU whose desktop started without it. */
 const AVOID_GPU_MS = 10 * 60_000;
+const RETAG_TRIES = 5;
 /** The GPU memory a desktop needs free as it starts: its display service's MIN_FREE_VRAM_MIB. */
 const DESKTOP_GPU_MIB = 384;
 /** Each GPU's memory as bb-box last read it (#603), by GPU. */
@@ -298,6 +303,7 @@ const BRIDGE: Check = ["proxmox.bridge", "Network bridge"];
 const VMIDS: Check = ["proxmox.vmids", "VMID range"];
 const GPU_REPORT: Check = ["proxmox.gpu-report", "Host's GPU report"];
 const GPU_HELPER: Check = ["proxmox.gpu-helper", "Host's GPU helper"];
+const GPU_MIGRATION: Check = ["proxmox.gpu-migration", "Markers on GPU guests"];
 const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 
@@ -1803,6 +1809,18 @@ export class ProxmoxLxcBackend implements Backend {
           if (vm && helper) {
             const verdict = judgeGpuHelper(helper, { node, pool, vmid: vm.vmid, ageMs: report ? this.#now() - report.at : null, ago });
             checks.push({ id: GPU_HELPER[0], name: GPU_HELPER[1], ...verdict });
+            if (verdict.status === "fail") skip(GPU_MIGRATION);
+            else {
+              try {
+                const setup = this.#markingSetup();
+                const ours = (await api.listPool(pool, signal)).filter((guest) => isOurGuest(guest, setup, node));
+                const looks = await lookAtEach(api, ours, signal);
+                const guests = ours.map((guest, at) => ({ name: guest.name, look: looks[at]! }));
+                checks.push({ id: GPU_MIGRATION[0], name: GPU_MIGRATION[1], ...judgeGpuMigration(parseHelperLines(vm.notes), guests, { ...setup, node, vmid: vm.vmid }) });
+              } catch (error) {
+                warn(GPU_MIGRATION, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
+              }
+            }
           }
           if (!vm) {
             checks.push({
@@ -2014,10 +2032,22 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(member.ref);
     const installId = this.#context.installId;
-    // A warm guest keeps its low CPU weight, and the tag, until the box is ready (#888).
-    const low = parseTags((await api.config(vmid, signal)).tags).includes(START_TAG);
     await api.configure(vmid, { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
-    await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), low) }, signal);
+    // A warm guest keeps its low CPU weight, and the tag, until the box is ready (#888).
+    await this.#retag(api, vmid, (tags) => withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)), signal);
+  }
+
+  async #retag(api: Proxmox, vmid: number, tagsFor: (tags: readonly string[]) => string[], signal?: AbortSignal): Promise<void> {
+    for (let tries = 1; ; tries++) {
+      const config = await api.config(vmid, signal);
+      const tags = parseTags(config.tags);
+      try {
+        await api.configure(vmid, { tags: withGpuTagsOf(tags, tagsFor(tags)), ...(typeof config.digest === "string" ? { digest: config.digest } : {}) }, signal);
+        return;
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.changedMeanwhile) || tries >= RETAG_TRIES) throw error;
+      }
+    }
   }
 
   #proxmox(node: string): Proxmox {
@@ -2509,10 +2539,8 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(guest.ref);
     const installId = this.#context.installId;
-    const tags = parseTags((await api.config(vmid, signal)).tags);
-    const template = templateFromTags(tags);
     await api.configure(vmid, { hostname: box.name, description: describe(box, installId) }, signal);
-    await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)) }, signal);
+    await this.#retag(api, vmid, (tags) => withStartTag(boxTags(box, installId, templateFromTags(tags)), tags.includes(START_TAG)), signal);
     // A spare's low CPU weight goes back as a box takes it (#888).
     await this.#settle(api, vmid, signal);
     if (from !== box.name) await this.#name(vmid, box.name, signal, from);
@@ -2746,6 +2774,24 @@ export class ProxmoxLxcBackend implements Backend {
         return known ? [{ id, freeMiB: known.freeMiB, totalMiB: known.totalMiB, at: known.at, neededMiB: DESKTOP_GPU_MIB, source: known.source }] : [];
       }),
       fullUntil: this.#fullUntil(gpus, state),
+    };
+  }
+
+  async markGpus(request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking> {
+    return markGpus(await this.client(), this.#markingSetup(), request, signal);
+  }
+
+  #markingSetup(): MarkingSetup {
+    return {
+      backend: this.id,
+      label: this.label,
+      pool: this.#config.proxmox.pool,
+      installId: this.#context.installId,
+      reportVm: GPU_REPORT_VM,
+      madeAndRemovedByBbBox: (tags) => tags.includes(FILLING) || tags.includes(RETIRED) || tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)),
+      now: () => this.#now(),
+      sleep: this.#options.sleep ?? pause,
+      ago,
     };
   }
 

@@ -287,9 +287,11 @@ host/setup-gpu.sh --remove       # remove it, and put the timer back
 - Upgrade is running a newer release's `setup-gpu.sh`. It replaces the
   program, restarts the helper, and keeps `gpu.conf` and the ledger in
   `/var/lib/bb-box-gpu`. If the new helper writes no fresh, healthy report
-  within 75 s, the one before is put back as it was, with its ledger. The
-  helper writes its report at least once a minute, so a restart with nothing
-  new to say can take that long.
+  within 30 s, the one before is put back as it was, with its ledger. From
+  0.2.0 the helper writes its report on its first pass after a start, within
+  about 10 s, and each report names the process that wrote it, so a restart
+  always gives a report that differs from the one before. A helper put back from an older release may write only on its
+  one-minute heartbeat, so it is waited for 75 s.
 - An older release refuses to replace a newer helper, or to use a ledger a
   newer protocol wrote, unless given `--downgrade`. It then sets that ledger
   aside, and the helper rebuilds it from the guests.
@@ -305,6 +307,52 @@ host/setup-gpu.sh --remove       # remove it, and put the timer back
   `/var/lib/bb-box-gpu/setup-backup`: run the same command again, and that
   install is put back if the helper does not report.
 - No run changes a guest's device lines or tags.
+
+Before writes come on, bb-box marks its guests that have a card's device
+lines, so the helper knows which claim each holds. It needs bb-box-gpu 0.2.0
+or later, whose report lists its ledger. From BB:
+
+```sh
+bb box gpu mark --check   # what it would mark, and what it leaves and why
+bb box gpu mark           # mark them, and wait up to 10 s for the helper's answers
+bb box gpu mark --undo    # take those markers off again: tags only, see below
+```
+
+- A guest of this install's pool whose device lines name a card gets one tag,
+  `gpu.shared.<the card's UUID>.g<N>`, or `gpu.whole` where its box's record
+  says a whole card. The UUID is the one the helper's report lists for the
+  card those lines name. N is 1 for a guest the helper has never answered,
+  and otherwise one above the last generation its ledger answered. Guests
+  with no GPU device lines are not marked.
+- It writes only the guest's tags, on the digest of the config Proxmox gave
+  it just before, and keeps every other tag. It never restarts, stops or
+  resizes a guest, and never changes a device line. A running box is marked
+  as it runs.
+- It leaves, and names, a guest the helper would refuse or rewrite: lines
+  that name a node no card has, or two cards, or are not exactly the card's
+  set for its kind; raw `lxc.*` lines for GPU devices; GPU lines waiting in
+  its pending changes; a lock; a privileged container; a description that
+  names another install; another guest that names the same box; a card
+  another guest holds whole; another marker it did not write.
+- Templates, held copies, earlier guests, image boxes, warm guests being
+  filled or retired, and other installs' guests are never touched. Each of
+  these is checked again from the config read just before the write.
+- A guest counts as granted only from the helper's own answer to the marker
+  just written, or, for a marker already there, from the helper's ledger
+  holding that generation, part and card. Asked again, a guest the helper
+  refused, or whose ledger holds another claim, gets the next generation once
+  the checks above pass.
+- The doctor's "Markers on GPU guests" check reads each guest's config and
+  pending changes. It fails, naming them, on GPU lines with no marker, lines
+  naming a node no card has, a write the helper would make, a refusal, and a
+  marker the helper's ledger does not hold as asked. It never passes a report
+  that leaves lines out or has no ledger lines.
+- `--undo` takes the shared and whole markers off, and nothing else. It does
+  not clear the claims the helper granted: they stay in its ledger until a
+  later BB Box release clears claims (071 unit 5). With writes off the helper
+  changes nothing; with writes on it would go on giving each stopped guest
+  the lines of the card it claimed. A later mark asks above the generation
+  the ledger answered.
 
 Where the helper is installed, `setup-gpu-report.sh` makes the VM and its
 rights but does not put the timer back. The doctor's "Host's GPU helper"

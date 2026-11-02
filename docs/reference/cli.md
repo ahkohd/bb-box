@@ -62,6 +62,7 @@
 | [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it. |
 | [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
+| [`bb box gpu mark`](#bb-box-gpu-mark) | Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.&lt;card's UUID>.g&lt;N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo takes those markers off again, and nothing else: the claims the helper granted stay in its ledger until a later release clears claims. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
 | [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
@@ -1106,6 +1107,22 @@ Arguments:
 Options:
   --yes       Forget them.
   --help, -h  Show this help and exit
+```
+
+## bb box gpu mark
+
+Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.<card's UUID>.g<N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo takes those markers off again, and nothing else: the claims the helper granted stay in its ledger until a later release clears claims.
+
+```text
+Usage:
+  bb box gpu mark [--check] [--undo] [--on <value>] [--json]
+
+Options:
+  --check       Only say what it would mark, or with --undo take off, and why; it changes nothing.
+  --undo        Take the shared and whole markers off this install's guests again. Other gpu tags stay, and so do the claims the helper granted, in its ledger.
+  --on <value>  Only this backend, by its ID, such as proxmox-lxc. Every Proxmox LXC backend that is on by default.
+  --json        Print JSON.
+  --help, -h    Show this help and exit
 ```
 
 ## bb box monitor snapshot
