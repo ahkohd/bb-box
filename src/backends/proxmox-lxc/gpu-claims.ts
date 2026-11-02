@@ -46,6 +46,9 @@ export function cardsView(notes: string | null, seen: ReportSeen): CardsView {
   const verdict = judgeGpuHelper(judged, { node: seen.node, pool: seen.pool, vmid: seen.vmid, ageMs: at ? seen.now - Number(at[1]) * 1000 : null, ago: seen.ago });
   if (verdict.status === "fail") return { is: "blocked", why: verdict.detail, fix: verdict.fix };
   const lines = parseHelperLines(notes);
+  if (lines.ledgerUnknown) {
+    return { is: "blocked", why: `The GPU helper on ${seen.node} reports its ledger as unknown, as while it waits to rebuild a lost ledger from a full reading of every card, so bb-box cannot see its claims.`, fix: `Read why in VM ${seen.vmid}'s error lines, or with journalctl -u bb-box-gpu on ${seen.node}.` };
+  }
   if (!lines.ledgerReported) {
     return { is: "blocked", why: `bb-box-gpu ${helper.version} on ${seen.node} does not report its ledger, which bb-box reads to claim a card.`, fix: `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${seen.node}.` };
   }

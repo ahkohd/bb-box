@@ -165,6 +165,7 @@ export class FakeNode {
         '  cat "$root/smi" || exit 0',
         '  [ "$(cat "$root/smi-mode" 2>/dev/null)" = stall ] && stall',
         '  [ -f "$root/smi-stderr" ] && cat "$root/smi-stderr" >&2',
+        '  [ -f "$root/smi-killed" ] && kill -KILL $$',
         '  [ "$loop" = 1 ] || exit "$(cat "$root/smi-exit" 2>/dev/null || echo 0)"',
         "  sleep 0.2",
         "done",
@@ -238,6 +239,12 @@ export class FakeNode {
 
   smiRow(card: FakeCard): string {
     return `GPU-${card.uuid}, ${card.bus}, ${card.index}, ${card.freeMiB}, ${card.totalMiB}`;
+  }
+
+  smiKilled(killed: boolean): void {
+    const file = join(this.root, "smi-killed");
+    if (killed) writeFileSync(file, "");
+    else rmSync(file, { force: true });
   }
 
   smiMode(mode: "normal" | "stall" | "silent"): void {
@@ -365,7 +372,7 @@ export class FakeNode {
     return join(this.root, "var/lib/bb-box-gpu/ledger");
   }
 
-  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string }; proposed_strip?: { why: string } }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[] } {
+  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string }; proposed_strip?: { why: string } }>; unsettled?: Record<string, { generation: number }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[] } {
     return JSON.parse(readFileSync(this.ledgerPath(), "utf8"));
   }
 

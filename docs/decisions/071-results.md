@@ -1558,13 +1558,17 @@ before. Writes stay off on the node until the lead runs
   on names: bb-box
   writes the new marker on the digest, every other tag kept, waits for the
   grant, for which the helper writes the card's lines into the stopped
-  guest, and then starts it. With no card that has room, it is not started:
+  guest, and then starts it. Before each marker write, a retry after the
+  config changed meanwhile included, and again just before the start, bb-box
+  reads the guest's config and checks it still names this install and this
+  box, writing on that config's digest; otherwise it writes nothing, does
+  not start the guest, and does not release it. With no card that has room, it is not started:
   "Container 7021 was not started: No card on pve can take another box now:
   ... It is stopped, with its disk as it was." Memory is not part of the
   start gate (see deviations). A start returns the claim it started with,
   and the box's record takes it, with its GPU fact naming the card it holds
   now, also when it starts on the last report's grant while the helper is
-  not reporting. A release, and the readings of GPU memory in running
+  not reporting, and when it is started again while it runs. A release, and the readings of GPU memory in running
   desktops, go by that card too. A stop gives up the box's shared
   reservation at once.
 - **Recovery at bb-box's start.** Before the first placement, bb-box reads
@@ -1595,7 +1599,7 @@ before. Writes stay off on the node until the lead runs
   guest keeps its lines, holds its card unmanaged, and the helper never
   writes it again. It needs bb-box-gpu 0.3.0 or later, and is refused,
   changing nothing, with an older helper or none.
-- **The helper, 0.3.1** (0.3.0 as PR 1349 merged it). Protocol 1. The marker gains `gpu.release.g<N>`:
+- **The helper, 0.3.2** (0.3.0 as PR 1349 merged it, 0.3.1 as PR 1350 did). Protocol 1. The marker gains `gpu.release.g<N>`:
   answered by clearing the guest's claim, with writes on or off, as it
   writes no guest; a rebuilt ledger takes it for no claim. `--preview` makes
   one pass as writes on would, writing no guest, ledger, report or state and
@@ -1610,10 +1614,15 @@ before. Writes stay off on the node until the lead runs
   may hold until it can be read.
 - **Incomplete readings.** A reading by `nvidia-smi` that leaves out a card
   the driver lists decides no request on that card and changes no guest's
-  lines for it. One with a row the helper cannot read, or that ends with an
-  error status or is cut short, decides no request on any card and changes
-  no guest's lines. Each is named in an `error` line, so the preview fails.
-- **A lost ledger** is rebuilt from the guests as before, with two changes.
+  lines for it. One with a row the helper cannot read, or from a query that
+  did not exit normally with status 0 (an error status, a signal, output
+  closed with no exit, or cut short), decides no request on any card and
+  changes no guest's lines. Each is named in an `error` line, so the preview
+  fails.
+- **A lost ledger** is rebuilt from the guests only from a full reading of
+  every card: until `nvidia-smi` gives one, the report says `ledger
+  unknown`, nothing is decided, and bb-box places and starts no GPU desktop.
+  The rebuild is as before, with two changes.
   A guest whose card a guest the helper cannot read may hold is left out,
   and its request waits. And the rebuild strips no stopped guest's lines, at
   boot or after: a stopped copy, a guest whose lines do not match its
@@ -1626,7 +1635,10 @@ before. Writes stay off on the node until the lead runs
   decision, once it has asked again, or it has gone or holds no card, every
   card it may hold takes no new guest and no whole claim: the helper
   refuses such a request `unsettled`, naming the guest, and bb-box places no
-  box there. A guest that already holds a claim on the card, or is itself
+  box there. Only a full reading of every card can show it holds no card,
+  and only an answer decided on one settles it: a reading that fails, or
+  leaves a card out, keeps it, and a refusal for want of a reading does not
+  count. A guest that already holds a claim on the card, or is itself
   unresolved and holds the card's lines, may still ask for it shared.
   Writes on or off alike.
 - **`setup-gpu.sh --writes on`** works only on this release's helper,
@@ -1887,10 +1899,41 @@ Then, as root on a `linux` box: `tsc` clean; the node suite, 3,586 tests,
 Proxmox LXC test files on the commit itself, 269 tests, 268 passed, 1
 skipped.
 
+### After the final review
+
+The final review of `be5ec8ca` and `a16b4536` (PR 1350) said no-go, with
+three blockers and the node steps. Each fix has a test built from the
+review's probe, which fails on `ecb9129e` and passes now.
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| F1: a start whose marker write met a changed config retried on whatever guest then had the VMID: another install's replacement was marked, the helper moved its devices, and bb-box started it | Each marker write, each retry included, reads the config, checks it names this install and this box, and writes on that config's digest; the same check comes just before the start. Otherwise nothing is written or started, and a failed acquire does not release the guest | `test/gpu-claims.test.ts`, with the fake Proxmox replacing the guest at the first marker write: the replacement was marked, written by the helper and started |
+| F2: a ledger lost while `nvidia-smi` failed was rebuilt with no card known, so a running whole box got no hold; a later failed reading let an unresolved guest go | A lost ledger is rebuilt only from a full reading of every card; until then nothing is decided and the report says `ledger unknown`. An unresolved guest is let go only on a full reading that shows it holds no card, or an answer decided on one | `test/gpu-helper.test.ts`: the ledger was rebuilt with no reading, the whole box lost its claim, and a failed reading let the guest go. `test/gpu-claims.test.ts`: bb-box placed a desktop on the running whole box's card |
+| F3: a query killed by a signal after every row read as exit 0, so the preview, `--check` and `--writes on` passed | A query counts only when it exited normally with status 0; any other end is an `error` line that blocks every decision and fails the preview | `test/gpu-helper.test.ts`: the preview exited 0. `test/gpu-setup.test.ts`, run on the old helper with its version: `--check` and `--writes on` succeeded |
+| O6, P3: a moved box started again while it ran got its template's GPU fact | A running box's GPU fact names the card the helper's ledger has granted it | `test/gpu-claims.test.ts`: the second start named card 0 |
+
+The helper is 0.3.2, so `setup-gpu.sh --writes on` refuses 0.3.1 and
+earlier. bb-box reads a report that says `ledger unknown` as the helper
+waiting to rebuild, in the start gate, placement and the doctor. The node
+steps now run each step as a script under `bash -euo pipefail`, so a failed
+command, pipeline or comparison stops it; leave E3's pause of the production
+helper optional, with a resume armed by `systemd-run` before it; make E4
+stand alone; and have `u5-guest.sh mark` write only on a guest whose tags
+name the test install, on its config's digest.
+
+Then, as root on a `linux` box, directly, on the commit rebased onto main
+`46525aaa`: `tsc` clean; the node suite, 3,600 tests, 3,305 passed, 0
+failed, 295 skipped; vitest, 448 passed. On `ecb9129e` before that, the
+suite passed the same way, 3,592 tests, 3,297 passed; a run before that one,
+on the same code, failed the writes-off
+lock test (Astra 1): its pass took 2.3 s against 1.5 s under the suite's
+load. Alone it passed 5 times of 5 on this commit and on `ecb9129e`, and a
+helper pass took 35 to 100 ms on both.
+
 ### The node steps
 
 Wait for the lead, after unit 4's day has passed and this unit is merged and
-deployed: the helper upgraded to 0.3.1 with writes off and the test pool
+deployed: the helper upgraded to 0.3.2 with writes off and the test pool
 served; `setup-gpu.sh --writes on --check`; `--writes on`; a watcher under
 `systemd-run`; the gate on test guests on lent VMIDs, through a test BB with
 its own pool and desktops per GPU 1. The steps, a read-only check script,
