@@ -347,6 +347,17 @@ export interface GuestFact {
 export interface Started {
   /** The guest's facts now, in place of those kept, as a desktop's display mode when a GPU desktop fell back to the CPU (#597). */
   readonly facts?: readonly GuestFact[];
+  readonly address?: string;
+}
+
+export interface LeasedAddressNow {
+  readonly power: "running" | "suspended" | "stopped" | "gone";
+  readonly leased: string | null;
+}
+
+export function startedGuest(guest: Guest, started: Started | void): Guest {
+  if (!started) return guest;
+  return { ...guest, ...(started.facts ? { facts: started.facts } : {}), ...(started.address ? { address: started.address } : {}) };
 }
 
 export interface BoxOwner {
@@ -790,6 +801,7 @@ export interface Backend {
   forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
   readonly addressIsAnEndpoint?: boolean;
+  leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;
   startForForkCheck?(guest: Guest, signal: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   forkCheckCommand?(guest: Guest, signal?: AbortSignal): Promise<CommandTransport>;
   disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;

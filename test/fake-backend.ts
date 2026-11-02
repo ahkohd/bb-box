@@ -249,6 +249,7 @@ export class FakeBackend implements Backend {
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
   /** The facts a start finds, as a GPU desktop's display mode after it fell back to the CPU (#597); null for none. */
   startFacts: readonly GuestFact[] | null = null;
+  startAddress: string | null = null;
   readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly keepsSession?: (kind: string) => boolean;
@@ -327,7 +328,7 @@ export class FakeBackend implements Backend {
         await this.#power(guest, "running");
         await answered?.();
         for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
-        if (this.startFacts) return { facts: this.startFacts };
+        if (this.startFacts || this.startAddress) return { ...(this.startFacts ? { facts: this.startFacts } : {}), ...(this.startAddress ? { address: this.startAddress } : {}) };
       };
       this.stop = (guest) => this.#power(guest, "stopped");
       if (options.keepsSession) this.keepsSession = options.keepsSession;

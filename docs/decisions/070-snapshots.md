@@ -931,6 +931,31 @@ costs on that backend before the person confirms:
   from the guest at each take and keeps it on the snapshot as `forkSafe`.
   A snapshot without it neither forks nor is kept, and says "Taken before
   amber-fox's image had the identity reset".
+- **Its address, and its source's.** A fork holding an address its source
+  holds is refused. Where a backend reserves addresses, as Proxmox does,
+  the source's address is the one recorded when the fork was asked for,
+  always. Where a DHCP server leases them, as the Mac's does on Tart, a
+  source's Linux releases its lease as it shuts down, and the server may
+  give that address to the fork. There bb-box reads the source's state on
+  its host at each look of the check, in the source's turn, so the source
+  cannot start or stop until the check has passed and the fork is armed:
+  - running or suspended: the fork is refused if it holds the source's
+    lease or any address recorded for it, the one at the fork's request
+    and the one on its record now. A suspended macOS VM resumes with its
+    address.
+  - stopped, or its VM gone: those recorded addresses are compared too,
+    unless the snapshot holds the source's DHCP client IDs and the fork
+    asked for its address with client IDs of its own. A server never gives
+    a live lease to a second client ID, so the source gets another address
+    when it starts, and bb-box records the address each start finds. A
+    snapshot taken before bb-box read client IDs, a source or fork with no
+    systemd-networkd lease, and a fork whose lease is not on record yet
+    (waited for, then refused) keep the recorded-address rule.
+  - unreadable, or a VM that is there but not the box's: the fork is
+    refused.
+  A fork that asked with its source's client ID is refused whatever the
+  addresses. A Tart VM's commands go only to the address the Mac gives it
+  now, never to one recorded, which a fork may hold.
 - **Then it enrols** under its own box ID as a new BB machine, and gets its
   thread's access, or the person's.
 - **What a fork still holds**: everything else on the disk. A project's

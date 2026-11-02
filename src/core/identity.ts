@@ -90,6 +90,7 @@ const HELD_IDENTITY_FACTS = [
   `hash() { sum=$(sha256sum) || return 1; printf '%s\\n' "\${sum%% *}"; }`,
   `if [ ! -e "$r/etc/machine-id" ]; then echo missing=machine-id; elif [ -r "$r/etc/machine-id" ] && h=$(hash < "$r/etc/machine-id"); then printf 'machine_id=%s\\n' "$h"; else echo unreadable=machine-id; fi`,
   `keys=0; for f in "$r"/etc/ssh/ssh_host_*_key.pub; do [ -e "$f" ] || continue; if [ -r "$f" ] && h=$(cut -d' ' -f2 "$f" | hash); then printf 'host_key=%s\\n' "$h"; keys=$((keys + 1)); else printf 'unreadable=%s\\n' "\${f#"$r"}"; fi; done; [ "$keys" -gt 0 ] || echo missing=ssh-host-keys`,
+  `for f in "$r"/run/systemd/netif/leases/*; do [ -f "$f" ] || continue; if [ -r "$f" ] && c=$(sed -n 's/^CLIENTID=//p' "$f") && h=$(printf '%s' "$c" | hash); then [ -z "$c" ] || printf 'dhcp_client_id=%s\\n' "$h"; else printf 'unreadable=%s\\n' "\${f#"$r"}"; fi; done`,
 ];
 
 const MACOS_HELD_IDENTITY_FACTS = [
@@ -124,6 +125,7 @@ function asRootShell(lines: readonly string[]): string {
 export interface HeldIdentity {
   readonly machineId: string | null;
   readonly hostKeys: readonly string[];
+  readonly dhcpClientIds?: readonly string[];
 }
 
 export type NotForkSafe = "reset-off" | "unread";
@@ -158,9 +160,16 @@ function identityRead(stdout: string): IdentityRead {
   const valid = (hash: string) => HASH.test(hash) && hash !== EMPTY_HASH;
   const machineIds = everyValue(stdout, "machine_id");
   const keys = everyValue(stdout, "host_key");
-  const unreadable = [...values(stdout, "unreadable"), ...machineIds.filter((hash) => !valid(hash)).map(() => "machine-id"), ...keys.filter((hash) => !valid(hash)).map(() => "an SSH host key")];
+  const clientIds = everyValue(stdout, "dhcp_client_id");
+  const unreadable = [
+    ...values(stdout, "unreadable"),
+    ...machineIds.filter((hash) => !valid(hash)).map(() => "machine-id"),
+    ...keys.filter((hash) => !valid(hash)).map(() => "an SSH host key"),
+    ...clientIds.filter((hash) => !valid(hash)).map(() => "a DHCP client ID"),
+  ];
+  const dhcpClientIds = [...new Set(clientIds.filter(valid))].sort();
   return {
-    identity: { machineId: machineIds.find(valid) ?? null, hostKeys: [...new Set(keys.filter(valid))].sort() },
+    identity: { machineId: machineIds.find(valid) ?? null, hostKeys: [...new Set(keys.filter(valid))].sort(), ...(dhcpClientIds.length ? { dhcpClientIds } : {}) },
     missing: values(stdout, "missing"),
     unreadable: [...new Set(unreadable)],
     done: stdout.split("\n").some((line) => line.trim() === PROBES_DONE),
@@ -212,7 +221,8 @@ export interface ForkExpected {
   readonly sourceMacs: readonly string[];
   readonly sourceBox: string;
   readonly sourceName: string;
-  readonly sourceAddress: string | null;
+  readonly sourceAddresses: readonly string[];
+  readonly freedSourceAddresses: readonly string[];
   readonly ownAddress: string | null;
   readonly boxAddresses: readonly string[];
   readonly held: HeldIdentity | null;
@@ -255,6 +265,14 @@ function listWords(items: readonly string[]): string {
 
 const MISSING_WORDS: Readonly<Record<string, string>> = { "machine-id": "a machine ID", "ssh-host-keys": "SSH host keys" };
 
+function clientIdsOf(seen: ForkSeen, expected: ForkExpected): "its own" | "unknown" | "unproven" {
+  const sourceIds = expected.held?.dhcpClientIds ?? [];
+  const ownIds = seen.identity.dhcpClientIds ?? [];
+  if (!sourceIds.length) return "unproven";
+  if (!ownIds.length) return "unknown";
+  return ownIds.some((id) => sourceIds.includes(id)) ? "unproven" : "its own";
+}
+
 export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict {
   const refused = (why: string): ForkVerdict => ({ is: "refused", why });
   const status = seen.status;
@@ -270,8 +288,17 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   const sourceMacs = new Set(expected.sourceMacs.map((mac) => mac.toLowerCase()));
   const shared = [...forkMacs].filter((mac) => sourceMacs.has(mac));
   if (shared.length) return refused(`it has ${expected.sourceName}'s MAC address ${listWords(shared)}, so its identity reset cannot tell it is a copy`);
-  if (expected.sourceAddress && seen.addresses.includes(expected.sourceAddress)) {
-    return refused(`it holds ${expected.sourceName}'s address ${expected.sourceAddress}, so it would take what is sent to ${expected.sourceName}`);
+  const sourceClientIds = new Set(expected.held?.dhcpClientIds ?? []);
+  if (seen.identity.dhcpClientIds?.some((id) => sourceClientIds.has(id))) {
+    return refused(`it asked for its address with ${expected.sourceName}'s DHCP client ID, so a DHCP server takes it for ${expected.sourceName} and may give it ${expected.sourceName}'s address`);
+  }
+  const held = seen.addresses.find((address) => expected.sourceAddresses.includes(address));
+  if (held) return refused(`it holds ${expected.sourceName}'s address ${held}, so it would take what is sent to ${expected.sourceName}`);
+  const freed = seen.addresses.find((address) => expected.freedSourceAddresses.includes(address));
+  if (freed) {
+    const clientIds = clientIdsOf(seen, expected);
+    if (clientIds === "unknown") return { is: "wait", why: `it holds ${expected.sourceName}'s last address ${freed}, and has no DHCP lease on record yet to show that it asked for it as itself` };
+    if (clientIds !== "its own") return refused(`it holds ${expected.sourceName}'s address ${freed}, so it would take what is sent to ${expected.sourceName}`);
   }
   const ranged = new Set(expected.boxAddresses);
   const foreign = seen.addresses.filter((address) => ranged.has(address) && address !== expected.ownAddress);

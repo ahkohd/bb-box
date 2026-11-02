@@ -14,7 +14,8 @@
 //   another app runs (the number in ~/.fake-other-macos-vms), as the
 //   Virtualization framework does; Linux VMs do not count. A Linux VM refuses
 //   --suspendable and a saved state, as Tart 2.30.0 does (040).
-// - `tart ip` gives each VM an address of its own, 192.168.64.<n>.
+// - `tart ip` gives each VM an address of its own, 192.168.64.<n>, and fails while
+//   ~/.fake-tart-ip-fails exists, as for a VM with no lease.
 // - A saved state that holds "corrupt" fails to restore, as Tart reports it.
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
 // - `sysctl` says the Mac has 16 cores, 12 of them performance cores unless
@@ -171,6 +172,7 @@ function tart() {
     case "ip": {
       const [name] = rest;
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
+      if (existsSync(join(home, ".fake-tart-ip-fails"))) fail(`no IP address found for "${name}"`);
       const file = join(dir(name), "lease");
       if (!existsSync(file)) {
         const counter = join(vms, ".lease");

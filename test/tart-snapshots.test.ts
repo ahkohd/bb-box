@@ -159,6 +159,61 @@ test("a Linux VM is copied only while stopped, and holds its disk", async () => 
   await backend.release(guest, releasing);
 });
 
+test("what a Tart VM holds now: its lease while it runs, none once it is shut down, gone only when its folder is missing; a start returns the address the Mac's DHCP gave it", async () => {
+  const { backend, mac, vms } = setup({ "tart-linux-image": "bb-box-linux" });
+  const linux = await backend.acquire(identity("linux-arm64", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, acquiring, signal());
+  assert.ok(linux.address);
+  assert.deepEqual(await backend.leasedAddressNow(linux, signal()), { power: "running", leased: linux.address });
+  await backend.stop(linux);
+  assert.deepEqual(await backend.leasedAddressNow(linux, signal()), { power: "stopped", leased: null }, "a Linux VM released its lease at its shutdown");
+  rmSync(join(vms, linux.ref, "lease"));
+  const started = await backend.start(linux, signal());
+  assert.ok(started?.address);
+  assert.notEqual(started.address, linux.address);
+  assert.deepEqual(await backend.leasedAddressNow(linux, signal()), { power: "running", leased: started.address });
+  await backend.release(linux, releasing);
+  assert.deepEqual(await backend.leasedAddressNow(linux, signal()), { power: "gone", leased: null });
+  const macos = await backend.acquire(identity(), null, acquiring, signal());
+  await backend.stop(macos);
+  assert.equal(await backend.power(macos), "stopped");
+  assert.deepEqual(await backend.leasedAddressNow(macos, signal()), { power: "suspended", leased: macos.address }, "a suspended macOS VM resumes with its address");
+  writeFileSync(join(mac, ".fake-tart-ip-fails"), "");
+  assert.deepEqual(await backend.leasedAddressNow(macos, signal()), { power: "suspended", leased: null }, "a suspended VM's lease may have gone; core still compares its recorded address");
+  rmSync(join(mac, ".fake-tart-ip-fails"));
+  await backend.release(macos, releasing);
+});
+
+test("what a Tart VM holds now fails closed: a VM that is there but not this box's, one Tart does not list, a running VM with no lease, and a lease that is not an address all throw", async () => {
+  const { backend, mac, vms } = setup({ "tart-linux-image": "bb-box-linux" });
+  const linux = await backend.acquire(identity("linux-arm64", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, acquiring, signal());
+  const owner = join(mac, ".bb-box", "tart", "owners", linux.ref);
+  const owned = readFileSync(owner, "utf8");
+  writeFileSync(owner, owned.replace(/^box=.*$/m, "box=bxsomeoneelse"));
+  await assert.rejects(backend.leasedAddressNow(linux, signal()), /is there, but its owner file does not name this box/);
+  writeFileSync(owner, owned);
+  writeFileSync(join(mac, ".fake-tart-ip-fails"), "");
+  await assert.rejects(backend.leasedAddressNow(linux, signal()), /tart ip found no lease for \S+ on mac1, which runs: .*no IP address found/);
+  rmSync(join(mac, ".fake-tart-ip-fails"));
+  writeFileSync(join(vms, linux.ref, "lease"), "deadbeef");
+  await assert.rejects(backend.leasedAddressNow(linux, signal()), /tart ip gave \S+ on mac1 "deadbeef", not an address/);
+  await backend.stop(linux);
+  renameSync(join(vms, linux.ref, "nvram.bin"), join(vms, linux.ref, "nvram.aside"));
+  await assert.rejects(backend.leasedAddressNow(linux, signal()), /Tart does not list \S+ on mac1 as running, suspended or stopped: it says "unlisted"/);
+  renameSync(join(vms, linux.ref, "nvram.aside"), join(vms, linux.ref, "nvram.bin"));
+  await backend.release(linux, releasing);
+});
+
+test("a Tart VM's commands never go to its recorded address: with no address from the Mac, a connection is unreachable, so a fork that now holds that address is never reached as its source", async () => {
+  const { backend, mac, make } = setup({ "tart-linux-image": "bb-box-linux" });
+  const linux = await backend.acquire(identity("linux-arm64", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, acquiring, signal());
+  assert.ok(linux.address);
+  writeFileSync(join(mac, ".fake-tart-ip-fails"), "");
+  const restarted = make();
+  await assert.rejects(restarted.transports(linux, "linux-arm64"), /The VM \S+ on mac1 has no address/);
+  rmSync(join(mac, ".fake-tart-ip-fails"));
+  await backend.release(linux, releasing);
+});
+
 test("a snapshots folder on another volume than the VMs is refused before anything is copied, and the plan says so", async () => {
   const { backend, mac, snaps } = setup();
   const box = identity();
@@ -441,7 +496,7 @@ test("macOS's reset says when a user had logged in before it decided, and the fo
   assert.equal(status(root, "aa:bb:cc:00:00:02").raced, "yes");
   assert.match(readFileSync(join(root, "var", "lib", "bb-box", "identity-resets"), "utf8"), /someone was logged in at the console \(admin admin\) while it decided or removed BB's machine/);
   const seen = parseForkSeen(`${tool(root, "aa:bb:cc:00:00:02", "status").out}tailnet_node=no\nmarker_mac=aa:bb:cc:00:00:02\naddress=192.168.64.9\naddresses_read=yes\nmachine_id=${"1".repeat(64)}\nhost_key=${"2".repeat(64)}\nprobes=done\n`, 0);
-  const verdict = forkVerdict(seen, { forkMacs: ["aa:bb:cc:00:00:02"], forkValue: null, sourceMacs: ["aa:bb:cc:00:00:01"], sourceBox: "bxsource1", sourceName: "calm-otter", sourceAddress: null, ownAddress: "192.168.64.9", boxAddresses: [], held: null, safeFrom: 1 });
+  const verdict = forkVerdict(seen, { forkMacs: ["aa:bb:cc:00:00:02"], forkValue: null, sourceMacs: ["aa:bb:cc:00:00:01"], sourceBox: "bxsource1", sourceName: "calm-otter", sourceAddresses: [], freedSourceAddresses: [], ownAddress: "192.168.64.9", boxAddresses: [], held: null, safeFrom: 1 });
   assert.deepEqual(verdict, { is: "refused", why: "its identity reset ran after a user had logged in, so BB's daemon may have started as its source before the reset" });
 });
 

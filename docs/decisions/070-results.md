@@ -4392,3 +4392,131 @@ Mac, whose scripts run in a real shell with GNU `stat`; on a Mac's BSD
 
 The lead refreshes production's `linux-arm64` image on the Tart Mac, which
 production arms already, and forks one box to check.
+
+## After the close-out: forks of a stopped Tart Linux box
+
+### What the smoke test found
+
+After merge, a Tart Linux box was stopped through bb-box, a snapshot taken
+(fork-safe) and a fork made. The fork came up on the source's recorded
+address, and core's check refused it: "it holds <source>'s address ..., so
+it would take what is sent to <source>". While the source is stopped it
+holds no address, so the refusal was false.
+
+### The cause, as measured
+
+On a separate BB with a Tart backend of its own install on the production
+Tart Mac (macOS 27.0.1, Tart 2.40.1), from production's refreshed
+`bb-box-linux` image, cloned by name and not changed. One VM of this
+install's ran at a time. bootpd's lease lines were read for this install's
+VMs' MAC addresses only.
+
+| Step | Measured |
+| --- | --- |
+| The source, running | 192.168.64.5. systemd 255 (255.4-1ubuntu8.18). Its lease file: `CLIENTID=01f6839d58e72c`, `01` and its MAC address, not a DUID from its machine ID; `LIFETIME=1h`. bootpd: `identifier=1,f6:83:9d:58:e7:2c`, lease to 1 hour on |
+| bb-box's stop | networkd logged "DHCP lease lost" as it stopped: it sent a release (`SendRelease` is on by default). bootpd kept the entry, with its lease ending at the moment of the stop |
+| A fork, the source stopped | a new MAC address, 5a:b8:...; bootpd gave it 192.168.64.5, with `identifier=1,5a:b8:...`, its own. Core refused it, as in production, and released it |
+| The source started again | it got 192.168.64.6, as the refused fork's lease was still live, and bb-box's record still said 192.168.64.5: a Tart start returned no address, so core kept the old one |
+
+So the fork took nothing of its source's: its MAC address and DHCP client ID
+were its own, and the address was free. The reset ran before networkd: in
+the fork, `bb-box-identity.service` finished at 1.52 s and networkd had its
+lease at 1.69 s.
+
+### What changed
+
+As amended after two reviews; section 9 of [070](070-snapshots.md) states
+the rule.
+
+| Change | Where |
+| --- | --- |
+| A backend whose addresses are leased, not reserved, says what a guest holds now (`leasedAddressNow`): its power on its host, and its lease. On Tart, read on the Mac: "gone" only when the VM's folder is missing; a VM that is there but not the box's, one Tart does not list, a running VM with no lease and a lease that is not an IPv4 address all throw, which refuses the fork | `src/backends/tart/backend.ts`, `src/backends/tart/host.ts` |
+| The fork check reads the source at each look, in the source's turn, so its start and stop wait until the check has passed and the fork is armed. Running or suspended: a fork holding the source's lease or any recorded address (the one at the fork's request and the one on its record now) is refused. Stopped or gone: the recorded addresses are compared unless the snapshot holds the source's DHCP client IDs and the fork showed IDs of its own; a fork with no lease on record yet is waited for, then refused. Backends without it, Proxmox among them, keep the recorded address | `src/core/boxes.ts`, `src/core/identity.ts` |
+| A start says the address it found (`Started.address`), and core records it at a start, a restore's start and put-back, and a fork's first start, so a fork's own address is checked on Tart too. Tart's start and resize return it | `src/backends/types.ts`, `src/core/boxes.ts`, `src/core/snapshots.ts` |
+| The identity a snapshot holds, and the fork check, read the DHCP client ID of each systemd-networkd lease, hashed. A fork that asked for its address with its source's is refused | `src/core/identity.ts` |
+| A Tart VM's commands go only to the address the Mac gives it now, never to a recorded one, which a fork may hold: a connection with none is unreachable, a shutdown with none is a stop, and a rename with none is skipped | `src/backends/tart/backend.ts` |
+
+### After the reviews
+
+Opus and Astra each said merge after fixes. Each finding, and its test:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| Opus 1, Astra 2: with no client IDs held (an older snapshot, no networkd lease, a fixed or product-UUID client ID), a stopped source's address was not compared at all | the recorded addresses are compared unless both sides' client IDs prove the fork its own | "where addresses are leased, a fork on its stopped source's last address is handed over only when ..." |
+| Opus 2: a running source was compared with its lease only | its lease and its recorded addresses | the same, "running, on its recorded address" and "running, on its lease" |
+| Opus 3, Astra 1: "not this box's", an unlisted VM and a failed `tart ip` read as gone or fell back; `deadbeef` passed as an address | gone only with no folder; the rest throw; IPv4 only | "what a Tart VM holds now fails closed ..." |
+| Opus 4: a connection fell back to a recorded address, which a live fork may hold | no fallback | "a Tart VM's commands never go to its recorded address ..." |
+| Astra 3: the source was read once, outside its turn, so it could start before the handover | read at each look, in the source's turn, through the arm | "a source's start waits until its fork's check has passed and the fork is armed" |
+
+Against the first commit, with only the tests swapped in, each test in the
+table failed, as did the two changed for the new shapes, 6 in all; against
+main `eb751824` with only the tests and fakes swapped in, all 11 new
+or changed tests failed. The fake `tart ip` fails while
+`~/.fake-tart-ip-fails` exists, as for a VM with no lease.
+
+### Tests
+
+On a Proxmox LXC box (8 cores, 16 GiB, Node 24.21), in a checkout of the
+amended commit: `npx tsc` passes and the reference is current; the node
+suite ran 3,547 tests, 3,225 passed, 0 failed, 322 skipped; vitest ran 448,
+all passed, with `TZ=Pacific/Auckland`. With that `TZ` the node suite has
+one failure, on main too: "a box whose restore was cut short is put right
+...", which compares a process's start time; without it, it passes.
+
+### Live
+
+On a separate BB with bb-box from this change, a Tart backend of its own
+install on the production Tart Mac, production's `bb-box-linux` cloned by
+name, one VM of the install's at a time. bootpd's lines were read for the
+install's VMs' MAC addresses only.
+
+The first commit was run as two scripts:
+
+| Check | Result |
+| --- | --- |
+| The source starts again | records 192.168.64.6, the address it holds |
+| Stop, take | the lease released at the stop again; the snapshot holds the source's client ID hash |
+| Fork, the source stopped | ready in 4.7 s, on 192.168.64.6, the source's last address, with client ID `01` and its own MAC address; `boot=reset`, a new machine ID, its own marker and hostname |
+| The fork's record | its own address, 192.168.64.6, once its first start returned it (a second fork, 4.8 s) |
+| The fork stopped, the source started | bootpd gave the source 192.168.64.6 again, recorded so |
+
+The amended commit, on a new separate BB, by
+[tart-stopped-source-fork.sh](070-snapshots/close-out/tart-stopped-source-fork.sh)
+as it stands:
+
+| Check | Result |
+| --- | --- |
+| A box | ready, 192.168.64.2, client ID `0192c4e122208e`, its MAC address |
+| Stop, take | 1.1 s and 0.8 s; bootpd's lease ended at the stop |
+| Fork, the source stopped | ready in 4.6 s (5.4 s for the command), on 192.168.64.2, the source's last address, client ID `01ca4bbea8bdad`, its own; it records that address; its reset done at 1.42 s, its lease at 1.59 s |
+| The fork stopped, the source started | 4.4 s; it records 192.168.64.2, the address it holds; its last boot ended "DHCP lease lost" |
+| Clean up | both machines removed, no snapshots, a sweep; the test backend removed. On the Mac, no owner file or snapshot of this install's, and `bb-box-linux` untouched |
+
+Every command of that run went to the address the Mac gave the VM, as a
+connection no longer falls back.
+
+### macOS forks on Tart
+
+bb-box stops a macOS box by suspending it. A suspended VM sends no release,
+and its lease runs on, an hour on this Mac. Within that hour a fork gets
+another address, as unit 9 measured with its source suspended. After it,
+bootpd may give the fork the suspended source's address, which the source
+resumes with: the check refuses that fork. Not run live here.
+
+### Known limits
+
+- A source running beside its fork was not run live, as that needs two
+  VMs of the install at once; nor were the host script's "not-mine" and
+  "unlisted" answers, which the fake Mac runs.
+- A fork from a snapshot taken before this change is refused when the Mac
+  gives it its stopped source's last address, as on main: take the
+  snapshot again.
+- While a fork's check runs, up to a minute after its first boot, its
+  source's start, stop and take wait for it.
+- Two VMs that ask with the same client ID get one binding from bootpd.
+  Where the snapshot holds no client ID to compare, a source started after
+  its fork's handover could get the fork's address. The images bb-box
+  builds use `01` and the MAC address, which a fork changes.
+- The fork's DHCP request names its source's hostname, as the fork is
+  renamed after its first boot: bootpd's entry for the fork says
+  `name=tl-src`. bb-box reads nothing of it.
