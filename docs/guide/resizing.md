@@ -11,7 +11,7 @@ Resize… shows for a box that is ready or stopped, where its backend can change
 
 ## Choosing a size
 
-The dialog shows the box's size now. Choose **Small**, **Medium** or **Large**: a preset sets the cores and memory, and leaves the disk as it is. Or choose **Custom** and set the cores, the memory in GiB and the disk in GiB yourself. The dialog opens on the preset the box is now, if it is one.
+The dialog shows the box's size now. Choose **Small**, **Medium** or **Large**: a preset sets the cores and memory, and leaves the disk as it is. Or choose **Custom** and set the cores, the memory in GiB and the disk in GiB yourself, up to the kind's largest size. At that size or past it, a line under the fields says so, and **Change it in Settings** opens the kind's sizes in BB Box's settings, where you can raise it. An agent asking past it is told the same, and the command that raises it: `bb box kind set <kind> --largest-memory-gib <GiB>`, or `--largest-cores` or `--largest-disk-gib`. The dialog opens on the preset the box is now, if it is one.
 
 Under **What changes**, each part says whether it changes live, with a restart, or cannot change, and the dialog says whether the box's host has room for it to grow. Select **Resize** to make the change, or **Cancel** to leave the box as it is.
 

@@ -49,7 +49,7 @@ For a Linux box, if your project has no image, the form offers to make one. Sele
 
 ### Resources
 
-Choose Small, Medium or Large, or Custom to set the cores, memory in GiB and disk in GiB yourself. Each field says the most you can ask for. Leave the disk empty to keep the size the box's image comes with. The sizes for each kind are in [kinds and sizes](../reference/kinds.md).
+Choose Small, Medium or Large, or Custom to set the cores, memory in GiB and disk in GiB yourself. Each field says the most you can ask for. At that most or past it, a line under the fields says it is the largest for the kind, such as 'Up to 64 GiB of memory, the largest for Linux desktop (CPU) boxes.', and **Change it in Settings** opens the kind's sizes in BB Box's settings, where you can raise it. Leave the disk empty to keep the size the box's image comes with. The sizes for each kind are in [kinds and sizes](../reference/kinds.md).
 
 Where a desktop can have a graphics card, a GPU menu offers None or 1 GPU. A desktop needs some of the graphics card's memory free. If you choose 1 GPU when no graphics card had enough free a few minutes ago, a note under the menu says so, with when to try again. Choose None for a desktop drawn without a graphics card.
 

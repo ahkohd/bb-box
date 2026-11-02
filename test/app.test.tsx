@@ -1502,6 +1502,30 @@ test("a custom size starts from the preset in view, sends only its filled fields
   expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { linux: { cores: "6", memoryGiB: "12", diskGiB: "" } } });
 });
 
+test("New box's custom size says, under its fields, when a part is at or past the kind's largest, names the kind, and links to the kind's sizes in settings; its slot is kept, and the server's settings hint stays out of the form", async () => {
+  const { handlers } = server([], { failWith: "A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 16 cores, 40 GiB memory. Its presets are small. To allow more, raise the kind's largest size in BB Box settings, under Kinds, Linux, Sizes, or run bb box kind set linux --largest-memory-gib <GiB>." });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const sizes = await screen.findByRole("radiogroup", { name: "Size" });
+  fireEvent.click(within(sizes).getByRole("radio", { name: /^Custom/ }));
+  const line = document.querySelector<HTMLElement>("[data-largest-line]")!;
+  const shown = () => line.querySelector('[aria-live="polite"]')!.textContent;
+  expect(shown()).toBe("");
+  expect(line.querySelector('[aria-hidden="true"]')!.textContent).toBe("Up to 16 cores, 32 GiB of memory and 256 GiB of disk, the largest for Linux boxes. Change it in Settings");
+  fireEvent.change(screen.getByLabelText(/^Cores/), { target: { value: "15" } });
+  expect(shown()).toBe("");
+  fireEvent.change(screen.getByLabelText(/^Cores/), { target: { value: "16" } });
+  expect(shown()).toBe("Up to 16 cores, the largest for Linux boxes. Change it in Settings");
+  fireEvent.change(screen.getByLabelText(/^Memory, GiB/), { target: { value: "40" } });
+  expect(shown()).toBe("Up to 16 cores and 32 GiB of memory, the largest for Linux boxes. Change it in Settings");
+  expect(within(line).getByRole("link", { name: "Change it in Settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box#kind/linux");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 16 cores, 40 GiB memory. Its presets are small.");
+  fireEvent.click(within(line).getByRole("link", { name: "Change it in Settings" }));
+  await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "Size" })).toBeNull());
+});
+
 test("a refused box stays in the form with the reason", async () => {
   const { handlers } = server([], { failWith: "pve has no memory left. Release a box you no longer need." });
   const slot = panel(handlers);
@@ -1604,6 +1628,30 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   await waitFor(() => expect(stateCalls(slot)).toBe(calls + 1));
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(slot.queryByText(/^Resized to/)).toBeNull();
+});
+
+test("Resize's custom size says, under its fields, when a part it can change is at or past the kind's largest, and links to the kind's sizes in settings; nothing shows below it", async () => {
+  const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "no" } });
+  const { handlers } = server([box({ sizeNow: size(2, 4, 20), resizing: { cores: "live", memory: "live", disk: "no", shrinks: true } })], { resize });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+  const dialog = await openResize(slot);
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Custom/ }));
+  const line = dialog.querySelector<HTMLElement>("[data-largest-line]")!;
+  const shown = () => line.querySelector('[aria-live="polite"]')!.textContent;
+  expect(shown()).toBe("");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "31" } });
+  expect(shown()).toBe("");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "32" } });
+  expect(shown()).toBe("Up to 32 GiB of memory, the largest for Linux boxes. Change it in Settings");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "48" } });
+  expect(shown()).toBe("Up to 32 GiB of memory, the largest for Linux boxes. Change it in Settings");
+  expect(within(line).getByRole("link", { name: "Change it in Settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box#kind/linux");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "8" } });
+  expect(shown()).toBe("");
+  expect(checkWords("A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 2 cores, 48 GiB memory. Its presets are small. To allow more, raise the kind's largest size in BB Box settings, under Kinds, Linux, Sizes, or run bb box kind set linux --largest-memory-gib <GiB>.")).toBe(
+    "A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 2 cores, 48 GiB memory. Its presets are small.",
+  );
 });
 
 test("a starting box's row says what its acquire waits on, with how long it takes, and a ready box's row does not (#1117)", async () => {

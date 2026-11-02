@@ -17,6 +17,8 @@ import type { ImageOptionView, KindView, OfferRoom, OfferView, ProviderProfile, 
 import type { SlotKind } from "../core/device-host.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
+import { LargestLine, type AskedParts } from "./largest-line.tsx";
+import { withoutRaiseLargest } from "../core/largest-words.ts";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
@@ -107,6 +109,11 @@ function whole(text: string): number | null | undefined {
   if (!trimmed) return null;
   const value = Number(trimmed);
   return Number.isInteger(value) && value >= 1 ? value : undefined;
+}
+
+function askedParts(fields: Fields): AskedParts {
+  const asked = (text: string) => whole(text) ?? undefined;
+  return { cores: asked(fields.cores), memoryGiB: asked(fields.memoryGiB), diskGiB: asked(fields.diskGiB) };
 }
 
 /** Custom starts from a preset: its cores and memory, and its disk when it has one of its own. */
@@ -409,7 +416,7 @@ export function NewBox({
       const refused = buildsFirst
         ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined)
         : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, placementAsked);
-      setProblem(refused);
+      setProblem(refused === null ? null : withoutRaiseLargest(refused));
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
         setName("");
@@ -621,6 +628,7 @@ export function NewBox({
                   {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
                 </div>
               ) : null}
+              {!preset && largest ? <LargestLine kind={kind.id} largest={largest} asked={askedParts(fields)} onFollow={() => setOpen(false)} /> : null}
               {gpuChoice ? (
                 // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
                 <div className="space-y-1">

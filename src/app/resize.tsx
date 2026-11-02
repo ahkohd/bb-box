@@ -15,6 +15,8 @@ import type { BoxView, ResizeView, SizeView } from "../plugin/views.ts";
 import { FormSection, OptionCard } from "./box-form.tsx";
 import { message } from "./common.tsx";
 import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
+import { LargestLine, type AskedParts } from "./largest-line.tsx";
+import { withoutRaiseLargest } from "../core/largest-words.ts";
 
 /** How long the dialog waits after a change before it checks the size. */
 export const RESIZE_CHECK_MS = 250;
@@ -65,7 +67,7 @@ export function waysLine(ways: Resizing): string {
 
 /** A refusal while the person chooses: nothing was tried, so it does not say that nothing changed. */
 export function checkWords(text: string): string {
-  return text.replace(/\s*bb-box changed nothing\.\s*$/, "");
+  return withoutRaiseLargest(text.replace(/\s*bb-box changed nothing\.\s*$/, ""));
 }
 
 function whole(text: string): number | undefined {
@@ -73,6 +75,11 @@ function whole(text: string): number | undefined {
   if (!/^\d+$/.test(trimmed)) return undefined;
   const value = Number(trimmed);
   return value >= 1 ? value : undefined;
+}
+
+function askedParts(fields: Fields, ways: Resizing | null): AskedParts {
+  const changeable = (part: SizePart, text: string) => ((ways?.[part] ?? "no") === "no" ? undefined : whole(text));
+  return { cores: changeable("cores", fields.cores), memoryGiB: changeable("memory", fields.memoryGiB), diskGiB: changeable("disk", fields.diskGiB) };
 }
 
 function fieldsOf(size: SizeView | null | undefined): Fields {
@@ -355,6 +362,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
                   {field("diskGiB", "disk", "Disk, GiB", largest?.diskGiB ?? null)}
                 </div>
               ) : null}
+              {choice === CUSTOM && largest ? <LargestLine kind={box.kind} largest={largest} asked={askedParts(fields, ways)} onFollow={onClose} /> : null}
             </FormSection>
 
             <FormSection title="What changes">
@@ -389,7 +397,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
               // The answer to Resize: nothing changed, and why, in bb-box's words.
               <div role="alert" className="space-y-0.5 text-xs leading-snug">
                 <p className="text-destructive-text">Not resized</p>
-                <p className="text-foreground">{refusal}</p>
+                <p className="text-foreground">{withoutRaiseLargest(refusal)}</p>
               </div>
             ) : answer?.error || (plan && !plan.room.ok) ? (
               // What stands in the way of the size chosen, before anything is tried.

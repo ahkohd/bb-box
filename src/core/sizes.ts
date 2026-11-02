@@ -7,6 +7,7 @@
 import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
 import type { BoxSize, MachineSize, DoctorCheck } from "../backends/types.ts";
 import type { AndroidModelName } from "./device-models.ts";
+import { raiseLargestWords, type LargestPart } from "./largest-words.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
 export type Preset = (typeof PRESETS)[number];
@@ -360,6 +361,20 @@ export interface SizeRequest {
 
 export type SizeChoice = { readonly ok: true; readonly size: MachineSize } | { readonly ok: false; readonly message: string };
 
+function partsOverLargest(chosen: MachineSize, largest: MachineSize, current: MachineSize | null): LargestPart[] {
+  const changes = (part: keyof MachineSize) => current === null || chosen[part] !== current[part];
+  const over: LargestPart[] = [];
+  if (changes("cores") && chosen.cores > largest.cores) over.push("cores");
+  if (changes("memoryMiB") && chosen.memoryMiB > largest.memoryMiB) over.push("memory");
+  if (changes("diskGiB") && chosen.diskGiB !== null && largest.diskGiB !== null && chosen.diskGiB > largest.diskGiB) over.push("disk");
+  return over;
+}
+
+function overLargestWords(kind: string, sizes: KindSizes, chosen: MachineSize, over: readonly LargestPart[], presets: string): string {
+  const id = currentKindId(kind);
+  return `A ${kind} box can be at most ${describeSize(sizes.largest)}, not ${describeSize(chosen)}. ${presets}. ${raiseLargestWords(id, over)}`;
+}
+
 /**
  * The size a request asks for, complete: parts left out come from the named
  * preset, or else the default preset. Refuses an unknown preset, a part that
@@ -389,9 +404,8 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
     memoryMiB: request.memoryGiB !== undefined ? request.memoryGiB * 1024 : base.memoryMiB,
     diskGiB: request.diskGiB ?? base.diskGiB,
   };
-  if (!fits(chosen, sizes.largest)) {
-    return { ok: false, message: `A ${kind} box can be at most ${describeSize(sizes.largest)}, not ${describeSize(chosen)}. ${presets}.` };
-  }
+  const over = partsOverLargest(chosen, sizes.largest, null);
+  if (over.length) return { ok: false, message: overLargestWords(kind, sizes, chosen, over, presets) };
   const tooSmall = belowLeast(kind, chosen, undefined, device);
   if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   return { ok: true, size: chosen };
@@ -425,12 +439,8 @@ export function chooseResize(kind: string, sizes: KindSizes, current: MachineSiz
       message: `A ${kind} box needs at least ${LINUX_LEAST_MEMORY_GIB} GiB memory, not ${formatMiB(chosen.memoryMiB)}: with less it can run out of memory as a BB machine. ${presets}.`,
     };
   }
-  const { largest } = sizes;
-  const over =
-    (chosen.cores !== current.cores && chosen.cores > largest.cores) ||
-    (chosen.memoryMiB !== current.memoryMiB && chosen.memoryMiB > largest.memoryMiB) ||
-    (chosen.diskGiB !== current.diskGiB && chosen.diskGiB !== null && largest.diskGiB !== null && chosen.diskGiB > largest.diskGiB);
-  if (over) return { ok: false, message: `A ${kind} box can be at most ${describeSize(largest)}, not ${describeSize(chosen)}. ${presets}.` };
+  const over = partsOverLargest(chosen, sizes.largest, current);
+  if (over.length) return { ok: false, message: overLargestWords(kind, sizes, chosen, over, presets) };
   const tooSmall = belowLeast(kind, chosen, { cores: chosen.cores !== current.cores, memory: chosen.memoryMiB !== current.memoryMiB }, device);
   if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   if (chosen.diskGiB !== null && current.diskGiB !== null && chosen.diskGiB < current.diskGiB) {
