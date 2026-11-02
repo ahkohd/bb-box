@@ -57,7 +57,7 @@ import { BoxPage, Loading, NotHere, THREADS_RECHECK_MS, useBoxPage } from "./box
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { threadTitle, ThreadWorking } from "./thread-chips.tsx";
-import { BarNumbers, OtherViews, ViewSwitchButton } from "./view-bar.tsx";
+import { BarNumbers, OtherViews, otherViewsNow, useBarNumbersShown, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
@@ -99,7 +99,7 @@ import {
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
-import { BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { ActivityGlyph, BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./screens.ts";
 import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
@@ -111,15 +111,8 @@ const ACTION_TITLES: Readonly<Record<ScreenAction, string>> = { desktop: "Deskto
 type ScreenAction = typeof DESKTOP_ACTION | typeof DEVICE_ACTION;
 export const DESKTOP_PAGE = "desktop";
 
-export const DESKTOP_OWN_PASTE_WORDS = "A paste from the box's own menu, or a middle click, uses the box's own clipboard.";
-export const DEVICE_OWN_PASTE_WORDS = "A paste from the device's own menu uses the device's own clipboard.";
-
 export const DEVICE_PASTE_FIELD_WORDS =
   "This computer's clipboard cannot be read here. Paste the text below: it is pasted where the cursor is, and the device's own clipboard is put back after.";
-
-export function ownPasteWords(deviceShown: boolean): string {
-  return deviceShown ? DEVICE_OWN_PASTE_WORDS : DESKTOP_OWN_PASTE_WORDS;
-}
 
 /** How often a tab with control asks for the box's clipboard. */
 const CLIPBOARD_POLL_MS = 500;
@@ -901,7 +894,7 @@ function DisplayItems({
     return (
       <>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Display</DropdownMenuLabel>
+        <DropdownMenuLabel className="font-normal">Display</DropdownMenuLabel>
         {items}
       </>
     );
@@ -963,7 +956,7 @@ function TypeTextButton({ shortcut, compact, onClick }: { shortcut: string; comp
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+            className="h-7 gap-1.5 px-2 font-normal text-muted-foreground hover:text-foreground"
             aria-label={`Type text (${shortcut})`}
             onClick={onClick}
           >
@@ -1090,6 +1083,7 @@ type DesktopViewerProps = {
   openScreen?: (box: BoxView, screen: Screen) => void;
   page?: PageLink;
   otherViews?: (shown: Screen) => ReactNode;
+  openTerminal?: () => void;
   numbers?: ReactNode;
 };
 
@@ -1098,7 +1092,7 @@ export function DesktopViewer(props: DesktopViewerProps) {
   return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
 }
 
-function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, otherViews, numbers, viewer }: DesktopViewerProps & { viewer: string }) {
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, otherViews, openTerminal, numbers, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -1163,6 +1157,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   const sharp = state?.sharp ?? null;
   /** A small screen's menu is a sheet, which has no submenus: the display's items go in it under a label. */
   const compact = useIsCompactViewport();
+  const [numbersShown, showNumbers] = useBarNumbersShown();
   useEffect(() => {
     if (video === null) return;
     if (!videoPossible) {
@@ -1526,7 +1521,6 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
     session.current?.paste(text);
   };
   const typeShortcut = typeTextShortcutLabel(macBrowser());
-  const ownPasteId = useId();
   const openTyping = () => {
     if (!mine) {
       flashFor("Take control first, then type text.");
@@ -1742,14 +1736,14 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           />
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
-          {numbers}
+          {numbersShown ? numbers : null}
           {showing && !mine ? (
-            <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
+            <Button type="button" variant="outline" size="sm" className="h-7 font-normal" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
               {taken ? "Take control again" : "Take control"}
             </Button>
           ) : null}
           {showing && mine ? (
-            <Button type="button" size="sm" className="h-7" disabled={acting} onClick={() => void handBack()}>
+            <Button type="button" size="sm" className="h-7 font-normal" disabled={acting} onClick={() => void handBack()}>
               Hand back to the agent
             </Button>
           ) : null}
@@ -1757,7 +1751,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
             <TypeTextButton shortcut={typeShortcut} compact={compact} onClick={openTyping} />
           ) : null}
           {showing && connection.state === "disconnected" ? (
-            <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
+            <Button type="button" variant="outline" size="sm" className="h-7 font-normal" onClick={reconnect}>
               Reconnect
             </Button>
           ) : null}
@@ -1780,6 +1774,12 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
                     Open thread
                   </DropdownMenuItem>
                 )}
+                {openTerminal ? (
+                  <DropdownMenuItem onSelect={openTerminal}>
+                    <TerminalGlyph />
+                    Open terminal
+                  </DropdownMenuItem>
+                ) : null}
                 {showing ? (
                   <DropdownMenuItem onSelect={reconnect}>
                     <Icon name="ArrowReloadHorizontal" aria-hidden />
@@ -1809,17 +1809,20 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
                     }
                   />
                 ) : null}
+                {numbers ? (
+                  <DropdownMenuCheckboxItem className="gap-2" checked={numbersShown} onCheckedChange={showNumbers}>
+                    <ActivityGlyph />
+                    Show CPU and memory
+                  </DropdownMenuCheckboxItem>
+                ) : null}
                 {showing ? (
                   <>
                     <DropdownMenuSeparator />
                     {/* Both wait for the connection; Paste for control too, so the item says there is one to take. */}
-                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} aria-describedby={ownPasteId} onSelect={() => void pasteFromComputer()}>
+                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} onSelect={() => void pasteFromComputer()}>
                       <PasteGlyph />
                       Paste from this computer
                     </DropdownMenuItem>
-                    <p id={ownPasteId} className="max-w-64 px-2 pb-1.5 text-xs text-muted-foreground">
-                      {ownPasteWords(deviceShown)}
-                    </p>
                     <DropdownMenuItem disabled={connection.state !== "connected"} onSelect={() => void copyToComputer()}>
                       <Icon name="Copy" aria-hidden />
                       Copy to this computer
@@ -2210,11 +2213,26 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const switchTo = (view: BoxViewName) => nav.go(otherView(route, view), { replace: true });
   const box = page?.box ?? null;
   const otherViews = (shown: BoxViewName) => (box ? <OtherViews box={box} shown={shown} onSwitch={switchTo} /> : null);
+  const otherScreens = (shown: Screen) => (box ? <OtherViews box={box} shown={shown} without="terminal" onSwitch={switchTo} /> : null);
   const reach = page?.monitor ?? null;
-  const numbers = box && reach?.is === "read" && reach.machineId ? <BarNumbers key={reach.machineId} machineId={reach.machineId} name={box.name} page={pageLink} /> : null;
-  if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} numbers={numbers} />;
+  const machineId = box && reach?.is === "read" ? reach.machineId : null;
+  const numbers = (everyWidth: boolean) => (box && machineId ? <BarNumbers key={machineId} machineId={machineId} name={box.name} page={pageLink} everyWidth={everyWidth} /> : null);
+  if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} numbers={numbers(false)} />;
   const legacyDesktop = route.threadId !== null && route.view === "desktop";
-  return <DesktopViewer threadId={threadId} boxId={route.boxId} newTab={false} onBack={back} screen={legacyDesktop ? null : route.view} page={pageLink} otherViews={otherViews} numbers={numbers} />;
+  const terminalOpens = box !== null && otherViewsNow(box, route.view).some((choice) => choice.view === "terminal");
+  return (
+    <DesktopViewer
+      threadId={threadId}
+      boxId={route.boxId}
+      newTab={false}
+      onBack={back}
+      screen={legacyDesktop ? null : route.view}
+      page={pageLink}
+      otherViews={otherScreens}
+      openTerminal={terminalOpens ? () => switchTo("terminal") : undefined}
+      numbers={numbers(true)}
+    />
+  );
 }
 
 const knownTitles = new Map<string, string>();

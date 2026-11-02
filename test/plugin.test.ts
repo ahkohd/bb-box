@@ -3003,7 +3003,7 @@ test("box_resize resizes a box live where its backend can, says first what it wo
   assert.ok(isError(smaller));
   assert.match(text(smaller), /^A box's disk only grows, and this box's is 30 GiB, more than the 25 GiB asked for\./);
   assert.match(text(await tool("box_resize", { box: box.name, memory_gib: 1 })), /needs at least 2 GiB memory/);
-  assert.match(text(await tool("box_resize", { box: box.name, cores: 64 })), /can be at most 16 cores, 32 GiB memory, 256 GiB disk/);
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 64 })), /can be at most 16 cores, 32 GiB memory, 256 GiB disk.* To allow more, raise the kind's largest size in BB Box settings, under Kinds, Linux, Sizes, or run bb box kind set linux --largest-cores <cores>\./);
 });
 
 test("box_resize refuses a live shrink of memory below what the box uses, with a margin, and changes nothing (061)", async (t) => {
@@ -3607,6 +3607,7 @@ test("box_acquire takes a preset or a custom size, and box_list shows each kind'
   const refused = await tool("box_acquire", { cores: 64 });
   assert.ok(isError(refused));
   assert.match(text(refused), /^A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 64 cores, 4 GiB memory\./);
+  assert.match(text(refused), / To allow more, raise the kind's largest size in BB Box settings, under Kinds, Linux, Sizes, or run bb box kind set linux --largest-cores <cores>\./);
   assert.match(text(refused), /Pick a preset, or a custom size within the largest\. box_list shows each kind's sizes\./);
   assert.equal((await app.boxes.list(THREAD)).length, 2, "a refused size makes no box");
 });

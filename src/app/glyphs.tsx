@@ -95,6 +95,13 @@ export function TerminalGlyph(props: Props) {
   );
 }
 
+export function ActivityGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+    </Stroked>
+  );
+}
 
 export function HomeGlyph(props: Props) {
   return (
