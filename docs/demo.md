@@ -1,6 +1,6 @@
 # Recording the demo
 
-The README and the documentation site's landing page open with a 46-second demo of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form or the desktop and terminal tabs change.
+The README and the documentation site's landing page open with a demo of about 75 seconds of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form, the desktop and terminal tabs, a box's page or its Snapshots card change.
 
 ## The demo video
 
@@ -13,8 +13,11 @@ The video is recorded in a box, on a fresh BB with no account, so no deployment'
 3. The person opens the right panel, then the Box panel, then **Open desktop**, and maximises the pane to watch the desktop.
 4. The person opens the Monitor in BB's sidebar on the desktop box for a few seconds, its CPU and memory moving, and hides it again.
 5. In the Box panel, **New box**, a Linux server with the form's defaults, then **Open terminal** on its row, and `uname -sm && nproc` in it.
+6. **Open on the Boxes page** in the server box's menu: its page, with its Activity for a moment, then **Take snapshot** in its Snapshots card, named "before".
+7. BB's back button, to the thread's terminal tab, where `sudo rm /usr/bin/git && git status` breaks the box: 'git: command not found'. `exit` ends the terminal, so no terminal is open on the box.
+8. BB's forward button, back to the box's page, and **Restore** on the snapshot's row. The dialog has its undo ticked, and as nothing else is open on the box, its button says only **Restore** and the box's name. The box comes back on a new microVM, and the notice at the top of its page says it was restored, with **Undo…**.
 
-The agent's wait is played at three times its speed; the rest is real time.
+The agent's wait is played at three times its speed, and the restore at six times; the rest is real time.
 
 ### The agent
 
@@ -32,20 +35,20 @@ The recording, encoding and checking scripts in [scripts/demo/web-demo](../scrip
 
 ### Set up
 
-On a Linux box with Docker and sudo, about 8 cores, 16 GiB of memory and 40 GB of disk free, with a checkout of `main` at `~/bb-box`:
+On a Linux box with Docker, sudo and KVM, such as a Proxmox QEMU box, about 8 cores, 16 GiB of memory and 40 GB of disk free, with a checkout of `main` at `~/bb-box`:
 
 ```sh
 sh ~/bb-box/scripts/demo/web-demo/install-tools.sh
 sh ~/bb-box/scripts/demo/stage.sh ~/bb-box
 ```
 
-`install-tools.sh` installs Playwright, Google Chrome, which plays the desktop's video, ffmpeg, webp, tesseract and a word list. `stage.sh` takes about 20 minutes. It:
+`install-tools.sh` installs Playwright, Google Chrome, which plays the desktop's video, ffmpeg, webp, tesseract and a word list. `stage.sh` takes about 30 minutes. Start Docker first on a new VM, as the stage reads Docker's bridge address. If the image build stops moving, an Ubuntu mirror's download may have stalled: stopping its `apt` download process makes `apt` try again. It:
 
 1. starts a fresh BB with its own data and ports, and nothing from the box's environment, on port 4999, with `~/fresh/bb.sh` as its `bb`
 2. installs bb-box from the checkout
 3. lets boxes join it as machines, through the Docker bridge
 4. registers the agent and makes it the default, and turns off onboarding and telemetry
-5. sets up the Docker backend with `bbbox/linux-desktop:1` as its desktop image, and builds both images
+5. sets up the Docker backend with `bbbox/linux-desktop:1` as its desktop image, and builds both images. Docker's boxes take no snapshots, so Docker makes only the desktop, and a microsandbox backend on BB's server, first in the order, makes the Linux server, from the same image
 6. sets the Monitor to read every 2 seconds, so its CPU and memory move in the few seconds it shows
 
 ### Record
@@ -58,17 +61,19 @@ sh scripts/demo/web-demo/takes.sh scripts/demo/steps.mjs ~/takes "sh scripts/dem
 
 This records a rehearsal, then a dark take and a light take, in `~/takes`, with a fresh headless Chrome for each and [reset.sh](../scripts/demo/reset.sh) after each. The rehearsal starts the desktop for the first time, which is slow; it is not used. `record.mjs` drives BB's page at 1280 by 800 and draws a pointer that glides to each control before it is pressed, as headless Chrome draws none. It saves Chrome's screencast, the page alone at 2560 by 1600, with each frame's time, the time each step starts and the page's text. A take takes about a minute.
 
+A restore can race bb-box's check that a box answers: when the check runs before the restored box has joined BB again, the box's page says it does not answer until the next check, a minute later. Look for 'does not answer' in each take's `page-text.json`, and record that theme again if it is there, giving the theme after the reset command, such as `light`.
+
 ### Encode
 
 ```sh
-python3 scripts/demo/web-demo/encode.py ~/takes/dark --out docs/media --name demo
+python3 scripts/demo/web-demo/encode.py ~/takes/dark --out docs/media --name demo --webp-width 800 --webp-fps 8
 python3 scripts/demo/web-demo/encode.py ~/takes/light --out docs/media --name demo-light --no-webp
 ```
 
 This plays the agent's wait three times faster, holds the last frame for 1.5 seconds, and makes:
 
-- `demo.mp4` from the dark take and `demo-light.mp4` from the light one: H.264 at CRF 12, 1920 by 1200, 30 fps, about 2 MB each, `-tune animation`, yuv420p, faststart, no sound. The landing page plays one, muted and looping: the one that matches the page's theme.
-- `demo.webp`, from the dark take: animated WebP at 960 by 600 and 10 fps, for the README, as GitHub plays images in a README but not videos. Its quality steps down from 70 until it is under 5 MB, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
+- `demo.mp4` from the dark take and `demo-light.mp4` from the light one: H.264 at CRF 12, 1920 by 1200, 30 fps, about 4.5 MB each, `-tune animation`, yuv420p, faststart, no sound. The landing page plays one, muted and looping: the one that matches the page's theme.
+- `demo.webp`, from the dark take: animated WebP at 800 by 500 and 8 fps, which keeps it under 5 MB, for the README, as GitHub plays images in a README but not videos. Its quality steps down from 70 until it is under 5 MB, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
 - `demo-poster.jpg` and `demo-light-poster.jpg`: the desktop with the Monitor open on it, each video's poster while it loads.
 
 ### Check every frame

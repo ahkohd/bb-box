@@ -40,6 +40,9 @@ path = sys.argv[1]
 config = json.load(open(path))
 docker = next(backend for backend in config["backends"] if backend["type"] == "docker")
 docker["fields"]["desktop-image"] = "bbbox/linux-desktop:1"
+docker["fields"]["linux-image"] = ""
+microsandbox = {"id": "microsandbox", "type": "microsandbox", "enabled": True, "fields": {"desktop-image": ""}}
+config["backends"] = [microsandbox] + [backend for backend in config["backends"] if backend["type"] != "microsandbox"]
 json.dump(config, open(path, "w"))
 EOF
 "$bb" box config apply "$fresh/config.json" | tail -1

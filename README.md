@@ -1,6 +1,6 @@
 # bb-box
 
-[![A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal](docs/media/demo.webp)](docs/media/demo.mp4)
+[![A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo](docs/media/demo.webp)](docs/media/demo.mp4)
 
 Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.
 
