@@ -911,7 +911,7 @@ export function DevicePicker({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-foreground" aria-label={`Device: ${label}. Choose another`} disabled={switching !== null}>
+        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs font-normal text-foreground" aria-label={`Device: ${label}. Choose another`} disabled={switching !== null}>
           <PhoneGlyph className="text-muted-foreground" />
           {label}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="size-3.5 text-muted-foreground" aria-hidden>

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -41,7 +41,7 @@ export function otherViewsNow(box: BoxView, shown: BoxViewName): ViewChoice[] {
 
 export function ViewSwitchButton({ view, words, hint, onClick }: { view: BoxViewName; words: string; hint?: string; onClick: () => void }) {
   const button = (
-    <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" data-view-switch={view} onClick={onClick}>
+    <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 font-normal" data-view-switch={view} onClick={onClick}>
       {viewGlyph(view, "size-3.5")}
       {words}
     </Button>
@@ -61,14 +61,44 @@ export function fromTheTerminalWords(): string {
   return `In the terminal, ${LEAVE_TERMINAL_KEYS} comes here.`;
 }
 
-export function OtherViews({ box, shown, onSwitch }: { box: BoxView; shown: BoxViewName; onSwitch: (view: BoxViewName) => void }) {
+export function OtherViews({ box, shown, without, onSwitch }: { box: BoxView; shown: BoxViewName; without?: BoxViewName; onSwitch: (view: BoxViewName) => void }) {
   return (
     <>
-      {otherViewsNow(box, shown).map((choice) => (
-        <ViewSwitchButton key={choice.view} view={choice.view} words={choice.words} hint={shown === "terminal" ? fromTheTerminalWords() : undefined} onClick={() => onSwitch(choice.view)} />
-      ))}
+      {otherViewsNow(box, shown)
+        .filter((choice) => choice.view !== without)
+        .map((choice) => (
+          <ViewSwitchButton key={choice.view} view={choice.view} words={choice.words} hint={shown === "terminal" ? fromTheTerminalWords() : undefined} onClick={() => onSwitch(choice.view)} />
+        ))}
     </>
   );
+}
+
+export const BAR_NUMBERS_SHOWN_KEY = "bb-box:bar-numbers";
+
+function rememberedBarNumbersShown(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(BAR_NUMBERS_SHOWN_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function rememberBarNumbersShown(shown: boolean): void {
+  try {
+    if (shown) globalThis.localStorage?.setItem(BAR_NUMBERS_SHOWN_KEY, "on");
+    else globalThis.localStorage?.removeItem(BAR_NUMBERS_SHOWN_KEY);
+  } catch {
+    return;
+  }
+}
+
+export function useBarNumbersShown(): readonly [boolean, (shown: boolean) => void] {
+  const [shown, setShown] = useState(rememberedBarNumbersShown);
+  const choose = (next: boolean) => {
+    rememberBarNumbersShown(next);
+    setShown(next);
+  };
+  return [shown, choose];
 }
 
 function percentWords(value: number | null): string {
@@ -92,10 +122,10 @@ function Reading({ colour, label, value }: { colour: string; label: string; valu
   );
 }
 
-export function BarNumbers({ machineId, name, page }: { machineId: string; name: string; page: PageLink }) {
+export function BarNumbers({ machineId, name, page, everyWidth = false }: { machineId: string; name: string; page: PageLink; everyWidth?: boolean }) {
   const { container, snapshot, error } = useMonitorSnapshot(machineId);
   return (
-    <div ref={container} data-bar-numbers className={cn("flex items-center max-sm:hidden", CHART_TONES)}>
+    <div ref={container} data-bar-numbers className={cn("flex items-center", !everyWidth && "max-sm:hidden", CHART_TONES)}>
       <BarReading snapshot={snapshot} error={error} name={name} page={page} />
     </div>
   );

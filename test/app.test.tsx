@@ -22,8 +22,9 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
+import { BoxLine, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
+import { BAR_NUMBERS_SHOWN_KEY } from "../src/app/view-bar.tsx";
 import { forgetMoves } from "../src/app/box-route.ts";
 import { FRESH_PLACE, forgetListPlace, keepListPlace, leaveRow, listPlace, placeFrom, returnToPlace, rowToReturnTo } from "../src/app/list-place.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
@@ -3739,7 +3740,8 @@ test("a desktop gets this computer's clipboard only with a paste, not on taking 
   expect(client.pasted).toEqual([]);
   const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
   const paste = within(menu).getByRole("menuitem", { name: "Paste from this computer" });
-  expect(document.getElementById(paste.getAttribute("aria-describedby")!)?.textContent).toBe(DESKTOP_OWN_PASTE_WORDS);
+  expect(paste.hasAttribute("aria-describedby")).toBe(false);
+  expect(menu.textContent).not.toContain("own clipboard");
   fireEvent.click(paste);
   await waitFor(() => expect(client.pasted).toEqual(["a test value"]));
   expect(readText).toHaveBeenCalledTimes(1);
@@ -4319,7 +4321,8 @@ test("a device gets this computer's clipboard only with a paste: taking control 
 
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     const paste = within(menu).getByRole("menuitem", { name: "Paste from this computer" });
-    expect(document.getElementById(paste.getAttribute("aria-describedby")!)?.textContent).toBe(DEVICE_OWN_PASTE_WORDS);
+    expect(paste.hasAttribute("aria-describedby")).toBe(false);
+    expect(menu.textContent).not.toContain("own clipboard");
     fireEvent.click(paste);
     await waitFor(() => expect(pastes()).toHaveLength(2));
     expect(readText).toHaveBeenCalledTimes(1);
@@ -8889,19 +8892,26 @@ test("a view's way back goes back in history when the panel itself made the move
   window.history.pushState(null, "", "/");
 });
 
-test("a view's bar has the box's other views as buttons, and a switch replaces the view keeping every origin of G8, there and back (069 section 8, unit 5)", async () => {
+test("a view's bar has the box's other screens as buttons, a screen's menu opens its terminal, and a switch replaces the view keeping every origin of G8, there and back (069 section 8, unit 5)", async () => {
   const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
   const { handlers } = server([desktopBox(), android]);
   for (const origins of ["", "/from-list", "/from-box", "/from-box/from-list", "/from-box/from-settings", "/from-settings"]) {
     const desktop = boxPageAt(handlers, `box/box_2/desktop${origins}`);
-    const terminal = await desktop.findByRole("button", { name: "Terminal" });
+    const menu = await openMenu(await desktop.findByRole("button", { name: "Desktop actions" }));
+    expect(desktop.queryByRole("button", { name: "Terminal" })).toBeNull();
     expect(desktop.queryByRole("button", { name: "Desktop" })).toBeNull();
-    fireEvent.click(terminal);
+    expect(items(menu).slice(0, 2)).toEqual(["Open thread", "Open terminal"]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Open terminal" }));
     expect(desktop.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_2/terminal${origins}`, replace: true } });
     cleanup();
     const shell = boxPageAt(handlers, `box/box_2/terminal${origins}`);
     fireEvent.click(await shell.findByRole("button", { name: "Desktop" }));
     expect(shell.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_2/desktop${origins}`, replace: true } });
+    cleanup();
+    const emulator = boxPageAt(handlers, `box/box_a/device${origins}`);
+    fireEvent.click(within(await openMenu(await emulator.findByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Open terminal" }));
+    expect(emulator.queryByRole("button", { name: "Terminal" })).toBeNull();
+    expect(emulator.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_a/terminal${origins}`, replace: true } });
     cleanup();
     const emulatorShell = boxPageAt(handlers, `box/box_a/terminal${origins}`);
     fireEvent.click(await emulatorShell.findByRole("button", { name: "Emulator" }));
@@ -8909,7 +8919,7 @@ test("a view's bar has the box's other views as buttons, and a switch replaces t
     cleanup();
   }
   const old = boxPageAt(handlers, "thr_ui/box_2/from-settings");
-  fireEvent.click(await old.findByRole("button", { name: "Terminal" }));
+  fireEvent.click(within(await openMenu(await old.findByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Open terminal" }));
   expect(old.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/terminal/from-settings", replace: true } });
 });
 
@@ -9004,7 +9014,7 @@ test("after a switch, the way back still goes back in history to where the view 
   cleanup();
   window.history.pushState(null, "", "/plugins/bb-box/desktop/box/box_2/desktop/from-box");
   const view = boxPageAt(handlers, "box/box_2/desktop/from-box");
-  fireEvent.click(await view.findByRole("button", { name: "Terminal" }));
+  fireEvent.click(within(await openMenu(await view.findByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Open terminal" }));
   cleanup();
   window.history.replaceState(null, "", "/plugins/bb-box/desktop/box/box_2/terminal/from-box");
   const switched = boxPageAt(handlers, "box/box_2/terminal/from-box");
@@ -9057,22 +9067,51 @@ function readByTheMonitor(machineId: string, reading: () => MonitorSnapshot, box
   return { handlers, done: () => rects.mockRestore() };
 }
 
-test("a view's bar has the box's CPU and memory now, from the same reading as its page, leading to the page, and gone below 640 px (069 section 8, unit 5)", async () => {
+test("a terminal's bar has the box's CPU and memory now, from the same reading as its page, leading to the page, and gone below 640 px (069 section 8, unit 5)", async () => {
   const { handlers, done } = readByTheMonitor("host_bold", () => monitorReading());
-  for (const view of ["desktop", "terminal"]) {
-    const slot = boxPageAt(handlers, `box/box_2/${view}/from-list`);
-    const numbers = await slot.findByRole("link", { name: "bold-heron: CPU 31%, memory 58%. Open bold-heron's page" });
-    expect(numbers.textContent).toBe("CPU 31%Memory 58%");
-    expect(numbers.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/from-list");
-    expect(numbers.closest("[data-bar-numbers]")!.className).toContain("max-sm:hidden");
-    fireEvent.click(numbers);
-    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/from-list" } });
-    cleanup();
-  }
+  const slot = boxPageAt(handlers, "box/box_2/terminal/from-list");
+  const numbers = await slot.findByRole("link", { name: "bold-heron: CPU 31%, memory 58%. Open bold-heron's page" });
+  expect(numbers.textContent).toBe("CPU 31%Memory 58%");
+  expect(numbers.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/from-list");
+  expect(numbers.closest("[data-bar-numbers]")!.className).toContain("max-sm:hidden");
+  fireEvent.click(numbers);
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/from-list" } });
+  cleanup();
   const page = boxPageAt(handlers, "box/box_2");
   const activity = await page.findByRole("region", { name: "Activity" });
   await waitFor(() => expect(within(activity).getByRole("region", { name: "CPU" }).querySelector(".text-xl")!.textContent).toBe("31"));
   expect(within(activity).getByRole("region", { name: "Memory" }).querySelector(".text-xl")!.textContent).toBe("58");
+  done();
+  vi.unstubAllGlobals();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  vi.stubGlobal("ResizeObserver", FakeObserver);
+});
+
+test("a desktop's bar shows CPU and memory only once Show CPU and memory is ticked in its menu, at every width, and the choice lasts in this browser until unticked", async () => {
+  const { handlers, done } = readByTheMonitor("host_bold", () => monitorReading());
+  const figures = "bold-heron: CPU 31%, memory 58%. Open bold-heron's page";
+  const toggle = async (view: ReturnType<typeof boxPageAt>) => within(await openMenu(await view.findByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show CPU and memory" });
+  const first = boxPageAt(handlers, "box/box_2/desktop/from-list");
+  const off = await toggle(first);
+  expect(off.getAttribute("aria-checked")).toBe("false");
+  expect(first.queryByRole("link", { name: figures })).toBeNull();
+  fireEvent.click(off);
+  const numbers = await first.findByRole("link", { name: figures });
+  expect(numbers.closest("[data-bar-numbers]")!.className).not.toContain("max-sm:hidden");
+  expect(window.localStorage.getItem(BAR_NUMBERS_SHOWN_KEY)).toBe("on");
+  cleanup();
+  const reloaded = boxPageAt(handlers, "box/box_2/desktop/from-list");
+  expect(await reloaded.findByRole("link", { name: figures })).toBeTruthy();
+  const on = await toggle(reloaded);
+  expect(on.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(on);
+  await waitFor(() => expect(reloaded.queryByRole("link", { name: figures })).toBeNull());
+  expect(window.localStorage.getItem(BAR_NUMBERS_SHOWN_KEY)).toBeNull();
+  cleanup();
+  const unread = boxPageAt(server([desktopBox()]).handlers, "box/box_2/desktop/from-list");
+  const menu = await openMenu(await unread.findByRole("button", { name: "Desktop actions" }));
+  expect(within(menu).queryByRole("menuitemcheckbox", { name: "Show CPU and memory" })).toBeNull();
+  cleanup();
   done();
   vi.unstubAllGlobals();
   vi.stubGlobal("WebSocket", FakeSocket);
