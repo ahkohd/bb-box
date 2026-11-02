@@ -4041,3 +4041,128 @@ tsc` passes, the reference is current; the node suite ran 3,381 tests,
 3,092 passed, 1 failed, 288 skipped, the failure a boat test that pinned
 `guestIdentity`'s answer without its value, since updated and passing
 with its file (27 of 27); vitest ran 444, all passed.
+
+## Close-out A: microsandbox snapshots on a Mac
+
+Unit 10 turned microsandbox snapshots off on a Mac host, as what they rest
+on was measured on Linux only. This measures it on a Mac and turns them on
+there, with the version guard kept. On the way it found that `msb` refuses
+a snapshot's ID whenever its home is reached through a link, which bb-box's
+own wrapper does on Linux too, so bb-box now names each snapshot by its
+group and member. Decisions are in 070, [Decided during the
+close-out](070-snapshots.md#decided-during-the-close-out).
+
+### The probe on a Mac
+
+Unit 10's probe could not run on a Mac as it was: it needs GNU `date`,
+`mkfs.ext4` and `python3`. [microsandbox-mac.sh](../research/box-snapshots/microsandbox-mac.sh)
+runs on a Mac and on Linux. It downloads its own `msb` 0.7.7, checks its
+SHA-256 against bb-box's pin, and runs it with an `MSB_HOME` of its own,
+never bb-box's `msb` or home. It needs no sudo, `python3` or `osascript`,
+prints no paths or names, and on exit removes every sandbox and snapshot it
+made, then its folder. It runs unit 10's checks and the reviewers' checks A
+to C, adds the memory checks, and check E, bb-box's own commands.
+
+The lead ran it on the production Mac host, as its user, in `/tmp`, on the
+same volume as bb-box's `msb` folder: macOS 27.0.1, Apple M4 Max, 128 GiB,
+APFS on the internal SSD, 340 GiB free. Each version passed first on a
+nested-KVM Proxmox QEMU Linux box. Five runs:
+
+| Run | Result | What it showed |
+| --- | --- | --- |
+| 1 | 12 passed, 3 failed | The data checks held: a chain of three restored byte for byte with both parents removed with `--force`, and checks A to C. The 3 failures measured nothing: the counter process never started on the Mac, and `--disk-only` printed no reason |
+| 2 | 13 passed, 3 failed, 1 skipped | The cause was a terminal, not `msb`: from an interactive shell `msb exec` gave the sandbox a PTY, so every read ended in a carriage return ("x\r" is not "x"), and the PTY's hangup ended the counter. Run 2's script under a PTY on Linux (`script -qec`) gave the same pattern |
+| 3 | 17 of 17 | With `msb exec --no-tty` and stdin from `/dev/null`, as bb-box runs `msb`. But its clean-up, which removes snapshots by ID, left 5 on the Mac and none on Linux |
+| 4 | 19 passed, 3 failed | Removal by ID, as bb-box's delete did, failed on the Mac: "snapshot identity <ID> has 2 local copies; use group:member or an explicit artifact path" |
+| 5 | 29 of 29 | Check E: bb-box's own commands by group and member (create with `--group` and `--label`, inspect, restore, `restore --disk-only` as a fork does, head, remove with `--force` of a parent, remove of an old head once another is head, remove of the last one after its sandboxes went, then nothing listed), once with `MSB_HOME` through a link and once through its real path. By ID, inspect failed through the link and worked through the real path |
+
+Run 5 on the Mac ([output](../research/box-snapshots/microsandbox-mac-results.txt)),
+times from the probe's own clock: a take with memory 0.78 s and of the disk
+0.22 s; a memory restore 0.20 s, with the counter process running and
+counting on from 12, its value at the take; the memory snapshot's disk
+alone, booted as a fork boots it, 0.26 s, with the files byte for byte and
+the counter still at 12; a disk restore at another size 0.28 s; removals
+0.06 s each.
+
+### Why "2 local copies"
+
+On a Mac `/tmp` is a link to `/private/tmp`, so the probe's home was always
+reached through one. Where `msb`'s home is a link, `msb` indexes each
+snapshot under the link's path and the real one, and then refuses to pick
+one by ID in `snapshot inspect`, `restore` and `remove`. Reproduced on
+Linux the moment `MSB_HOME` is a link; by group and member all three work.
+bb-box's wrapper reaches a home longer than 57 bytes through
+`/tmp/bb-box-msb-<uid>`, as for a BB machine's own data folder, so a Linux
+host with a long folder took snapshots before this that it could not
+restore, fork or delete, and a release of such a box stopped at its
+snapshots. bb-box's size read of a snapshot (`inspect`) failed there too,
+and fell back to the box's size.
+
+### What changed
+
+- **Mac hosts take snapshots.** The refusal on a Mac is gone from the plan,
+  every change and the doctor's Snapshots check, which says "ok" on a Mac
+  with `msb` 0.7.7. The version guard stays as it was: every change reads
+  `msb --version` first.
+- **A snapshot is named by its group and member** (`groupMember`,
+  `bbbox-<box ID>:<name>`) in `snapshot inspect`, `restore`, which forks
+  use too, and `remove`, and when a new head is chosen. bb-box's own files
+  (keep dates, sizes) stay keyed by the ID.
+- **Docs**: the snapshots guide and the microsandbox guide say Linux hosts
+  and Macs; the architecture says why bb-box names snapshots so; the probe
+  and its Mac output are in the research folder; 070's decisions.
+
+### Tests
+
+In `test/microsandbox-snapshots.test.ts`, the fake `msb` refuses an ID as
+the Mac did when its home is reached through a link (`homeThroughLink`):
+
+- "a Mac host's microsandbox boxes take and delete snapshots, as the probe
+  on a Mac measured, and the doctor says so; another msb is still
+  refused", in place of unit 10's test of the refusal;
+- "where msb's home is reached through a link ... bb-box names each by
+  group and member to inspect, restore, fork and delete it": two snapshots,
+  a restore, a fork, the parent deleted with `--force`, the last deleted,
+  and no `msb` call with an ID.
+
+Both fail on main's sources; both fail too with the Mac refusal lifted
+alone. Two tests of unit 10 that pinned the ID in `remove` and `restore`
+now pin group and member.
+
+On a Proxmox LXC box (8 cores, 16 GiB, Node 24.21), in a git checkout of
+this commit: `npx tsc` passes and the reference is current (`node
+scripts/reference.ts --check`); the node suite ran 3,494 tests, 3,175
+passed, 0 failed, 319 skipped; vitest ran 445, all passed, with
+`TZ=Pacific/Auckland`.
+
+### On a separate BB
+
+The lead keeps a second microsandbox install off the owner's Mac, so the
+live check through bb-box ran on Linux, through the link: a fresh `npx
+bb-app` 0.48.1 with no account and `BB_BOX_LIVE_CHECKS=1` in a nested-KVM
+Proxmox QEMU box (8 cores, 16 GiB), bb-box from this branch, microsandbox
+on BB's server, with `HOME` long enough that `msb`'s home is 81 bytes, so
+bb-box reached it through `/tmp/bb-box-msb-1000`
+([live-linked-home.sh](070-snapshots/close-out/live-linked-home.sh), which
+runs unit 10's own [live-setup.sh](070-snapshots/unit-10/live-setup.sh) and
+[live-gates.sh](070-snapshots/unit-10/live-gates.sh) unchanged). Boxes were
+machines of the person's and joined BB as machines. Times are bb-box's own.
+
+| Check | Result |
+| --- | --- |
+| A box | ready in 235 s, most of it importing the image into a new `msb` home; `boot=unarmed`, its own marker |
+| Take with memory, take of the disk | 3.4 s and 0.71 s |
+| Restore, memory | 2.7 s: the counter process running, the same host ID, one microVM; BB's daemon connected again 6.8 s after the restore began |
+| Fork of the memory snapshot | 2.8 s, a new BB machine; `boot=reset`, "BB machines removed" naming the source's host ID; no process of its source; new SSH host keys |
+| Undo, disk | 2.5 s; `boot=kept`, the same host ID; the daemon connected 3.7 s after it began |
+| Take a parent and its child, delete the parent | 0.68, 0.69 and 0.38 s |
+| Keep, release | 0.38 s and 0.89 s; the kept snapshot listed after the release |
+| Fork of the kept snapshot after the release | 2.3 s, `boot=reset`, a new host ID |
+| Clean up | every box released, every snapshot deleted: "There are no snapshots", `msb ls` "No sandboxes found", `msb snapshot list` "No snapshots indexed", no keep file; the link in place throughout |
+| Main's bb-box, in the same BB, through the same link | `origin/main`'s bb-box (`b15fe055`) installed from a checkout; the release of a box holding one snapshot stopped: "bb-box could not confirm the delete of snapshot ... msb snapshot remove failed: exit code 1. It checks again at its next sweep". With this branch's bb-box installed again, the sweep finished that release; `msb` then listed no sandboxes and no snapshots |
+
+### After merge
+
+The lead takes, restores, forks and deletes a snapshot on production's own
+microsandbox backend on that Mac, releases the box and sees nothing
+listed, and rolls back if anything is wrong.

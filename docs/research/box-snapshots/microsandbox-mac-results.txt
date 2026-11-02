@@ -1,0 +1,108 @@
+== the host
+macOS 27.0.1 build 26A434, Apple M4 Max, 128 GiB
+File System Personality:   APFS
+Device Location:           Internal
+Solid State:               Yes
+340 GiB free where the probe works
+== its own msb 0.7.7, apart from any other
+msb 0.7.7, SHA-256 checked, MSB_HOME of its own
+  ✓ Pulled              alpine:3.20 (1.4s)
+== 1: msb's own disk, with memory, restored beside its stopped source
+the counter in the source before the take: 8, then 11
+TIME 0.78 s rc=0 :: msb snap create full --sandbox own --full --quiet
+TIME 0.22 s rc=0 :: msb snap create disk --sandbox own --quiet
+"format": "qcow2", "name": "disk", "parent_digest": "snap_90b64afc4d95e4ff31a66ebf607daa96", "scope": "disk", "snapshot_id": "snap_ced80358169ceb220b20cb63d96beace",
+"format": null, "name": "full", "parent_digest": null, "scope": "full", "snapshot_id": "snap_90b64afc4d95e4ff31a66ebf607daa96",
+TIME 0.20 s rc=0 :: msb snap restore own:full --name own-m --quiet
+PASS 1 the memory snapshot's root and own disk, byte for byte
+the counter at the take: 12; after the memory restore: 12, then 15
+PASS 1 the memory restore resumed the running process from the take
+TIME 0.26 s rc=0 :: msb snap restore own:full --name own-f --quiet --disk-only
+PASS 1 the memory snapshot's disk alone, root and own disk, byte for byte
+the counter in the memory snapshot's disk alone: 12, then 12
+PASS 1 the memory snapshot's disk alone holds no process
+TIME 0.28 s rc=0 :: msb snap restore own:disk --name own-d --quiet --cpus 2 --memory 2048M
+PASS 1 the disk snapshot's root and own disk, byte for byte
+the counter in the disk snapshot's sandbox: 13, then 13
+PASS 1 the disk snapshot holds no process
+  ✓ Removed             own:full
+TIME 0.06 s rc=0 :: msb snap rm --force own:full
+PASS 1 the sandbox restored from it, the same after a stop and start
+== 2: a chain of three, both parents removed with --force
+TIME 0.19 s rc=0 :: msb snap create c0 --sandbox chain --quiet
+TIME 0.18 s rc=0 :: msb snap create c1 --sandbox chain --quiet
+TIME 0.24 s rc=0 :: msb snap create c2 --sandbox chain --quiet
+"format": "qcow2", "name": "c2", "parent_digest": "snap_bdd458ef958f27c83f8d58a4faa8aeff", "scope": "disk", "snapshot_id": "snap_e0405f8b2af206dcbd04ddf5ac6633a5",
+"format": "qcow2", "name": "c1", "parent_digest": "snap_3fc3e3a0e5067d26f201ec309c63ad42", "scope": "disk", "snapshot_id": "snap_bdd458ef958f27c83f8d58a4faa8aeff",
+"format": "raw", "name": "c0", "parent_digest": null, "scope": "disk", "snapshot_id": "snap_3fc3e3a0e5067d26f201ec309c63ad42",
+snapshots folder before the removals: 372992 KiB in all of the probe's msb home
+PASS 2 a parent refused without --force
+  ✓ Removed             chain:c0
+TIME 0.06 s rc=0 :: msb snap rm --force chain:c0
+  ✓ Removed             chain:c1
+TIME 0.06 s rc=0 :: msb snap rm --force chain:c1
+TIME 0.30 s rc=0 :: msb snap restore chain:c2 --name chain-r --quiet
+PASS 2 the leaf holds its own data
+== 3: the head, and a memory snapshot booted from its disk only at another size
+PASS 3 the group's head refused while it has other members
+TIME 0.22 s rc=0 :: msb snap restore head:two --name head-r --quiet --disk-only --cpus 2 --memory 2048M
+/root/x in the memory snapshot's disk alone, at another size: x
+PASS 3 --disk-only boots the disk
+PASS 3 a memory restore at another size refused
+  ✓ Removed             head:two
+TIME 0.06 s rc=0 :: msb snap rm head:two
+PASS 3 the old head removed once another is head
+what a restored sandbox keeps of its source's settings:
+    "env": [
+    "labels": {}
+      "cpus": 2
+      "memory_mib": 2048
+      "hostname": null
+    "env": [
+    "labels": {}
+      "cpus": 2
+      "memory_mib": 2048
+      "hostname": null
+== A: a running sandbox restored from a snapshot that is then deleted
+  ✓ Removed             a-src:s1
+TIME 0.07 s rc=0 :: msb snap rm a-src:s1
+PASS A the same running, after its snapshot and source went
+PASS A the same after a stop and start
+== B: a capture of that sandbox names the deleted snapshot as its parent
+"format": "qcow2", "name": "t1", "parent_digest": "snap_0c39e9f778fbce0a296473d61645d9d5", "scope": "disk", "snapshot_id": "snap_097a727f4741b7edd51d39fc21d6af40",
+"format": "qcow2", "name": "t0", "parent_digest": "snap_034cc4e1086482d8c649bf7462edbcab", "scope": "disk", "snapshot_id": "snap_0c39e9f778fbce0a296473d61645d9d5",
+  ✓ Removed             a-r:t0
+TIME 0.06 s rc=0 :: msb snap rm --force a-r:t0
+TIME 0.29 s rc=0 :: msb snap restore a-r:t1 --name b-r --quiet
+PASS B the same after its parent was removed with --force
+== C: a parent removed with --force while a sandbox restored from it runs
+  ✓ Removed             c-src:p0
+TIME 0.06 s rc=0 :: msb snap rm --force c-src:p0
+PASS C the same after a restart
+== E: bb-box's own snapshot commands, by group:member, through a linked home and through a real one
+-- MSB_HOME linked, a link
+  inspect by ID: error: invalid config: snapshot identity <ID> has 2 local copies; use group:member or an explicit artifact path
+PASS E linked: inspect by group:member
+PASS E linked: a restore by group:member
+PASS E linked: a fork's restore of a memory snapshot's disk by group:member
+PASS E linked: a parent removed by group:member with --force
+PASS E linked: the old head removed by group:member once another is head
+PASS E linked: the last removed by group:member after its sandboxes went, as a release does, and none left
+-- MSB_HOME real, no link in its path: yes
+  inspect by ID: works
+PASS E real: inspect by group:member
+PASS E real: a restore by group:member
+PASS E real: a fork's restore of a memory snapshot's disk by group:member
+PASS E real: a parent removed by group:member with --force
+PASS E real: the old head removed by group:member once another is head
+PASS E real: the last removed by group:member after its sandboxes went, as a release does, and none left
+the linked home of E: snapshots left after removal by ID: 0
+the linked home of E: left: sandboxes 0, snapshots 0
+the real home of E: snapshots left after removal by ID: 0
+the real home of E: left: sandboxes 0, snapshots 0
+the main home: snapshots left after removal by ID: 5; the last refusal: error: invalid config: snapshot identity <ID> has 2 local copies; use group:member or an explicit artifact path
+the main home: left: sandboxes 0, snapshots 0
+processes with files in the probe's folder: 0
+removed the probe's folder
+passed 29, failed 0
+exit 0

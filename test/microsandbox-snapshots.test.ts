@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { MsbBackend, OWN_HOSTNAME, RUN_IN_MEMORY, sandboxName } from "../src/backends/microsandbox/backend.ts";
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { MSB_VERSION, msbScript, scriptValues } from "../src/backends/microsandbox/release.ts";
-import { HOST_FILE_DOCKER, MAC_NOT_YET, SNAPSHOTS_CHECKED_WITH, parseHead, parseInspect, parseSnapshotList, snapshotName, versionRefusal } from "../src/backends/microsandbox/snapshots.ts";
+import { HOST_FILE_DOCKER, SNAPSHOTS_CHECKED_WITH, parseHead, parseInspect, parseSnapshotList, snapshotName, versionRefusal } from "../src/backends/microsandbox/snapshots.ts";
 import { SnapshotFailed, type AcquireHooks, type BoxIdentity, type CopyHooks, type MachineSize, type Guest, type SnapshotHooks } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { IDENTITY_TOOL, forkCheckScript, forkSafetyOf, forkVerdict, parseForkSeen } from "../src/core/identity.ts";
@@ -108,19 +108,48 @@ test("070 unit 10 review (Astra 2): msb changed under a running backend is read 
   assert.equal(fake.snapshots().length, 1);
 });
 
-test("070 unit 10 review (Opus 1): on a Mac host microsandbox boxes take no snapshots yet, with words, and the doctor says so", async () => {
+test("070 close-out: a Mac host's microsandbox boxes take and delete snapshots, as the probe on a Mac measured, and the doctor says so; another msb is still refused", async () => {
   const fake = fakeMsbHost();
   fake.facts({ os: "Darwin", arch: "arm64", docker: "" });
+  fake.set({ homeThroughLink: true });
   const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
-  const guest = await backend.acquire(identity("linux-arm64"), null, acquiring(), signal());
+  const box = identity("linux-arm64");
+  const guest = await backend.acquire(box, null, acquiring(), signal());
   const plan = await backend.planSnapshots(guest, "linux-arm64", null, signal());
-  assert.deepEqual([plan.take.ok, plan.take.why], [false, `${MAC_NOT_YET}.`]);
-  assert.equal(plan.restore.way, "none");
-  assert.equal(plan.fork.ok, false);
-  await assert.rejects(backend.snapshot(guest, { id: snapshotId(), box: guest.data!.box as string, memory: false }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && error.message === `${MAC_NOT_YET}.`);
-  assert.ok(!fake.calls().some((call) => call[0] === "snapshot"), "msb is never asked");
+  assert.deepEqual([plan.take.ok, plan.take.why, plan.fork.ok], [true, null, true]);
   const check = (await backend.doctor(signal())).checks.find((each) => each.id === "microsandbox.snapshots");
-  assert.deepEqual([check?.status, check?.detail], ["warn", `${MAC_NOT_YET}, so its boxes take none.`]);
+  assert.equal(check?.status, "ok");
+  const id = snapshotId();
+  const taken = await backend.snapshot(guest, { id, box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
+  assert.equal(taken.holds, "disk-and-memory");
+  await backend.deleteSnapshot({ id, ref: taken.ref, guest }, QUIET, signal());
+  assert.deepEqual(fake.snapshots(), []);
+  fake.set({ version: "0.8.0" });
+  await assert.rejects(backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && /this host has msb 0\.8\.0/.test(error.message));
+});
+
+test("070 close-out: where msb's home is reached through a link, as bb-box's wrapper reaches a long one and a Mac's /tmp always is, msb refuses a snapshot's ID, so bb-box names each by group and member to inspect, restore, fork and delete it", async () => {
+  const { fake, backend } = setup();
+  fake.set({ homeThroughLink: true });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring(), signal());
+  const parent = snapshotId();
+  const first = await backend.snapshot(guest, { id: parent, box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  const last = snapshotId();
+  const second = await backend.snapshot(guest, { id: last, box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
+  const firstRef = { id: parent, ref: first.ref, guest };
+  const secondRef = { id: last, ref: second.ref, guest };
+  const restored = await backend.adoptSnapshot(firstRef, { ...box, size: { ...guest.size!, gpu: "none" } }, { macs: {}, smbios: null, value: box.boxId }, { claimed: async () => {}, submitting: async () => {}, task: async () => {} }, signal());
+  assert.notEqual(restored.ref, guest.ref);
+  const fork = await backend.forkSnapshot(secondRef, identity(), null, acquiring(), signal());
+  assert.ok(fake.sandboxes().includes(fork.ref));
+  await backend.deleteSnapshot(firstRef, QUIET, signal());
+  assert.deepEqual(fake.snapshots().map((each) => each.id), [second.ref], "the parent goes, with --force, and its child stays");
+  await backend.deleteSnapshot(secondRef, QUIET, signal());
+  assert.deepEqual(fake.snapshots(), []);
+  const named = fake.calls().filter((call) => call[0] === "snapshot" && ["inspect", "restore", "remove"].includes(call[1]!));
+  assert.deepEqual([...new Set(named.map((call) => call[1]))].sort(), ["inspect", "remove", "restore"]);
+  assert.deepEqual(named.filter((call) => call.some((arg) => /^snap_[0-9a-f]{32}$/.test(arg))), [], "no snapshot named by its ID");
 });
 
 test("070 unit 10 review (Opus 2): a restore keeps the box's disk when it has grown since the snapshot, as the dialog says, and as a fork does", async () => {
@@ -200,14 +229,14 @@ test("070 unit 10: a delete removes a snapshot others depend on with --force, as
   const tasks: string[] = [];
   await backend.deleteSnapshot({ id: ids[0]!, ref: taken[0]!.ref, guest }, { submitting: async () => {}, task: async (task) => void tasks.push(task.ref) }, signal());
   const removed = fake.calls().filter((call) => call[0] === "snapshot" && call[1] === "remove");
-  assert.deepEqual(removed.at(-1), ["snapshot", "remove", "--force", "--quiet", taken[0]!.ref], "msb refuses a parent without --force");
+  assert.deepEqual(removed.at(-1), ["snapshot", "remove", "--force", "--quiet", `bbbox-${box}:${snapshotName("test", ids[0]!, 7)}`], "msb refuses a parent without --force");
   assert.deepEqual(tasks, [`delete:${taken[0]!.ref}`]);
   assert.ok(!existsSync(join(fake.dir, "kept", taken[0]!.ref)), "its keep date goes with it");
   assert.deepEqual(fake.snapshots().map((each) => each.id).sort(), [taken[1]!.ref, taken[2]!.ref].sort());
   await backend.deleteSnapshot({ id: ids[2]!, ref: taken[2]!.ref, guest }, QUIET, signal());
   const head = fake.calls().filter((call) => call[0] === "snapshot" && call[1] === "head").at(-1)!;
   assert.equal(head[2], `bbbox-${box}:${snapshotName("test", ids[1]!, 7)}`, "msb removes no group's head while it has other members");
-  assert.deepEqual(fake.calls().filter((call) => call[0] === "snapshot" && call[1] === "remove").at(-1), ["snapshot", "remove", "--quiet", taken[2]!.ref], "no --force for a snapshot nothing depends on");
+  assert.deepEqual(fake.calls().filter((call) => call[0] === "snapshot" && call[1] === "remove").at(-1), ["snapshot", "remove", "--quiet", `bbbox-${box}:${snapshotName("test", ids[2]!, 7)}`], "no --force for a snapshot nothing depends on");
   await backend.deleteSnapshot({ id: ids[2]!, ref: taken[2]!.ref, guest }, QUIET, signal());
   const other = new MsbBackend(msbConfig(), testContext(undefined, "other"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
   await assert.rejects(other.deleteSnapshot({ id: ids[1]!, ref: taken[1]!.ref, guest }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && /is not bb-box's snapshot .* of this install's/.test(error.message));
@@ -219,7 +248,8 @@ test("070 unit 10: a restore makes the box a new microVM from the snapshot, with
   const box = identity();
   const guest = await backend.acquire(box, null, acquiring(), signal());
   writeHome(fake, guest.ref, "work.txt", "before");
-  const disk = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  const diskId = snapshotId();
+  const disk = await backend.snapshot(guest, { id: diskId, box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
   writeHome(fake, guest.ref, "work.txt", "after");
   const claimed: string[] = [];
   const hooks: CopyHooks = { claimed: async (made) => void claimed.push(made.ref), submitting: async () => {}, task: async () => {} };
@@ -228,7 +258,7 @@ test("070 unit 10: a restore makes the box a new microVM from the snapshot, with
   assert.notEqual(fresh.ref, guest.ref);
   assert.deepEqual(claimed, [fresh.ref, fresh.ref], "claimed before msb is asked");
   const restore = fake.calls().find((call) => call[0] === "snapshot" && call[1] === "restore")!;
-  assert.deepEqual([restore[2], after(restore, "--name")[0], after(restore, "--cpus")[0], after(restore, "--memory")[0], restore.includes("--disk-only")], [disk.ref, fresh.ref, "2", "4096M", false]);
+  assert.deepEqual([restore[2], after(restore, "--name")[0], after(restore, "--cpus")[0], after(restore, "--memory")[0], restore.includes("--disk-only")], [`bbbox-${box.boxId}:${snapshotName("test", diskId, 7)}`, fresh.ref, "2", "4096M", false]);
   assert.deepEqual([after(restore, "--net-default"), after(restore, "--net-rule")], [["deny"], ["allow@dns,allow@public,allow@private,allow:ingress@any"]], "the box's own network profiles, as msb's create made them, which a restore does not keep: without private it cannot reach BB on a private address (found live)");
   const made = fake.inspect(fresh.ref);
   assert.equal(made.config.labels["bbbox.box"], box.boxId);

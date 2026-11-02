@@ -48,6 +48,10 @@ export interface MsbSnapshot {
   readonly createdAt: number | null;
 }
 
+export function groupMember(snapshot: Pick<MsbSnapshot, "group" | "name">): string {
+  return `${snapshot.group}:${snapshot.name}`;
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -172,9 +176,6 @@ export function versionRefusal(installed: string | null): string | null {
   if (installed === SNAPSHOTS_CHECKED_WITH && MSB_VERSION === SNAPSHOTS_CHECKED_WITH) return null;
   return `bb-box takes and deletes microsandbox snapshots only with msb ${SNAPSHOTS_CHECKED_WITH}, whose snapshots its checks measured, and this host has ${installed ? `msb ${installed}` : "no msb installed yet"}${MSB_VERSION === SNAPSHOTS_CHECKED_WITH ? "" : `, while this bb-box pins ${MSB_VERSION}`}`;
 }
-
-export const MAC_NOT_YET =
-  "bb-box takes no snapshots of microsandbox boxes on a Mac yet: what they rest on, such as each snapshot holding its own data, was measured on Linux only";
 
 export function msbVersionOf(stdout: string): string | null {
   return /^msb\s+(\S+)/.exec(stdout.trim())?.[1] ?? null;

@@ -17,7 +17,7 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | not yet | not yet |
 | Every other backend | no snapshots yet | | | | |
 
-A microsandbox box takes snapshots only when its Docker disk is `msb`'s own, as on every box BB Box makes now. A box an earlier BB Box made keeps its Docker data on a file of the host's, which `msb` leaves out of a snapshot and cannot give a restored box, so its Snapshots say why it takes none; it works as before otherwise. BB Box takes them only with `msb` 0.7.7, the release whose snapshots it measured, and only on a Linux host: a Mac takes none yet. `bb box doctor` says so in its microsandbox Snapshots check. Each snapshot of a microsandbox box lists the one it was taken after ("after ..."), as `msb` keeps a box's snapshots in a chain; each holds its own data, so any of them can be deleted first.
+A microsandbox box takes snapshots only when its Docker disk is `msb`'s own, as on every box BB Box makes now. A box an earlier BB Box made keeps its Docker data on a file of the host's, which `msb` leaves out of a snapshot and cannot give a restored box, so its Snapshots say why it takes none; it works as before otherwise. BB Box takes them only with `msb` 0.7.7, the release whose snapshots it measured on Linux hosts and on a Mac. `bb box doctor` says so in its microsandbox Snapshots check. Each snapshot of a microsandbox box lists the one it was taken after ("after ..."), as `msb` keeps a box's snapshots in a chain; each holds its own data, so any of them can be deleted first.
 
 ### Tart
 

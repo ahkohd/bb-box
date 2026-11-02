@@ -1916,6 +1916,38 @@ decided:
 - **Arming boat.dev stays off in production** until the owner arms it after
   merge and a smoke test.
 
+## Decided during the close-out
+
+On 2 November 2026, closing 070, with the lead's answers:
+
+- **microsandbox boxes take snapshots on a Mac host too.** Unit 10's probe,
+  rewritten to run on a Mac with an `msb` 0.7.7 and an `MSB_HOME` of its
+  own ([microsandbox-mac.sh](../research/box-snapshots/microsandbox-mac.sh)),
+  passed 29 of 29 on a Mac with Apple silicon, macOS 27 and APFS
+  ([output](../research/box-snapshots/microsandbox-mac-results.txt)), as
+  on Linux: each snapshot holds its own data, so a parent goes with
+  `--force`; a memory restore resumes a running process; a memory
+  snapshot's disk alone, as a fork boots it, holds no process; a restore
+  keeps none of its source's settings. So unit 10's refusal on a Mac is
+  lifted. The version guard stays: only `msb` 0.7.7.
+- **bb-box names a snapshot by its group and member, never by its ID.**
+  Where `msb`'s home is reached through a link, `msb` indexes each
+  snapshot under both paths and refuses its ID in `snapshot inspect`,
+  `restore` and `remove` ("snapshot identity ... has 2 local copies; use
+  group:member or an explicit artifact path"). A Mac's `/tmp` is a link,
+  and bb-box's wrapper reaches a home longer than 57 bytes through
+  `/tmp/bb-box-msb-<uid>`, as for a BB machine's own data folder, on Linux
+  too. So before this, a Linux host with a long `msb` folder took
+  snapshots it could not restore, fork or delete, and a release of its box
+  stopped at its snapshots. By group and member all three work through a
+  link, as the probe's check E showed on the Mac and on Linux.
+- **The live check through bb-box ran on Linux, through such a link.**
+  The lead keeps a second microsandbox install off the owner's Mac; the
+  probe ran bb-box's own commands there instead. After merge the lead
+  takes, restores, forks and deletes a snapshot on production's own
+  microsandbox backend on that Mac, releases the box and sees nothing
+  listed, and rolls back if anything is wrong.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order
