@@ -1,11 +1,13 @@
 # 070: A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them
 
-Status: proposed, 30 October 2026, with the owner's answers to the
-research's four questions built in. Revised three times the same day after
-three rounds of two independent reviews; every finding of each round is answered
-in [What changed after the reviews](#what-changed-after-the-reviews). Not
-built yet: see [How it is built](#13-how-it-is-built) and its
-[gates](#gated-in-unit-n).
+Status: done, 2 November 2026: built in units 0 to 11b and the close-out,
+with units 12 and 13 left for later, not built. What is live on each
+backend, and what is not, is in [070 is done](070-results.md#070-is-done).
+Proposed 30 October 2026, with the owner's answers to the research's four
+questions built in, and revised three times the same day after three
+rounds of two independent reviews; every finding of each round is answered
+in [What changed after the reviews](#what-changed-after-the-reviews). See
+[How it is built](#13-how-it-is-built) and its [gates](#gated-in-unit-n).
 
 Research: [Snapshots of boxes](../research/box-snapshots.md), with its
 measurements on Proxmox LXC and QEMU, Docker, Tart, microsandbox, boat.dev,

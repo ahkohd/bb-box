@@ -3,6 +3,65 @@
 What was built and checked for each unit of [070](070-snapshots.md). Each
 unit keeps to its own section.
 
+## 070 is done
+
+On 2 November 2026, with the close-out's two units, 070 is built as far as
+it goes. Units 12 and 13 are left for later, not built, as a decision of
+their own. What is live is in bb-box's code and was checked live on a
+separate BB, but for microsandbox on a Mac: there the evidence is the
+probe's 29 of 29 through bb-box's exact commands, and the lead smoke-tests
+production's microsandbox on the Mac after merge. Some of the rest waits
+for a production step, said on its line.
+
+| Backend | Live |
+| --- | --- |
+| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin; forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
+| Proxmox QEMU, Linux | As Proxmox LXC, with or without memory; forks and Keep from the disk only |
+| boat.dev, a paid plan | Saved snapshots within the paid ceiling, with the price on each; restore as a swap to a new sandbox; forks and Keep from version 8 of the reset. Arming boat.dev's reset stays off in production until the owner arms it |
+| boat.dev, the free trial | No snapshots: the trial has no saved snapshots |
+| microsandbox | Take with or without memory; restore as a swap; forks from the disk; Keep as it is; chains, deleted with `--force`. On Linux hosts and, since the close-out, Macs, with `msb` 0.7.7 only. The lead smoke-tests it on production's Mac after merge |
+| Tart, macOS | Take of the suspended VM with its memory; restore in place; forks, cleaned on the Mac first, and Keep, on a Mac whose `diskutil` has `image attach` (macOS 27) |
+| Tart, Linux | Take and restore while stopped; since the close-out, forks and Keep, for boxes from an image refreshed since. Production forks once its `linux-arm64` image is refreshed after merge |
+
+Everywhere they apply: the box log's events, the Snapshots tab, the box
+page's card, Settings' Snapshots page, the agent's tools and the CLI.
+
+Left for later, not built:
+
+- **Unit 12, Docker, Hetzner and Namespace Linux boxes**: a commit of the
+  paused container with the box's Docker volume, and a restore as a swap
+  to a new container.
+- **Unit 13, Android devices**: the emulator's own snapshots, of the
+  device only, with the device's own capture order and losses.
+- Windows and iOS boxes, and the SSH host pool's machines, take no
+  snapshots; 070's "Later" list stands.
+
+Known gaps, in plain words:
+
+- **Restores of boxes threads run on stay off** until BB holds every turn
+  (gate G17): "Send now" can still start a turn on a box being stopped for
+  a restore (request 39). A person's and an agent's restores of other
+  boxes work.
+- **A fork made outside bb-box keeps its source's identity.** bb-box's own
+  forks always reset. A copy made with a provider's own tools, such as a
+  fork in boat.dev's dashboard, gets its source's identity value, so its
+  reset does not run.
+- **The identity reset across a node reboot (G16) is unproved.** Held copies
+  and earlier guests were checked not to start by themselves, by their
+  settings, and an earlier guest started by hand reset before its network.
+  But no node was rebooted for the checks, so it is not known what they do
+  when one is. Unit 8 made it a condition before production's Keep on
+  Proxmox is turned on.
+- **ZFS restores stay off** until gate G4 runs on a ZFS node; there was
+  none.
+- **A snapshot of a stopped Tart box forks only if bb-box stopped it** and
+  it has not run since.
+- **The identity reset is off on a backend until it is armed** in
+  `general.identityResetBackends`; until then its snapshots neither fork
+  nor keep.
+- **Follow-up**: cleaning a macOS fork's raw disk with `hdiutil` on a Mac
+  without `diskutil image attach`.
+
 ## Unit 1a: the snapshot record, and Proxmox LXC take and delete
 
 Built on 30 October 2026, on main `9e7f9b6b` (unit 0 included).
