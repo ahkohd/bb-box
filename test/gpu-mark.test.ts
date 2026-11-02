@@ -273,7 +273,7 @@ test("bb box gpu mark refuses the whole run, changing nothing, with no helper, a
     [
       ["no helper", "pve has no GPU helper: VM 9190's report has no helper line, and only the helper, bb-box-gpu, answers a marker.", "Run host/setup-gpu.sh from the setup guide as root on pve.", 0],
       ["old", "The GPU helper on pve last reported 3 minutes ago, in VM 9190.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.", 0],
-      ["not served", "bb-box-gpu 0.3.0 on pve serves pool team, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve.", 0],
+      ["not served", "bb-box-gpu 0.3.1 on pve serves pool team, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve.", 0],
       ["no cards", "The GPU helper on pve lists no card in VM 9190's report, so bb-box cannot tell which card a guest's lines name.", "Run systemctl status bb-box-gpu and nvidia-smi as root on pve.", 0],
       ["no report VM", "The token can read no VM named bb-box-gpu-memory on pve, so bb-box cannot read the GPU helper's report.", "Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on pve.", 0],
     ],

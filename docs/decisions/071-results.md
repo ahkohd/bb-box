@@ -1595,7 +1595,7 @@ before. Writes stay off on the node until the lead runs
   guest keeps its lines, holds its card unmanaged, and the helper never
   writes it again. It needs bb-box-gpu 0.3.0 or later, and is refused,
   changing nothing, with an older helper or none.
-- **The helper, 0.3.0.** Protocol 1. The marker gains `gpu.release.g<N>`:
+- **The helper, 0.3.1** (0.3.0 as PR 1349 merged it). Protocol 1. The marker gains `gpu.release.g<N>`:
   answered by clearing the guest's claim, with writes on or off, as it
   writes no guest; a rebuilt ledger takes it for no claim. `--preview` makes
   one pass as writes on would, writing no guest, ledger, report or state and
@@ -1619,7 +1619,16 @@ before. Writes stay off on the node until the lead runs
   boot or after: a stopped copy, a guest whose lines do not match its
   marker, and a whole box whose card another guest still has are refused,
   `copy` or `ledger-lost`, keep their lines, and are decided when bb-box
-  asks again, as it does before it starts them.
+  asks again, as it does before it starts them. Each guest the rebuild
+  leaves unresolved, refused or left out, that may hold a card is kept in
+  the ledger and named in the report, `unsettled <vmid> <uuid> g<N>`, one
+  line per card it may hold. Until the helper answers it in a normal
+  decision, once it has asked again, or it has gone or holds no card, every
+  card it may hold takes no new guest and no whole claim: the helper
+  refuses such a request `unsettled`, naming the guest, and bb-box places no
+  box there. A guest that already holds a claim on the card, or is itself
+  unresolved and holds the card's lines, may still ask for it shared.
+  Writes on or off alike.
 - **`setup-gpu.sh --writes on`** works only on this release's helper,
   already installed and reporting, with no unfinished run. It runs the
   preview first, prints it, and refuses, changing nothing, when the preview
@@ -1640,7 +1649,10 @@ before. Writes stay off on the node until the lead runs
   now saying what writes off means for bb-box and giving the steps:
   `--writes on --check`, then `--writes on`. It warns, rather than fails,
   for a pve-container the helper's release was not tested on.
-  `proxmox.gpu-migration` reads a `gpu.release` marker as no marker.
+  `proxmox.gpu-migration` reads a `gpu.release` marker as no marker, and
+  names the guests a lost ledger left unresolved and the cards they close:
+  it fails for this install's, whose fix is `bb box gpu mark`, which asks
+  again, and warns for another install's.
 
 ### What was run
 
@@ -1837,10 +1849,48 @@ which has no time limit, and no hook waits for it.
   counts that this load, about 2.5 times the cores, delays. They passed in
   CI and on a quiet box, where vitest passed 448 of 448.
 
+### A lost ledger closes the cards it leaves unresolved
+
+The lead decided, after merging PR 1349: a lost ledger still strips no
+stopped guest's lines, at boot or after; instead it fails closed. A card
+that a guest the rebuild left unresolved may hold takes no new placement and
+no whole claim until that guest has asked again and been answered, and the
+doctor names those guests. Before this, after a lost ledger, a running whole
+box whose card a stopped box still had was refused, and until it asked
+again, at its next start, another guest could be placed on its card, as
+could any card a refused guest still had the lines of.
+
+- The helper, now 0.3.1, keeps each such guest in its ledger: refused,
+  `copy` or `ledger-lost`, or left out of the rebuild for an unreadable
+  guest, while it may hold a card. It refuses a whole request on any card
+  the guest may hold, and a shared one from a guest that holds no claim on
+  that card, `unsettled`, naming the guest. The guest is settled by the
+  helper's next answer to it in a normal decision, or when it has gone or
+  holds no card. The report lists `unsettled <vmid> <uuid> g<N>`.
+- With writes off, the rebuild now refuses such a whole box too, rather than
+  leaving its request to be decided each pass: decided each pass, its first
+  refusal, by a new guest's lines, settled it and opened its card.
+- bb-box places no box on a card a report's `unsettled` line names for
+  another guest, and the doctor's Markers on GPU guests names the guests and
+  the cards they close: it fails for this install's, whose fix is `bb box
+  gpu mark`, and warns for another install's.
+- The version is 0.3.1 so that `setup-gpu.sh --writes on`, which needs the
+  installed helper to be this release's, refuses 0.3.0.
+
+Three new tests, and the writes-off recovery test (Astra 5, Opus 6), whose
+expectation changes, fail on `be5ec8ca` and pass now: the helper granted a
+new guest on the running whole box's card, and on a card a refused guest
+had the lines of; with writes off, it left the whole box's request open;
+bb-box placed a new desktop on such a card, which had the most memory free.
+Then, as root on a `linux` box: `tsc` clean; the node suite, 3,586 tests,
+3,291 passed, 0 failed, 295 skipped; vitest, 448 passed; the GPU and
+Proxmox LXC test files on the commit itself, 269 tests, 268 passed, 1
+skipped.
+
 ### The node steps
 
 Wait for the lead, after unit 4's day has passed and this unit is merged and
-deployed: the helper upgraded to 0.3.0 with writes off and the test pool
+deployed: the helper upgraded to 0.3.1 with writes off and the test pool
 served; `setup-gpu.sh --writes on --check`; `--writes on`; a watcher under
 `systemd-run`; the gate on test guests on lent VMIDs, through a test BB with
 its own pool and desktops per GPU 1. The steps, a read-only check script,
@@ -1890,11 +1940,17 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
   desktop made before this release has no marker: `bb box gpu mark` marks
   them, and the doctor names them meanwhile.
 - A lost ledger strips no stopped guest's lines, at boot too (R3, the lead's
-  rule). Before, a lost ledger at boot stripped a stopped guest whose lines
-  did not match its marker, so that its `onboot` start could not use a card
-  no claim names. Now it is refused, `ledger-lost`, and keeps them. bb-box
-  asks again before it starts the box, but a start outside bb-box, by
-  `onboot` or by hand, uses those lines until then.
+  rule, kept by the lead's decision after the re-review). Before, a lost
+  ledger at boot stripped a stopped guest whose lines did not match its
+  marker, so that its `onboot` start could not use a card no claim names.
+  Now it is refused, `ledger-lost`, and keeps them. bb-box asks again before
+  it starts the box, but a start outside bb-box, by `onboot` or by hand,
+  uses those lines until then. Every card it may hold is closed meanwhile,
+  as above.
+- With writes off, a lost ledger's whole box whose card a stopped shared box
+  still has is refused `ledger-lost`, as with writes on, rather than left to
+  its request. Left to its request, the helper decided it again each pass,
+  and the first refusal, by another guest's lines, opened the card.
 - With the desktop kind off, or its templates cleared, a stopped box with a
   marker still goes through the start gate. It may start on the card the
   helper holds for it, and is moved to no other.
@@ -1906,9 +1962,6 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
 
 ### Still open
 
-- Whether a lost ledger at boot should strip a stopped guest whose lines do
-  not match its marker, as before R3, for guests that start `onboot`. As
-  built, it never strips; see deviations.
 - Whether boxes per card should count every install's boxes, as section 12's
   words suggest, once the node has no other install's boxes on the cards.
 - The node's E3 step pauses the production helper for up to 45 s

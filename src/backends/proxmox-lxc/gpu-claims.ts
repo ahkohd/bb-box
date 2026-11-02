@@ -221,7 +221,9 @@ export function placeShared(input: PlaceInput): Placed {
     const load = loadOf(card, input);
     loads.push(load);
     const waiting = input.outstanding.find((request) => request.marker.card === card.uuid);
+    const unsettled = [...new Set(input.lines.unsettled.filter((line) => line.card === card.uuid && line.vmid !== input.vmid).map((line) => line.vmid))];
     if (load.whole) reasons.push(`${cardName(card)} is CT ${load.whole.vmid}'s whole card`);
+    else if (unsettled.length) reasons.push(`${cardName(card)} waits for ${inWords(unsettled.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${unsettled.length === 1 ? "it" : "each"} may hold the card`);
     else if (input.limit !== null && load.own >= input.limit) reasons.push(`${cardName(card)} has ${load.own} of this install's boxes, the most a card may have`);
     else if (waiting) reasons.push(`the GPU helper has not answered CT ${waiting.vmid}'s request g${waiting.marker.generation} on ${cardName(card)}`);
     else open.push(load);

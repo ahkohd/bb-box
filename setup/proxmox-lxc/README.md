@@ -303,6 +303,13 @@ nodes, by writing a tag. That exposes NVIDIA's kernel driver to that guest.
 - An older release refuses to replace a newer helper, or to use a ledger a
   newer protocol wrote, unless given `--downgrade`. It then sets that ledger
   aside, and the helper rebuilds it from the guests.
+- A ledger rebuilt from the guests, as after a downgrade or a ledger that
+  cannot be read, writes no guest. A guest it cannot match to its marker
+  keeps its lines and is refused, and every card such a guest may hold takes
+  no new guest and no whole claim until the guest has asked again and been
+  answered. The report's `unsettled` lines, and the doctor's "Markers on GPU
+  guests" check, name them; `bb box gpu mark` asks again for this
+  install's.
 - `--writes on` comes on only for this release's helper, already installed
   and reporting: run `setup-gpu.sh` without it first. It runs
   `bb-box-gpu --preview` first, which makes one pass as writes on would,
@@ -378,8 +385,9 @@ bb box gpu mark --undo    # clear the helper's claims and take the markers off, 
   the checks above pass.
 - The doctor's "Markers on GPU guests" check reads each guest's config and
   pending changes. It fails, naming them, on GPU lines with no marker, lines
-  naming a node no card has, a write the helper would make, a refusal, and a
-  marker the helper's ledger does not hold as asked. It never passes a report
+  naming a node no card has, a write the helper would make, a refusal, a
+  marker the helper's ledger does not hold as asked, and a guest a rebuilt
+  ledger left unresolved; it warns for another install's. It never passes a report
   that leaves lines out or has no ledger lines.
 - `--undo` clears each claim the helper holds for this install's guests,
   then takes their shared and whole markers off. It writes a

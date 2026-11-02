@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
 import { test } from "node:test";
 import { CardReservations, cardsView, loadOf, nextGeneration, outstandingRequests, placeShared, settleOutstanding, underCardLock, waitForAnswer, type PlaceInput, type Placed } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
@@ -318,6 +319,10 @@ test("071 unit 5: the claim rules on their own: holders, reservations, the lock,
   assert.deepEqual([loadOf(a, input()).boxes, loadOf(lines.cards[1]!, input()).boxes], [1, 1], "a stopped shared managed box holds no place; an unmanaged stopped one does");
   assert.equal(placedOn(placeShared(input())), A, "card 1 has too little memory free");
   assert.equal(placedOn(placeShared(input({ needMiB: 0 }))), A, "equal boxes: then the most memory free");
+  const lost = parseHelperLines(`${report}\n    unsettled 3 ${A} g2\n    unsettled 4 ${A} g1`);
+  assert.equal(placedOn(placeShared(input({ lines: lost, needMiB: 0 }))), B, "a card guests the lost ledger left unresolved may hold takes no new box");
+  assert.deepEqual(reasonsOf(placeShared(input({ lines: lost, candidates: new Set([A]) }))), ["card 0 waits for CT 3 and CT 4 to ask again, as the GPU helper's ledger was lost and each may hold the card"]);
+  assert.deepEqual(reasonsOf(placeShared(input({ lines: lost, candidates: new Set([A]), vmid: 3 }))), ["card 0 waits for CT 4 to ask again, as the GPU helper's ledger was lost and it may hold the card"], "one of them asking again is not held back by itself");
   const held = reservations.add(A, "shared", 384, "bx", null);
   assert.equal(placeShared(input({ reserved: reservations.live(lines, 0), limit: 2 })).is, "placed");
   assert.deepEqual(reasonsOf(placeShared(input({ reserved: reservations.live(lines, 0), limit: 1, candidates: new Set([A]) }))), ["card 0 has 2 of this install's boxes, the most a card may have"]);
@@ -575,4 +580,27 @@ test("071 unit 5, re-review R4: a moved box's GPU is the card it holds, not its 
   assert.equal(bridge.proxmox.guests.get(7010)!.status, "running");
   assert.deepEqual(again && "claim" in again ? again.claim : null, { card: B, part: "shared", generation: 2, answer: "granted" });
   assert.deepEqual(again?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: `GPU-${B}` }, "started on a stale report, its GPU fact still names the card it holds");
+});
+
+test("071 unit 5, lost ledger: bb-box places no new desktop on a card a guest the rebuild left unresolved may hold, and the doctor names that guest until it has asked again", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend();
+  const owl = box("linux-desktop", "swift-owl");
+  bridge.desktop(7005, CARD_A, owl, INSTALL, { marker: marker("shared", CARD_B, 1) });
+  bridge.desktop(7006, CARD_B, box("linux-desktop", "lone-pine"), INSTALL, { marker: marker("shared", CARD_B, 1), running: true });
+  rmSync(bridge.node.ledgerPath());
+  bridge.pass();
+  const made = await backend.acquire(box(), null, hooks(), signal());
+  assert.equal(cardIn(bridge.tags(Number(made.ref))), B, "each card has one box, and card 0 the most memory free, but CT 7005 may hold it");
+  assert.ok(bridge.node.reportLines().includes(`unsettled 7005 ${A} g1`), bridge.node.reportLines().join("\n"));
+  const doctor = (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-migration");
+  assert.equal(doctor?.status, "fail");
+  assert.match(doctor?.detail ?? "", /This guest of this install may hold a card and has not asked again since the GPU helper's ledger was lost: CT 7005\b[^.]*\. Until each has, card 0 takes no new box and no whole claim\./);
+  assert.match(doctor?.fix ?? "", /Run bb box gpu mark, which asks again for each of this install's guests/);
+  bridge.proxmox.guests.get(7005)!.config.tags = bridge.proxmox.guests.get(7005)!.config.tags!.replace(marker("shared", CARD_B, 1), marker("shared", CARD_A, 2));
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().includes(`claim 7005 g2 granted shared ${A}`), bridge.node.reportLines().join("\n"));
+  assert.ok(!bridge.node.reportLines().some((line) => line.startsWith("unsettled ")));
+  const next = await backend.acquire(box(), null, hooks(), signal());
+  assert.equal(cardIn(bridge.tags(Number(next.ref))), A, "asked again and answered, CT 7005 opens card 0");
 });
