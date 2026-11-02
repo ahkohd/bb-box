@@ -487,6 +487,19 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   installs `/usr/local/sbin/bb-box-identity` and the LaunchDaemon
   `dev.bb-box.identity` in each macOS VM, which also runs at a fork's first
   boot.
+- **Linux boxes have the identity reset in their image**, on, from an image
+  `prepare-linux-image.sh` built from this bb-box on: it runs at each boot
+  before the network, SSH and the box user's services. A Linux fork gets a
+  new MAC address from Tart, and its reset gives up the source's BB machine,
+  tailnet node, access file, SSH host keys and machine ID. Its disk is not
+  cleaned on the Mac. An older image has the reset off, so its boxes'
+  snapshots neither fork nor keep: refresh the image. Linux desktops do not
+  fork.
+- **A stopped box's snapshot forks only when bb-box stopped it** and it has
+  not run since: bb-box reads the reset from inside the box just before its
+  own stop, and keeps the reading with each VM file's modification time
+  and size, which it reads again at a take. A run of the VM, even outside
+  bb-box, changes them.
 - **Kept snapshots stay on the Mac** when bb-box, or this backend, is
   removed: delete them in bb-box first, or remove the folder as Remove
   says.

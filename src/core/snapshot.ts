@@ -1,7 +1,7 @@
 import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
 import type { Actor } from "./box-log.ts";
 import type { Charge } from "./snapshot-cost.ts";
-import type { HeldIdentity } from "./identity.ts";
+import type { HeldIdentity, NotForkSafe } from "./identity.ts";
 
 export const SNAPSHOT_STATES = ["taking", "ready", "failed", "incomplete", "deleting", "unavailable", "lost"] as const;
 export type SnapshotState = (typeof SNAPSHOT_STATES)[number];
@@ -74,6 +74,7 @@ export interface SnapshotRecord {
   readonly keptAt: number | null;
   readonly undoOf: string | null;
   readonly forkSafe: number | null;
+  readonly forkSafeWhy?: NotForkSafe | null;
   readonly identity?: HeldIdentity | null;
   readonly unflushed?: string | null;
   readonly dependsOn: readonly string[];

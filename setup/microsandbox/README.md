@@ -247,8 +247,9 @@ the host, apart from each box's microVM, and outlive it.
   host's, which `msb` leaves out of a snapshot. Such a box says why, and
   works as before otherwise.
 - **Not in LXC**, as above.
-- **Not on a Mac yet.** What snapshots rest on was measured on Linux only,
-  so a Mac host takes none, and the doctor says so.
+- **On Linux hosts and Macs alike.** The probes ran on both
+  (`docs/research/box-snapshots/microsandbox-unit-10.sh` and
+  `microsandbox-mac.sh`).
 
 ## Check it worked
 

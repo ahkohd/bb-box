@@ -197,6 +197,7 @@ const snapshotDir = (id) => join(root, "snapshot-data", id);
 const findSnapshot = (selector) => {
   const list = snapshots();
   const [group, member] = selector.split(":");
+  if (host.homeThroughLink && member === undefined && list.some((each) => each.id === selector)) fail(`invalid config: snapshot identity ${selector} has 2 local copies; use group:member or an explicit artifact path`);
   return list.find((each) => each.id === selector || (member !== undefined && each.group === group && each.name === member)) ?? null;
 };
 

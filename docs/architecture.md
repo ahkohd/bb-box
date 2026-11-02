@@ -779,7 +779,10 @@ control (`src/relay/mux.ts`).
   `microsandbox` in the plugin's data folder on the machine, with msb's
   state and images in its `home`. msb's sockets need a home of at most 57
   bytes, so a longer one is reached through a link of the user's,
-  `/tmp/bb-box-msb-<uid>`.
+  `/tmp/bb-box-msb-<uid>`. Through a link, such as that one or a path in a
+  Mac's `/tmp`, which is itself a link, msb indexes each snapshot under
+  both paths and refuses its ID, so bb-box names a snapshot by its group
+  and member (`bbbox-<box>:<name>`), which works with or without a link.
 - **File streams** carry a `box_copy` larger than BB's file API takes, on
   the `/file-relay` route, from the worker on the machine that holds the
   thread's workspace (#492).

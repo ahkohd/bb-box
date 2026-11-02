@@ -97,7 +97,6 @@ import {
   DOCKER_GUEST,
   FULL_TAKE_ABOUT_MS,
   HOST_FILE_DOCKER,
-  MAC_NOT_YET,
   msbVersionOf,
   RESTORED_NAME,
   RESTORE_ABOUT_MS,
@@ -107,6 +106,7 @@ import {
   TAKE_TASK,
   dependentsOf,
   dependsOnOf,
+  groupMember,
   heldFrom,
   heldStateOf,
   msbOffer,
@@ -1385,8 +1385,7 @@ export class MsbBackend implements Backend {
         }
       }
       const snapshotsOff = versionRefusal(facts.installed);
-      if (facts.os === "Darwin") push("microsandbox.snapshots", "Snapshots", "warn", `${MAC_NOT_YET}, so its boxes take none.`, "Use a Linux host with KVM for boxes that need snapshots.");
-      else if (snapshotsOff) push("microsandbox.snapshots", "Snapshots", "warn", `${snapshotsOff}, so its boxes take no snapshots.`, `bb-box installs msb ${MSB_VERSION} there, within a few minutes.`);
+      if (snapshotsOff) push("microsandbox.snapshots", "Snapshots", "warn", `${snapshotsOff}, so its boxes take no snapshots.`, `bb-box installs msb ${MSB_VERSION} there, within a few minutes.`);
       else if (!facts.lxc) push("microsandbox.snapshots", "Snapshots", "ok", `msb ${facts.installed} takes them, as bb-box's checks measured. A box made before bb-box gave boxes a Docker disk of msb's own takes none.`);
       if (facts.lxc) {
         push(
@@ -1496,7 +1495,6 @@ export class MsbBackend implements Backend {
   }
 
   #hostRefusal(facts: HostFacts, installed: string | null = facts.installed): string | null {
-    if (facts.os === "Darwin") return `${MAC_NOT_YET}.`;
     const version = versionRefusal(installed);
     if (version) return `${version}.`;
     if (facts.lxc) return `${this.#host} is an LXC container, whose seccomp filter stops msb's snapshots (053).`;
@@ -1505,7 +1503,6 @@ export class MsbBackend implements Backend {
 
   async #changeRefusal(signal?: AbortSignal): Promise<string | null> {
     const facts = await this.#hostFacts(signal);
-    if (facts.os === "Darwin") return `${MAC_NOT_YET}.`;
     const ran = await this.#cli.run(["--version"], { timeoutMs: 30_000, signal });
     if (ran.exitCode !== 0) {
       const failed = this.#cli.error("msb --version", ran);
@@ -1528,8 +1525,8 @@ export class MsbBackend implements Backend {
     return storageOf(this.#host, facts.diskKiB, facts.freeKiB);
   }
 
-  async #capturedSize(id: string, fallback: MachineSize | null, signal?: AbortSignal): Promise<MachineSize | null> {
-    const result = await this.#cli.run(["snapshot", "inspect", id], { timeoutMs: 30_000, signal });
+  async #capturedSize(held: MsbSnapshot, fallback: MachineSize | null, signal?: AbortSignal): Promise<MachineSize | null> {
+    const result = await this.#cli.run(["snapshot", "inspect", groupMember(held)], { timeoutMs: 30_000, signal });
     const said = result.exitCode === 0 ? parseInspect(result.stdout) : null;
     const cores = Number(said?.labels[SNAPSHOT_LABELS.cores]) || fallback?.cores || 0;
     const memoryMiB = Number(said?.labels[SNAPSHOT_LABELS.memory]) || fallback?.memoryMiB || 0;
@@ -1552,7 +1549,7 @@ export class MsbBackend implements Backend {
     const extras = held ? await this.#snapshotExtras(signal).catch(() => null) : null;
     const bytes = held ? (extras?.sizes.get(held.id) ?? null) : null;
     const now = found ? sizeOf(found) : null;
-    const captured = held ? await this.#capturedSize(held.id, now ?? guest.size, signal) : null;
+    const captured = held ? await this.#capturedSize(held, now ?? guest.size, signal) : null;
     const memoryMiB = now?.memoryMiB ?? 0;
     const takeWhy = hostWhy ?? guestWhy;
     const restoreWhy = takeWhy ?? targetWhy;
@@ -1631,11 +1628,11 @@ export class MsbBackend implements Backend {
   async #removeSnapshot(snapshot: MsbSnapshot, listed: readonly MsbSnapshot[], signal?: AbortSignal): Promise<void> {
     const head = parseHead(await this.#cli.ok(["snapshot", "head", snapshot.group, "--format", "json"], { timeoutMs: 30_000, signal }));
     const other = nextHead(snapshot, listed);
-    if (head === snapshot.id && other) await this.#cli.ok(["snapshot", "head", `${other.group}:${other.name}`, "--format", "json"], { timeoutMs: 30_000, signal });
+    if (head === snapshot.id && other) await this.#cli.ok(["snapshot", "head", groupMember(other), "--format", "json"], { timeoutMs: 30_000, signal });
     const dependents = dependentsOf(snapshot, listed);
     const forced = dependents.length ? await this.#changeRefusal(signal) : null;
     if (forced) throw new SnapshotFailed(forced);
-    const removed = await this.#cli.run(["snapshot", "remove", ...(dependents.length ? ["--force"] : []), "--quiet", snapshot.id], { timeoutMs: 120_000, signal });
+    const removed = await this.#cli.run(["snapshot", "remove", ...(dependents.length ? ["--force"] : []), "--quiet", groupMember(snapshot)], { timeoutMs: 120_000, signal });
     if (removed.exitCode !== 0 && !NOT_FOUND.test(removed.stderr)) throw this.#cli.error("msb snapshot remove", removed);
     const unkept = await this.#cli.script("keep", [snapshot.id, "none"], signal);
     if (unkept.exitCode !== 0) throw this.#cli.error(`Removing the keep date of ${snapshot.id}`, unkept);
@@ -1707,7 +1704,7 @@ export class MsbBackend implements Backend {
   async #restoreAs(held: MsbSnapshot, name: string, size: MachineSize, way: "resume" | "boot", signal: AbortSignal | undefined): Promise<void> {
     const resumes = way === "resume" && held.holds === "disk-and-memory";
     const sized = resumes ? [] : [...(held.holds === "disk-and-memory" ? ["--disk-only"] : []), "--cpus", String(size.cores), "--memory", `${size.memoryMiB}M`];
-    await this.#cli.ok(["snapshot", "restore", held.id, "--name", name, ...sized, ...restoreNetwork(this.#config.network), "--quiet"], { timeoutMs: SNAPSHOT_MS, signal });
+    await this.#cli.ok(["snapshot", "restore", groupMember(held), "--name", name, ...sized, ...restoreNetwork(this.#config.network), "--quiet"], { timeoutMs: SNAPSHOT_MS, signal });
   }
 
   async #claimRestored(name: string, box: BoxIdentity, value: string, diskGiB: number | null, signal: AbortSignal | undefined): Promise<SandboxInfo> {
@@ -1740,7 +1737,7 @@ export class MsbBackend implements Backend {
     const name = `${sandboxName(box.boxId)}-${randomBytes(4).toString("hex")}`;
     await hooks.claimed(this.#restoredGuest(name, box, null));
     await hooks.submitting();
-    const captured = await this.#capturedSize(held.id, box.size, signal);
+    const captured = await this.#capturedSize(held, box.size, signal);
     await this.#restoreAs(held, name, box.size, "resume", signal);
     const made = await this.#claimRestored(name, box, identity.value ?? box.boxId, Math.max(box.size.diskGiB ?? 0, captured?.diskGiB ?? 0) || null, signal);
     const guest = this.#restoredGuest(name, box, sizeOf(made));
@@ -1762,7 +1759,7 @@ export class MsbBackend implements Backend {
       const started = performance.now();
       await this.#restoreAs(held, name, box.size, "boot", signal);
       hooks.timing("restore", Math.round(performance.now() - started));
-      const captured = await this.#capturedSize(held.id, null, signal);
+      const captured = await this.#capturedSize(held, null, signal);
       const made = await this.#claimRestored(name, box, box.boxId, Math.max(box.size.diskGiB ?? 0, captured?.diskGiB ?? 0) || null, signal);
       const guest = this.#restoredGuest(name, box, sizeOf(made));
       await hooks.claim(guest);

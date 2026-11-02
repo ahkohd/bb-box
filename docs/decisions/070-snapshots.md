@@ -1,11 +1,13 @@
 # 070: A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them
 
-Status: proposed, 30 October 2026, with the owner's answers to the
-research's four questions built in. Revised three times the same day after
-three rounds of two independent reviews; every finding of each round is answered
-in [What changed after the reviews](#what-changed-after-the-reviews). Not
-built yet: see [How it is built](#13-how-it-is-built) and its
-[gates](#gated-in-unit-n).
+Status: done, 2 November 2026: built in units 0 to 11b and the close-out,
+with units 12 and 13 left for later, not built. What is live on each
+backend, and what is not, is in [070 is done](070-results.md#070-is-done).
+Proposed 30 October 2026, with the owner's answers to the research's four
+questions built in, and revised three times the same day after three
+rounds of two independent reviews; every finding of each round is answered
+in [What changed after the reviews](#what-changed-after-the-reviews). See
+[How it is built](#13-how-it-is-built) and its [gates](#gated-in-unit-n).
 
 Research: [Snapshots of boxes](../research/box-snapshots.md), with its
 measurements on Proxmox LXC and QEMU, Docker, Tart, microsandbox, boat.dev,
@@ -1915,6 +1917,84 @@ decided:
   says why otherwise.
 - **Arming boat.dev stays off in production** until the owner arms it after
   merge and a smoke test.
+
+## Decided during the close-out
+
+On 2 November 2026, closing 070, with the lead's answers:
+
+- **microsandbox boxes take snapshots on a Mac host too.** Unit 10's probe,
+  rewritten to run on a Mac with an `msb` 0.7.7 and an `MSB_HOME` of its
+  own ([microsandbox-mac.sh](../research/box-snapshots/microsandbox-mac.sh)),
+  passed 29 of 29 on a Mac with Apple silicon, macOS 27 and APFS
+  ([output](../research/box-snapshots/microsandbox-mac-results.txt)), as
+  on Linux: each snapshot holds its own data, so a parent goes with
+  `--force`; a memory restore resumes a running process; a memory
+  snapshot's disk alone, as a fork boots it, holds no process; a restore
+  keeps none of its source's settings. So unit 10's refusal on a Mac is
+  lifted. The version guard stays: only `msb` 0.7.7.
+- **bb-box names a snapshot by its group and member, never by its ID.**
+  Where `msb`'s home is reached through a link, `msb` indexes each
+  snapshot under both paths and refuses its ID in `snapshot inspect`,
+  `restore` and `remove` ("snapshot identity ... has 2 local copies; use
+  group:member or an explicit artifact path"). A Mac's `/tmp` is a link,
+  and bb-box's wrapper reaches a home longer than 57 bytes through
+  `/tmp/bb-box-msb-<uid>`, as for a BB machine's own data folder, on Linux
+  too. So before this, a Linux host with a long `msb` folder took
+  snapshots it could not restore, fork or delete, and a release of its box
+  stopped at its snapshots. By group and member all three work through a
+  link, as the probe's check E showed on the Mac and on Linux.
+- **The live check through bb-box ran on Linux, through such a link.**
+  The lead keeps a second microsandbox install off the owner's Mac; the
+  probe ran bb-box's own commands there instead. After merge the lead
+  takes, restores, forks and deletes a snapshot on production's own
+  microsandbox backend on that Mac, releases the box and sees nothing
+  listed, and rolls back if anything is wrong.
+
+- **Tart's Linux boxes fork and are kept, as they are, from version 8 of
+  the identity reset**, the plain `linux-arm64` kind only; Linux desktops
+  on Tart neither fork nor keep, with why, as on Proxmox and boat.dev. Unit
+  9 left them off as their reset was not checked live; now it is.
+- **The reset is on in Tart's Linux image** (the lead's decision):
+  `prepare-linux-image.sh` sets `BOX_IDENTITY_RESET=on` for the plain image,
+  as Proxmox's, Docker's and boat.dev's Linux builds do. Before, the image
+  had the program with it off, so no Tart Linux box was fork-safe. A box
+  from an image prepared before refuses forks and Keep with words to
+  refresh the image. Production arms Tart already; after merge the lead
+  refreshes production's `linux-arm64` image and forks one box to check.
+- **A Linux fork is not cleaned on the Mac.** Its VM is a copy of the
+  snapshot's files with a new MAC address from Tart (`--random-mac`; a
+  Linux VM has no Mac serial), and its own reset, which systemd runs at
+  boot before the network, SSH and the box user's services, gives up the
+  source's identity, compared by the VM card's MAC address (`device`). The
+  Mac cannot mount its ext4 disk, and does not need to: unlike macOS, the
+  order is systemd's, and was measured live.
+- **A stopped box's fork-safety is read at bb-box's own stop** (the lead's
+  decision). bb-box reads a box's identity reset from inside it at each
+  take, which a stopped box cannot answer, and Tart takes a Linux box only
+  while it is stopped. So, where a backend's snapshots are taken from a
+  stopped box (`stopped-only` or `suspends`, as on Tart, for Linux and
+  macOS), bb-box's stop reads it just before it stops the box and, once
+  the stop has succeeded, keeps it on the box's record with the backend's
+  mark of the stopped guest (`stoppedMark`; on Tart, each VM file's
+  modification time and size, as Tart keeps no start time). A take of the
+  stopped box uses it only while the mark is the same. Identity changes
+  only at a boot, and any run, even outside bb-box, changes the mark, so a
+  reading holds only for the start it was taken in. A box stopped another
+  way, or that ran since, has none, so its snapshots neither fork nor keep,
+  and the refusal says to start it, stop it with bb-box and take it again.
+- **After the reviews** (the lead's decisions): a stop that fails keeps no
+  reading, though the guest stopped; a restore drops the reading as it
+  begins; and a reading that found the reset off is kept as such, so each
+  snapshot records why it is not fork-safe (`forkSafeWhy`: `reset-off` or
+  `unread`). A `reset-off` snapshot's refusals say to refresh the Linux
+  image and make the box again, on every backend; only an `unread` one's,
+  on Tart, say to stop the box with bb-box.
+- **The live check's image was built by its prepare script, by hand.**
+  bb-box's own image build renames its build over the configured image and
+  then prunes the base's cached copies that no tag names, in Tart's cache,
+  which production shares on that Mac; with `--try` it deletes the build.
+  So the check ran `prepare-linux-image.sh` from the branch, as the image
+  build does, under an image name of its own, from the base already cached.
 
 ## Alternatives considered
 

@@ -14,7 +14,7 @@ import {
   type StoredPicture,
 } from "../core/snapshot.ts";
 import { chargeOf, type Charge } from "../core/snapshot-cost.ts";
-import type { HeldIdentity } from "../core/identity.ts";
+import type { HeldIdentity, NotForkSafe } from "../core/identity.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
@@ -146,6 +146,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
     `CREATE INDEX ${SCHEMA}.snapshot_operations_by_state ON snapshot_operations(state)`,
   ].join(";\n"),
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN attempts TEXT`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN fork_safe_why TEXT CHECK(fork_safe_why IS NULL OR fork_safe_why IN ('reset-off', 'unread'))`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -213,6 +214,7 @@ interface SnapshotRow {
   kept_at: number | null;
   undo_of: string | null;
   fork_safe: number | null;
+  fork_safe_why: NotForkSafe | null;
   identity: string | null;
   unflushed: string | null;
   depends_on: string;
@@ -310,6 +312,7 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     keptAt: row.kept_at,
     undoOf: row.undo_of,
     forkSafe: row.fork_safe,
+    forkSafeWhy: row.fork_safe_why,
     identity: parsed<HeldIdentity | null>(row.identity, null),
     unflushed: row.unflushed,
     dependsOn: parsed<string[]>(row.depends_on, []),
@@ -357,6 +360,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     kept_at: record.keptAt,
     undo_of: record.undoOf,
     fork_safe: record.forkSafe,
+    fork_safe_why: record.forkSafeWhy ?? null,
     identity: json(record.identity ?? null),
     unflushed: record.unflushed ? utf8Prefix(record.unflushed, UNFLUSHED_BYTES) : null,
     depends_on: JSON.stringify(record.dependsOn),

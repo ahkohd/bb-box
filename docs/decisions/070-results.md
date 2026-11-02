@@ -3,6 +3,65 @@
 What was built and checked for each unit of [070](070-snapshots.md). Each
 unit keeps to its own section.
 
+## 070 is done
+
+On 2 November 2026, with the close-out's two units, 070 is built as far as
+it goes. Units 12 and 13 are left for later, not built, as a decision of
+their own. What is live is in bb-box's code and was checked live on a
+separate BB, but for microsandbox on a Mac: there the evidence is the
+probe's 29 of 29 through bb-box's exact commands, and the lead smoke-tests
+production's microsandbox on the Mac after merge. Some of the rest waits
+for a production step, said on its line.
+
+| Backend | Live |
+| --- | --- |
+| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin; forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
+| Proxmox QEMU, Linux | As Proxmox LXC, with or without memory; forks and Keep from the disk only |
+| boat.dev, a paid plan | Saved snapshots within the paid ceiling, with the price on each; restore as a swap to a new sandbox; forks and Keep from version 8 of the reset. Arming boat.dev's reset stays off in production until the owner arms it |
+| boat.dev, the free trial | No snapshots: the trial has no saved snapshots |
+| microsandbox | Take with or without memory; restore as a swap; forks from the disk; Keep as it is; chains, deleted with `--force`. On Linux hosts and, since the close-out, Macs, with `msb` 0.7.7 only. The lead smoke-tests it on production's Mac after merge |
+| Tart, macOS | Take of the suspended VM with its memory; restore in place; forks, cleaned on the Mac first, and Keep, on a Mac whose `diskutil` has `image attach` (macOS 27) |
+| Tart, Linux | Take and restore while stopped; since the close-out, forks and Keep, for boxes from an image refreshed since. Production forks once its `linux-arm64` image is refreshed after merge |
+
+Everywhere they apply: the box log's events, the Snapshots tab, the box
+page's card, Settings' Snapshots page, the agent's tools and the CLI.
+
+Left for later, not built:
+
+- **Unit 12, Docker, Hetzner and Namespace Linux boxes**: a commit of the
+  paused container with the box's Docker volume, and a restore as a swap
+  to a new container.
+- **Unit 13, Android devices**: the emulator's own snapshots, of the
+  device only, with the device's own capture order and losses.
+- Windows and iOS boxes, and the SSH host pool's machines, take no
+  snapshots; 070's "Later" list stands.
+
+Known gaps, in plain words:
+
+- **Restores of boxes threads run on stay off** until BB holds every turn
+  (gate G17): "Send now" can still start a turn on a box being stopped for
+  a restore (request 39). A person's and an agent's restores of other
+  boxes work.
+- **A fork made outside bb-box keeps its source's identity.** bb-box's own
+  forks always reset. A copy made with a provider's own tools, such as a
+  fork in boat.dev's dashboard, gets its source's identity value, so its
+  reset does not run.
+- **The identity reset across a node reboot (G16) is unproved.** Held copies
+  and earlier guests were checked not to start by themselves, by their
+  settings, and an earlier guest started by hand reset before its network.
+  But no node was rebooted for the checks, so it is not known what they do
+  when one is. Unit 8 made it a condition before production's Keep on
+  Proxmox is turned on.
+- **ZFS restores stay off** until gate G4 runs on a ZFS node; there was
+  none.
+- **A snapshot of a stopped Tart box forks only if bb-box stopped it** and
+  it has not run since.
+- **The identity reset is off on a backend until it is armed** in
+  `general.identityResetBackends`; until then its snapshots neither fork
+  nor keep.
+- **Follow-up**: cleaning a macOS fork's raw disk with `hdiutil` on a Mac
+  without `diskutil image attach`.
+
 ## Unit 1a: the snapshot record, and Proxmox LXC take and delete
 
 Built on 30 October 2026, on main `9e7f9b6b` (unit 0 included).
@@ -4041,3 +4100,295 @@ tsc` passes, the reference is current; the node suite ran 3,381 tests,
 3,092 passed, 1 failed, 288 skipped, the failure a boat test that pinned
 `guestIdentity`'s answer without its value, since updated and passing
 with its file (27 of 27); vitest ran 444, all passed.
+
+## Close-out A: microsandbox snapshots on a Mac
+
+Unit 10 turned microsandbox snapshots off on a Mac host, as what they rest
+on was measured on Linux only. This measures it on a Mac and turns them on
+there, with the version guard kept. On the way it found that `msb` refuses
+a snapshot's ID whenever its home is reached through a link, which bb-box's
+own wrapper does on Linux too, so bb-box now names each snapshot by its
+group and member. Decisions are in 070, [Decided during the
+close-out](070-snapshots.md#decided-during-the-close-out).
+
+### The probe on a Mac
+
+Unit 10's probe could not run on a Mac as it was: it needs GNU `date`,
+`mkfs.ext4` and `python3`. [microsandbox-mac.sh](../research/box-snapshots/microsandbox-mac.sh)
+runs on a Mac and on Linux. It downloads its own `msb` 0.7.7, checks its
+SHA-256 against bb-box's pin, and runs it with an `MSB_HOME` of its own,
+never bb-box's `msb` or home. It needs no sudo, `python3` or `osascript`,
+prints no paths or names, and on exit removes every sandbox and snapshot it
+made, then its folder. It runs unit 10's checks and the reviewers' checks A
+to C, adds the memory checks, and check E, bb-box's own commands.
+
+The lead ran it on the production Mac host, as its user, in `/tmp`, on the
+same volume as bb-box's `msb` folder: macOS 27.0.1, Apple M4 Max, 128 GiB,
+APFS on the internal SSD, 340 GiB free. Each version passed first on a
+nested-KVM Proxmox QEMU Linux box. Five runs:
+
+| Run | Result | What it showed |
+| --- | --- | --- |
+| 1 | 12 passed, 3 failed | The data checks held: a chain of three restored byte for byte with both parents removed with `--force`, and checks A to C. The 3 failures measured nothing: the counter process never started on the Mac, and `--disk-only` printed no reason |
+| 2 | 13 passed, 3 failed, 1 skipped | The cause was a terminal, not `msb`: from an interactive shell `msb exec` gave the sandbox a PTY, so every read ended in a carriage return ("x\r" is not "x"), and the PTY's hangup ended the counter. Run 2's script under a PTY on Linux (`script -qec`) gave the same pattern |
+| 3 | 17 of 17 | With `msb exec --no-tty` and stdin from `/dev/null`, as bb-box runs `msb`. But its clean-up, which removes snapshots by ID, left 5 on the Mac and none on Linux |
+| 4 | 19 passed, 3 failed | Removal by ID, as bb-box's delete did, failed on the Mac: "snapshot identity <ID> has 2 local copies; use group:member or an explicit artifact path" |
+| 5 | 29 of 29 | Check E: bb-box's own commands by group and member (create with `--group` and `--label`, inspect, restore, `restore --disk-only` as a fork does, head, remove with `--force` of a parent, remove of an old head once another is head, remove of the last one after its sandboxes went, then nothing listed), once with `MSB_HOME` through a link and once through its real path. By ID, inspect failed through the link and worked through the real path |
+
+Run 5 on the Mac ([output](../research/box-snapshots/microsandbox-mac-results.txt)),
+times from the probe's own clock: a take with memory 0.78 s and of the disk
+0.22 s; a memory restore 0.20 s, with the counter process running and
+counting on from 12, its value at the take; the memory snapshot's disk
+alone, booted as a fork boots it, 0.26 s, with the files byte for byte and
+the counter still at 12; a disk restore at another size 0.28 s; removals
+0.06 s each.
+
+### Why "2 local copies"
+
+On a Mac `/tmp` is a link to `/private/tmp`, so the probe's home was always
+reached through one. Where `msb`'s home is a link, `msb` indexes each
+snapshot under the link's path and the real one, and then refuses to pick
+one by ID in `snapshot inspect`, `restore` and `remove`. Reproduced on
+Linux the moment `MSB_HOME` is a link; by group and member all three work.
+bb-box's wrapper reaches a home longer than 57 bytes through
+`/tmp/bb-box-msb-<uid>`, as for a BB machine's own data folder, so a Linux
+host with a long folder took snapshots before this that it could not
+restore, fork or delete, and a release of such a box stopped at its
+snapshots. bb-box's size read of a snapshot (`inspect`) failed there too,
+and fell back to the box's size.
+
+### What changed
+
+- **Mac hosts take snapshots.** The refusal on a Mac is gone from the plan,
+  every change and the doctor's Snapshots check, which says "ok" on a Mac
+  with `msb` 0.7.7. The version guard stays as it was: every change reads
+  `msb --version` first.
+- **A snapshot is named by its group and member** (`groupMember`,
+  `bbbox-<box ID>:<name>`) in `snapshot inspect`, `restore`, which forks
+  use too, and `remove`, and when a new head is chosen. bb-box's own files
+  (keep dates, sizes) stay keyed by the ID.
+- **Docs**: the snapshots guide and the microsandbox guide say Linux hosts
+  and Macs; the architecture says why bb-box names snapshots so; the probe
+  and its Mac output are in the research folder; 070's decisions.
+
+### Tests
+
+In `test/microsandbox-snapshots.test.ts`, the fake `msb` refuses an ID as
+the Mac did when its home is reached through a link (`homeThroughLink`):
+
+- "a Mac host's microsandbox boxes take and delete snapshots, as the probe
+  on a Mac measured, and the doctor says so; another msb is still
+  refused", in place of unit 10's test of the refusal;
+- "where msb's home is reached through a link ... bb-box names each by
+  group and member to inspect, restore, fork and delete it": two snapshots,
+  a restore, a fork, the parent deleted with `--force`, the last deleted,
+  and no `msb` call with an ID.
+
+Both fail on main's sources; both fail too with the Mac refusal lifted
+alone. Two tests of unit 10 that pinned the ID in `remove` and `restore`
+now pin group and member.
+
+On a Proxmox LXC box (8 cores, 16 GiB, Node 24.21), in a git checkout of
+this commit: `npx tsc` passes and the reference is current (`node
+scripts/reference.ts --check`); the node suite ran 3,494 tests, 3,175
+passed, 0 failed, 319 skipped; vitest ran 445, all passed, with
+`TZ=Pacific/Auckland`.
+
+### On a separate BB
+
+The lead keeps a second microsandbox install off the owner's Mac, so the
+live check through bb-box ran on Linux, through the link: a fresh `npx
+bb-app` 0.48.1 with no account and `BB_BOX_LIVE_CHECKS=1` in a nested-KVM
+Proxmox QEMU box (8 cores, 16 GiB), bb-box from this branch, microsandbox
+on BB's server, with `HOME` long enough that `msb`'s home is 81 bytes, so
+bb-box reached it through `/tmp/bb-box-msb-1000`
+([live-linked-home.sh](070-snapshots/close-out/live-linked-home.sh), which
+runs unit 10's own [live-setup.sh](070-snapshots/unit-10/live-setup.sh) and
+[live-gates.sh](070-snapshots/unit-10/live-gates.sh) unchanged). Boxes were
+machines of the person's and joined BB as machines. Times are bb-box's own.
+
+| Check | Result |
+| --- | --- |
+| A box | ready in 235 s, most of it importing the image into a new `msb` home; `boot=unarmed`, its own marker |
+| Take with memory, take of the disk | 3.4 s and 0.71 s |
+| Restore, memory | 2.7 s: the counter process running, the same host ID, one microVM; BB's daemon connected again 6.8 s after the restore began |
+| Fork of the memory snapshot | 2.8 s, a new BB machine; `boot=reset`, "BB machines removed" naming the source's host ID; no process of its source; new SSH host keys |
+| Undo, disk | 2.5 s; `boot=kept`, the same host ID; the daemon connected 3.7 s after it began |
+| Take a parent and its child, delete the parent | 0.68, 0.69 and 0.38 s |
+| Keep, release | 0.38 s and 0.89 s; the kept snapshot listed after the release |
+| Fork of the kept snapshot after the release | 2.3 s, `boot=reset`, a new host ID |
+| Clean up | every box released, every snapshot deleted: "There are no snapshots", `msb ls` "No sandboxes found", `msb snapshot list` "No snapshots indexed", no keep file; the link in place throughout |
+| Main's bb-box, in the same BB, through the same link | `origin/main`'s bb-box (`b15fe055`) installed from a checkout; the release of a box holding one snapshot stopped: "bb-box could not confirm the delete of snapshot ... msb snapshot remove failed: exit code 1. It checks again at its next sweep". With this branch's bb-box installed again, the sweep finished that release; `msb` then listed no sandboxes and no snapshots |
+
+### After merge
+
+The lead takes, restores, forks and deletes a snapshot on production's own
+microsandbox backend on that Mac, releases the box and sees nothing
+listed, and rolls back if anything is wrong.
+
+## Close-out B: Tart's Linux boxes fork and are kept
+
+Unit 9 shipped Tart's Linux VMs with takes and restores only, as their
+identity reset was not checked live. This checks it live, turns it on in
+their image, and offers fork and Keep for Tart's plain Linux boxes, as for
+macOS. Decisions are in 070, [Decided during the
+close-out](070-snapshots.md#decided-during-the-close-out).
+
+### What the live check found first
+
+- **The image had the reset off.** `prepare-linux-image.sh` installs
+  `bb-box-identity` through `customize-base.sh`, which turns it on only with
+  `BOX_IDENTITY_RESET=on`, and the script never set it. So no Tart Linux box
+  was fork-safe, whatever bb-box offered. It sets it now for the plain image.
+- **A stopped take was never fork-safe.** With the image fixed, the first
+  live fork was refused: "tl-src had no working identity reset when
+  'before' was taken". Core reads fork-safety from inside a ready box at
+  each take, and Tart takes a Linux box only while it is stopped. A macOS
+  box taken while stopped had the same gap. The fake Mac's tests had passed
+  `forkSafe` in by hand, so they missed it. bb-box's own stop now reads it.
+
+### What changed
+
+- **Tart's offer** (`src/backends/tart/snapshots.ts`, the backend): the
+  `linux-arm64` kind forks by copy and keeps as it is, from version 8 of
+  the reset (`LINUX_FORK_SAFE_FROM`); its identity source is `device`, the
+  VM card's MAC address. `linux-arm64-desktop-cpu` neither forks nor keeps,
+  with why (`LINUX_DESKTOP_NO_FORKS`). The plan reads the fork rules from the
+  offer, and a Linux snapshot taken without the reset says "which boxes
+  from a Linux image refreshed since have". The "macOS forks" doctor check,
+  about `diskutil image attach`, runs only for macOS kinds.
+- **A Linux fork** copies the snapshot's files into a VM of its own,
+  claimed first, with a new MAC address (`tart set --random-mac`) and the
+  fork's size, names it a Linux guest, and cleans nothing on the Mac.
+- **The image**: `prepare-linux-image.sh` sets `BOX_IDENTITY_RESET=on` for
+  the plain image and off with `--desktop`.
+- **Core**: where a backend's snapshots are taken from a stopped box
+  (`readsForkSafetyAtStop`: it forks, and its snapshots are `stopped-only`
+  or `suspends`), bb-box's stop reads the reset from inside the box just
+  before it stops it, and keeps it on the box's record (`stopForkSafety`)
+  once the stop has succeeded, with the stopped guest's mark; any write of
+  the record in another state than stopped, or with a restore under way,
+  drops it. A take of a stopped box uses it while the mark is the same
+  (since the reviews, below). The fork and Keep refusals of a
+  snapshot that is not fork-safe, there, add `STOPPED_ANOTHER_WAY`: "A
+  snapshot of a stopped box is fork-safe only when bb-box stopped the box,
+  as it reads the identity reset just before its stop: start the box, stop
+  it with bb-box and take the snapshot again."
+- **Docs**: the snapshots guide (the offer table, which images have the
+  reset on, the stop rule), the Tart guide's Snapshots section, 070.
+
+### Tests
+
+- `test/tart-snapshots.test.ts`: the offers test, now with Linux forks and
+  Keep and the desktop's refusal; "a Linux VM's snapshot forks into a VM of
+  its own with a new MAC address ... nothing to clean on the Mac", with
+  `diskutil` unable to attach; "a Linux VM's snapshot taken before its box
+  had the identity reset does not fork ... a Linux desktop forks none"; and
+  one through bb-box's own `Boxes` and `Snapshots` with the real Linux reset
+  program in a test root, reached through the fake Mac's guest: core writes
+  the marker at acquire, bb-box's stop reads version 8, the stopped take
+  records it, the plan offers the fork, Keep takes it, and a box stopped
+  outside bb-box takes a snapshot that is not fork-safe.
+- `test/beside-snapshots.test.ts`: in core, bb-box's stop reads the reset
+  where snapshots suspend the box, a stopped take uses it and keeps, a
+  start forgets it, a box stopped another way takes one that neither keeps
+  nor forks, with the words; where snapshots are taken live, the stop reads
+  nothing.
+- `test/identity-reset.test.ts`: Tart's Linux build turns the reset on for
+  the plain image and off for the desktop.
+
+Run against unit A's commit with only these tests swapped in, and the
+three constants they import added so they load, 6 of the 7 new or changed
+tests failed; the seventh, that a stop reads nothing where snapshots are
+taken from a running box, guards that nothing changes there.
+
+On a Proxmox LXC box (8 cores, 16 GiB, Node 24.21), in a git checkout of
+this commit with the done note: `npx tsc` passes and the reference is
+current; the node suite ran 3,499 tests, 3,180 passed, 0 failed, 319
+skipped; vitest ran 445, all passed, with `TZ=Pacific/Auckland`.
+
+### On a separate BB
+
+A fresh `npx bb-app` 0.48.1 with no account, its own data folder and ports,
+`env -i` and `BB_BOX_LIVE_CHECKS=1`, in a Proxmox LXC box, bb-box installed
+from this branch with `bb plugin install path:`, by
+[tart-linux-setup.sh](070-snapshots/close-out/tart-linux-setup.sh). The
+lead gave it a Tart backend of its own install on the production Tart Mac,
+as in unit 9, with that backend's SSH key put in the box as a file, deleted
+once the backend was added; every kind off but `linux-arm64`, warm VMs off,
+`reserve-disk-gib` 60, `general.identityResetBackends` `tart`. The Mac:
+macOS 27.0.1, Tart 2.40.1. One VM of this install's ran at a time; no other
+VM was touched.
+
+The image was built from this branch's `prepare-linux-image.sh` on the Mac
+as its user, under a name of its own, from the base the production image
+names, already cached, so nothing was pulled, renamed or pruned (070, the
+close-out's decisions say why not bb-box's own image build): 2 minutes 24
+seconds, 4.7 GB; its box-user checks passed, and the doctor read it as a
+standard image build.
+
+As in unit 9, a BB with no account cannot make the boxes BB machines, so
+the BB machine was stood in for by a random host ID in
+`~/.bb-machines/live-check/host-id`, and the tailnet node by a file in
+`/var/lib/tailscale`. The steps are
+[tart-linux-gates.sh](070-snapshots/close-out/tart-linux-gates.sh). Times
+are the CLI's.
+
+| Check | Result |
+| --- | --- |
+| A box | ready in 4.8 s by bb-box's timings, identity marker 65 ms; 15.9 s for the command, the rest its first try to join a BB it cannot reach; `bb-box-identity status`: version 8, on, `boot=unarmed`, `marker=matches`, armed, `source=device`; its unit is ordered before `ssh`, `ssh.socket`, `systemd-networkd`, `tailscaled` and the box user's `user@` |
+| Stop, take stopped, start | 16.1 s, 0.7 s and 4.2 s |
+| Restore, undo | 20.8 s and 21.1 s, each a shutdown, the copy put back and a boot: `work.txt` "before", then "after"; the same host ID, machine ID and SSH host key; `boot=kept` |
+| Fork, as one of the person's machines | ready in 4.6 s (5.5 s for the command), after core's check before ready. In the fork: `boot=reset`, "none of the marker's MAC addresses (0e:ac:...) is on this box's interfaces (1e:de:...); BB machines removed: <the stand-in host ID>"; no host ID file, no Tailscale state; a new machine ID and SSH host key; its own marker and hostname; `work.txt` "before". The order in its boot: the reset done at 1.45 s, `systemd-networkd` active at 1.55 s, `ssh` at 1.58 s and the box user's `user@1002` at 1.66 s, which is ordered after it |
+| The source after its fork | unchanged: the same host ID, Tailscale state, machine ID, SSH host key and MAC address, `boot=kept`, `marker=matches` |
+| Keep, release | 0.6 s; the source released in 1.2 s, its kept snapshot listed after |
+| Fork of the kept snapshot after the release | ready in 4.6 s (5.4 s for the command): `boot=reset`, no host ID file, a new machine ID and SSH host key, `work.txt` "before" |
+| Clean up | every machine released, the kept snapshot deleted, a sweep: no snapshots, no machines; the test backend removed. The lead then deleted the image and its two folders on the Mac with `TART_NO_AUTO_PRUNE=1`, and confirmed no VM, owner file or snapshot of this install's there, and production's own Linux images untouched |
+
+### Known limits
+
+- A box from a Tart Linux image prepared before this unit has the reset
+  off, so its snapshots neither fork nor keep until the image is refreshed
+  and the box made again.
+- A box stopped other than by bb-box, shut down from inside or by the Mac,
+  takes snapshots that neither fork nor keep, until bb-box starts and stops
+  it.
+- A Linux fork's disk is not cleaned on the Mac, as a macOS fork's is: it
+  relies on systemd's order, measured above, and on its source's reset
+  having been on at the take.
+- bb-box's stop of a Tart box now waits for the reading first, a moment
+  when the box answers and up to 10 s when it does not, and then reads the
+  stopped VM's mark on the Mac.
+- A Tart box stopped by bb-box whose VM folder is touched while it is
+  stopped, by `tart set` say, also loses its reading: it fails closed.
+
+### After the reviews
+
+Opus and Astra each said merge after fixes. The lead asked for these, in
+the same commits rebased onto main `93c25d53`, each with a test that fails
+before it:
+
+| Finding | What changed | Test |
+| --- | --- | --- |
+| Astra's high, Opus 2: a reading survived a start and stop outside bb-box between sweeps, and a failed stop observed as stopped kept it | The reading is kept only once bb-box's stop has succeeded, with the backend's mark of the stopped guest (`stoppedMark`), and a take uses it only while the mark is the same. On Tart the mark is each VM file's modification time and size (`config.json`, `nvram.bin`, `disk.img`, `state.vzvmsave`), read on the Mac; a run writes them, as the firmware writes the NVRAM at each boot. A backend with no mark keeps no reading | "a box bb-box stopped that then ran outside bb-box ... is not fork-safe", "a stop that failed, though the guest stopped, keeps no reading", and the fake Mac test, whose fake `tart run` now touches `nvram.bin` |
+| Opus 1, Astra's low: an older image's box was told to stop it with bb-box, which cannot help | A reading that found the reset off or missing is kept as such; a snapshot records why it is not fork-safe (`forkSafeWhy`, a new column in `snapshots.db`); `reset-off` refusals say "refresh the Linux image and make the box again" (or, for macOS, "make the box again"), and only `unread` ones say to stop it with bb-box | "a box whose reset was off when bb-box stopped it ... refresh the Linux image", and unit 8's Keep tests in core and the CLI, whose box has no reset program, now expect those words |
+| Opus 3: an in-place restore left stopped kept the reading of the earlier disk | Any write of the box's record with a restore under way drops the reading | "a restore drops the stopped box's reading as it begins" |
+
+Run against the rebased commit's sources with only these tests and fakes
+swapped in, and `resetOffWords` added so they load, all 6 failed.
+
+On a Proxmox LXC box (8 cores, 16 GiB, Node 24.21), in a git checkout of
+the three commits on main `93c25d53`: `npx tsc` passes and the reference is
+current; the node suite ran 3,504 tests, 3,185 passed, 0 failed, 319
+skipped; vitest ran 448, all passed, with `TZ=Pacific/Auckland`. At unit A's
+commit alone: 3,495 tests, 3,176 passed, 0 failed, 319 skipped; vitest 448.
+
+The stop and the take each gain one call to the Mac, `stoppedMark`, besides
+the reading; nothing else in either path changed. It was run on the fake
+Mac, whose scripts run in a real shell with GNU `stat`; on a Mac's BSD
+`stat` it reads `%Fm` and `%z`, which was not run live.
+
+### After merge
+
+The lead refreshes production's `linux-arm64` image on the Tart Mac, which
+production arms already, and forks one box to check.

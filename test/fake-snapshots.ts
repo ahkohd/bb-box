@@ -78,6 +78,7 @@ export class FakeSnapshots {
   forkWhy: string | null = null;
   onProvider: { price: Snapshotting["price"]; forkWhy?: string; forkSafeFrom?: number } | null = null;
   beside = false;
+  readonly runs = new Map<string, number>();
   memoryOnly = false;
   notResumed: string | null = null;
   bill: SnapshotBill | Error | null = null;
@@ -132,9 +133,11 @@ export class FakeSnapshots {
     if (start) {
       target.start = async (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number) => {
         this.order.push(readyWithinMs === undefined ? "start" : `start within ${readyWithinMs / 1000} s`);
+        this.runs.set(guest.ref, (this.runs.get(guest.ref) ?? 0) + 1);
         return start(guest, signal, timing, answered);
       };
     }
+    target.stoppedMark = async (guest: Guest): Promise<string | null> => ((await backend.power(guest)) === "running" ? null : `${guest.ref} after ${this.runs.get(guest.ref) ?? 0} starts`);
     target.snapshotting = (): Snapshotting =>
       this.onProvider
         ? {
