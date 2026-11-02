@@ -8,7 +8,7 @@ import { parseTags } from "../src/backends/proxmox/api.ts";
 import { buildFromTags, installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
 import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
-import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
+import { ProxmoxQemuBackend, ROOT_FACT, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { vmNameScript } from "../src/backends/proxmox-lxc/backend.ts";
 import { spawnSync } from "node:child_process";
 import { quote } from "../src/transports/process.ts";
@@ -1429,6 +1429,75 @@ test("a Linux VM's root file system grows live over its disk (061)", async () =>
   const log = existsSync(join(home, "sudo.log")) ? readFileSync(join(home, "sudo.log"), "utf8") : "";
   if (grown instanceof Error) assert.fail(grown.message);
   assert.match(log, /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
+});
+
+function linuxDiskTools(ssh: ReturnType<typeof fakeSsh>, address: string): { log: () => string; growpartFails: (failing: boolean) => void } {
+  rmSync(join(ssh.dir, "windows", address));
+  const home = ssh.home(address);
+  mkdirSync(join(home, "bin"), { recursive: true });
+  const tools: Record<string, string> = {
+    findmnt: "echo /dev/sda1",
+    lsblk: "echo sda",
+    sudo: `echo "$*" >> "$HOME/sudo.log"; if [ "$1" = growpart ] && [ -e "$HOME/growpart-fails" ]; then echo "FAILED: failed to resize" >&2; exit 2; fi`,
+  };
+  for (const [name, script] of Object.entries(tools)) {
+    writeFileSync(join(home, "bin", name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(home, "bin", name), 0o755);
+  }
+  const failing = join(home, "growpart-fails");
+  return {
+    log: () => (existsSync(join(home, "sudo.log")) ? readFileSync(join(home, "sudo.log"), "utf8") : "").split("\n").filter((line) => /^(growpart|resize2fs) /.test(line)).map((line) => `${line}\n`).join(""),
+    growpartFails: (fails) => (fails ? writeFileSync(failing, "") : rmSync(failing, { force: true })),
+  };
+}
+
+test("a Linux VM's root file system is grown over a disk larger than its template's by bb-box after its first boot, not left to its boot script alone", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  const tools = linuxDiskTools(ssh, "192.0.2.150");
+  const timing = hooks();
+  const guest = await backend.acquire(identity(sized({ diskGiB: 120 }), "linux"), null, timing.value, signal());
+  assert.equal(guest.size?.diskGiB, 120);
+  assert.match(tools.log(), /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
+  assert.ok("grow" in timing.timings, "the grow is a step of the acquire's timings");
+  assert.equal(guest.facts?.some((fact) => fact.label === ROOT_FACT) ?? false, false);
+});
+
+test("a Linux VM at its template's disk size needs no grow, and its boot script's grow is enough", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  const tools = linuxDiskTools(ssh, "192.0.2.150");
+  await backend.acquire(identity(sized({ diskGiB: 64 }), "linux"), null, hooks().value, signal());
+  assert.equal(tools.log(), "");
+});
+
+test("a Linux VM whose root file system cannot be grown is still a box, and its facts say its root was not grown, until a resize grows it", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  const tools = linuxDiskTools(ssh, "192.0.2.150");
+  tools.growpartFails(true);
+  const guest = await backend.acquire(identity(sized({ diskGiB: 120 }), "linux"), null, hooks().value, signal());
+  assert.match(tools.log(), /^growpart \/dev\/sda \S*\n$/, "no resize2fs over a partition that did not grow");
+  const fact = guest.facts?.find((candidate) => candidate.label === ROOT_FACT);
+  assert.ok(fact, "the box's facts say so");
+  assert.match(fact.value, /^Not grown over its disk: growpart \/dev\/sda \S* failed with exit code 2\. Run growpart and resize2fs in the box, or resize its disk again\.$/);
+  tools.growpartFails(false);
+  const grown = await backend.resize(guest, "linux", { ...guest.size!, diskGiB: 128 }, { restart: false }, signal());
+  assert.deepEqual(grown.facts, [], "a resize that grows it takes the fact away, with a list of facts the box's record keeps");
+  tools.growpartFails(true);
+  const again = await backend.resize(grown, "linux", { ...grown.size!, diskGiB: 136 }, { restart: false }, signal());
+  assert.equal(again.size?.diskGiB, 136, "the disk grew, so the resize did");
+  assert.equal(again.facts?.filter((candidate) => candidate.label === ROOT_FACT).length, 1, "and the root that did not grow with it is said once");
+});
+
+test("a Linux VM resized with a restart grows its root file system over its larger disk once it is up, as a live resize does", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  const tools = linuxDiskTools(ssh, "192.0.2.150");
+  const guest = await backend.acquire(identity(sized(), "linux"), null, hooks().value, signal());
+  assert.equal(tools.log(), "");
+  await backend.resize(guest, "linux", { ...guest.size!, cores: guest.size!.cores + 2, diskGiB: guest.size!.diskGiB! + 8 }, { restart: true }, signal());
+  assert.match(tools.log(), /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
 });
 
 test("an Android template with KVM off offers no kind, but its image is listed, boxed at the android kind's size, captured, and checked by the doctor (063)", async () => {

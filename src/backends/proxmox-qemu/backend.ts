@@ -78,6 +78,7 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type Guest,
+  type GuestFact,
   type HeldGuest,
   type ImageBox,
   type ImageBuild,
@@ -340,12 +341,27 @@ function sizeOf(config: Record<string, unknown>): MachineSize | null {
 /** How long a resize's clean shutdown waits for the guest before Proxmox stops it (061). */
 const SHUTDOWN_WAIT_S = 120;
 
-/** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart says NOCHANGE when there is nothing to grow. */
-const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
+/** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart exits 1, NOCHANGE, when there is nothing to grow, and 2 when it fails. */
+export const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
 disk=/dev/$(lsblk -no PKNAME "$dev")
 part=$(cat "/sys/class/block/$(basename "$dev")/partition")
-sudo growpart "$disk" "$part" >/dev/null || :
+sudo growpart "$disk" "$part" >/dev/null
+grown=$?
+[ "$grown" -le 1 ] || { echo "growpart $disk $part failed with exit code $grown." >&2; exit 1; }
 sudo resize2fs "$dev" >/dev/null`;
+
+export const ROOT_FACT = "Root file system";
+
+function rootNotGrown(error: unknown): GuestFact {
+  const why = error instanceof Error ? error.message : String(error);
+  return { label: ROOT_FACT, value: `Not grown over its disk: ${why.replace(/\.?$/, ".")} Run growpart and resize2fs in the box, or resize its disk again.` };
+}
+
+function withRootFact(guest: Guest, unfilled: GuestFact | null): Guest {
+  const saidBefore = guest.facts?.some((fact) => fact.label === ROOT_FACT) ?? false;
+  if (!saidBefore && !unfilled) return guest;
+  return { ...guest, facts: [...(guest.facts ?? []).filter((fact) => fact.label !== ROOT_FACT), ...(unfilled ? [unfilled] : [])] };
+}
 
 function gone(vmid: number): BackendError {
   return new BackendError("gone", `The box's VM ${vmid} no longer exists.`);
@@ -1169,7 +1185,8 @@ export class ProxmoxQemuBackend implements Backend {
       const size = api.config(id, signal).then(sizeOf, () => null);
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step, os);
       if (isLinuxVmKind(box.kind)) await step("name", () => this.#nameLinux(id, box.name, signal));
-      // A Linux template's bb-box-boot grows its root filesystem at each boot. Its desktop starts after SSH, as in Proxmox LXC.
+      const unfilled = linux && (grew || (resumed && box.size.diskGiB !== null)) ? await step("grow", () => this.#rootUnfilled(id, signal)) : null;
+      // Its desktop starts after SSH, as in Proxmox LXC.
       if (linux && this.#kindOf(template).capabilities.displays.length) {
         display = await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
       }
@@ -1180,7 +1197,7 @@ export class ProxmoxQemuBackend implements Backend {
       }
       // A spare keeps its low weight until a box takes it: relabel() puts it back then.
       if (box.threadId !== SPARES) await this.#settle(api, id, signal);
-      return this.#guest(api.node, id, template, box.boxId, await size, build, display);
+      return withRootFact(this.#guest(api.node, id, template, box.boxId, await size, build, display), unfilled);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -1277,8 +1294,10 @@ export class ProxmoxQemuBackend implements Backend {
     if (restart && !options.restart) throw new BackendError("unsupported", "A VM's cores and memory change only with a restart.");
     const grows = to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB);
     if (!restart) {
-      if (grows && (await this.#grow(api, vmid, config, to.diskGiB, untimed, signal))) await this.#growRoot(vmid, os, signal);
-      return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+      const grew = grows && (await this.#grow(api, vmid, config, to.diskGiB, untimed, signal));
+      if (grew && os === "windows") await this.#extend(vmid, signal);
+      const resized = { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+      return grew && os === "linux" ? withRootFact(resized, await this.#rootUnfilled(vmid, signal)) : resized;
     }
     await this.#forget(vmid);
     await api.shutdown(vmid, SHUTDOWN_WAIT_S, signal);
@@ -1294,9 +1313,9 @@ export class ProxmoxQemuBackend implements Backend {
       await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
       throw error;
     }
-    // A Linux VM's boot script grew its root file system; Windows extends C: now.
     if (grew && os === "windows") await this.#extend(vmid, signal);
-    return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+    const resized = { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+    return grew && os === "linux" ? withRootFact(resized, await this.#rootUnfilled(vmid, signal)) : resized;
   }
 
   /** The VM's config and size, when it is the box's and runs, and the disk asked for is not smaller (061). */
@@ -1316,11 +1335,16 @@ export class ProxmoxQemuBackend implements Backend {
     return { config, from };
   }
 
-  /** Grows the guest's root file system, or C:, over the space its disk grew by, while it runs (061). */
-  async #growRoot(vmid: number, os: GuestOs, signal?: AbortSignal): Promise<void> {
-    if (os === "windows") return this.#extend(vmid, signal);
-    const result = await (await this.#command(vmid, "linux")).run(GROW_ROOT, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) throw new Error(`The box's disk grew, but Linux could not grow its root file system: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+  async #rootUnfilled(vmid: number, signal?: AbortSignal): Promise<GuestFact | null> {
+    try {
+      const result = await (await this.#command(vmid, "linux")).run(GROW_ROOT, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode !== 0) throw new Error(result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`);
+      return null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#context.logError(`grow the root file system of VM ${vmid}`, error);
+      return rootNotGrown(error);
+    }
   }
 
   /** Room on the node for a VM to grow from `from` to `to`: the memory and disk it adds, within the reserves, and cores within the node's (061). */
