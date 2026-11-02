@@ -4,15 +4,30 @@ here=$(cd "$(dirname "$0")" && pwd)
 
 usage() {
   cat <<'EOF'
-usage: setup-gpu.sh [--pool <name>]... [--writes off] [--downgrade]
-                        install or upgrade bb-box-gpu, the host's GPU helper
+usage: setup-gpu.sh [--pool <name>]... [--downgrade]
+                        install or upgrade bb-box-gpu, the host's GPU helper,
+                        keeping writes as they are: off on a first install
+       setup-gpu.sh --writes on [--check]
+       setup-gpu.sh --writes off
+                        turn the helper's writes on or off, on its own
        setup-gpu.sh --remove
                         remove it, and put back bb-box-gpu-memory.timer
 
   --pool <name>   serve this pool as well as BBBOX_POOL and the pools
                   /etc/bb-box/gpu.conf already lists; give it once per pool
-  --writes off    keep writes off. This release runs the helper with writes
-                  off only, a dry run, so --writes on is refused
+  --writes on     let the helper write guests' NVIDIA and DRM device lines.
+                  Only once this release's helper is installed and
+                  reporting, as its own step. It first runs bb-box-gpu
+                  --preview, which shows what the helper's first pass with
+                  writes on would write, and refuses if that is any guest
+  --check         with --writes on: print the preview and change nothing
+  --writes off    a dry run again: the helper writes no guest. Claims it
+                  granted stay in its ledger
+
+An upgrade with writes on runs the new release's --preview first, and changes
+nothing if it is incomplete or would write any guest. A --writes on cut short
+once both units are written is finished by the next run, which keeps writes
+on; cut short before that, writes stay off.
   --downgrade     install this release over a newer one, and set aside a
                   ledger a newer protocol wrote, which the helper then
                   rebuilds from the guests
@@ -39,8 +54,11 @@ or fails part way leaves a writer running and says which. It keeps the
 install from before it in /var/lib/bb-box-gpu/setup-backup, and the next run
 puts that back if its helper does not report.
 
-No run changes a guest's device lines or tags. Run as root on the Proxmox
-host. Idempotent: a run with nothing to do says "nothing changed".
+No run of this script changes a guest's device lines or tags; with writes
+on, the helper does, for the markers bb-box writes. Writes are on only when
+gpu.conf says so and both units run the helper without --dry-run, which
+--writes on and --writes off set together. Run as root on the Proxmox host.
+Idempotent: a run with nothing to do says "nothing changed".
 EOF
 }
 
@@ -54,6 +72,7 @@ pool_name_pattern='^[A-Za-z0-9][A-Za-z0-9._/-]*$'
 mode=install
 asked_pools=()
 asked_writes=""
+check_only=0
 downgrade=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -73,17 +92,20 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --downgrade) downgrade=1 ;;
+    --check) check_only=1 ;;
     -h | --help) usage && exit 0 ;;
     *) refuse_usage "cannot read '$1'" ;;
   esac
   shift
 done
-if [ "$mode" = remove ] && { [ "${#asked_pools[@]}" -gt 0 ] || [ -n "$asked_writes" ] || [ "$downgrade" = 1 ]; }; then
+if [ "$mode" = remove ] && { [ "${#asked_pools[@]}" -gt 0 ] || [ -n "$asked_writes" ] || [ "$downgrade" = 1 ] || [ "$check_only" = 1 ]; }; then
   refuse_usage "--remove takes no other option"
 fi
-if [ "$asked_writes" = on ]; then
-  echo "setup-gpu.sh: this release runs bb-box-gpu with writes off only, a dry run. Writes come on in a later release, once bb-box has marked its guests and a day of dry run with the markers shows no write the helper would make. Nothing was changed." >&2
-  exit 1
+if [ "$check_only" = 1 ] && [ "$asked_writes" != on ]; then
+  refuse_usage "--check goes with --writes on"
+fi
+if [ -n "$asked_writes" ] && { [ "${#asked_pools[@]}" -gt 0 ] || [ "$downgrade" = 1 ]; }; then
+  refuse_usage "--writes is a step of its own: run it without --pool or --downgrade"
 fi
 
 helper_heartbeat=60
@@ -111,6 +133,7 @@ report_name=bb-box-gpu-memory
 helper_units=(bb-box-gpu.service bb-box-gpu-boot.service)
 unhealthy_report='^#[[:space:]]*error (the ledger is protocol|the pass could not finish|cannot write the helper.s state)'
 changed=0
+expect_writes=off
 report_line=""
 serves_line=""
 vmid=""
@@ -202,6 +225,35 @@ newer_than() {
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]
 }
 
+writes_of() {
+  local conf_file=$1 unit_file=$2
+  if [ -f "$conf_file" ] && grep -Eq '^[[:space:]]*writes[[:space:]]+on[[:space:]]*$' "$conf_file" &&
+    [ -f "$unit_file" ] && grep -q '^ExecStart=/usr/local/sbin/bb-box-gpu' "$unit_file" &&
+    ! grep -q '^ExecStart=.* --dry-run' "$unit_file"; then
+    echo on
+  else
+    echo off
+  fi
+}
+
+rendered_unit() {
+  local name=$1 writes=$2 out
+  out=$(mktemp "$state/$name.rendered.XXXXXX")
+  if [ "$writes" = on ]; then
+    sed 's#^\(ExecStart=/usr/local/sbin/bb-box-gpu.*\) --dry-run$#\1#' "$here/$name" >"$out"
+  else
+    cp "$here/$name" "$out"
+  fi
+  echo "$out"
+}
+
+put_unit() {
+  local name=$1 writes=$2 rendered
+  rendered=$(rendered_unit "$name" "$writes")
+  put 0644 "$rendered" "$units/$name"
+  rm -f "$rendered"
+}
+
 ledger_protocol() {
   [ -f "$ledger" ] || return 0
   perl -MJSON::PP -e '
@@ -232,7 +284,7 @@ report_is_fresh() {
   at=$(line_of "$snapshot" 'at [0-9]\{1,\}')
   at=${at#at }
   helper=$(line_of "$snapshot" 'helper bb-box-gpu .*')
-  if [[ "$helper" == "helper bb-box-gpu $version protocol $protocol writes off "* ]] && [ "${at:-0}" -ge "$since" ] &&
+  if [[ "$helper" == "helper bb-box-gpu $version protocol $protocol writes $expect_writes "* ]] && [ "${at:-0}" -ge "$since" ] &&
     { [ -z "$unlike" ] || [ "$snapshot" != "$unlike" ]; } && ! grep -Eq "$unhealthy_report" <<<"$snapshot"; then
     report_line=$helper
     serves_line=$(line_of "$snapshot" 'serves .*')
@@ -406,6 +458,7 @@ roll_back() {
   systemctl stop bb-box-gpu.service || true
   put_previous_back
   phase="starting bb-box-gpu $old_version again"
+  expect_writes=$(writes_of "$backup/gpu.conf" "$backup/bb-box-gpu.service")
   local since before
   since=$(date +%s)
   before=$(description_text "$vmid")
@@ -439,6 +492,49 @@ pool_known() {
   grep -q "^pool:$1:" "$root/etc/pve/user.cfg" 2>/dev/null
 }
 
+clean_preview() {
+  local preview_of=$1 outcome=$2 output errors status
+  errors=$(mktemp "$state/preview.XXXXXX")
+  status=0
+  output=$(perl "$preview_of" --preview 2>"$errors") || status=$?
+  printf '%s\n' "$output" | sed 's/^/setup-gpu.sh: /'
+  if [ "$status" != 0 ] || ! grep -q '^preview: writes on would write ' <<<"$output" || grep -q '^error: ' <<<"$output"; then
+    echo "setup-gpu.sh: what bb-box-gpu --preview said besides:" >&2
+    tail -20 "$errors" | sed 's/^/setup-gpu.sh:   /' >&2
+    rm -f "$errors"
+    die "bb-box-gpu --preview could not show what writes on would do (exit status $status; see its error and incomplete lines above), so $outcome. Put right what it names, then run this again. Nothing was changed."
+  fi
+  rm -f "$errors"
+  if grep -q '^preview: pve-container .* is not a version this release was tested on' <<<"$output"; then
+    die "bb-box-gpu $new_version was not tested on the pve-container installed here, so it would write no guest even with writes on, and $outcome. Nothing was changed."
+  fi
+  if grep -q '^would write CT ' <<<"$output"; then
+    die "with writes on, bb-box-gpu $new_version would write the guests above on its first pass, so $outcome. Find why with journalctl -u bb-box-gpu and the report's would lines: each write must be explained before writes come on. Nothing was changed."
+  fi
+}
+
+preview_writes_on() {
+  local installed_version=$1 now_writes=$2 output errors status
+  if [ -d "$backup" ]; then
+    die "an earlier run did not finish, and the install from before it is kept in $backup: run setup-gpu.sh without --writes first, then --writes on. Nothing was changed."
+  fi
+  if [ "$installed_version" != "$new_version" ]; then
+    die "writes come on only for this release's helper once it runs, and bb-box-gpu ${installed_version:-none} is installed: run setup-gpu.sh without --writes first, to install bb-box-gpu $new_version with writes off, then --writes on. Nothing was changed."
+  fi
+  expect_writes=$now_writes
+  if ! systemctl is-active --quiet bb-box-gpu.service || ! report_is_fresh $(($(date +%s) - 90)) "$new_version" "$new_protocol"; then
+    die "bb-box-gpu $new_version has written no fresh, healthy report in VM $vmid in the last 90 s, so its writes do not come on: see systemctl status bb-box-gpu. Nothing was changed."
+  fi
+  if [[ "$report_line" != *" tested" ]]; then
+    die "bb-box-gpu $new_version was not tested on the pve-container installed here ($report_line), so it would write no guest even with writes on. Nothing was changed."
+  fi
+  clean_preview "$program" "writes stay off"
+  if [ "$check_only" = 1 ]; then
+    echo "setup-gpu.sh: --check: writes on would write no guest; nothing was changed. Run setup-gpu.sh --writes on to turn them on."
+    exit 0
+  fi
+}
+
 install_helper() {
   [ -d "$root/proc/driver/nvidia/gpus" ] || die "no NVIDIA driver loaded: there is no GPU for the helper"
   command -v nvidia-smi >/dev/null || die "nvidia-smi is missing (it comes with NVIDIA's driver)"
@@ -461,6 +557,19 @@ install_helper() {
   fi
   vmid=$(report_vmid) || true
   [ -n "$vmid" ] || die "no VM named $report_name on this node: run setup-gpu-report.sh first, which makes the report's VM"
+  local current_writes want_writes
+  current_writes=$(writes_of "$conf" "$units/bb-box-gpu.service")
+  want_writes=${asked_writes:-$current_writes}
+  if [ "$want_writes" = on ] && [ "$current_writes" = off ]; then preview_writes_on "$current_version" "$current_writes"; fi
+  if [ "$want_writes" = on ] && [ "$current_writes" = on ] && [ "$current_version" != "$new_version" ] && [ "$check_only" = 0 ]; then
+    echo "setup-gpu.sh: writes are on, so bb-box-gpu $new_version's preview runs before it replaces ${current_version:-the helper}:"
+    clean_preview "$here/bb-box-gpu" "bb-box-gpu ${current_version:-installed} stays as it is; run setup-gpu.sh --writes off first to upgrade with writes off"
+  fi
+  if [ "$check_only" = 1 ]; then
+    echo "setup-gpu.sh: --check: writes are on already; nothing was changed"
+    exit 0
+  fi
+  expect_writes=$want_writes
   if timer_present; then timer_was_there=1; fi
 
   phase="keeping a copy of the install before this run"
@@ -474,15 +583,15 @@ install_helper() {
   phase="writing gpu.conf"
   local pools wanted pool
   pools=$(wanted_pools)
-  wanted=$(printf 'pools %s\nwrites off' "$pools")
+  wanted=$(printf 'pools %s\nwrites %s' "$pools" "$want_writes")
   if [ ! -f "$conf" ] || [ "$(cat "$conf")" != "$wanted" ]; then
     local was_on=""
-    if [ -f "$conf" ] && grep -Eq '^[[:space:]]*writes[[:space:]]+on[[:space:]]*$' "$conf"; then
-      was_on=" (it said writes on, which this release does not run)"
+    if [ "$want_writes" = off ] && [ -f "$conf" ] && grep -Eq '^[[:space:]]*writes[[:space:]]+on[[:space:]]*$' "$conf" && [ "$asked_writes" != off ]; then
+      was_on=" (it said writes on, but the helper's units did not run it so; writes stay off until setup-gpu.sh --writes on)"
     fi
     (umask 077 && printf '%s\n' "$wanted" >"$conf.new")
     mv "$conf.new" "$conf"
-    said "wrote $conf: pools $pools, writes off$was_on"
+    said "wrote $conf: pools $pools, writes $want_writes$was_on"
     for pool in $pools; do
       pool_known "$pool" || echo "setup-gpu.sh: pool $pool is not in /etc/pve/user.cfg yet; the helper serves it once it is"
     done
@@ -495,16 +604,16 @@ install_helper() {
 
   phase="replacing the program and its units"
   put 0755 "$here/bb-box-gpu" "$program"
-  put 0644 "$here/bb-box-gpu.service" "$units/bb-box-gpu.service"
-  put 0644 "$here/bb-box-gpu-boot.service" "$units/bb-box-gpu-boot.service"
+  put_unit bb-box-gpu.service "$want_writes"
+  put_unit bb-box-gpu-boot.service "$want_writes"
   systemctl daemon-reload
   if ! systemctl is-enabled --quiet bb-box-gpu-boot.service 2>/dev/null; then
     systemctl enable --quiet bb-box-gpu-boot.service
-    said "enabled bb-box-gpu-boot.service, the boot pass before pve-guests.service, with writes off"
+    said "enabled bb-box-gpu-boot.service, the boot pass before pve-guests.service, with writes $want_writes"
   fi
   if ! systemctl is-enabled --quiet bb-box-gpu.service 2>/dev/null; then
     systemctl enable --quiet bb-box-gpu.service
-    said "enabled bb-box-gpu.service, with writes off"
+    said "enabled bb-box-gpu.service, with writes $want_writes"
   fi
 
   local since ledger_too_new=0 unproven=0
@@ -527,18 +636,20 @@ install_helper() {
     before=$(description_text "$vmid")
     start_helper || roll_back "bb-box-gpu $new_version did not start"
     if [ -n "$old_version" ] && [ "$old_version" != "$new_version" ]; then
-      said "restarted bb-box-gpu.service on $new_version, which was $old_version, with writes off; gpu.conf and the ledger are kept"
+      said "restarted bb-box-gpu.service on $new_version, which was $old_version, with writes $want_writes; gpu.conf and the ledger are kept"
+    elif [ "$want_writes" != "$current_writes" ]; then
+      said "restarted bb-box-gpu.service with writes $want_writes, which were $current_writes; the ledger is kept"
     else
-      said "started bb-box-gpu.service, with writes off"
+      said "started bb-box-gpu.service, with writes $want_writes"
     fi
     phase="waiting for bb-box-gpu $new_version's report"
     wait_for_report "$first_pass_wait" "$since" "$new_version" "$new_protocol" "$before" ||
-      roll_back "bb-box-gpu $new_version wrote no fresh, healthy report with writes off in VM $vmid within $first_pass_wait s"
+      roll_back "bb-box-gpu $new_version wrote no fresh, healthy report with writes $want_writes in VM $vmid within $first_pass_wait s"
   else
     phase="reading bb-box-gpu's report"
     since=$(($(date +%s) - 90))
     wait_for_report "$heartbeat_wait" "$since" "$new_version" "$new_protocol" ||
-      hand_over_to_timer "bb-box-gpu wrote no fresh, healthy report with writes off in VM $vmid within $heartbeat_wait s"
+      hand_over_to_timer "bb-box-gpu wrote no fresh, healthy report with writes $want_writes in VM $vmid within $heartbeat_wait s"
   fi
 
   if timer_present; then
@@ -595,6 +706,7 @@ remove_helper() {
   [ -z "$stuck" ] || { echo "setup-gpu.sh: could not stop$stuck: see systemctl status" >&2; exit 1; }
   if [ "$changed" = 1 ]; then
     echo "setup-gpu.sh: kept $conf and the ledger in $state; no guest's device lines or tags were changed"
+    echo "setup-gpu.sh: bb-box starts a box with a GPU marker only once a helper reports its grant: to remove the helper for good, run bb box gpu mark --undo from each BB first"
   else
     echo "setup-gpu.sh: nothing changed"
   fi

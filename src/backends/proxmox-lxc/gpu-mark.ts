@@ -13,7 +13,9 @@ import {
   parseHelperLines,
   planMark,
   planUnmark,
+  releasedAt,
   tagsOf,
+  withMarker,
   type GuestLook,
   type HelperLines,
   type MarkAnswer,
@@ -26,6 +28,18 @@ const ANSWER_POLLS = 10;
 const ANSWER_POLL_MS = 1_000;
 const WRITE_TRIES = 2;
 const LOOKS_AT_ONCE = 8;
+export const RELEASING_HELPER = "0.3.0";
+
+export function helperAtLeast(version: string | null, least: string): boolean {
+  if (version === null || !/^\d+(?:\.\d+)*$/.test(version)) return false;
+  const have = version.split(".").map(Number);
+  const want = least.split(".").map(Number);
+  for (let at = 0; at < Math.max(have.length, want.length); at++) {
+    const difference = (have[at] ?? 0) - (want[at] ?? 0);
+    if (difference) return difference > 0;
+  }
+  return true;
+}
 
 export interface MarkingSetup {
   readonly backend: string;
@@ -75,16 +89,12 @@ function boxesNamed(looks: readonly GuestLook[]): Map<string, number[]> {
   return named;
 }
 
-function tagsWithMarker(tags: readonly string[], marker: string): string[] {
-  const gpu = gpuTagsOf(tags);
-  return [...tags.filter((tag) => !gpu.includes(tag)), marker];
-}
-
 type Plan = MarkPlan | UnmarkPlan;
-type Planned = { readonly guest: PoolGuest; readonly look: GuestLook; readonly plan: Plan; readonly wrote: boolean; readonly failed: string | null };
+type Planned = { readonly guest: PoolGuest; readonly look: GuestLook; readonly plan: Plan; readonly wrote: boolean; readonly failed: string | null; readonly cleared?: boolean };
 
 function nextTags(look: GuestLook, plan: Plan): string[] | null {
-  if (plan.is === "mark") return tagsWithMarker(tagsOf(look), markerTag(plan.marker));
+  if (plan.is === "mark") return withMarker(tagsOf(look), plan.marker);
+  if (plan.is === "release" && !plan.asked) return withMarker(tagsOf(look), plan.marker);
   if (plan.is === "unmark") return tagsOf(look).filter((tag) => tag !== plan.marker);
   return null;
 }
@@ -117,6 +127,10 @@ function outcomeOf(planned: Planned, check: boolean): Pick<GpuMarkGuest, "outcom
   const gpu = gpuTagsOf(tagsOf(planned.look)).join(" ") || null;
   if (failed) return { outcome: "refused", why: failed, marker: gpu, card: null };
   switch (plan.is) {
+    case "release":
+      if (check) return { outcome: "would-unmark", why: gpu ? null : "It has no marker, but the helper's ledger holds a claim for it.", marker: gpu, card: null };
+      if (planned.cleared) return { outcome: "unmarked", why: gpu ? null : "It had no marker, but the helper's ledger held a claim for it.", marker: gpu, card: null };
+      return { outcome: "refused", why: `${markerTag(plan.marker)} is on it, so the helper clears its claim once it answers; run bb box gpu mark --undo again then to take the tag off.`, marker: markerTag(plan.marker), card: null };
     case "mark":
       return { outcome: check ? "would-mark" : "marked", why: plan.why, marker: markerTag(plan.marker), card: cardName(plan.card) };
     case "marked":
@@ -158,6 +172,30 @@ async function answersFor(api: Proxmox, setup: MarkingSetup, planned: readonly P
   }
 }
 
+async function clearReleased(api: Proxmox, setup: MarkingSetup, planned: readonly Planned[], first: HelperLines, signal?: AbortSignal): Promise<Planned[]> {
+  const asked = (each: Planned) => each.plan.is === "release" && !each.failed && (each.wrote || each.plan.asked);
+  let lines = first;
+  for (let poll = 0; ; poll++) {
+    const waiting = planned.filter((each) => asked(each) && each.plan.is === "release" && !releasedAt(lines, each.guest.vmid, each.plan.marker.generation));
+    if (!waiting.length || poll >= ANSWER_POLLS) break;
+    await setup.sleep(ANSWER_POLL_MS, signal);
+    lines = (await readLines(api, setup, signal)) ?? lines;
+  }
+  const cleared: Planned[] = [];
+  for (const each of planned) {
+    if (!asked(each) || each.plan.is !== "release" || !releasedAt(lines, each.guest.vmid, each.plan.marker.generation)) {
+      cleared.push(each);
+      continue;
+    }
+    const release = markerTag(each.plan.marker);
+    const takenOff = await planAndWrite(api, each.guest, await lookAt(api, each.guest.vmid, signal), { check: false, undo: true, recordedParts: new Map() }, (look) =>
+      gpuTagsOf(tagsOf(look)).includes(release) ? { is: "unmark", marker: release } : { is: "unmarked" },
+    signal);
+    cleared.push({ ...each, cleared: !takenOff.failed, failed: takenOff.failed ? `The helper cleared its claim, but ${takenOff.failed}` : null });
+  }
+  return cleared;
+}
+
 export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking> {
   const node = api.node;
   const base = { backend: setup.backend, label: setup.label, node, check: request.check, undo: request.undo, withoutCards: 0 };
@@ -165,7 +203,7 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
   const vm = await api.vmNotes(setup.reportVm, signal);
   const helper = vm ? parseGpuHelper(vm.notes) : null;
   let lines: HelperLines = vm ? parseHelperLines(vm.notes) : NO_HELPER_LINES;
-  if (!request.undo) {
+  {
     if (!vm) return refuse(`The token can read no VM named ${setup.reportVm} on ${node}, so bb-box cannot read the GPU helper's report.`, `Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on ${node}.`);
     if (!helper) return refuse(`${node} has no GPU helper: VM ${vm.vmid}'s report has no helper line, and only the helper, bb-box-gpu, answers a marker.`, `Run host/setup-gpu.sh from the setup guide as root on ${node}.`);
     const at = /^\s*at (\d+)\s*$/m.exec(vm.notes);
@@ -179,6 +217,12 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
       );
     }
     if (lines.omitted.length) return refuse(`VM ${vm.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so bb-box cannot read every claim the helper holds.`, `Read what the helper says with journalctl -u bb-box-gpu on ${node}.`);
+    if (request.undo && !helperAtLeast(helper.version, RELEASING_HELPER)) {
+      return refuse(
+        `bb-box-gpu ${helper.version} on ${node} cannot clear a claim, and --undo clears each claim the helper holds before it takes a marker off.`,
+        `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${node}, to install bb-box-gpu ${RELEASING_HELPER} or later.`,
+      );
+    }
   }
   const ours = (await api.listPool(setup.pool, signal)).filter((guest) => isOurGuest(guest, setup, node)).sort((a, b) => a.vmid - b.vmid);
   const looks = await lookAtEach(api, ours, signal);
@@ -191,15 +235,17 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
     return { installId: setup.installId, madeAndRemovedByBbBox: setup.madeAndRemovedByBbBox, cards: lines.cards, holders: lines.holders, ledger: lines.ledger, answers: lines.answers, boxNamedBy: named };
   };
   const plan = (look: GuestLook): Plan => {
-    if (request.undo) return planUnmark(look, setup);
+    if (request.undo) return planUnmark(look, setup, lines.ledger);
     const boxId = boxIdOf(look);
     return planMark({ look, recordedPart: boxId === null ? null : (request.recordedParts.get(boxId) ?? null) }, context(look));
   };
-  const planned: Planned[] = [];
+  let planned: Planned[] = [];
   for (const [at, guest] of ours.entries()) planned.push(await planAndWrite(api, guest, looks[at]!, request, plan, signal));
-  if (!request.undo && planned.some((each) => each.wrote)) lines = (await readLines(api, setup, signal)) ?? lines;
+  if (planned.some((each) => each.wrote)) lines = (await readLines(api, setup, signal)) ?? lines;
+  if (request.undo && !request.check) planned = await clearReleased(api, setup, planned, lines, signal);
   const answers = request.undo ? new Map<number, MarkAnswer>() : await answersFor(api, setup, planned, lines, request.check, signal);
   const shown = planned.filter((each) => each.plan.is !== "no-card" && (each.plan.is !== "unmarked" || each.failed));
+  const released = (each: Planned): GpuMarkAnswer | null => (each.plan.is === "release" && !request.check ? (each.cleared ? "released" : "unanswered") : null);
   const guests: GpuMarkGuest[] = shown.map((each) => {
     const answer = answers.get(each.guest.vmid);
     return {
@@ -207,7 +253,7 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
       name: each.guest.name,
       running: each.guest.status === "running",
       ...outcomeOf(each, request.check),
-      answer: (answer?.is as GpuMarkAnswer | undefined) ?? null,
+      answer: (answer?.is as GpuMarkAnswer | undefined) ?? released(each),
       answerWhy: answer && "why" in answer ? answer.why : null,
     };
   });

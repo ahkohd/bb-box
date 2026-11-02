@@ -270,14 +270,22 @@ reads memory in desktops. The doctor's "Host's GPU report" check says which.
 
 Not yet for general use. `host/setup-gpu.sh` installs `bb-box-gpu`, the
 host's GPU helper, in the timer's place. The helper writes the same report,
-with its own lines added. This release runs it with writes off, a dry run: it
-changes no guest.
+with its own lines added, and answers the GPU markers bb-box writes on its
+guests. It installs with writes off, a dry run: it changes no guest until
+`--writes on`, a step of its own.
 
 ```sh
-host/setup-gpu.sh                # install, or upgrade from an older release
-host/setup-gpu.sh --pool team    # serve another install's pool as well
-host/setup-gpu.sh --remove       # remove it, and put the timer back
+host/setup-gpu.sh                    # install, or upgrade from an older release
+host/setup-gpu.sh --pool team        # serve another install's pool as well
+host/setup-gpu.sh --writes on --check  # what writes on would write, changing nothing
+host/setup-gpu.sh --writes on        # let the helper write guests' GPU device lines
+host/setup-gpu.sh --writes off       # a dry run again
+host/setup-gpu.sh --remove           # remove it, and put the timer back
 ```
+
+Turning writes on lets anything that holds bb-box's token give any
+unprivileged guest in the pools the helper serves a card's NVIDIA device
+nodes, by writing a tag. That exposes NVIDIA's kernel driver to that guest.
 
 - Install puts in `/usr/local/sbin/bb-box-gpu`, `bb-box-gpu.service`,
   `bb-box-gpu-boot.service` and `/etc/bb-box/gpu.conf`. That file lists the
@@ -295,7 +303,30 @@ host/setup-gpu.sh --remove       # remove it, and put the timer back
 - An older release refuses to replace a newer helper, or to use a ledger a
   newer protocol wrote, unless given `--downgrade`. It then sets that ledger
   aside, and the helper rebuilds it from the guests.
-- `--writes on` is refused in this release, and changes nothing.
+- `--writes on` comes on only for this release's helper, already installed
+  and reporting: run `setup-gpu.sh` without it first. It runs
+  `bb-box-gpu --preview` first, which makes one pass as writes on would,
+  writing no guest, ledger or report and locking no guest, and prints each
+  write and answer it would give. If that would write any guest, or the
+  preview is incomplete (it read no card, has an error line, could not read
+  every guest, or `nvidia-smi` gave no full reading of every card the driver
+  lists), writes stay off and nothing changes: each such write must be
+  explained, and each error put right, first. On a pve-container
+  this release was not tested on, it is refused too. Then it
+  writes `writes on` in `gpu.conf` and runs both units without `--dry-run`,
+  which it sets together, restarts the helper and waits for its report to
+  say `writes on`; if it does not, the helper before is put back as it was.
+- With `--check`, `--writes on` prints the preview and changes nothing.
+- `--writes off` writes `writes off` and puts `--dry-run` back in both
+  units. The claims the helper granted stay in its ledger.
+- An upgrade keeps writes as they are. With writes on, it first runs the new
+  release's `--preview`, and changes nothing if that is incomplete or would
+  write any guest: run `--writes off` first to upgrade with writes off. A
+  helper put back by `--remove` and a later install comes back with writes
+  off.
+- A `--writes on` cut short once both units are written is finished by the
+  next run of `setup-gpu.sh`, which keeps writes on, restarts the helper and
+  waits for its report; cut short before that, writes stay off.
 - `--remove` starts the timer and waits for it to write the report before
   it stops the helper. If the timer cannot write, as when `nvidia-smi`
   fails, the helper is left running and nothing is removed. It keeps
@@ -306,7 +337,10 @@ host/setup-gpu.sh --remove       # remove it, and put the timer back
   which of the two writes the report. It keeps the install from before it in
   `/var/lib/bb-box-gpu/setup-backup`: run the same command again, and that
   install is put back if the helper does not report.
-- No run changes a guest's device lines or tags.
+- No run of `setup-gpu.sh` changes a guest's device lines or tags. With
+  writes on, the helper does: only the NVIDIA and DRM device lines of a
+  stopped guest whose marker asks for a card, inside Proxmox's config lock,
+  never a running or locked one.
 
 Before writes come on, bb-box marks its guests that have a card's device
 lines, so the helper knows which claim each holds. It needs bb-box-gpu 0.2.0
@@ -315,7 +349,7 @@ or later, whose report lists its ledger. From BB:
 ```sh
 bb box gpu mark --check   # what it would mark, and what it leaves and why
 bb box gpu mark           # mark them, and wait up to 10 s for the helper's answers
-bb box gpu mark --undo    # take those markers off again: tags only, see below
+bb box gpu mark --undo    # clear the helper's claims and take the markers off, see below
 ```
 
 - A guest of this install's pool whose device lines name a card gets one tag,
@@ -347,17 +381,53 @@ bb box gpu mark --undo    # take those markers off again: tags only, see below
   naming a node no card has, a write the helper would make, a refusal, and a
   marker the helper's ledger does not hold as asked. It never passes a report
   that leaves lines out or has no ledger lines.
-- `--undo` takes the shared and whole markers off, and nothing else. It does
-  not clear the claims the helper granted: they stay in its ledger until a
-  later BB Box release clears claims (071 unit 5). With writes off the helper
-  changes nothing; with writes on it would go on giving each stopped guest
-  the lines of the card it claimed. A later mark asks above the generation
-  the ledger answered.
+- `--undo` clears each claim the helper holds for this install's guests,
+  then takes their shared and whole markers off. It writes a
+  `gpu.release.g<N>` marker in place of each, which the helper answers by
+  clearing the claim and leaving the device lines as they are; once
+  answered, that marker comes off too. A guest with a claim and no marker,
+  as an undo before this release left it, is cleared the same way. It needs
+  bb-box-gpu 0.3.0 or later. A later mark asks above the generation the
+  ledger answered. `gpu.none` markers and tags it did not write stay.
+
+From this release, bb-box writes the marker itself as it makes a GPU
+desktop or a warm desktop, in the same config write as the box's labels,
+and waits up to 10 s for the helper's answer before it starts the box
+(071 unit 5):
+
+- A new GPU desktop is placed under a lock per node: on a card one of its
+  templates carries, held whole by no guest, with fewer of this install's
+  boxes than the desktops per GPU, then on the card with the fewest boxes,
+  the most memory free and the lowest index. The card is reserved for it
+  until the helper answers. If the helper refuses it, bb-box releases the
+  guest and places it once more, on another card; then it says why.
+- With writes on, a stopped shared desktop holds no place: it starts on its
+  last card if that card has room, and otherwise on another card with room,
+  whose lines the helper writes while it is stopped. With no card that has
+  room, it is not started, and stays as it was. With writes off, a stopped
+  desktop starts on the card its lines name, as before.
+- After bb-box restarts, it places nothing until the helper has answered
+  the markers it wrote before, or a minute has passed. A box whose marker
+  is still unanswered is not started.
+- A box starts only on a grant of its current marker. A marker the helper
+  refused is asked again, as the claim the helper still holds for it, before
+  the start; with no claim it is not started. With the helper not reporting,
+  as while `setup-gpu.sh` restarts it, a box with a marker waits up to 10 s,
+  then is not started, and no new GPU desktop is made: remove the helper
+  for good only after `bb box gpu mark --undo`.
+- Where the helper is installed but cannot be used, as when its report is
+  3 minutes old or does not serve this install's pool, new GPU desktops are
+  refused with the reason, and boxes whose claims stand still start. A
+  helper on a pve-container its release was not tested on runs as with
+  writes off: desktops are made and marked, and none is moved. With no
+  helper and no guest of this install marked, GPU desktops are made as
+  before, with no marker.
 
 Where the helper is installed, `setup-gpu-report.sh` makes the VM and its
 rights but does not put the timer back. The doctor's "Host's GPU helper"
 check says whether the helper reports, speaks this bb-box's protocol, serves
-this install's pool and has writes on; it warns while writes are off. The
+this install's pool and has writes on; it warns while writes are off, and
+says how to turn them on. The
 helper keeps one `nvidia-smi` running, so NVIDIA's kernel module cannot be
 unloaded, and a card cannot be reset, while it runs: `systemctl stop
 bb-box-gpu` first.

@@ -1500,3 +1500,422 @@ and the watcher are in the report to the lead.
   `--undo`, and must not let `--undo` take off markers it writes itself.
 - Not rehearsed under real systemd this time: the installer's code is unit
   3's but for its two waits, and the tests run it with the fake `systemctl`.
+
+## Unit 5: claims, and the helper's writes on
+
+Built on main `eb751824`. Used first by today's GPU desktops: no form, tool,
+CLI option or setting is added, and no box is offered a GPU it was not
+before. Writes stay off on the node until the lead runs
+`setup-gpu.sh --writes on`, a step of its own.
+
+### What it does
+
+- **The card lock.** One lock per node, in bb-box's process, shared by every
+  backend that reaches the node through the same API. It is held from
+  reading the helper's report and the pool to reserving a card, and never
+  across a clone, a stop or a start. An acquire, a warm desktop's fill and
+  the start of a stopped box take it.
+- **Reservations.** Under the lock, the card is reserved in memory for the
+  box being placed, with the 384 MiB a desktop needs. Placement counts a
+  reservation as a holder of its card, once per guest. A reservation ends
+  when the operation fails, or, once the box runs, when the helper's report
+  shows the guest running on the card, or after 2 minutes.
+- **Placement** (section 3, "Shared"), where the helper is usable: a card
+  that one of the desktop templates carries (each template's GPU ID is
+  matched to the report's cards by UUID, PCI address or index, as today),
+  not avoided after a display that came up on the CPU nor read full while
+  another is left (as today), held whole by no guest, with fewer of this
+  install's boxes than the desktops per GPU, and with no request of this
+  install the helper has left unanswered; then the card with the fewest
+  boxes holding it, of every install and none, the most memory free less
+  what is reserved, and the lowest index. A box holds its card when it runs,
+  when it holds it whole, and when the helper does not manage it; a stopped
+  shared box the helper manages holds no place.
+- **Generations.** A marker asks one above the highest of the ledger's
+  answered generation for the guest, its claim's, the marker on the guest,
+  and the last this process wrote.
+- **Acquire.** Lock, place, reserve, unlock. Clone from the least used
+  template on that card, whose lines are the card's. The marker
+  `gpu.shared.<UUID>.g<N>` goes in the same config write as the box's
+  labels. bb-box waits up to 10 s for the helper's answer, reading the
+  report every 0.5 s, and starts the box only once it is granted. Refused,
+  the guest is released and the box placed once more, on another card; a
+  second refusal, or no answer, releases the guest and is said in words.
+  The box's record gets the claim (`guest.claim`).
+- **Warm desktops** are placed and marked the same way, before they start,
+  and keep the marker through their last labels. A box that takes one keeps
+  its marker, as since unit 4.
+- **The start gate**, for a stopped guest with a shared or whole marker,
+  whatever the desktop templates and kinds say now. A box starts only on a
+  grant of its current marker, as the helper reports it. An unanswered request is waited for, up to 10 s, and so is a helper
+  that is not reporting; then the box is not started. A marker the helper
+  refused is not started on: where the helper still holds a claim for the
+  guest, that claim is asked again as a new generation, which needs no
+  write, and the box starts once it is granted. With writes off, or a whole
+  claim, that is all: the box starts on the card it holds, as before. With
+  writes on, a shared box starts on its last card if that card has room,
+  else on another card with room that a desktop template of a kind that is
+  on names: bb-box
+  writes the new marker on the digest, every other tag kept, waits for the
+  grant, for which the helper writes the card's lines into the stopped
+  guest, and then starts it. With no card that has room, it is not started:
+  "Container 7021 was not started: No card on pve can take another box now:
+  ... It is stopped, with its disk as it was." Memory is not part of the
+  start gate (see deviations). A start returns the claim it started with,
+  and the box's record takes it, with its GPU fact naming the card it holds
+  now, also when it starts on the last report's grant while the helper is
+  not reporting. A release, and the readings of GPU memory in running
+  desktops, go by that card too. A stop gives up the box's shared
+  reservation at once.
+- **Recovery at bb-box's start.** Before the first placement, bb-box reads
+  the report and every marker on this install's guests, and waits up to a
+  minute for each request the helper has not answered. Those still
+  unanswered are logged by name, and the start gate does not start them.
+  Placement leaves a card on which this install has an unanswered request
+  that no operation in this process is waiting for.
+- **When the helper cannot be used.** With no helper line in the report, or
+  no report, and no guest of this install marked, GPU desktops are made as
+  before, with no marker. With a guest of this install marked, a report with
+  no helper line, as the timer writes while `setup-gpu.sh` restarts the
+  helper, means the helper is not reporting: no new GPU desktop is made and
+  no marked box starts. Where the helper's own doctor check fails (its
+  report 3 minutes old, another protocol, this install's pool not served),
+  or its report leaves lines out, lists no card or no ledger, a new GPU
+  desktop and a warm desktop's fill are refused with the reason and the
+  fix, and a stopped box whose current marker the last report granted still
+  starts. A helper on a pve-container its release was not tested on runs as
+  with writes off: desktops are made and marked, and no box is moved.
+- **Capacity** uses the same placement, without the lock: its GPU limit is
+  this install's boxes holding cards against the desktops per GPU times the
+  cards, and its refusal is the placement's.
+- **`bb box gpu mark --undo` clears claims.** It writes `gpu.release.g<N>`
+  in place of each shared or whole marker, and on a guest with a claim and
+  no marker, as unit 4's undo left them; waits up to 10 s for the helper's
+  `claim <vmid> g<N> released`; then takes that tag off, on the digest. The
+  guest keeps its lines, holds its card unmanaged, and the helper never
+  writes it again. It needs bb-box-gpu 0.3.0 or later, and is refused,
+  changing nothing, with an older helper or none.
+- **The helper, 0.3.0.** Protocol 1. The marker gains `gpu.release.g<N>`:
+  answered by clearing the guest's claim, with writes on or off, as it
+  writes no guest; a rebuilt ledger takes it for no claim. `--preview` makes
+  one pass as writes on would, writing no guest, ledger, report or state and
+  locking no guest, and prints each write it would make, each answer it
+  would give, and a summary. It exits 1, saying why, when it read no card,
+  has an error line, or could not read a guest it would decide on. Under a
+  guest's config lock, the helper writes or grants only while the guest is
+  the same box it scanned: the same box, install, kind, pool and gpu tags;
+  otherwise it leaves the request for the next pass. A guest whose config it
+  cannot read is named in an `error` line, holds every card in the report's
+  holder lines, and stops every decision that would give or claim a card it
+  may hold until it can be read.
+- **Incomplete readings.** A reading by `nvidia-smi` that leaves out a card
+  the driver lists decides no request on that card and changes no guest's
+  lines for it. One with a row the helper cannot read, or that ends with an
+  error status or is cut short, decides no request on any card and changes
+  no guest's lines. Each is named in an `error` line, so the preview fails.
+- **A lost ledger** is rebuilt from the guests as before, with two changes.
+  A guest whose card a guest the helper cannot read may hold is left out,
+  and its request waits. And the rebuild strips no stopped guest's lines, at
+  boot or after: a stopped copy, a guest whose lines do not match its
+  marker, and a whole box whose card another guest still has are refused,
+  `copy` or `ledger-lost`, keep their lines, and are decided when bb-box
+  asks again, as it does before it starts them.
+- **`setup-gpu.sh --writes on`** works only on this release's helper,
+  already installed and reporting, with no unfinished run. It runs the
+  preview first, prints it, and refuses, changing nothing, when the preview
+  would write any guest, is incomplete or has an error line, or finds an
+  untested pve-container. An upgrade with writes on runs the new release's
+  preview the same way first, and changes nothing if it fails. A `--writes
+  on` cut short once both units are written is finished by the next run,
+  which keeps writes on; cut short before that, writes stay off.
+  Then it writes `writes on` in `gpu.conf` and installs both units without
+  `--dry-run`, restarts the helper with the timer running meanwhile, and
+  waits for a report that says `writes on`; else the install before is put
+  back. `--check` prints the preview and changes nothing. `--writes off`
+  sets both back. An upgrade keeps writes as they were; a failed one puts
+  them back as they were. `--writes` takes no other option. Writes are on
+  only when `gpu.conf` says so and the service unit runs the helper without
+  `--dry-run`; after `--remove`, a later install comes back with writes off.
+- **The doctor.** `proxmox.gpu-helper` still warns while writes are off,
+  now saying what writes off means for bb-box and giving the steps:
+  `--writes on --check`, then `--writes on`. It warns, rather than fails,
+  for a pve-container the helper's release was not tested on.
+  `proxmox.gpu-migration` reads a `gpu.release` marker as no marker.
+
+### What was run
+
+On a `linux` box, directly, with Node 26.13.0 and Perl 5.38, the tests as
+root as CI runs them, after the reviews' fixes:
+
+- `test/gpu-claims.test.ts`, 20 tests, with bb-box against the fake Proxmox
+  API and the real helper 0.3.0 with writes on, on unit 2's fake node. A new
+  bridge (`test/gpu-helper/claims-bridge.ts`) keeps the two in step both
+  ways: before each helper pass every container's config, pool and power
+  state goes to the node, and after it the device lines the helper wrote and
+  its report come back; each sleep of bb-box's is one pass. The gate's cases:
+  two acquires at once with desktops per GPU 1 on two cards, and a third
+  refused before any clone; a second install whose placement a whole claim
+  overtakes before its clone, refused `whole-taken` by the helper and placed
+  once more on the other card, then refused with words where it has no
+  other; bb-box made again with a marker left unanswered, which places
+  nothing until the helper answers, and a box whose marker stays unanswered
+  not started; a stopped desktop on a full card moved by the start gate,
+  the helper writing the other card's lines into it while stopped and
+  nothing else, and a running guest's move refused `running` with its lines
+  kept. Also: a refusal on both cards; a stopped shared box holding no
+  place; writes off as before; no helper, and a helper bb-box cannot use; a
+  warm desktop marked as it is made; capacity; an acquire resumed after a
+  restart; desktop templates whose GPU IDs name no card the helper lists;
+  each review finding below; and the rules alone (holders, reservations,
+  the lock, generations, answers, recovery, the report's states).
+- `test/gpu-helper.test.ts`: release markers with writes on and off,
+  running and stopped, an ineligible one refused, a lost ledger, and the
+  boot pass after a release; `--preview` writing no guest, ledger, report or
+  state and locking no guest, naming the write it would make, and the
+  untested pve-container; and the review findings: a guest changed while the
+  helper waited for its lock, an unreadable guest, an incomplete preview.
+  The fake Proxmox modules can now change a guest's config once its lock is
+  taken (`FAKE_PVE_SWAP_ON_LOCK`).
+- `test/gpu-setup.test.ts`: `--writes on` refused before an install, with
+  an older helper, on an untested pve-container, when the preview would
+  write a guest, and when it is incomplete, each changing nothing;
+  `--check`; on, with both units and `gpu.conf` together and no guest
+  written; an upgrade keeping writes on, after the new release's preview,
+  and refused while that preview fails; a failed upgrade putting them back
+  on; `--writes off`; a removal and a later install coming back with writes
+  off; the usage errors.
+- `test/gpu-mark.test.ts` and `test/gpu-mark-reviews.test.ts`: `--undo`
+  clears each claim and takes the markers off, as before marking; a second
+  undo changes nothing; a mark after an undo asks above the release.
+- Rebased onto main `ffafe0bb`: `tsc` clean; the reference as `npm run
+  reference` writes it; the node suite, 3,579 tests, 3,285 passed, 0
+  failed, 294 skipped; `shellcheck -x` on `setup-gpu.sh`: clean. vitest,
+  448 passed, twice in a row, on a Hetzner box.
+- After the re-review's fixes and the CI fix, still on main `ffafe0bb`, as
+  root on a `linux` box: `tsc` clean; the node suite, 3,584 tests, 3,289
+  passed, 0 failed, 295 skipped; vitest, 448 passed. A run of the node
+  suite before that one failed a test of `test/identity-reset.test.ts`,
+  which passed alone, 42 of 42 with 2 skipped, on this commit and on
+  `b3212714`. The GPU and Proxmox LXC test files together: 267 tests, 266
+  passed, 1 skipped.
+- Run directly on a box rather than in a container that reaps them, the
+  helper tests had left 136 of the fake `nvidia-smi`'s loops running. The
+  fake now exits once nothing reads its output; the five GPU test files,
+  124 tests, then passed and left none.
+
+### The live check
+
+Run again after the reviews' fixes, directly on a box: two fresh
+`npx bb-app@0.48.1`, with no account and enrolment off, each with bb-box
+installed from this branch by `bb plugin install`, each a separate install
+with its own pool. Their Proxmox LXC backends were set up with `bb box
+backend add proxmox-lxc` against a throwaway HTTPS server on the box that
+answers with the tests' fake Proxmox, pinned by its certificate's
+fingerprint, and keeps its guests in step with a fake node where the real
+helper 0.3.0 made a pass with writes on every second. The boxes' addresses
+answered SSH on the box itself, as the box user, with bb-box's key, and
+their desktops said they had drawn on the GPU. Two GPU desktop templates,
+one per card; desktops per GPU 1, then 2. Times are the fake server's log.
+
+- Two `bb box acquire linux-desktop` at once: one on each card, each
+  marker in the write that labelled the guest, each start after its grant.
+  A third was refused before any clone, with the words above.
+- One box stopped: a new box took its card. Starting the stopped box was
+  refused, both cards full, and it stayed stopped. With the box on the other
+  card released, the start moved it: marker g2 for card 1, the helper wrote
+  card 1's lines into it while stopped 0.6 s after the marker, it started
+  0.4 s later, and its record's claim and GPU fact name card 1.
+- A box released, and another asked for at once: it took the released
+  box's card, though the report still listed the released guest.
+- The report made the timer's, with no helper line, and the helper paused:
+  starting a stopped marked box was refused after 11 s, "bb-box cannot see
+  a grant of its GPU marker ... The GPU helper on pve is not reporting ...",
+  and an acquire was refused with the same reason. With the helper
+  reporting again, the start went ahead.
+- bb-box killed between a marker and its answer: with the helper's answers
+  paused, an acquire wrote its marker and BB was killed 1.1 s later.
+  Restarted, BB resumed that acquire, and was asked for a new desktop. For
+  20 s nothing was cloned and the resumed guest was not started. Within
+  1.3 s of the helper's answer both went on: the new acquire took card 0,
+  so the resumed acquire's start gate moved its guest to card 1, the helper
+  writing its lines while it was stopped, before starting it. Each card
+  ended with two boxes, the limit.
+- Writes turned off on the fake node, and a move of a stopped box to card 1
+  asked as if just before: the helper left it as a write it would make. The
+  start asked the box's standing claim on card 0 again (g3), the helper
+  granted it with no write, and the box started on card 0.
+- The second BB's desktop went to card 0. Stopped, its guest asked for card
+  0 whole: the helper refused it `card-held 7003`, the first install's box,
+  and its config was as before. Its next start did not use the refused
+  marker: it asked its standing shared claim again (g3) and started on it.
+- `bb box gpu mark --undo` on the first BB cleared four claims through
+  release markers; every guest kept its lines; the doctor's Markers on GPU
+  guests then failed, naming the four; `bb box gpu mark` asked each above
+  the release and the helper granted them; the doctor then passed both GPU
+  checks.
+- In all, the helper wrote guests twice, CT 7000 and CT 7004, each while
+  stopped, for a move bb-box asked; no running guest was written.
+
+Limits: a fake Proxmox and a fake node, not a node: no real `pct` lock,
+pending section or hot-plug; the helper made one-off passes, not the
+service; the boxes were one SSH server; the cards loaded nothing. The first
+move above ran on the build before the last fix (a released guest's place),
+as the first BB had not restarted; every later step ran on the final build.
+
+### After the reviews
+
+Two reviews, Opus and Astra, said to merge after fixes, with writes kept off
+until every one is in. The lead decided Opus 3. Each fix has a test, and each
+of these tests failed when run against the reviewed commit's `src`, helper
+and `setup-gpu.sh` (`1c5765fa`), on a box: 16 tests, all failing, each for
+the reason in the table.
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| Astra 1: after waiting for a guest's config lock, the helper wrote a guest that had changed meanwhile: a guest asking for no card got the card it had asked before, and another install's guest that took the VMID got the old box's card | Under the lock, the helper writes, grants or takes a yield only while the guest is the one it scanned: box, install, kind, pool and gpu tags the same. Otherwise the request waits for the next pass | `test/gpu-helper.test.ts`, with the fake Proxmox changing the config once the lock is taken: the guest asking for none was given card 0's lines and granted shared; the replacement got the lines; a replaced yielder lost its lines |
+| Astra 2: the start gate failed open: a report with no helper line skipped it, and with writes off a refused marker started | A box starts only on a grant of its current marker. A report with no helper line, while this install has marked guests, means the helper is not reporting: wait 10 s, then refuse. A refused marker is never started on; a claim the helper still holds is asked again, and the box starts on that grant | `test/gpu-claims.test.ts`: the marked box started on a timer-only report; with writes off, a box refused `whole-taken` started on another box's whole card; a refused move started on its old claim without asking again |
+| Astra 3: a guest whose config could not be read was left out, so another guest got the card it held whole, and the preview passed | The guest is named in an `error` line, holds every card in the holder lines, and stops every decision that would give or claim a card it may hold; the preview fails | `test/gpu-helper.test.ts`: another guest was granted card 0 whole while the unreadable one ran on it, and the preview exited 0 |
+| Astra 4, Opus 2: the preview, and so `--writes on` and `--check`, passed with no card read and an `nvidia-smi` error | The preview exits 1, naming why, when it read no card, has an error line, or could not read a guest; `setup-gpu.sh` refuses on any of these, and on any `error:` line | `test/gpu-helper.test.ts` and `test/gpu-setup.test.ts`: the preview exited 0, and `--writes on --check` succeeded, with `nvidia-smi` failing |
+| Astra 5: stopping a box just made kept its reservation for up to 2 minutes | A stop, or a power-off, gives up the box's shared reservations at once, under the card lock | `test/gpu-claims.test.ts`: the next desktop was refused, its only card counted full |
+| Opus 1: the start gate could move a box to a card no desktop template names | The gate places only on cards a desktop template names, as an acquire does | `test/gpu-claims.test.ts`: the box was moved to card 1, which no template names |
+| Opus 3, decided by the lead: an untested pve-container refused every new GPU desktop | It runs as with writes off: desktops are made and marked, none is moved, and the doctor warns; `--writes on` stays refused | `test/gpu-claims.test.ts` and `test/proxmox-lxc.test.ts`: the acquire was refused, and the doctor failed |
+| Opus 4: a timer-only report during a restart read as no helper, so desktops were made unmarked | With this install's guests marked, such a report blocks new GPU desktops, with words | `test/gpu-claims.test.ts`: an unmarked desktop was made |
+| Opus 5: a move left unanswered when writes went off held the box, and closed the card it was moving to | With writes off, the standing claim is asked again, with no write, and the box starts; a request the helper would make only with writes on closes no card | `test/gpu-claims.test.ts`: the start was refused after 10 s. The rules test checks that such a request closes no card; it failed earlier, on Opus 8 |
+| Opus 6: after a move, the box's GPU fact named its template's card | The fact names the card the box holds | `test/gpu-claims.test.ts`: the fact named card 0 after the move to card 1 |
+| Opus 7: an upgrade with writes on ran no preview | It runs the new release's preview first, and changes nothing if that fails or would write | `test/gpu-setup.test.ts`: the upgrade went ahead with `nvidia-smi` failing |
+| Opus 8: a reused VMID could read an old guest's answer | A marker asks above every answer the report lists for the VMID | the rules test: g1 was asked over a listed g5 |
+| Found in the live check: a start or acquire just after a release was refused, as the report, written each second, still listed the released guest | A guest this process has deleted holds no place, until the report no longer lists it or 2 minutes pass | `test/gpu-claims.test.ts`: the next desktop was refused, its card counted full |
+| Opus 9: the `--undo` words said a start marks a box again | "A box bb-box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again." | `test/gpu-mark.test.ts`: the old words |
+
+Also documented, as Opus asked: a `--writes on` cut short once both units are
+written is finished by the next run of `setup-gpu.sh`, which keeps writes on.
+And, from Astra 2's fix: `setup-gpu.sh --remove` now says that a box with a
+GPU marker starts only once a helper reports its grant, so `bb box gpu mark
+--undo` comes first when the helper is removed for good.
+
+### After the re-review
+
+Astra's re-review of `b3212714` found the earlier fixes held, except in
+three cases, and one smaller one. Each fix has a test that fails on
+`b3212714` for the reason the re-review gave, built from its description of
+the probes. 8 tests: 4 new, and 4 earlier ones whose expectations change
+with R3. They fail on `b3212714` and pass now, on a box, as root.
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| R1: a partial reading passed the preview: card 0 read, card 1 `[N/A]`, an error and exit 9 | The helper keeps the failure of any row it cannot read, and of an error status or a reading cut short, and compares the cards read with those the driver lists. A card not read blocks every decision on it; a bad row or status blocks every decision. Each is an `error` line, and the preview names the gap | `test/gpu-helper.test.ts`: the preview exited 0 with card 1 `[N/A]` and exit 9, with card 1 left out, and with every row then exit 9. `test/gpu-setup.test.ts`: `--writes on --check` and `--writes on` succeeded in the same three cases |
+| R2: with the desktop templates cleared, a marked box skipped the start gate, and started on another box's whole card | Every stopped guest with a marker goes through the gate, whatever the templates. The gate and an acquire count only the templates of a kind that is on; with none, a box starts only on the card the helper holds for it | `test/gpu-claims.test.ts`, with the templates cleared and with the desktop kind off: the box started under a timer-only report and after a `whole-taken` refusal; with the kind off, it was moved to card 1 |
+| R3: a lost ledger was rebuilt past a guest whose config could not be read, and stripped a stopped whole box on card 0 because of it | The rebuild leaves out a guest whose card an unreadable guest may hold, and strips no stopped guest's lines, at boot or after: it refuses, and the box asks again | `test/gpu-helper.test.ts`: the whole box lost card 0's lines, and a shared box was granted, while CT 2552 could not be read; at boot, a mismatched box lost its lines. The earlier tests of a lost ledger expected the strips |
+| R4: a box moved from card 0 to card 1 and started again while the report was stale got card 0's GPU fact | A start on the last report's grant names the card the marker holds; a release and the readings of GPU memory go by the card the box holds, not its template's | `test/gpu-claims.test.ts`: the fact named card 0 |
+
+### After CI
+
+PR 1349 failed CI twice the same way: vitest's `test/monitor-app.test.tsx`
+timed out in its 10 s `beforeAll` hook, and its 40 tests were skipped. This
+unit did not cause it. Main `eb751824` failed CI the same way. On a quiet
+box the file took the same time on main and on this branch, 21.2 to 21.7 s.
+
+The hook loaded the app, `loadPluginApp(() => import("../app.tsx"))`. The
+first import in a vitest worker compiles the app's whole module graph while
+the other workers compile theirs, and on a busy runner that took longer
+than the hook's 10 s. In CI's failing runs, compiling took 30 and 43
+percent of vitest's time, against 3 percent in the passing run, and the
+first test file finished 9 to 14 s after vitest started, against 1.3 s.
+`test/activity.test.tsx` loaded the app the same way.
+
+The fix: both files load the app at the top of the module, as
+`test/app.test.tsx` does. The import is then part of collecting the file,
+which has no time limit, and no hook waits for it.
+
+- Under load on a 4-core box, with 8 busy loops beside a full `vitest run`,
+  its cache cleared each time, load average about 9: before the fix, 2 of 3
+  runs timed out the Monitor file's hook at 10.0 s, as CI did. After it,
+  10 of 10 runs passed the Monitor file, its 40 tests in 26 to 32 s each,
+  with no hook timeout, and the Activity file's 35 tests each time.
+- In those runs, and in the run before the fix that passed the Monitor
+  file, 3 or 4 tests of `test/app.test.tsx` failed: they check times and
+  counts that this load, about 2.5 times the cores, delays. They passed in
+  CI and on a quiet box, where vitest passed 448 of 448.
+
+### The node steps
+
+Wait for the lead, after unit 4's day has passed and this unit is merged and
+deployed: the helper upgraded to 0.3.0 with writes off and the test pool
+served; `setup-gpu.sh --writes on --check`; `--writes on`; a watcher under
+`systemd-run`; the gate on test guests on lent VMIDs, through a test BB with
+its own pool and desktops per GPU 1. The steps, a read-only check script,
+the watcher and a harness for the lent VMIDs are in the report to the lead.
+
+### Deviations from the note
+
+- Boxes per card is the existing desktops per GPU (no limit unless set),
+  and it counts this install's boxes holding a card, as desktops per GPU
+  did. Every guest holding the card counts in choosing among cards. On a
+  node shared with the owner's boxes, the gate's "boxes per card 1" can
+  only be met that way. The key `boxes-per-card` and its default of 4 come
+  with units 7 and 15.
+- Memory is not part of the start gate: a stopped desktop starts on its card
+  as before, its display falling back to the CPU when the card is short. For
+  new boxes the memory rule is as before, soft: a card read full is left out
+  while another is left, now less what is reserved on it.
+- Until writes are on, the start gate moves no box: it starts it on the card
+  it holds, once its current marker is granted, asking the claim the helper
+  holds again where that marker was refused or cannot be carried out with
+  writes off. With writes on, section 3's rule applies, on cards a desktop
+  template names.
+- A helper on a pve-container its release was not tested on is taken as
+  writes off: desktops are made and marked, and the doctor warns. The lead
+  decided this (Opus 3).
+- A box with a GPU marker starts only on a grant the helper reports. With the
+  helper removed, marked boxes do not start until it is back, so `bb box gpu
+  mark --undo` comes before a removal for good.
+- A refused acquire is placed once more by releasing its guest and cloning
+  from the other card's template, as templates still carry their card's
+  lines until unit 7.
+- The marker gains `gpu.release.g<N>`, answered `released`, within protocol
+  1: older helpers refuse it as malformed and change nothing, and bb-box
+  sends it only to 0.3.0 or later.
+- `--undo` clears claims, as the lead's brief asked, rather than being
+  refused; it does so for every shared or whole marker of this install,
+  bb-box's own included, as each is the same claim.
+- Writes on needs two keys, `gpu.conf` and units without `--dry-run`, set
+  together by `setup-gpu.sh`, and a clean preview first.
+- The card lock and reservations are per BB process, by API URL and node;
+  two BBs on one node rely on the helper, as the note has two installs do.
+- Recovery names unanswered markers in the server's log and the doctor's
+  Markers on GPU guests check; `proxmox.gpu-claims` is not added yet.
+- A release takes no card lock: the guest's place goes when the report no
+  longer lists it.
+- A box from an image build (049) is made as before, unmarked, and a warm
+  desktop made before this release has no marker: `bb box gpu mark` marks
+  them, and the doctor names them meanwhile.
+- A lost ledger strips no stopped guest's lines, at boot too (R3, the lead's
+  rule). Before, a lost ledger at boot stripped a stopped guest whose lines
+  did not match its marker, so that its `onboot` start could not use a card
+  no claim names. Now it is refused, `ledger-lost`, and keeps them. bb-box
+  asks again before it starts the box, but a start outside bb-box, by
+  `onboot` or by hand, uses those lines until then.
+- With the desktop kind off, or its templates cleared, a stopped box with a
+  marker still goes through the start gate. It may start on the card the
+  helper holds for it, and is moved to no other.
+- Choosing among the templates on a card still counts boxes by the template
+  each was made from, as does the path with no helper. A box moved to another
+  card counts against its first template there. It changes only which of a
+  card's templates a new box is cloned from, never the card; without a
+  helper, no box moves.
+
+### Still open
+
+- Whether a lost ledger at boot should strip a stopped guest whose lines do
+  not match its marker, as before R3, for guests that start `onboot`. As
+  built, it never strips; see deviations.
+- Whether boxes per card should count every install's boxes, as section 12's
+  words suggest, once the node has no other install's boxes on the cards.
+- The node's E3 step pauses the production helper for up to 45 s
+  (`SIGSTOP`), so that a marker stays unanswered; production markers wait
+  meanwhile. Skip it if that is not wanted: the suite and the live check
+  cover it.
+- Fork, restore, held copy, earlier guest and swap are unit 6's. With writes
+  on, today's copies give the helper no write to make: each copy's
+  description names its own box from the clone, and a held copy's or an
+  earlier guest's labels drop the marker.

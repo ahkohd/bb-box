@@ -156,7 +156,7 @@ test("a box whose record says a whole card, alone on it, is marked whole, and th
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
 
-test("--undo takes off the shared and whole markers, and only those, keeping every other tag; --check says so first; a second undo changes nothing", async () => {
+test("--undo clears each claim through the helper, then takes the shared and whole markers off, and only those, keeping every other tag; --check says so first; a second undo changes nothing (071 unit 5)", async () => {
   const bridge = new Bridge();
   today(bridge);
   bridge.guest(7050, { box: "bx7050", name: "none-marked", kind: "linux", marker: marker("none", null, 1) });
@@ -177,24 +177,32 @@ test("--undo takes off the shared and whole markers, and only those, keeping eve
   ]);
   assert.deepEqual(bridge.configs(), marked, "--check changes nothing");
   const undone = await backend.markGpus(request({ undo: true }));
-  assert.deepEqual(undone.guests.map((guest) => [guest.vmid, guest.outcome, guest.marker]), [
-    [7001, "unmarked", marker("shared", CARD_A, 1)],
-    [7002, "unmarked", marker("shared", CARD_B, 1)],
-    [7003, "unmarked", marker("shared", CARD_A, 1)],
-    [7004, "unmarked", marker("shared", CARD_B, 1)],
-    [7050, "kept", "gpu.none.g1"],
-    [7051, "kept", "gpu.shared.nonsense.g1"],
+  assert.deepEqual(undone.guests.map((guest) => [guest.vmid, guest.outcome, guest.marker, guest.answer]), [
+    [7001, "unmarked", marker("shared", CARD_A, 1), "released"],
+    [7002, "unmarked", marker("shared", CARD_B, 1), "released"],
+    [7003, "unmarked", marker("shared", CARD_A, 1), "released"],
+    [7004, "unmarked", marker("shared", CARD_B, 1), "released"],
+    [7050, "kept", "gpu.none.g1", null],
+    [7051, "kept", "gpu.shared.nonsense.g1", null],
   ]);
+  assert.equal(markingFailed([undone]), false);
   for (const vmid of [7001, 7002, 7003, 7004]) assert.deepEqual(bridge.tags(vmid), parseTags(before.get(vmid)!.tags), `CT ${vmid}'s tags are as before marking`);
   assert.deepEqual(bridge.configs(), new Map([...before].map(([vmid, config]) => [vmid, config])), "every guest is as it was before marking");
-  assert.match(markingText([undone]), /^Proxmox LXC on pve: took the marker off 4 guests\. This takes off tags alone: it does not clear the claims the GPU helper granted, which stay in its ledger until a later BB Box release clears claims \(071 unit 5\)\. With writes off the helper changes nothing; with writes on it would go on giving each stopped guest the lines of the card it claimed\.\n/);
+  const report = bridge.node.reportLines();
+  for (const vmid of [7001, 7002, 7003, 7004]) {
+    assert.ok(report.includes(`claim ${vmid} g2 released`), report.join("\n"));
+    assert.ok(report.some((line) => line.startsWith(`ledger ${vmid} `) && line.endsWith(" answered g2 claim none")), `CT ${vmid}'s claim is cleared`);
+  }
+  assert.ok(report.includes(`holder ${A} 7001 shared running install ${INSTALL} unmanaged`), "it holds its card by its lines, unmanaged, as before marking");
+  assert.match(markingText([undone]), /^Proxmox LXC on pve: cleared the claim of 4 guests\. Each claim is cleared by the GPU helper first, through a gpu\.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them\. A box bb-box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again\.\n/);
+  assert.doesNotMatch(markingText([undone]), /starts later is marked/, "Opus 9: a start does not mark a box again");
   const writes = bridge.tagWrites().length;
   const again = await backend.markGpus(request({ undo: true }));
   assert.deepEqual(again.guests.map((guest) => guest.outcome), ["kept", "kept"]);
   assert.equal(markingFailed([again]), false, "a gpu tag it does not write is kept, which is no failure");
   assert.equal(bridge.tagWrites().length, writes);
   bridge.helper();
-  assert.deepEqual(parseHelperLines(bridge.node.report()).would, [], "with the markers off, the helper still would write nothing: its claims match the lines");
+  assert.deepEqual(parseHelperLines(bridge.node.report()).would, [], "with the claims cleared, the helper would write nothing");
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
 
@@ -265,7 +273,7 @@ test("bb box gpu mark refuses the whole run, changing nothing, with no helper, a
     [
       ["no helper", "pve has no GPU helper: VM 9190's report has no helper line, and only the helper, bb-box-gpu, answers a marker.", "Run host/setup-gpu.sh from the setup guide as root on pve.", 0],
       ["old", "The GPU helper on pve last reported 3 minutes ago, in VM 9190.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.", 0],
-      ["not served", "bb-box-gpu 0.2.0 on pve serves pool team, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve.", 0],
+      ["not served", "bb-box-gpu 0.3.0 on pve serves pool team, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve.", 0],
       ["no cards", "The GPU helper on pve lists no card in VM 9190's report, so bb-box cannot tell which card a guest's lines name.", "Run systemctl status bb-box-gpu and nvidia-smi as root on pve.", 0],
       ["no report VM", "The token can read no VM named bb-box-gpu-memory on pve, so bb-box cannot read the GPU helper's report.", "Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on pve.", 0],
     ],
@@ -347,7 +355,17 @@ test("the marking rules on their own: the marker's grammar, a guest's device set
   const context: MarkContext = { ...eligibility, cards, holders: [], ledger: new Map(), answers: [], boxNamedBy: new Map() };
   const look = (config: Record<string, unknown>, pending: GuestLook["pending"] = []): GuestLook => ({ vmid: 1, config: { description: `bb-box x\ninstall ${INSTALL}\nkind linux-desktop`, tags: `bb-box;install.${INSTALL}`, unprivileged: "1", ...config }, pending });
   assert.deepEqual(planMark({ look: look({ lxc: [["lxc.cgroup2.devices.allow", "c 195:1 rwm"]] }), recordedPart: null }, context), { is: "refused", why: "It has raw lines for GPU devices (lxc.cgroup2.devices.allow: c 195:1 rwm), which the helper does not manage.", card: null });
-  assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.shared.${A}.g3`, lock: "backup" }), eligibility), { is: "refused", why: "It is locked (backup). Run bb box gpu mark --undo again once the lock is gone.", card: null });
+  assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.shared.${A}.g3`, lock: "backup" }), eligibility, new Map()), { is: "refused", why: "It is locked (backup). Run bb box gpu mark --undo again once the lock is gone.", card: null });
+  const claimed = new Map([[1, { vmid: 1, box: null, answered: 4, claim: { generation: 4, part: "shared" as const, card: A, answer: "granted" as const } }]]);
+  assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.shared.${A}.g3` }), eligibility, claimed), { is: "release", marker: { part: "release", card: null, generation: 5 }, replaces: `gpu.shared.${A}.g3`, asked: false });
+  assert.deepEqual(planUnmark(look({}), eligibility, claimed), { is: "release", marker: { part: "release", card: null, generation: 5 }, replaces: null, asked: false }, "a claim with no marker, as unit 4's undo left it, is cleared too");
+  assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.release.g5` }), eligibility, claimed), { is: "release", marker: { part: "release", card: null, generation: 5 }, replaces: null, asked: true });
+  const released = new Map([[1, { vmid: 1, box: null, answered: 5, claim: null }]]);
+  assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.release.g5` }), eligibility, released), { is: "unmark", marker: "gpu.release.g5" });
+  assert.deepEqual(planUnmark(look({}), eligibility, released), { is: "unmarked" });
+  assert.deepEqual(parseMarker("gpu.release.g5"), { part: "release", card: null, generation: 5 });
+  assert.equal(parseMarker(`gpu.release.${A}.g5`), null);
+  assert.deepEqual(parseHelperLines("    claim 9 g5 released").answers, [{ vmid: 9, generation: 5, is: "released" }]);
   assert.deepEqual(withGpuTagsOf(["bb-box", "warm", marker("shared", CARD_B, 1)], ["bb-box", "box.bx1"]), ["bb-box", "box.bx1", marker("shared", CARD_B, 1)]);
   const lines = parseHelperLines([
     `    claim 5 g1 granted shared ${A}`,

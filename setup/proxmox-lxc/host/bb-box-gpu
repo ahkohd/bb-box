@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.2.0';
+use constant VERSION => '0.3.0';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -37,11 +37,12 @@ use constant GUEST_LOCK_TIMEOUT_SECONDS => 2;
 use constant DEVICE_MODE => '0666';
 
 my $UUID = qr/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
-my $MARKER = qr/^gpu\.(?:(none)|(shared|whole)\.($UUID))\.g([1-9][0-9]{0,8})$/;
+my $MARKER = qr/^gpu\.(?:(none|release)|(shared|whole)\.($UUID))\.g([1-9][0-9]{0,8})$/;
 my $SMI_FIELDS = 'uuid,pci.bus_id,index,memory.free,memory.total';
 my $ROOT = $ENV{BBBOX_GPU_ROOT} // '';
 my $stopping = 0;
 my $dry_run_fixed = 0;
+my $previewing = 0;
 my $locks_held = 0;
 my @held_notes;
 my %noted;
@@ -90,8 +91,14 @@ bb-box-gpu @{[VERSION]}, protocol @{[PROTOCOL]}: the host's GPU helper for bb-bo
   bb-box-gpu --once   one pass, with one reading of the cards, then exit
   bb-box-gpu --boot   the boot pass: put each claimed guest's device lines
                       right from its claim, before guests start
-  --dry-run           with any of these: writes stay off, whatever the
-                      settings say, as setup-gpu.sh installs it
+  bb-box-gpu --preview
+                      one pass as writes on would make it, changing nothing:
+                      no guest, ledger or report is written and no guest's
+                      config is locked; it prints each write writes on would
+                      make, and each answer it would give
+  --dry-run           with --once or --boot, or as a service: writes stay
+                      off, whatever the settings say, as setup-gpu.sh
+                      installs it until setup-gpu.sh --writes on
 
 Settings: @{[CONFIG_FILE]} ("pools <pool> ...", "writes on|off"). Writes are off
 unless that file, owned by this user and writable by no one else, says on, and
@@ -204,6 +211,47 @@ sub card_nodes {
         drm_card => card_drm_node($card->{pci}, 'card'),
         drm_render => card_drm_node($card->{pci}, 'render'),
     };
+}
+
+sub driver_cards {
+    my $dir = host_path('/proc/driver/nvidia/gpus');
+    opendir(my $dh, $dir) or return ();
+    my @cards;
+    for my $entry (sort readdir $dh) {
+        my $pci = pci_address($entry) // next;
+        my $text = read_file("$dir/$entry/information") // '';
+        my $uuid = $text =~ /^GPU UUID:\s*(?:GPU-)?(\S+)\s*$/mi ? lc($1) : undef;
+        push @cards, { pci => $pci, uuid => defined $uuid && $uuid =~ /^$UUID$/ ? $uuid : undef };
+    }
+    closedir $dh;
+    return @cards;
+}
+
+sub note_unread_cards {
+    my ($ctx) = @_;
+    $ctx->{unread} = {};
+    return unless $ctx->{cards_known};
+    my %read = map { $_->{pci} => 1 } values %{ $ctx->{cards} };
+    for my $card (driver_cards()) {
+        next if $read{ $card->{pci} };
+        $ctx->{unread}{ $card->{uuid} // '*' } = $card->{pci};
+        push @{ $ctx->{errors} }, "nvidia-smi gave no reading of the card at $card->{pci}, so no request on it is decided and no guest's lines for it are changed";
+    }
+    if ($ctx->{reading_bad}) {
+        $ctx->{unread}{'*'} = 'every card';
+        push @{ $ctx->{errors} }, "nvidia-smi's reading was incomplete ($ctx->{reading_bad}), so no request on any card is decided and no guest's lines are changed";
+    }
+}
+
+sub card_unread {
+    my ($ctx, $uuid) = @_;
+    return 1 if exists $ctx->{unread}{'*'};
+    return defined $uuid && exists $ctx->{unread}{$uuid} ? 1 : 0;
+}
+
+sub card_blocked {
+    my ($ctx, $guests, $uuid, $vmid) = @_;
+    return card_unread($ctx, $uuid) || defined unreadable_holder($guests, $uuid // '', $vmid);
 }
 
 sub card_table {
@@ -465,12 +513,64 @@ sub read_guests {
     for my $vmid (@ids) {
         my $conf = eval { PVE::LXC::Config->load_config($vmid) };
         if (!$conf) {
-            note_once("unreadable $vmid", "CT $vmid: its config cannot be read, so it is left alone: " . ($@ =~ s/\s+$//r));
+            note_once("unreadable $vmid", "CT $vmid: its config cannot be read, so no guest is given, and no claim granted on, any card it may hold until it can be: " . ($@ =~ s/\s+$//r));
+            push @{ $ctx->{errors} }, "CT ${vmid}'s config cannot be read, so no card it may hold is given or claimed until it can be";
+            $guests{$vmid} = unreadable_guest($ctx, $vmid, $active->{$vmid}, $members->{$vmid});
             next;
         }
         $guests{$vmid} = describe_guest($ctx, $vmid, $conf, $active->{$vmid}, $members->{$vmid});
     }
     return \%guests;
+}
+
+sub unreadable_guest {
+    my ($ctx, $vmid, $running, $pool) = @_;
+    return {
+        vmid => $vmid,
+        conf => {},
+        running => $running ? 1 : 0,
+        pool => $pool,
+        install => undef,
+        box => undef,
+        set => 'server',
+        held => 0,
+        earlier => 0,
+        template => 0,
+        unprivileged => 0,
+        lock => undef,
+        pending_devices => 0,
+        gpu_tags => [],
+        devices => {},
+        named => { map { $_ => 1 } keys %{ $ctx->{cards} } },
+        marker => undef,
+        malformed => 0,
+        ineligible => 'unreadable',
+        holds_nothing => 0,
+        unreadable => 1,
+    };
+}
+
+sub unreadable_holder {
+    my ($guests, $uuid, $except) = @_;
+    for my $vmid (sort { $a <=> $b } keys %$guests) {
+        next if $vmid == $except;
+        return $vmid if $guests->{$vmid}{unreadable} && $guests->{$vmid}{named}{$uuid};
+    }
+    return undef;
+}
+
+sub same_guest {
+    my ($scanned, $fresh) = @_;
+    return 0 if $fresh->{ineligible} || $fresh->{malformed};
+    for my $key (qw(box install set pool)) {
+        return 0 if ($scanned->{$key} // '') ne ($fresh->{$key} // '');
+    }
+    return join(';', sort @{ $scanned->{gpu_tags} }) eq join(';', sort @{ $fresh->{gpu_tags} }) ? 1 : 0;
+}
+
+sub fresh_pool {
+    my ($vmid) = @_;
+    return read_pool_members()->{$vmid};
 }
 
 sub refresh_guest {
@@ -515,6 +615,10 @@ sub write_atomically {
 
 sub save_ledger {
     my ($ctx) = @_;
+    if ($previewing) {
+        $ctx->{ledger_dirty} = 0;
+        return;
+    }
     my $ledger = $ctx->{ledger};
     $ledger->{protocol} = PROTOCOL;
     $ledger->{written} = int($ctx->{now});
@@ -525,6 +629,10 @@ sub save_ledger {
 
 sub set_aside_ledger {
     my ($ctx) = @_;
+    if ($previewing) {
+        note("the ledger could not be read; the preview rebuilds it from the guests in memory and moves nothing");
+        return;
+    }
     my $aside = ledger_path() . '.unreadable-' . int($ctx->{now});
     rename(ledger_path(), $aside);
     note("the ledger could not be read, so it was moved to $aside and is rebuilt from the guests");
@@ -538,13 +646,14 @@ sub entry_for {
 sub record_answer {
     my ($ctx, $answer) = @_;
     $answer->{at} = int($ctx->{now});
+    push @{ $ctx->{previewed_answers} }, $answer if $previewing;
     push @{ $ctx->{ledger}{answers} }, $answer;
     $ctx->{ledger_dirty} = 1;
 }
 
 sub target_of {
     my ($marker) = @_;
-    return '-' unless $marker;
+    return '-' unless $marker && $marker->{part} ne 'release';
     return $marker->{part} eq 'none' ? 'none' : $marker->{card};
 }
 
@@ -601,7 +710,7 @@ sub with_guest {
         $result = $code->($conf, $running);
     };
     my $ok = eval {
-        if ($ctx->{writes}) {
+        if ($ctx->{writes} && !$previewing) {
             holding(sub { PVE::LXC::Config->lock_config_full($vmid, GUEST_LOCK_TIMEOUT_SECONDS, $read) });
         } else {
             $read->();
@@ -609,7 +718,9 @@ sub with_guest {
         1;
     };
     if (!$ok) {
-        note_once("guest $vmid $@", "CT $vmid: left for the next scan: " . ($@ =~ s/\s+$//r));
+        my $why = $@ =~ s/\s+$//r;
+        $ctx->{left}{$vmid} = $why;
+        note_once("guest $vmid $why", "CT $vmid: left for the next scan: $why");
         return undef;
     }
     return $result;
@@ -635,6 +746,10 @@ sub change_guest {
         return 'would';
     }
     with_device_lines($conf, $desired);
+    if ($previewing) {
+        push @{ $ctx->{previewed_writes} }, "would write CT $vmid for $why: $change";
+        return 'wrote';
+    }
     PVE::LXC::Config->write_config($vmid, $conf);
     note("wrote CT $vmid for $why: $change");
     return 'wrote';
@@ -741,7 +856,20 @@ sub decide_request {
     }
     delete $entry->{refused_tags};
     return if $marker->{generation} <= ($entry->{answered} // 0);
+    return release_claim($ctx, $guest) if $marker->{part} eq 'release';
     evaluate_request($ctx, $guests, $guest);
+}
+
+sub release_claim {
+    my ($ctx, $guest) = @_;
+    my $entry = entry_for($ctx, $guest);
+    my $generation = $guest->{marker}{generation};
+    delete @$entry{qw(claim strip proposed_strip)};
+    $entry->{answered} = $generation;
+    $entry->{box} = $guest->{box};
+    record_answer($ctx, { vmid => $guest->{vmid}, generation => $generation, answer => 'released', target => '-' });
+    save_ledger($ctx);
+    note("released CT $guest->{vmid} g$generation: its claim is cleared, and its device lines stay as they are");
 }
 
 sub evaluate_request {
@@ -756,7 +884,15 @@ sub evaluate_request {
     my @yielders;
     if ($marker->{part} ne 'none') {
         return refuse($ctx, $guest, 'no-cards') unless $ctx->{cards_known};
+        if (card_unread($ctx, $marker->{card})) {
+            note_once("unread $guest->{vmid} $generation", "CT $guest->{vmid} g$generation waits: nvidia-smi gave no full reading of the cards");
+            return;
+        }
         my $card = $ctx->{cards}{ $marker->{card} } or return refuse($ctx, $guest, 'unknown-card');
+        if (defined(my $unknown = unreadable_holder($guests, $card->{uuid}, $guest->{vmid}))) {
+            note_once("waits $guest->{vmid} $generation $unknown", "CT $guest->{vmid} g$generation waits: CT ${unknown}'s config cannot be read, and it may hold $card->{uuid}");
+            return;
+        }
         $desired = device_set($card, $guest->{set}) or return refuse($ctx, $guest, 'card-nodes');
         my $whole = whole_holder($ctx, $guests, $card->{uuid}, $guest->{vmid});
         return refuse($ctx, $guest, 'whole-taken', detail => $whole) if defined $whole;
@@ -785,7 +921,8 @@ sub yield_card {
     return 'would' if !$ctx->{writes} && would_known($ctx, would_signature($vmid, $why, $yielder, []));
     my $outcome = with_guest($ctx, $vmid, sub {
         my ($conf, $running) = @_;
-        my $fresh = describe_guest($ctx, $vmid, $conf, $running, $yielder->{pool});
+        my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
+        return undef unless same_guest($yielder, $fresh);
         return 'refused' unless yields_card($ctx, $fresh);
         return 'yielded' unless $fresh->{named}{ $marker->{card} };
         $ctx->{would_pending} = would_signature($vmid, $why, $fresh, []);
@@ -821,9 +958,8 @@ sub commit_request {
     return if $yields_pending && !$scanned_changes;
     my $outcome = with_guest($ctx, $vmid, sub {
         my ($conf, $running) = @_;
-        my $fresh = describe_guest($ctx, $vmid, $conf, $running, $guest->{pool});
-        my $now = $fresh->{marker};
-        return ['changed'] unless $now && $now->{generation} == $marker->{generation} && !$fresh->{ineligible};
+        my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
+        return ['changed'] unless same_guest($guest, $fresh);
         return ['refused', 'locked', $conf->{lock}] if $conf->{lock};
         return ['refused', 'pending'] if $fresh->{pending_devices};
         my $desired = [];
@@ -874,6 +1010,9 @@ sub converge {
     my ($desired, $label, $why) = desired_lines($ctx, $guest, $entry);
     return unless $desired;
     return if same_lines($guest->{devices}, $desired);
+    my $claimed_card = $entry->{claim} ? $entry->{claim}{card} : undef;
+    return if @$desired && defined unreadable_holder($guests, $claimed_card // '', $vmid);
+    return if defined $claimed_card && card_unread($ctx, $claimed_card);
     if ($guest->{running}) {
         my $claim = $entry->{claim};
         my $target = $entry->{strip} || (!$ctx->{writes} && $entry->{proposed_strip}) || !$claim || $claim->{answer} ne 'granted' || $claim->{part} eq 'none' ? 'none' : $claim->{card};
@@ -886,8 +1025,8 @@ sub converge {
     return if !$ctx->{writes} && would_known($ctx, would_signature($vmid, $why, $guest, $desired));
     with_guest($ctx, $vmid, sub {
         my ($conf, $running) = @_;
-        my $fresh = describe_guest($ctx, $vmid, $conf, $running, $guest->{pool});
-        return if $running || $conf->{lock} || $fresh->{pending_devices} || $fresh->{ineligible} || $fresh->{malformed};
+        my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
+        return if $running || $conf->{lock} || $fresh->{pending_devices} || !same_guest($guest, $fresh);
         return unless $fresh->{marker} || $claim_given;
         my ($want, $want_label, $want_why) = desired_lines($ctx, $fresh, $entry);
         return unless $want;
@@ -916,6 +1055,7 @@ sub settle_identities {
             note("CT $vmid is gone, so its claim is dropped");
             next;
         }
+        next if $guest->{unreadable};
         if (defined $entry->{box} && ($guest->{box} // '') ne $entry->{box}) {
             note("CT $vmid now names " . ($guest->{box} // 'no box') . ", not $entry->{box}, so its claim is dropped");
             %$entry = (box => $guest->{box}, answered => 0);
@@ -935,8 +1075,9 @@ sub rebuild_ledger {
     my @candidates;
     for my $vmid (sort { $a <=> $b } keys %$guests) {
         my $guest = $guests->{$vmid};
-        next if $guest->{ineligible} || !$guest->{marker};
+        next if $guest->{ineligible} || !$guest->{marker} || $guest->{marker}{part} eq 'release';
         my $marker = $guest->{marker};
+        next if $marker->{part} ne 'none' && card_blocked($ctx, $guests, $marker->{card}, $vmid);
         my $desired = $marker->{part} eq 'none' ? [] : ($ctx->{cards}{ $marker->{card} } ? device_set($ctx->{cards}{ $marker->{card} }, $guest->{set}) : undef);
         push @candidates, { guest => $guest, match => defined $desired && same_lines($guest->{devices}, $desired) ? 1 : 0 };
     }
@@ -953,7 +1094,7 @@ sub rebuild_ledger {
     for my $candidate (@candidates) {
         my $guest = $candidate->{guest};
         if (defined $candidate->{copy_of}) {
-            refuse_quietly($ctx, $guest, 'copy', $candidate->{copy_of}, "copy of $candidate->{copy_of}");
+            refuse_quietly($ctx, $guest, 'copy', $candidate->{copy_of});
             $copies++;
         } elsif ($candidate->{match}) {
             my $entry = entry_for($ctx, $guest);
@@ -961,7 +1102,7 @@ sub rebuild_ledger {
             $entry->{claim} = { generation => $marker->{generation}, part => $marker->{part}, card => $marker->{card}, answer => 'granted', at => int($ctx->{now}) };
             $entry->{answered} = $marker->{generation};
         } else {
-            refuse_quietly($ctx, $guest, 'ledger-lost', undef, $at_boot ? 'lost ledger at boot' : undef);
+            refuse_quietly($ctx, $guest, 'ledger-lost');
             $unmatched++;
         }
     }
@@ -984,11 +1125,10 @@ sub rebuild_ledger {
 }
 
 sub refuse_quietly {
-    my ($ctx, $guest, $reason, $detail, $strip) = @_;
+    my ($ctx, $guest, $reason, $detail) = @_;
     my $entry = entry_for($ctx, $guest);
     my $marker = $guest->{marker};
     $entry->{answered} = $marker->{generation};
-    $entry->{ $ctx->{writes} ? 'strip' : 'proposed_strip' } = { why => $strip, generation => $marker->{generation} } if $strip;
     record_answer($ctx, {
         vmid => $guest->{vmid},
         generation => $marker->{generation},
@@ -1002,7 +1142,7 @@ sub refuse_quietly {
 sub lose_whole {
     my ($ctx, $guest, $because) = @_;
     delete $ctx->{ledger}{guests}{ $guest->{vmid} }{claim};
-    refuse_quietly($ctx, $guest, 'ledger-lost', $because, $guest->{running} ? undef : "whole conflict with $because");
+    refuse_quietly($ctx, $guest, 'ledger-lost', $because);
 }
 
 sub leave_whole_to_its_request {
@@ -1041,11 +1181,7 @@ sub settle_whole_conflicts {
             leave_whole_to_its_request($ctx, $guests->{$keeper});
             next;
         }
-        for my $other (@yielding) {
-            my $entry = $ctx->{ledger}{guests}{$other};
-            $entry->{claim}{answer} = 'yielded';
-            $entry->{claim}{to} = $keeper;
-        }
+        lose_whole($ctx, $guests->{$keeper}, $yielding[0]);
     }
 }
 
@@ -1098,6 +1234,7 @@ sub answer_line {
     if ($answer->{answer} eq 'yielded') {
         return "$head yielded $answer->{target} $answer->{detail}";
     }
+    return "$head released" if $answer->{answer} eq 'released';
     return "$head refused $answer->{reason} $answer->{target}" . (defined $answer->{detail} ? " $answer->{detail}" : '');
 }
 
@@ -1130,7 +1267,7 @@ sub update_host_state {
             $state->{boot}{cards}{$_} = $mapping{$_} for keys %mapping;
         }
     }
-    if (JSON::PP->new->canonical->encode($state) ne $before) {
+    if (!$previewing && JSON::PP->new->canonical->encode($state) ne $before) {
         eval { write_atomically(host_state_path(), JSON::PP->new->canonical->pretty->encode($state)); 1 }
             or push @{ $ctx->{errors} }, "cannot write the helper's state: " . ($@ =~ s/\s+$//r);
     }
@@ -1383,12 +1520,14 @@ sub pass {
     $ctx->{config} = read_helper_config();
     $ctx->{served} = { map { $_ => 1 } @{ $ctx->{config}{pools} } };
     $ctx->{errors} = [ @{ $ctx->{config}{problems} } ];
+    $ctx->{left} = {};
     $ctx->{mismatches} = [];
     $ctx->{would_seen} = {};
     $ctx->{cards_known} = defined $ctx->{reading} && monotonic() - $ctx->{reading_monotonic} <= READING_FRESH_SECONDS ? 1 : 0;
     push @{ $ctx->{errors} }, $ctx->{smi_failure} // 'nvidia-smi has given no reading for over ' . READING_FRESH_SECONDS . ' s, so no card is listed and no claim is granted'
         unless $ctx->{cards_known};
     $ctx->{cards} = $ctx->{cards_known} ? card_table($ctx->{reading}) : {};
+    note_unread_cards($ctx);
     update_host_state($ctx);
     my $guests = read_guests($ctx);
     if (!$guests) {
@@ -1402,7 +1541,7 @@ sub pass {
         note_once("pass $why", "the pass could not finish, so what is left waits for the next one: $why");
     }
     delete $ctx->{would}{$_} for grep { !$ctx->{would_seen}{$_} } keys %{ $ctx->{would} };
-    write_report($ctx, $guests) if $mode ne 'boot';
+    write_report($ctx, $guests) if $mode eq 'service' || $mode eq 'once';
     if ($mode eq 'boot') {
         note("boot pass: " . scalar(@{ $ctx->{mismatches} }) . " running guests on the wrong lines, writes " . ($ctx->{writes} ? 'on' : 'off'));
         note("boot pass: $_") for @{ $ctx->{mismatches} };
@@ -1418,6 +1557,8 @@ sub decide {
     push @{ $ctx->{errors} }, "writes are on in " . CONFIG_FILE . ", but pve-container $ctx->{pve_container} is not a version this release was tested on, so writes stay off"
         if $asked && !$dry_run_fixed && !$tested;
     $ctx->{writes} = $asked && $tested && !$dry_run_fixed ? 1 : 0;
+    $ctx->{writes} = $tested ? 1 : 0 if $previewing;
+    $ctx->{previewed_untested} = !$tested if $previewing;
     $ctx->{ledger} = empty_ledger();
     my ($ledger, $status, $protocol) = load_ledger();
     $ctx->{ledger_known} = 0;
@@ -1539,6 +1680,7 @@ sub wait_for_children {
 sub finish_group {
     my ($smi) = @_;
     return unless @{ $smi->{group} };
+    $smi->{reading_bad} = delete $smi->{group_bad};
     $smi->{reading} = $smi->{group};
     $smi->{reading_at} = $smi->{group_at};
     $smi->{reading_monotonic} = $smi->{group_monotonic};
@@ -1552,6 +1694,7 @@ sub take_smi_line {
     my $row = parse_smi_row($line);
     if (!$row) {
         $smi->{failure} = 'nvidia-smi gave no GPU memory: ' . substr($line =~ s/[^\x20-\x7e]//gr, 0, 120);
+        $smi->{group_bad} = $smi->{failure};
         return;
     }
     finish_group($smi) if grep { $_->{index} == $row->{index} } @{ $smi->{group} };
@@ -1573,6 +1716,7 @@ sub read_smi {
         finish_group($smi);
         my $status = $smi->{pid} ? exit_status_soon($smi->{pid}, 0.5) : undef;
         $smi->{pid} = undef if defined $status;
+        $smi->{exit_status} = $status;
         stop_smi($smi, defined $status
             ? "nvidia-smi exited with status $status, so no card is listed and no claim is granted"
             : 'nvidia-smi closed its output, so it was stopped; no card is listed and no claim is granted');
@@ -1591,18 +1735,25 @@ sub one_reading {
     return $smi unless start_smi($smi);
     my $deadline = monotonic() + ONE_READING_TIMEOUT_SECONDS;
     my $select = IO::Select->new($smi->{fh});
+    my $unfinished;
     while ($smi->{fh}) {
         my $left = $deadline - monotonic();
         if ($left <= 0) {
             stop_smi($smi, 'nvidia-smi did not answer within ' . ONE_READING_TIMEOUT_SECONDS . ' s, so it was stopped; no card is listed and no claim is granted');
+            $unfinished = 'nvidia-smi did not finish within ' . ONE_READING_TIMEOUT_SECONDS . ' s';
             last;
         }
         next unless $select->can_read($left);
         last unless read_smi($smi);
     }
+    my $bad = $smi->{group_bad};
     finish_group($smi);
+    $smi->{reading_bad} //= $bad;
     if (!$smi->{reading}) {
         $smi->{failure} //= 'nvidia-smi listed no card, so no claim is granted';
+    } elsif ($smi->{reading_bad} || $unfinished || ($smi->{exit_status} // 0) != 0) {
+        $smi->{reading_bad} //= $unfinished // "nvidia-smi exited with status $smi->{exit_status}";
+        delete $smi->{failure};
     } else {
         delete $smi->{failure};
     }
@@ -1615,6 +1766,7 @@ sub context_from {
     $ctx->{reading_at} = $smi->{reading_at} // 0;
     $ctx->{reading_monotonic} = $smi->{reading_monotonic} // 0;
     $ctx->{smi_failure} = $smi->{failure};
+    $ctx->{reading_bad} = $smi->{reading_bad};
 }
 
 sub new_context {
@@ -1634,7 +1786,37 @@ sub run_one_pass {
     context_from($ctx, $smi);
     my ($status) = with_helper_lock(sub { pass($ctx, $mode) });
     wait_for_children(SMI_KILL_WAIT_SECONDS + 1);
+    return print_preview($ctx, $status // 1) if $mode eq 'preview';
     return $status // 1;
+}
+
+sub print_preview {
+    my ($ctx, $status) = @_;
+    my @writes = @{ $ctx->{previewed_writes} // [] };
+    my @answers = map { answer_line($_) } @{ $ctx->{previewed_answers} // [] };
+    print "preview: bb-box-gpu " . VERSION . " on pve-container $ctx->{pve_container}, as its first pass with writes on would go; nothing was written\n";
+    print "$_\n" for @writes;
+    print "would answer: $_\n" for @answers;
+    print "would leave running, on lines that do not name its claim's card: $_\n" for sort @{ $ctx->{mismatches} };
+    print "error: $_\n" for @{ $ctx->{errors} };
+    print "left for the next scan: CT $_: $ctx->{left}{$_}\n" for sort { $a <=> $b } keys %{ $ctx->{left} // {} };
+    if ($ctx->{previewed_untested}) {
+        print "preview: pve-container $ctx->{pve_container} is not a version this release was tested on, so with writes on it would still write no guest\n";
+    } elsif (@writes) {
+        my %guests = map { /^would write CT (\d+) / ? ($1 => 1) : () } @writes;
+        print "preview: writes on would write " . scalar(keys %guests) . " " . (keys %guests == 1 ? 'guest' : 'guests') . "\n";
+    } else {
+        print "preview: writes on would write no guest\n";
+    }
+    my @why;
+    push @why, 'it read no card' unless $ctx->{cards_known};
+    push @why, scalar(@{ $ctx->{errors} }) . ' error ' . (@{ $ctx->{errors} } == 1 ? 'line' : 'lines') if @{ $ctx->{errors} };
+    push @why, 'nvidia-smi gave no full reading of every card' if %{ $ctx->{unread} // {} };
+    push @why, 'it could not read every guest it would decide on' if %{ $ctx->{left} // {} };
+    push @why, 'its pass did not finish' if $status;
+    return 0 unless @why;
+    print "preview: incomplete, as " . join(', and ', @why) . ", so it cannot show what writes on would do\n";
+    return 1;
 }
 
 sub new_hour {
@@ -1717,6 +1899,7 @@ sub main {
     for my $arg (@args) {
         if ($arg eq '--once') { $mode = 'once' }
         elsif ($arg eq '--boot') { $mode = 'boot' }
+        elsif ($arg eq '--preview') { $mode = 'preview'; $previewing = 1 }
         elsif ($arg eq '--dry-run') { $dry_run_fixed = 1 }
         elsif ($arg eq '--help' || $arg eq '-h') { usage(); return 0 }
         elsif ($arg eq '--version') { print "bb-box-gpu " . VERSION . " protocol " . PROTOCOL . "\n"; return 0 }

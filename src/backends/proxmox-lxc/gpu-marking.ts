@@ -5,25 +5,45 @@ import type { GpuPart } from "../types.ts";
 import type { GpuHelperVerdict } from "./gpu-helper.ts";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const MARKER = new RegExp(`^gpu\\.(?:(none)|(shared|whole)\\.(${UUID}))\\.g([1-9][0-9]{0,8})$`);
+const MARKER = new RegExp(`^gpu\\.(?:(none|release)|(shared|whole)\\.(${UUID}))\\.g([1-9][0-9]{0,8})$`);
 const DEVICE_MODE = "0666";
 const MOST_NAMED = 8;
 const HELD_COPY_DESCRIPTION = /^bb-box install \S+ box \S+ held copy of snapshot /;
 
+export type MarkerPart = GpuPart | "release";
+
 export interface GpuMarker {
-  readonly part: GpuPart;
+  readonly part: MarkerPart;
   readonly card: string | null;
   readonly generation: number;
+}
+
+export interface ClaimMarker extends GpuMarker {
+  readonly part: GpuPart;
 }
 
 export function parseMarker(tag: string): GpuMarker | null {
   const match = MARKER.exec(tag);
   if (!match) return null;
-  return { part: (match[1] ?? match[2]) as GpuPart, card: match[3] ?? null, generation: Number(match[4]) };
+  return { part: (match[1] ?? match[2]) as MarkerPart, card: match[3] ?? null, generation: Number(match[4]) };
 }
 
 export function markerTag(marker: GpuMarker): string {
-  return marker.part === "none" ? `gpu.none.g${marker.generation}` : `gpu.${marker.part}.${marker.card}.g${marker.generation}`;
+  return marker.card === null ? `gpu.${marker.part}.g${marker.generation}` : `gpu.${marker.part}.${marker.card}.g${marker.generation}`;
+}
+
+export function isClaimMarker(marker: GpuMarker | null): marker is ClaimMarker {
+  return marker !== null && marker.part !== "release";
+}
+
+export function claimMarkerOf(tags: readonly string[]): ClaimMarker | null {
+  const marker = markerOf(tags);
+  return isClaimMarker(marker) ? marker : null;
+}
+
+export function withMarker(tags: readonly string[], marker: GpuMarker): string[] {
+  const gpu = gpuTagsOf(tags);
+  return [...tags.filter((tag) => !gpu.includes(tag)), markerTag(marker)];
 }
 
 export function gpuTagsOf(tags: readonly string[]): string[] {
@@ -66,7 +86,8 @@ export interface HelperWould {
 export type HelperAnswer =
   | { readonly vmid: number; readonly generation: number; readonly is: "granted"; readonly part: GpuPart; readonly card: string | null }
   | { readonly vmid: number; readonly generation: number; readonly is: "refused"; readonly reason: string; readonly detail: string | null }
-  | { readonly vmid: number; readonly generation: number; readonly is: "yielded"; readonly card: string };
+  | { readonly vmid: number; readonly generation: number; readonly is: "yielded"; readonly card: string }
+  | { readonly vmid: number; readonly generation: number; readonly is: "released" };
 
 export interface LedgerClaim {
   readonly generation: number;
@@ -128,6 +149,8 @@ export function parseHelperLines(notes: string): HelperLines {
       answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "refused", reason: match[3]!, detail: match[4] ?? null });
     } else if ((match = /^claim (\d+) g(\d+) yielded (\S+) \d+$/.exec(line))) {
       answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "yielded", card: match[3]! });
+    } else if ((match = /^claim (\d+) g(\d+) released$/.exec(line))) {
+      answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "released" });
     } else if ((match = /^omitted (.+)$/.exec(line))) omitted.push(match[1]!);
   }
   return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledger, would, answers, omitted };
@@ -394,7 +417,7 @@ export function planMark(guest: MarkCandidate, context: MarkContext): MarkPlan {
   const gpu = gpuTagsOf(tags);
   const existing = markerOf(tags);
   if (!devices.length && !raw.length && !pending.length) {
-    if (!gpu.length || existing?.part === "none") return { is: "no-card" };
+    if (!gpu.length || existing?.part === "none" || existing?.part === "release") return { is: "no-card" };
     return { is: "refused", why: `It has the tag ${gpu.join(" and ")} and no card's device lines; bb box gpu mark leaves a marker it did not write.`, card: null };
   }
   const ineligible = ineligibility(look, context);
@@ -438,6 +461,10 @@ export function planMark(guest: MarkCandidate, context: MarkContext): MarkPlan {
   const next = Math.max(entry?.answered ?? 0, existing?.generation ?? 0) + 1;
   const asked: GpuMarker = { part, card: card.uuid, generation: next };
   if (!gpu.length) return { is: "mark", marker: asked, card, replaces: null, why: entry && entry.answered > 0 ? `The helper answered up to g${entry.answered} for it before, so it is asked with g${next}.` : null };
+  if (existing?.part === "release") {
+    if ((entry?.answered ?? 0) < existing.generation) return { is: "refused", why: `The helper has not answered ${gpu[0]}, which releases its claim, yet. Run bb box gpu mark again in a minute.`, card };
+    return { is: "mark", marker: asked, card, replaces: gpu[0]!, why: `Its claim was released at g${existing.generation}, so it is asked again with g${next}.` };
+  }
   if (!existing || existing.part !== part || existing.card !== card.uuid) {
     return { is: "refused", why: `It already has the tag ${gpu.join(" and ")}, not the marker its lines give, gpu.${part}.${card.uuid}; bb box gpu mark leaves a marker it did not write.`, card };
   }
@@ -454,20 +481,35 @@ export function planMark(guest: MarkCandidate, context: MarkContext): MarkPlan {
 }
 
 export type UnmarkPlan =
+  | { readonly is: "release"; readonly marker: GpuMarker; readonly replaces: string | null; readonly asked: boolean }
   | { readonly is: "unmark"; readonly marker: string }
   | { readonly is: "kept"; readonly why: string }
   | { readonly is: "refused"; readonly why: string; readonly card: null }
   | { readonly is: "unmarked" };
 
-export function planUnmark(look: GuestLook, eligibility: Eligibility): UnmarkPlan {
-  const gpu = gpuTagsOf(tagsOf(look));
-  if (!gpu.length) return { is: "unmarked" };
+export function planUnmark(look: GuestLook, eligibility: Eligibility, ledger: ReadonlyMap<number, LedgerEntry>): UnmarkPlan {
+  const tags = tagsOf(look);
+  const gpu = gpuTagsOf(tags);
+  const entry = ledger.get(look.vmid) ?? null;
+  const claimed = entry?.claim != null;
+  if (!gpu.length && !claimed) return { is: "unmarked" };
   const ineligible = ineligibility(look, eligibility);
   if (ineligible) return { is: "refused", why: ineligible, card: null };
-  const existing = markerOf(tagsOf(look));
-  if (!existing || existing.part === "none") return { is: "kept", why: `Its tag ${gpu.join(" and ")} is not a marker bb box gpu mark writes, so it stays.` };
+  const existing = markerOf(tags);
+  if (gpu.length && (!existing || existing.part === "none")) return { is: "kept", why: `Its tag ${gpu.join(" and ")} is not a marker bb box gpu mark writes, so it stays.` };
+  if (existing?.part === "release") {
+    if ((entry?.answered ?? 0) >= existing.generation && !claimed) return { is: "unmark", marker: gpu[0]! };
+    if ((entry?.answered ?? 0) < existing.generation) return { is: "release", marker: existing, replaces: null, asked: true };
+  }
   if (look.config.lock) return { is: "refused", why: `It is locked (${String(look.config.lock)}). Run bb box gpu mark --undo again once the lock is gone.`, card: null };
-  return { is: "unmark", marker: gpu[0]! };
+  const next = Math.max(entry?.answered ?? 0, existing?.generation ?? 0) + 1;
+  return { is: "release", marker: { part: "release", card: null, generation: next }, replaces: gpu[0] ?? null, asked: false };
+}
+
+export function releasedAt(lines: HelperLines, vmid: number, generation: number): boolean {
+  if (lines.answers.some((answer) => answer.vmid === vmid && answer.generation === generation && answer.is === "released")) return true;
+  const entry = lines.ledger.get(vmid);
+  return entry !== undefined && entry.answered >= generation && entry.claim === null;
 }
 
 export type MarkAnswer =
@@ -524,7 +566,7 @@ export function judgeGpuMigration(lines: HelperLines, guests: readonly Migration
   });
   const ours = new Set(guests.map((guest) => guest.look.vmid));
   const unknown = cardLines.filter(({ devices }) => nodesOfNoCard(devices, lines.cards).length).map(({ guest, devices }) => `${nameOf(guest)}, ${inWords(nodesOfNoCard(devices, lines.cards))}`);
-  const unmarked = cardLines.filter(({ guest }) => !gpuTagsOf(tagsOf(guest.look)).length).map(({ guest }) => nameOf(guest));
+  const unmarked = cardLines.filter(({ guest }) => !gpuTagsOf(tagsOf(guest.look)).length || markerOf(tagsOf(guest.look))?.part === "release").map(({ guest }) => nameOf(guest));
   const would = lines.would.filter((line) => ours.has(line.vmid));
   const othersWould = [...new Set(lines.would.filter((line) => !ours.has(line.vmid)).map((line) => line.vmid))];
   const refused: string[] = [];
@@ -535,6 +577,7 @@ export function judgeGpuMigration(lines: HelperLines, guests: readonly Migration
     const gpu = gpuTagsOf(tagsOf(guest.look));
     if (!gpu.length) continue;
     const marker = markerOf(tagsOf(guest.look));
+    if (marker?.part === "release") continue;
     const answer = lines.answers.find((each) => each.vmid === vmid && each.is === "refused" && each.generation === (marker ? marker.generation : 0));
     if (answer?.is === "refused") {
       refused.push(`${nameOf(guest)}, as ${refusalWords(answer.reason, answer.detail)}`);

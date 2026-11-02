@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep, MetricPoint, MonitorReach, MonitorSnapshot } from "../src/plugin/contract.ts";
@@ -130,35 +130,31 @@ function page(box: BoxView, monitor: MonitorReach = reach): BoxPageState {
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-let app: Awaited<ReturnType<typeof loadPluginApp>>;
-
-beforeAll(async () => {
-  globalThis.IntersectionObserver = class {
-    readonly #callback: IntersectionObserverCallback;
-    constructor(callback: IntersectionObserverCallback) {
-      this.#callback = callback;
-    }
-    observe() {
-      this.#callback([{ isIntersecting: true, intersectionRect: { width: 900, height: 600 } } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
-    }
-    disconnect() {}
-    unobserve() {}
-    takeRecords() {
-      return [];
-    }
-    readonly root = null;
-    readonly rootMargin = "";
-    readonly thresholds = [];
-  } as unknown as typeof IntersectionObserver;
-  globalThis.ResizeObserver = class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-  window.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
-  vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-  app = await loadPluginApp(() => import("../app.tsx"));
-});
+globalThis.IntersectionObserver = class {
+  readonly #callback: IntersectionObserverCallback;
+  constructor(callback: IntersectionObserverCallback) {
+    this.#callback = callback;
+  }
+  observe() {
+    this.#callback([{ isIntersecting: true, intersectionRect: { width: 900, height: 600 } } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+  disconnect() {}
+  unobserve() {}
+  takeRecords() {
+    return [];
+  }
+  readonly root = null;
+  readonly rootMargin = "";
+  readonly thresholds = [];
+} as unknown as typeof IntersectionObserver;
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
+window.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+const app = await loadPluginApp(() => import("../app.tsx"));
 
 beforeEach(() => {
   reach = read();

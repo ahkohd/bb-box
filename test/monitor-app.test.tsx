@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ExperimentalSidebarFooterDisclosureProps, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { ComponentType } from "react";
@@ -109,36 +109,31 @@ function handlers(readings: Record<string, MonitorSnapshot>): PluginRpcTestHandl
   } as unknown as PluginRpcTestHandlers<Contract>;
 }
 
-let footer: { component: ComponentType<ExperimentalSidebarFooterDisclosureProps>; label: string; icon: string; id: string } | undefined;
-
-beforeAll(async () => {
-  globalThis.IntersectionObserver = class {
-    readonly #callback: IntersectionObserverCallback;
-    constructor(callback: IntersectionObserverCallback) {
-      this.#callback = callback;
-    }
-    observe() {
-      this.#callback([{ isIntersecting: true, intersectionRect: { width: 300, height: 600 } } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
-    }
-    disconnect() {}
-    unobserve() {}
-    takeRecords() {
-      return [];
-    }
-    readonly root = null;
-    readonly rootMargin = "";
-    readonly thresholds = [];
-  } as unknown as typeof IntersectionObserver;
-  window.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
-  globalThis.ResizeObserver = class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-  vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-  const app = await loadPluginApp(() => import("../app.tsx"));
-  footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status") as typeof footer;
-});
+globalThis.IntersectionObserver = class {
+  readonly #callback: IntersectionObserverCallback;
+  constructor(callback: IntersectionObserverCallback) {
+    this.#callback = callback;
+  }
+  observe() {
+    this.#callback([{ isIntersecting: true, intersectionRect: { width: 300, height: 600 } } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+  disconnect() {}
+  unobserve() {}
+  takeRecords() {
+    return [];
+  }
+  readonly root = null;
+  readonly rootMargin = "";
+  readonly thresholds = [];
+} as unknown as typeof IntersectionObserver;
+window.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
+vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+const footer = (await loadPluginApp(() => import("../app.tsx"))).experimentalSidebarFooterItems.find((item) => item.id === "status") as { component: ComponentType<ExperimentalSidebarFooterDisclosureProps>; label: string; icon: string; id: string } | undefined;
 
 afterEach(() => {
   cleanup();
