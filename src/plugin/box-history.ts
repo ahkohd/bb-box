@@ -101,13 +101,13 @@ function sumTallies(rows: readonly Tally[]): Tally {
 
 export type HistoryReadDeps = Pick<BoxHistoryAppDeps, "boxes" | "reach" | "hostLight" | "connected" | "unreachableHost">;
 
-export function historyRead(deps: HistoryReadDeps, recordOf: (boxId: string) => BoxRecord | undefined) {
+export function historyRead(deps: HistoryReadDeps) {
   const stillReady = async (box: BoxRecord): Promise<BoxRecord | null> => {
     const current = await deps.boxes.find(box.id).catch(() => null);
-    return current?.state === "ready" ? current : null;
+    return current?.state === "ready" && current.guest?.ref === box.guest?.ref ? current : null;
   };
   return async (historyBox: HistoryBox, request: LightRequest, signal: AbortSignal): Promise<LightReading> => {
-    const box = recordOf(historyBox.id) ?? (await deps.boxes.find(historyBox.id));
+    const box = await deps.boxes.find(historyBox.id);
     if (!box) throw new Error("That box is gone.");
     const hostId = hostOf(box);
     const os = routeOs(box);
@@ -168,7 +168,7 @@ export function createBoxHistory(deps: BoxHistoryAppDeps) {
   const now = deps.now ?? Date.now;
   let records = new Map<string, BoxRecord>();
 
-  const read = historyRead(deps, (boxId) => records.get(boxId));
+  const read = historyRead(deps);
 
   const reader = new BoxHistory({
     async boxes() {

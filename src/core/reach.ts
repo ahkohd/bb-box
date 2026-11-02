@@ -21,6 +21,7 @@ export interface ReachDeps {
   readonly find: (boxId: string) => Promise<BoxRecord | null>;
   readonly attempt: (box: BoxRecord, signal: AbortSignal) => Promise<string | null>;
   readonly checkable: (box: BoxRecord) => boolean;
+  readonly rejoining?: (box: BoxRecord) => Promise<void> | null;
   readonly changed: (box: BoxRecord) => void;
   readonly log: (message: string) => void;
   readonly now?: () => number;
@@ -55,6 +56,7 @@ export class ReachCheck {
   readonly #clearTimer: (timer: unknown) => void;
   readonly #unanswered = new Map<string, Unanswered>();
   readonly #lastAnswered = new Map<string, number>();
+  readonly #checkAfterRejoin = new Set<string>();
   #disposed = false;
 
   constructor(deps: ReachDeps) {
@@ -99,7 +101,24 @@ export class ReachCheck {
       known.error = error;
       return;
     }
+    if (this.#waitedForRejoin(box, error)) return;
     this.#track(box, error, 0);
+  }
+
+  #waitedForRejoin(box: BoxRecord, error: string): boolean {
+    const rejoin = this.#deps.rejoining?.(box) ?? null;
+    if (!rejoin) return false;
+    if (this.#checkAfterRejoin.has(box.id)) return true;
+    this.#checkAfterRejoin.add(box.id);
+    this.#deps.log(`${boxWords(box)} did not answer while it rejoins BB: ${error} bb-box checks it again once it has rejoined.`);
+    const checkAgain = async () => {
+      this.#checkAfterRejoin.delete(box.id);
+      if (this.#disposed) return;
+      const current = await this.#deps.find(box.id).catch(() => null);
+      if (current) await this.checkNow(current);
+    };
+    void rejoin.then(checkAgain, checkAgain);
+    return true;
   }
 
   #track(box: BoxRecord, error: string, attempts: number): void {
@@ -118,7 +137,7 @@ export class ReachCheck {
       const error = await this.#try(box);
       if (this.#disposed) return this.reach(box);
       if (error === null) this.#lastAnswered.set(box.id, this.#now());
-      else if (!this.#unanswered.has(box.id)) this.#track(box, error, 1);
+      else if (!this.#unanswered.has(box.id) && !this.#waitedForRejoin(box, error)) this.#track(box, error, 1);
       return this.reach(box);
     }
     await this.#attempt(box.id, known);
@@ -130,6 +149,7 @@ export class ReachCheck {
     if (known) this.#clearTimer(known.timer);
     this.#unanswered.delete(boxId);
     this.#lastAnswered.delete(boxId);
+    this.#checkAfterRejoin.delete(boxId);
   }
 
   dispose(): void {

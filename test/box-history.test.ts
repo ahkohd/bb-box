@@ -969,7 +969,6 @@ test("a history reading goes through a connected BB machine's host entry, else o
       connected: async () => connected,
       unreachableHost: async (box) => void calls.push(`machine offline ${box.id}`),
     },
-    (id) => records[id],
   );
   const request = { own: false, machine: true };
   const as = (id: string): HistoryBox => ({ id, name: id, os: "linux", slot: null, lastStartAt: null });
@@ -996,6 +995,46 @@ test("a history reading goes through a connected BB machine's host entry, else o
 
   await assert.rejects(read(as("bxwindows00001"), request, signal), /not answering BB/);
   assert.deepEqual(calls.splice(0), ["machine offline bxwindows00001"]);
+});
+
+test("a history reading after a restore reads the box's new guest, and a reading of a guest that a restore replaced meanwhile is not told to the reach check", async () => {
+  const told: string[] = [];
+  const reach = {
+    answered: (box: BoxRecord) => void told.push(`answered ${box.guest?.ref}`),
+    failed: (box: BoxRecord, error: string) => void told.push(`does not answer: ${error}`),
+    notAnswering: () => false,
+    reach: () => ({ is: "answers", lastAnswered: null }),
+  } as unknown as ReachCheck;
+  const record = (guest: string): BoxRecord =>
+    ({ id: "bxrestored0001", name: "amber-fox", state: "ready", guest: { ref: guest, host: null, address: null, size: null }, enrol: { state: "off", hostId: null, error: null }, capabilities: { command: {}, os: "linux" } }) as unknown as BoxRecord;
+  let current = record("bbbox-new");
+  let duringRun: () => void = () => {};
+  const boxes = {
+    find: async () => current,
+    all: async () => [current],
+    transports: async (box: BoxRecord) => ({
+      command: {
+        run: async () => {
+          duringRun();
+          if (box.guest?.ref !== current.guest?.ref) throw new TransportError("unreachable", `The box ${box.guest?.ref} did not answer through msb exec.`);
+          return { exitCode: 0, stdout: linuxOutput({}), stderr: "", timedOut: false, truncated: false, durationMs: 5 } satisfies RunResult;
+        },
+      },
+    }),
+  } as unknown as Boxes;
+  const read = historyRead({ boxes, reach, hostLight: async () => ({}) as LightReading, connected: async () => null, unreachableHost: async () => undefined });
+  const listedBeforeTheRestore: HistoryBox = { id: "bxrestored0001", name: "amber-fox", os: "linux", slot: null, lastStartAt: null };
+  const signal = new AbortController().signal;
+
+  await read(listedBeforeTheRestore, { own: false, machine: true }, signal);
+  assert.deepEqual(told.splice(0), ["answered bbbox-new"], "the box as it is now, not as the minute's listing had it");
+
+  current = record("bbbox-old");
+  duringRun = () => {
+    current = record("bbbox-new-again");
+  };
+  await assert.rejects(read(listedBeforeTheRestore, { own: false, machine: true }, signal), /bbbox-old did not answer/);
+  assert.deepEqual(told.splice(0), [], "a guest the box no longer runs says nothing of the box");
 });
 
 function busyApp(store: BoxHistoryStore, clock: { now: number }, config: { current: MonitorConfig }, started: { at: number | null } = { at: null }) {

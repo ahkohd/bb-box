@@ -3435,6 +3435,10 @@ export class Boxes {
     if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
 
+  rejoining(boxId: string): Promise<void> | null {
+    return this.#reconnects.get(boxId) ?? null;
+  }
+
   machineBack(box: BoxRecord): boolean {
     if (box.enrol.state !== "enrolled" || !this.#deps.reconnect) return false;
     this.#waitFor(box.id, this.#deps.reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));

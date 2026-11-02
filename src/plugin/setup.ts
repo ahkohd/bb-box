@@ -774,6 +774,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const reach = new ReachCheck({
     find: (boxId) => boxes.find(boxId),
     checkable: (box) => box.state === "ready" && !!box.guest && backends.get(box.backend) !== null && (box.capabilities.command !== null || box.enrol.state === "enrolled"),
+    rejoining: (box) => boxes.rejoining(box.id),
     async attempt(box, signal) {
       const hostId = box.enrol.state === "enrolled" ? box.enrol.hostId : null;
       if (hostId) {

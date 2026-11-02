@@ -346,6 +346,149 @@ test("a box that stops answering is checked after 1, 5, then every 15 minutes, b
   reach.dispose();
 });
 
+function rejoinClock() {
+  const now = 0;
+  const timers: { at: number; task: () => void; id: number }[] = [];
+  let ids = 0;
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+  return {
+    now: () => now,
+    setTimer: (task: () => void, ms: number) => {
+      const timer = { at: now + ms, task, id: ids++ };
+      timers.push(timer);
+      return timer.id;
+    },
+    clearTimer: (id: unknown) => {
+      const index = timers.findIndex((timer) => timer.id === id);
+      if (index >= 0) timers.splice(index, 1);
+    },
+    pending: () => timers.length,
+    settle,
+  };
+}
+
+function rejoin(): { promise: Promise<void>; done: () => void } {
+  let done = () => {};
+  const promise = new Promise<void>((resolve) => (done = resolve));
+  return { promise, done };
+}
+
+test("a box that does not answer while it rejoins BB, as after a restore, is not said not to answer, and is checked again as soon as it has rejoined", async () => {
+  const clock = rejoinClock();
+  const lines: string[] = [];
+  let answers = false;
+  let attempts = 0;
+  let rejoining: ReturnType<typeof rejoin> | null = rejoin();
+  let box: BoxRecord | null = null;
+  const reach = new ReachCheck({
+    find: async () => box,
+    attempt: async () => {
+      attempts++;
+      return answers ? null : "Its BB machine is not connected.";
+    },
+    checkable: () => true,
+    rejoining: () => rejoining?.promise ?? null,
+    changed: () => {},
+    log: (line) => lines.push(line),
+    ...clock,
+  });
+  const state = world({ reach });
+  box = await readyBox(state);
+  reach.failed(box, "Its BB machine is not connected.");
+  reach.failed(box, "Its BB machine is not connected.");
+  assert.equal(reach.reach(box).is, "answers", "not said not to answer while it rejoins");
+  assert.equal(reach.notAnswering(box.id), false);
+  assert.equal(clock.pending(), 0, "no check a minute later");
+  assert.equal(attempts, 0);
+  assert.equal(lines.length, 1, "said once in the log");
+  assert.match(lines[0]!, /did not answer while it rejoins BB: Its BB machine is not connected\. bb-box checks it again once it has rejoined\.$/);
+  assert.equal((await reach.checkNow(box)).is, "answers", "a check now while it rejoins waits for the rejoin too");
+  assert.equal(attempts, 1);
+
+  answers = true;
+  const joined = rejoining;
+  rejoining = null;
+  joined.done();
+  await clock.settle();
+  assert.equal(attempts, 2, "checked again at once once it has rejoined");
+  const shown = reach.reach(box);
+  assert.equal(shown.is, "answers");
+  assert.equal(shown.lastAnswered, clock.now());
+  reach.dispose();
+});
+
+test("a box that still does not answer once it has rejoined BB is said not to answer then, and checked again a minute later", async () => {
+  const clock = rejoinClock();
+  let attempts = 0;
+  let rejoining: ReturnType<typeof rejoin> | null = rejoin();
+  let box: BoxRecord | null = null;
+  const reach = new ReachCheck({
+    find: async () => box,
+    attempt: async () => {
+      attempts++;
+      return "It did not answer a command.";
+    },
+    checkable: () => true,
+    rejoining: () => rejoining?.promise ?? null,
+    changed: () => {},
+    log: () => {},
+    ...clock,
+  });
+  const state = world({ reach });
+  box = await readyBox(state);
+  reach.failed(box, "Its BB machine is not connected.");
+  const joined = rejoining;
+  rejoining = null;
+  joined.done();
+  await clock.settle();
+  assert.equal(attempts, 1);
+  const shown = reach.reach(box);
+  assert.equal(shown.is, "not-answering");
+  if (shown.is === "not-answering") {
+    assert.equal(shown.error, "It did not answer a command.");
+    assert.equal(shown.nextCheckAt, clock.now() + REACH_DELAYS_MS[1]);
+  }
+  reach.dispose();
+});
+
+test("a box whose BB machine bb-box reconnects, as a restore's last step does, is rejoining until the reconnect ends, and the reach check waits for it", async () => {
+  const clock = rejoinClock();
+  const reconnect = rejoin();
+  let attempts = 0;
+  let answers = false;
+  const holder: { boxes: Boxes | null } = { boxes: null };
+  const reach = new ReachCheck({
+    find: async (id) => holder.boxes!.find(id),
+    attempt: async () => {
+      attempts++;
+      return answers ? null : "Its BB machine is not connected.";
+    },
+    checkable: (box) => box.state === "ready",
+    rejoining: (box) => holder.boxes!.rejoining(box.id),
+    changed: () => {},
+    log: () => {},
+    ...clock,
+  });
+  const state = world({ reach, reconnect: () => reconnect.promise });
+  holder.boxes = state.boxes;
+  const made = await readyBox(state);
+  const box = (await state.boxes.update(made, (current) => ({ enrol: { ...current.enrol, state: "enrolled", hostId: "host_box" } })))!;
+  assert.equal(state.boxes.rejoining(box.id), null);
+  assert.equal(state.boxes.machineBack(box), true);
+  assert.ok(state.boxes.rejoining(box.id), "rejoining while its machine reconnects");
+  reach.failed(box, "Its BB machine is not connected.");
+  assert.equal(reach.reach(box).is, "answers");
+  answers = true;
+  reconnect.done();
+  await clock.settle();
+  assert.equal(state.boxes.rejoining(box.id), null);
+  assert.equal(attempts, 1);
+  assert.equal(reach.reach(box).is, "answers");
+  reach.dispose();
+});
+
 test("a VM that crashes after a failed stop is a stop bb-box did not ask for, and is started again (069 G6)", async () => {
   const state = world();
   const box = await readyBox(state);
