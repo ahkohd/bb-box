@@ -59,7 +59,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName, isMachineName } from "./names.ts";
-import { FORK_SAFE_PROBE_MS, MARKER_WRITE_MS, forkVerdict, identityStatusScript, parseIdentityStatus, readForkSeen, writeIdentityMarker, type HeldIdentity } from "./identity.ts";
+import { FORK_SAFE_PROBE_MS, MARKER_WRITE_MS, forkVerdict, identityStatusScript, parseIdentityStatus, readForkSafe, readForkSeen, readsForkSafetyAtStop, writeIdentityMarker, type ForkSafety, type HeldIdentity, type StoppedForkSafety } from "./identity.ts";
 import { forksOn } from "./snapshot.ts";
 import {
   bestAnswer,
@@ -221,6 +221,7 @@ export interface BoxRecord {
   readonly askedDevice?: ModelName;
   readonly slim?: boolean;
   readonly stoppedAt?: number | null;
+  readonly stopForkSafety?: StoppedForkSafety | null;
 }
 
 export type { RecordedSize };
@@ -933,7 +934,8 @@ export class Boxes {
     return { ...box, kind, kindLabel: this.kinds().find((candidate) => candidate.id === kind)?.label ?? box.kindLabel };
   }
 
-  async #write(box: BoxRecord): Promise<BoxRecord> {
+  async #write(written: BoxRecord): Promise<BoxRecord> {
+    const box = written.stopForkSafety && (written.state !== "stopped" || written.restoring) ? { ...written, stopForkSafety: null } : written;
     await this.#deps.kv.set(recordKey(box.threadId, box.id), box);
     if (box.state !== "ready") this.#deps.reach?.settled?.(box);
     this.#deps.recorded?.(box, false);
@@ -2763,6 +2765,7 @@ export class Boxes {
       const { stop } = this.#stopStart(current);
       if (current.state === "stopped") return current;
       this.#require(current, "ready");
+      const reading = await this.#forkSafetyAtStop(current, signal);
       this.#require((await this.#move(current, "stopping")) ?? { ...current, state: "releasing" }, "stopping");
       this.#event(current, "stop-asked", who);
       try {
@@ -2773,10 +2776,39 @@ export class Boxes {
         if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: "bb-box found it stopped after its stop failed." });
         throw error;
       }
-      const stopped = (await this.#move(current, "stopped")) ?? current;
+      const kept = reading ? await this.#keptAtStop(current, reading, signal) : null;
+      const stopped = (await this.#move(current, "stopped", undefined, undefined, kept ? { stopForkSafety: kept } : {})) ?? current;
       this.#event(current, "stopped", who);
       return stopped;
     });
+  }
+
+  async #keptAtStop(box: BoxRecord, reading: ForkSafety, signal?: AbortSignal): Promise<StoppedForkSafety | null> {
+    const backend = this.#deps.backends.get(box.backend);
+    if (!backend?.stoppedMark || !box.guest) return null;
+    try {
+      const mark = await backend.stoppedMark(box.guest, signal);
+      return mark ? { ...reading, mark } : null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#deps.log?.(`Could not mark box ${box.name}'s guest as bb-box stopped it, so a snapshot of it taken while it is stopped is not fork-safe: ${describeError(error, "Marking it")}`);
+      return null;
+    }
+  }
+
+  async #forkSafetyAtStop(box: BoxRecord, signal?: AbortSignal): Promise<ForkSafety | null> {
+    const backend = this.#deps.backends.get(box.backend);
+    const system = box.capabilities.os;
+    if (!backend || !box.guest || (system !== "linux" && system !== "macos") || !readsForkSafetyAtStop(backend.snapshotting?.(box.kind))) return null;
+    try {
+      const command = (await backend.transports(box.guest, box.kind)).command;
+      const read = command ? await readForkSafe(command, signal, backend.identitySource?.(box.kind) ?? null, system) : null;
+      return read && (read.version !== null || read.resetOff) ? read : null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#deps.log?.(`Could not read box ${box.name}'s identity reset before its stop, so a snapshot of it taken while it is stopped is not fork-safe: ${describeError(error, "Reading it")}`);
+      return null;
+    }
   }
 
   /**
@@ -3056,6 +3088,7 @@ export class Boxes {
     state: "stopping" | "stopped" | "starting" | "ready",
     started?: Readonly<Record<string, number>>,
     facts?: readonly GuestFact[],
+    stoppedWith: Partial<BoxRecord> = {},
   ): Promise<BoxRecord | null> {
     const moving = state === "stopping" || state === "starting";
     return this.update(box, (current) => {
@@ -3063,7 +3096,7 @@ export class Boxes {
       if (state === "stopping") return { state, error: null, unrequestedStop: null };
       if (state === "starting") return { state, error: null, timings: withoutStartSteps(current.timings) };
       if (moving) return { state, error: null };
-      if (state === "stopped") return { state, stoppedAt: this.#now() };
+      if (state === "stopped") return { state, stoppedAt: this.#now(), ...stoppedWith };
       if (!started) return { state };
       const guest = facts && current.guest ? { guest: { ...current.guest, facts } } : {};
       return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest };

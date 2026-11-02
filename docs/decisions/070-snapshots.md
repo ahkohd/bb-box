@@ -1948,6 +1948,52 @@ On 2 November 2026, closing 070, with the lead's answers:
   microsandbox backend on that Mac, releases the box and sees nothing
   listed, and rolls back if anything is wrong.
 
+- **Tart's Linux boxes fork and are kept, as they are, from version 8 of
+  the identity reset**, the plain `linux-arm64` kind only; Linux desktops
+  on Tart neither fork nor keep, with why, as on Proxmox and boat.dev. Unit
+  9 left them off as their reset was not checked live; now it is.
+- **The reset is on in Tart's Linux image** (the lead's decision):
+  `prepare-linux-image.sh` sets `BOX_IDENTITY_RESET=on` for the plain image,
+  as Proxmox's, Docker's and boat.dev's Linux builds do. Before, the image
+  had the program with it off, so no Tart Linux box was fork-safe. A box
+  from an image prepared before refuses forks and Keep with words to
+  refresh the image. Production arms Tart already; after merge the lead
+  refreshes production's `linux-arm64` image and forks one box to check.
+- **A Linux fork is not cleaned on the Mac.** Its VM is a copy of the
+  snapshot's files with a new MAC address from Tart (`--random-mac`; a
+  Linux VM has no Mac serial), and its own reset, which systemd runs at
+  boot before the network, SSH and the box user's services, gives up the
+  source's identity, compared by the VM card's MAC address (`device`). The
+  Mac cannot mount its ext4 disk, and does not need to: unlike macOS, the
+  order is systemd's, and was measured live.
+- **A stopped box's fork-safety is read at bb-box's own stop** (the lead's
+  decision). bb-box reads a box's identity reset from inside it at each
+  take, which a stopped box cannot answer, and Tart takes a Linux box only
+  while it is stopped. So, where a backend's snapshots are taken from a
+  stopped box (`stopped-only` or `suspends`, as on Tart, for Linux and
+  macOS), bb-box's stop reads it just before it stops the box and, once
+  the stop has succeeded, keeps it on the box's record with the backend's
+  mark of the stopped guest (`stoppedMark`; on Tart, each VM file's
+  modification time and size, as Tart keeps no start time). A take of the
+  stopped box uses it only while the mark is the same. Identity changes
+  only at a boot, and any run, even outside bb-box, changes the mark, so a
+  reading holds only for the start it was taken in. A box stopped another
+  way, or that ran since, has none, so its snapshots neither fork nor keep,
+  and the refusal says to start it, stop it with bb-box and take it again.
+- **After the reviews** (the lead's decisions): a stop that fails keeps no
+  reading, though the guest stopped; a restore drops the reading as it
+  begins; and a reading that found the reset off is kept as such, so each
+  snapshot records why it is not fork-safe (`forkSafeWhy`: `reset-off` or
+  `unread`). A `reset-off` snapshot's refusals say to refresh the Linux
+  image and make the box again, on every backend; only an `unread` one's,
+  on Tart, say to stop the box with bb-box.
+- **The live check's image was built by its prepare script, by hand.**
+  bb-box's own image build renames its build over the configured image and
+  then prunes the base's cached copies that no tag names, in Tart's cache,
+  which production shares on that Mac; with `--try` it deletes the build.
+  So the check ran `prepare-linux-image.sh` from the branch, as the image
+  build does, under an image name of its own, from the base already cached.
+
 ## Alternatives considered
 
 - **A portable format of bb-box's own** (the research's shape B). An order

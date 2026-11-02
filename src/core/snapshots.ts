@@ -27,7 +27,7 @@ import {
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
 import { withRecordedGpu } from "./gpu.ts";
-import { readForkSafe, type ForkSafety } from "./identity.ts";
+import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
 import { ceilingOf, SNAPSHOT_LIMITS, snapshotConfig, type SnapshotConfig } from "./document.ts";
@@ -834,6 +834,7 @@ export class Snapshots {
         keptAt: null,
         undoOf: null,
         forkSafe: safety.version,
+        forkSafeWhy: safety.version === null ? (safety.why ?? null) : null,
         identity: safety.identity,
         dependsOn: [],
         picture: null,
@@ -1112,7 +1113,7 @@ export class Snapshots {
   #forkableAfterRelease(record: SnapshotRecord, backend: Backend, offer: Snapshotting): void {
     const name = record.box.name;
     if (!forksOn(record.box.system)) throw new BoxError("unsupported", `bb-box keeps only a snapshot it can fork after its box's release, and it forks Linux and macOS boxes only. Box ${name} runs ${record.box.system}.`);
-    if (record.forkSafe === null) throw new BoxError("unsupported", `Taken before ${name}'s image had the identity reset: ${quoted(record)} could not be forked after a release, so bb-box does not keep it.`);
+    if (record.forkSafe === null) throw new BoxError("unsupported", `Taken before ${name}'s image had the identity reset: ${quoted(record)} could not be forked after a release, so bb-box does not keep it.${notForkSafeWords(record.forkSafeWhy, record.box.system)}`);
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (record.forkSafe < safeFrom) {
       throw new BoxError("unsupported", `${name} had version ${record.forkSafe} of the identity reset when ${quoted(record)} was taken, and bb-box forks ${backend.label}'s boxes only from version ${safeFrom}: it could not be forked after a release, so bb-box does not keep it.`);
@@ -1801,15 +1802,34 @@ export class Snapshots {
   async #forkSafe(box: BoxRecord, backend: Backend): Promise<ForkSafety> {
     const none: ForkSafety = { version: null, identity: null };
     const system = box.capabilities.os;
+    if (box.state === "stopped") return this.#stoppedForkSafe(box, backend);
     if (box.state !== "ready" || (system !== "linux" && system !== "macos") || !box.guest) return none;
     try {
       const command = (await backend.transports(box.guest, box.kind)).command;
-      return command ? await readForkSafe(command, this.#stopping.signal, backend.identitySource?.(box.kind) ?? null, system) : none;
+      const read = command ? await readForkSafe(command, this.#stopping.signal, backend.identitySource?.(box.kind) ?? null, system) : none;
+      return read.version === null && read.resetOff ? { ...read, why: "reset-off" } : read;
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.log?.(`Could not read box ${box.name}'s identity reset at a take, so the snapshot is not fork-safe: ${message(error)}`);
       return none;
     }
+  }
+
+  async #stoppedForkSafe(box: BoxRecord, backend: Backend): Promise<ForkSafety> {
+    const none: ForkSafety = { version: null, identity: null };
+    if (!readsForkSafetyAtStop(backend.snapshotting?.(box.kind))) return none;
+    const kept = box.stopForkSafety;
+    if (!kept || !box.guest || !backend.stoppedMark) return { ...none, why: "unread" };
+    const now = await backend.stoppedMark(box.guest, this.#stopping.signal).catch((error: unknown) => {
+      if (this.#stopping.signal.aborted) throw error;
+      this.#deps.log?.(`Could not read box ${box.name}'s guest's mark at a take, so the snapshot is not fork-safe: ${message(error)}`);
+      return null;
+    });
+    if (now !== kept.mark) {
+      this.#deps.log?.(`Box ${box.name}'s guest ran or changed since bb-box stopped it, so bb-box's reading of its identity reset is no longer its own and the snapshot is not fork-safe.`);
+      return { ...none, why: "unread" };
+    }
+    return { version: kept.version, identity: kept.identity, why: kept.version === null ? "reset-off" : null };
   }
 
   #roomProblem(box: BoxRecord, storage: SnapshotStorage, adds: number, memory: boolean, roomPercent: number): string | null {
@@ -2251,6 +2271,7 @@ export class Snapshots {
           keptAt: null,
           undoOf: operationId,
           forkSafe: forkSafe.version,
+          forkSafeWhy: forkSafe.version === null ? (forkSafe.why ?? null) : null,
           identity: forkSafe.identity,
           dependsOn: [],
           picture: null,
@@ -2490,10 +2511,10 @@ export class Snapshots {
     if (target.state !== "ready") throw new BoxError(target.state === "taking" ? "try_again" : "unsupported", `Snapshot ${quoted(target)} is ${stateWords(target)}, so bb-box does not fork it.`);
     if (target.scope !== "box") throw new BoxError("unsupported", `Snapshot ${quoted(target)} holds ${name}'s device only, so it does not fork.`);
     if (!forksOn(target.box.system)) throw new BoxError("unsupported", `${FORKS_ONLY}. Box ${name} runs ${target.box.system}.`);
-    const notYet = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind)?.forkWhy;
-    if (notYet) throw new BoxError("unsupported", `bb-box does not fork ${quoted(target)}: ${notYet}.`);
+    const targetOffer = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind);
+    if (targetOffer?.forkWhy) throw new BoxError("unsupported", `bb-box does not fork ${quoted(target)}: ${targetOffer.forkWhy}.`);
     if (target.forkSafe === null) {
-      throw new BoxError("unsupported", `${name} had no working identity reset when ${quoted(target)} was taken, so bb-box does not fork it: a copy of it would not give up ${name}'s identity, and could act as ${name}.`);
+      throw new BoxError("unsupported", `${name} had no working identity reset when ${quoted(target)} was taken, so bb-box does not fork it: a copy of it would not give up ${name}'s identity, and could act as ${name}.${notForkSafeWords(target.forkSafeWhy, target.box.system)}`);
     }
     const backend = this.#deps.backends.get(target.backend.id);
     if (!backend) throw new BoxError("backend_off", `The ${target.backend.label} backend that holds snapshot ${quoted(target)} is not in bb-box's settings, so it forks nothing.`);

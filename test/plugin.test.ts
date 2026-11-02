@@ -7194,7 +7194,7 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   assert.equal((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "old image"])).exitCode, 0);
   const refused = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD]);
   assert.equal(refused.exitCode, 1);
-  assert.match(refused.stderr ?? "", /Taken before .*'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it\. \(unsupported\)/);
+  assert.match(refused.stderr ?? "", /Taken before .*'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it\. Its identity reset was off when it was taken, as in a box from an image prepared before the reset was turned on: refresh the Linux image and make the box again\. \(unsupported\)/);
   const [record] = app.snapshotStore.records();
   app.snapshotStore.updateRecord(record!.id, { forkSafe: 7 });
   const check = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10", "--check"]);

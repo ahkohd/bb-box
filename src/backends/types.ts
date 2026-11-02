@@ -739,6 +739,7 @@ export interface Backend {
   rollbackSnapshot?(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
   outsideRollbacks?(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]>;
   guestIdentity?(guest: Guest, signal?: AbortSignal): Promise<GuestIdentity>;
+  stoppedMark?(guest: Guest, signal?: AbortSignal): Promise<string | null>;
   copyGuest?(source: Guest, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
   copySnapshot?(ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest>;
   labelCopy?(copy: Guest, label: HeldCopyLabel, signal?: AbortSignal): Promise<Guest>;

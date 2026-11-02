@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SnapshotFailed, type Backend, type TaskRef } from "../src/backends/types.ts";
+import { resetOffWords } from "../src/core/identity.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { keptUntilAfter, utcDay, type Caller } from "../src/core/snapshot.ts";
 import { COMMAND, DAY, THREAD, armedWorld, readIn, readyBox, rejection, standing, untilHeld, world, writeIn, type World } from "./snapshot-world.ts";
@@ -61,7 +62,7 @@ test("Keep is refused for a snapshot no fork could use after a release: taken be
   await state.snapshots.take(COMMAND, box, standing(box), { name: "old image" });
   const refused = await rejection(state.snapshots.keep(COMMAND, standing(box), "old image"));
   assert.equal(refused.code, "unsupported");
-  assert.equal(refused.message, `Taken before ${box.name}'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it.`);
+  assert.equal(refused.message, `Taken before ${box.name}'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it. ${resetOffWords("linux")}.`);
   const other = armedWorld();
   other.provider.keepWay = "no";
   const second = await readyBox(other);

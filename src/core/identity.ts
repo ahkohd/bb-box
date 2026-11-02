@@ -1,4 +1,4 @@
-import type { IdentitySource } from "../backends/types.ts";
+import type { IdentitySource, Snapshotting } from "../backends/types.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 
@@ -7,6 +7,23 @@ export const IDENTITY_TOOL_MISSING = 64;
 export const IDENTITY_VARIABLE = "BBBOX_IDENTITY";
 export const MARKER_WRITE_MS = 20_000;
 export const FORK_SAFE_PROBE_MS = 10_000;
+export const STOPPED_ANOTHER_WAY = "A snapshot of a stopped box is fork-safe only when bb-box stopped the box and it has not run since, as bb-box reads the identity reset just before its stop: start the box, stop it with bb-box and take the snapshot again";
+
+export function resetOffWords(system: IdentitySystem): string {
+  return system === "macos"
+    ? "Its identity reset was off when it was taken, as in a box made before bb-box installed macOS's reset: make the box again"
+    : "Its identity reset was off when it was taken, as in a box from an image prepared before the reset was turned on: refresh the Linux image and make the box again";
+}
+
+export function notForkSafeWords(why: NotForkSafe | null | undefined, system: string): string {
+  if (why === "unread") return ` ${STOPPED_ANOTHER_WAY}.`;
+  if (why === "reset-off" && (system === "linux" || system === "macos")) return ` ${resetOffWords(system)}.`;
+  return "";
+}
+
+export function readsForkSafetyAtStop(offer: Snapshotting | null | undefined): boolean {
+  return !!offer && offer.fork === "copy" && (offer.whileRunning === "stopped-only" || offer.whileRunning === "suspends");
+}
 
 const AS_ROOT = `as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }`;
 const BOOT_CHECK_RAN = new Set(["kept", "unarmed", "reset"]);
@@ -109,9 +126,17 @@ export interface HeldIdentity {
   readonly hostKeys: readonly string[];
 }
 
+export type NotForkSafe = "reset-off" | "unread";
+
 export interface ForkSafety {
   readonly version: number | null;
   readonly identity: HeldIdentity | null;
+  readonly resetOff?: boolean;
+  readonly why?: NotForkSafe | null;
+}
+
+export interface StoppedForkSafety extends ForkSafety {
+  readonly mark: string;
 }
 
 function everyValue(stdout: string, key: string): string[] {
@@ -155,7 +180,8 @@ export function forkSafetyScript(system: IdentitySystem = "linux"): string {
 export function forkSafetyOf(stdout: string, exitCode: number | null, source: IdentitySource | null = null): ForkSafety {
   const version = exitCode === 0 ? forkSafeVersion(parseIdentityStatus(stdout)) : null;
   const identity = version === null ? null : wholeIdentity(identityRead(stdout), source);
-  return identity ? { version, identity } : { version: null, identity: null };
+  const resetOff = exitCode === IDENTITY_TOOL_MISSING || (exitCode === 0 && parseIdentityStatus(stdout)?.enabled === false);
+  return identity ? { version, identity } : { version: null, identity: null, ...(resetOff ? { resetOff } : {}) };
 }
 
 export async function readForkSafe(command: CommandTransport, signal?: AbortSignal, source: IdentitySource | null = null, system: IdentitySystem = "linux"): Promise<ForkSafety> {

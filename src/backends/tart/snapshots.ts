@@ -4,8 +4,10 @@ import { named, parseConfig, parseFields, script, sections, type VmConfig } from
 
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
 export const MACOS_FORK_SAFE_FROM = 3;
+export const LINUX_FORK_SAFE_FROM = 8;
+export const LINUX_FORK_KIND = "linux-arm64";
 export const TART_EXCLUDES = "the VM's network address, which the Mac's DHCP gives again";
-export const LINUX_FORK_NOT_YET = "bb-box has not checked the identity reset of Tart's Linux VMs live yet, so it forks and keeps none of their snapshots";
+export const LINUX_DESKTOP_NO_FORKS = "bb-box forks and keeps only Tart's plain Linux boxes, not its Linux desktops, whose image has no identity reset turned on, as on Proxmox and boat.dev";
 export const MIN_FREE_GIB = 20;
 export const NO_IMAGE_ATTACH = "the Mac's diskutil has no image attach, which bb-box needs to clean a fork's disk of its source's identity before the fork first boots, and which macOS 27 has. So bb-box makes no macOS forks on it, and keeps no macOS snapshot past its box's release";
 const GiB = 1024 ** 3;
@@ -31,7 +33,22 @@ export function parseTaskRef(ref: string): TartTask | null {
   return other ? { kind: other[1] as "take" | "delete", id: other[2]! } : null;
 }
 
-export function tartOffer(os: "macos" | "linux"): Snapshotting {
+export function tartOffer(os: "macos" | "linux", forks = true): Snapshotting {
+  if (os === "linux" && forks) {
+    return {
+      scope: "box",
+      holds: ["disk"],
+      whileRunning: "stopped-only",
+      restore: "in-place",
+      fork: "copy",
+      keepsPastRelease: "as-is",
+      lives: "host",
+      outlivesGuest: true,
+      price: null,
+      excludes: TART_EXCLUDES,
+      forkSafeFrom: LINUX_FORK_SAFE_FROM,
+    };
+  }
   return os === "macos"
     ? {
         scope: "box",
@@ -57,7 +74,7 @@ export function tartOffer(os: "macos" | "linux"): Snapshotting {
         outlivesGuest: true,
         price: null,
         excludes: TART_EXCLUDES,
-        forkWhy: LINUX_FORK_NOT_YET,
+        forkWhy: LINUX_DESKTOP_NO_FORKS,
       };
 }
 
@@ -482,6 +499,16 @@ echo restored
 `);
 }
 
+export function stoppedMarkScript(vm: string): string {
+  return script(String.raw`v="$tart_vms/"${quote(vm)}
+[ -d "$v" ] || { echo gone; exit 0; }
+[ "$(state ${quote(vm)})" != running ] || { echo running; exit 0; }
+for f in config.json nvram.bin disk.img state.vzvmsave; do
+  if [ -e "$v/$f" ]; then printf '%s %s %s\n' "$f" "$(stat_of '%y' '%Fm' "$v/$f")" "$(stat_of '%s' '%z' "$v/$f")"; else echo "$f none"; fi
+done
+`);
+}
+
 export function forkScript(input: { readonly install: string; readonly snapshot: string; readonly vm: string; readonly cpus: number; readonly memoryMiB: number; readonly macos: boolean; readonly minFreeGiB: number }): string {
   return withSnapshots(String.raw`vm=${quote(input.vm)}; id=${quote(input.snapshot)}; sd="$snaps/$id"; v="$tart_vms/$vm"; s="$snaps/.fork-$vm"
 [ -d "$sd" ] && ours "$sd" ${quote(input.install)} || { echo "The Mac has no snapshot $id of this install's." >&2; exit 4; }
@@ -545,7 +572,7 @@ export function roomShort(read: Pick<PlanRead, "volume" | "freeKiB">, floorGiB: 
   return free >= floorGiB ? null : `${where} has ${free} GiB free, and bb-box copies a VM there only with at least ${floorGiB} GiB free, as the copy grows as the VM changes`;
 }
 
-export function planOf(host: string, os: "macos" | "linux", read: PlanRead, asked: string | null, forkSafeFrom: number, floorGiB: number): SnapshotPlan {
+export function planOf(host: string, os: "macos" | "linux", read: PlanRead, asked: string | null, offer: Snapshotting, floorGiB: number): SnapshotPlan {
   const storage = storageOf(host, read);
   const memoryMiB = read.config?.memoryMiB ?? 0;
   const memoryBytes = memoryMiB * MiB;
@@ -566,8 +593,10 @@ export function planOf(host: string, os: "macos" | "linux", read: PlanRead, aske
   const sizeBack = target ? sizeFrom(target.config, label?.diskGB ?? null) : null;
   const readSize = target ? sizeBack : sizeFrom(read.config, read.diskGB);
   const forkSize = readSize ? { ...readSize, diskGiB: null } : null;
-  const unsafe = label && (label.reset === null || label.reset < forkSafeFrom) ? "it was taken before its box had macOS's identity reset" : null;
-  const forkWhy = os === "linux" ? LINUX_FORK_NOT_YET : (elsewhere ?? short ?? missing ?? unsafe ?? (read.canAttach ? null : NO_IMAGE_ATTACH) ?? (forkSize ? null : `bb-box could not read the size of ${asked ? "the snapshot" : "the box"}`));
+  const notForked = offer.fork === "copy" ? null : (offer.forkWhy ?? `${host} forks no snapshots of this box`);
+  const unsafe = label && (label.reset === null || label.reset < (offer.forkSafeFrom ?? 0)) ? (os === "macos" ? "it was taken before its box had macOS's identity reset" : "it was taken before its box had the identity reset, which boxes from a Linux image refreshed since have") : null;
+  const cannotClean = os === "macos" && !read.canAttach ? NO_IMAGE_ATTACH : null;
+  const forkWhy = notForked ?? elsewhere ?? short ?? missing ?? unsafe ?? cannotClean ?? (forkSize ? null : `bb-box could not read the size of ${asked ? "the snapshot" : "the box"}`);
   const wholeBytes = (label?.diskGB ?? read.diskGB ?? 0) * 1e9 + (target?.saved ? memoryBytes : 0);
   return {
     storage,
@@ -591,7 +620,7 @@ export function planOf(host: string, os: "macos" | "linux", read: PlanRead, aske
       newer: 0,
       copyAboutMs: null,
     },
-    keep: { way: os === "macos" ? "as-is" : "no", why: os === "macos" ? null : `${LINUX_FORK_NOT_YET}.`, aboutMs: null, bytes: wholeBytes > 0 ? wholeBytes : null, price: null },
+    keep: { way: notForked ? "no" : "as-is", why: notForked ? `${notForked}.` : null, aboutMs: null, bytes: wholeBytes > 0 ? wholeBytes : null, price: null },
     fork: { ok: forkWhy === null, why: forkWhy ? `${forkWhy}.` : null, aboutMs: COPY_MS + (os === "macos" ? MACOS_BOOT_MS : LINUX_BOOT_MS), bytes: null, size: forkSize },
     locked: null,
     busy: null,

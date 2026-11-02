@@ -191,12 +191,13 @@ import {
 import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import {
-  MACOS_FORK_SAFE_FROM,
+  LINUX_FORK_KIND,
   MIN_FREE_GIB,
   NO_IMAGE_ATTACH,
   deleteScript as snapshotDeleteScript,
   roomShort,
   forkScript,
+  stoppedMarkScript,
   heldOf,
   labelKeptScript,
   listScript,
@@ -2100,11 +2101,11 @@ export class TartBackend implements Backend {
 
   snapshotting(kind: string): Snapshotting | null {
     const os = this.#snapshotOs(kind);
-    return os ? tartOffer(os) : null;
+    return os ? tartOffer(os, os === "macos" || kind === LINUX_FORK_KIND) : null;
   }
 
   identitySource(kind: string): IdentitySource | null {
-    return this.#snapshotOs(kind) === "macos" ? "device" : null;
+    return this.snapshotting(kind)?.fork === "copy" ? "device" : null;
   }
 
   #snapshotGuest(guest: Guest): { host: TartHost; os: "macos" | "linux" } {
@@ -2130,7 +2131,7 @@ export class TartBackend implements Backend {
     const { host, os } = this.#snapshotGuest(guest);
     const asked = snapshot ? snapshot.ref || snapshot.id : null;
     const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked), { timeoutMs: 30_000, signal })).stdout);
-    return planOf(host.name, os, read, asked, MACOS_FORK_SAFE_FROM, this.#copyFloorGiB());
+    return planOf(host.name, os, read, asked, this.snapshotting(kind) ?? tartOffer(os, false), this.#copyFloorGiB());
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -2282,12 +2283,14 @@ export class TartBackend implements Backend {
   }
 
   async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
-    if (guestOsOf(box.kind) !== "macos" || box.kind === IOS_IMAGE_KIND) throw new BackendError("unsupported", `${this.label} forks macOS boxes only.`);
+    const offer = this.snapshotting(box.kind);
+    const os = this.#snapshotOs(box.kind);
+    if (!offer || offer.fork !== "copy" || !os) throw new BackendError("unsupported", `${this.label} forks no ${box.kind} boxes${offer?.forkWhy ? `: ${offer.forkWhy}` : ""}.`);
     const host = this.#hostOf(ref.guest);
     const vm = vmName(box.boxId);
-    const data = { box: box.boxId, forkOf: ref.guest.ref, forkName: box.name };
+    const data: Readonly<Record<string, string>> = { box: box.boxId, ...(os === "linux" ? { os } : {}), forkOf: ref.guest.ref, forkName: box.name };
     const guest = (size: MachineSize | null): Guest => ({ ref: vm, host: host.name, address: null, size, data });
-    if (previous && previous.ref === vm) await this.#delete(host, vm, "macos", box.boxId, signal);
+    if (previous && previous.ref === vm) await this.#delete(host, vm, os, box.boxId, signal);
     await hooks.claim(guest(null));
     const claimed = (await this.#run(host, claimScript(vm, this.#owner(box)), { signal })).stdout.trim();
     if (claimed !== "claimed") {
@@ -2295,15 +2298,21 @@ export class TartBackend implements Backend {
       if (fields.install !== this.#context.installId || fields.box !== box.boxId) throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
     }
     try {
-      const result = await this.#runSnapshot(host, forkScript({ install: this.#context.installId, snapshot: ref.ref || ref.id, vm, cpus: box.size.cores, memoryMiB: box.size.memoryMiB, macos: true, minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
+      const result = await this.#runSnapshot(host, forkScript({ install: this.#context.installId, snapshot: ref.ref || ref.id, vm, cpus: box.size.cores, memoryMiB: box.size.memoryMiB, macos: os === "macos", minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
       if (result.exitCode !== 0) throw new Error(`${host.name} could not copy snapshot ${ref.id} as ${vm}: ${this.#said(result)}`);
       const parts = sections(result.stdout);
       const disk = Number(parts.get("disk")?.trim());
       return guest(sizeFrom(parseConfig(parts.get("config") ?? ""), Number.isFinite(disk) && disk > 0 ? disk : null));
     } catch (error) {
-      await this.#delete(host, vm, "macos", box.boxId).catch((cause) => this.#context.logError("delete a fork that was not made", cause));
+      await this.#delete(host, vm, os, box.boxId).catch((cause) => this.#context.logError("delete a fork that was not made", cause));
       throw error;
     }
+  }
+
+  async stoppedMark(guest: Guest, signal?: AbortSignal): Promise<string | null> {
+    if (slotRefOf(guest) || this.#osOf(guest) === "windows") return null;
+    const said = (await this.#run(this.#hostOf(guest), stoppedMarkScript(guest.ref), { timeoutMs: 30_000, signal })).stdout.trim();
+    return said && said !== "gone" && said !== "running" ? said : null;
   }
 
   async armFork(_guest: Guest, _arming: ForkArming): Promise<void> {}
@@ -2917,7 +2926,7 @@ export class TartBackend implements Backend {
         push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
       if (tart) await this.#doctorSpotlight(host, push, signal);
-      if (images.some((kind) => this.identitySource(kind))) await this.#doctorForks(host, push, signal);
+      if (images.some((kind) => guestOsOf(kind) === "macos" && this.identitySource(kind))) await this.#doctorForks(host, push, signal);
       if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push, judge);
       if (windowsImage && state.qemuVideo) this.#doctorQemuVideo(host, state.qemuVideo, push);
       for (const kind of images) {

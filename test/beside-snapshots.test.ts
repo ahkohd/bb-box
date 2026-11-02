@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BY_COMMAND } from "../src/core/box-log.ts";
+import type { Guest } from "../src/backends/types.ts";
 import { keptUntilAfter } from "../src/core/snapshot.ts";
+import { STOPPED_ANOTHER_WAY, resetOffWords } from "../src/core/identity.ts";
+import { spawnSync } from "node:child_process";
 import { keepCostWords, takenText } from "../src/plugin/snapshot-words.ts";
-import { COMMAND, THREAD, armedWorld, readyBox, rejection, standing, world, type World } from "./snapshot-world.ts";
+import { COMMAND, THREAD, armedWorld, identityGuest, readyBox, rejection, standing, untilHeld, withIdentitySource, world, type World } from "./snapshot-world.ts";
 
 const START = Date.UTC(2026, 9, 30, 10, 42);
 
@@ -91,4 +94,111 @@ test("a take whose box did not resume after it leaves the box stopped, says so i
   assert.deepEqual([after.state, after.error], ["stopped", taken.notResumed]);
   assert.match(state.log.events(box.id).find((event) => event.kind === "snapshot-taken")!.words!, /did not resume after it: .* It is stopped: start it\.$/);
   assert.match(takenText(taken, box.name, 5), /did not resume after it/);
+});
+
+test("070 close-out: bb-box's own stop of a box whose snapshots are taken stopped, as on Tart, reads its identity reset just before, so a snapshot of it stopped is fork-safe and keeps; a start forgets the reading, and a box stopped another way takes snapshots that neither fork nor keep, with words to stop it with bb-box", async () => {
+  const state = beside(armedWorld());
+  const box = await readyBox(state);
+  await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
+  const stopped = (await state.boxes.find(box.id))!;
+  assert.equal(stopped.state, "stopped");
+  const version = stopped.stopForkSafety?.version ?? null;
+  assert.ok(version !== null && version >= 7, "read from the guest just before the stop");
+  assert.ok(stopped.stopForkSafety?.identity?.machineId, "with the box's machine ID, which a fork's check compares");
+  const taken = (await state.snapshots.take(COMMAND, stopped, standing(stopped), { name: "stopped", memory: false })).snapshot!;
+  assert.equal(state.store.record(taken.id)?.forkSafe, version);
+  await state.snapshots.keep(COMMAND, standing(stopped), taken.id, { days: 30 });
+  assert.notEqual(state.store.record(taken.id)?.keptUntil, null);
+  await state.boxes.start(THREAD, box.id, undefined, BY_COMMAND);
+  assert.equal((await state.boxes.find(box.id))!.stopForkSafety ?? null, null, "a start forgets it");
+  await state.backend.stop!(box.guest!);
+  await state.boxes.refresh(THREAD, box.id);
+  const outside = (await state.boxes.find(box.id))!;
+  assert.deepEqual([outside.state, outside.stopForkSafety ?? null], ["stopped", null]);
+  const other = (await state.snapshots.take(COMMAND, outside, standing(outside), { name: "outside", memory: false })).snapshot!;
+  assert.equal(state.store.record(other.id)?.forkSafe, null);
+  const keep = await rejection(state.snapshots.keep(COMMAND, standing(outside), other.id, { days: 30 }));
+  assert.match(keep.message, new RegExp(`does not keep it\\. ${escaped(STOPPED_ANOTHER_WAY)}\\.$`));
+  const fork = await rejection(state.snapshots.fork(COMMAND, outside, standing(outside), other.id));
+  assert.match(fork.message, new RegExp(`could act as \\S+\\. ${escaped(STOPPED_ANOTHER_WAY)}\\.$`));
+});
+
+test("070 close-out: where snapshots are taken from a running box, bb-box's stop reads nothing, and a stopped box's snapshots stay as they were", async () => {
+  const state = armedWorld();
+  const box = await readyBox(state);
+  await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
+  assert.equal((await state.boxes.find(box.id))!.stopForkSafety ?? null, null);
+});
+
+function escaped(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+test("070 close-out review (Astra's high, Opus 2): a box bb-box stopped that then ran outside bb-box, started and stopped before any sweep, takes a snapshot that is not fork-safe: the reading holds only while the guest's mark is the one bb-box saw at its stop", async () => {
+  const state = beside(armedWorld());
+  const box = await readyBox(state);
+  await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
+  assert.ok((await state.boxes.find(box.id))!.stopForkSafety?.mark, "a mark of the stopped guest, kept with the reading");
+  await state.backend.start!(box.guest!);
+  await state.backend.stop!(box.guest!);
+  const stale = (await state.boxes.find(box.id))!;
+  assert.equal(stale.state, "stopped");
+  assert.ok(stale.stopForkSafety, "the record has not seen the run");
+  const taken = (await state.snapshots.take(COMMAND, stale, standing(stale), { name: "after a run outside", memory: false })).snapshot!;
+  assert.deepEqual([state.store.record(taken.id)?.forkSafe, state.store.record(taken.id)?.forkSafeWhy], [null, "unread"]);
+  const keep = await rejection(state.snapshots.keep(COMMAND, standing(stale), taken.id, { days: 30 }));
+  assert.match(keep.message, new RegExp(`${escaped(STOPPED_ANOTHER_WAY)}\\.$`));
+});
+
+test("070 close-out review (Astra's high): a stop that failed, though the guest stopped, keeps no reading, so its snapshot is not fork-safe", async () => {
+  const state = beside(armedWorld());
+  const box = await readyBox(state);
+  const stop = state.backend.stop!.bind(state.backend);
+  Object.assign(state.backend, {
+    stop: async (guest: Guest) => {
+      await stop(guest);
+      throw new Error("the answer was lost");
+    },
+  });
+  await assert.rejects(state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND), /the answer was lost/);
+  const after = (await state.boxes.find(box.id))!;
+  assert.deepEqual([after.state, after.stopForkSafety ?? null], ["stopped", null]);
+  const taken = (await state.snapshots.take(COMMAND, after, standing(after), { name: "after a failed stop", memory: false })).snapshot!;
+  assert.deepEqual([state.store.record(taken.id)?.forkSafe, state.store.record(taken.id)?.forkSafeWhy], [null, "unread"]);
+});
+
+test("070 close-out review (Opus 1, Astra's low): a box whose reset was off when bb-box stopped it takes a snapshot whose fork and Keep refusals say to refresh the Linux image and make the box again, never to stop it with bb-box", async () => {
+  const guest = identityGuest();
+  const state = beside(world({ identityTool: guest.tool, identityRoot: guest.root }));
+  withIdentitySource(state, "eth");
+  const box = await readyBox(state);
+  assert.equal(spawnSync(guest.tool, ["disable"]).status, 0);
+  await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
+  const stopped = (await state.boxes.find(box.id))!;
+  assert.deepEqual([stopped.stopForkSafety?.version ?? null, stopped.stopForkSafety?.resetOff], [null, true], "the reading ran, and found the reset off");
+  const taken = (await state.snapshots.take(COMMAND, stopped, standing(stopped), { name: "reset off", memory: false })).snapshot!;
+  assert.deepEqual([state.store.record(taken.id)?.forkSafe, state.store.record(taken.id)?.forkSafeWhy], [null, "reset-off"]);
+  const keep = await rejection(state.snapshots.keep(COMMAND, standing(stopped), taken.id, { days: 30 }));
+  assert.match(keep.message, new RegExp(`${escaped(resetOffWords("linux"))}\\.$`));
+  assert.match(resetOffWords("linux"), /refresh the Linux image and make the box again$/);
+  assert.doesNotMatch(keep.message, /stop it with bb-box/);
+  const fork = await rejection(state.snapshots.fork(COMMAND, stopped, standing(stopped), taken.id));
+  assert.match(fork.message, new RegExp(`${escaped(resetOffWords("linux"))}\\.$`));
+});
+
+test("070 close-out review (Opus 3): a restore drops the stopped box's reading as it begins, so the disk it puts back is never vouched for by a reading of another", async () => {
+  const state = beside(armedWorld());
+  const box = await readyBox(state);
+  const target = (await state.snapshots.take(COMMAND, box, standing(box), { name: "target", memory: false })).snapshot!;
+  await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
+  const stopped = (await state.boxes.find(box.id))!;
+  assert.ok(stopped.stopForkSafety);
+  state.holds.step = "planned";
+  const held = state.snapshots.restore(COMMAND, stopped, standing(stopped), target.id).catch((error: unknown) => error);
+  await untilHeld(state, held);
+  const restoring = (await state.boxes.find(box.id))!;
+  assert.ok(restoring.restoring, "the restore has begun");
+  assert.equal(restoring.stopForkSafety ?? null, null);
+  await state.restart();
+  await held;
 });

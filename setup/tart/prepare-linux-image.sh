@@ -46,10 +46,10 @@ done
 [ -n "$key" ] || die "give bb-box's public key with --key, as bb box doctor shows it"
 if [ "$desktop" = 1 ]; then
   : "${name:=bb-box-linux-desktop}"
-  kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop
+  kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=off
 else
   : "${name:=bb-box-linux}"
-  kind=linux-arm64 artifacts=linux finalize=linux
+  kind=linux-arm64 artifacts=linux finalize=linux identity_reset=on
 fi
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -121,7 +121,7 @@ dir=/var/tmp/bb-box-build
 tar -C "$here/.." -czf - proxmox-lxc/template proxmox-lxc/host/common.sh |
   as_root sh -c "rm -rf $dir && mkdir -p $dir && tar -xzf - -C $dir"
 src=$dir/proxmox-lxc/template
-printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\n' "$bb_url" "$build_id" | as_root sh -c "cat >$src/build.env"
+printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\nBOX_IDENTITY_RESET=%s\n' "$bb_url" "$build_id" "$identity_reset" | as_root sh -c "cat >$src/build.env"
 printf '%s\n' "$key" | as_root sh -c "cat >$src/plugin-key.pub"
 
 step "fetching the arm64 tools, BB's host app and any desktop artifacts"

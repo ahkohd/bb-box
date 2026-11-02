@@ -35,7 +35,7 @@
 //   and `mdfind -onlyin` finds files by name there, none while
 //   ~/.fake-spotlight-excluded exists.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tool, ...args] = process.argv.slice(2);
@@ -143,6 +143,8 @@ function tart() {
       }
       writeFileSync(join(dir(name), "running"), String(process.pid));
       rmSync(join(dir(name), "state.vzvmsave"), { force: true });
+      const booted = new Date();
+      if (existsSync(join(dir(name), "nvram.bin"))) utimesSync(join(dir(name), "nvram.bin"), booted, booted);
       const lock = spawn("perl", [new URL("./fake-run-lock.pl", import.meta.url).pathname, join(dir(name), "config.json"), join(dir(name), "running"), String(process.pid)], { stdio: ["ignore", "pipe", "inherit"] });
       lock.on("exit", (code) => code && fail(`fake-run-lock.pl exited ${code}`));
       lock.stdout.once("data", () => {
