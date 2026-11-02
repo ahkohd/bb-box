@@ -341,7 +341,6 @@ function sizeOf(config: Record<string, unknown>): MachineSize | null {
 /** How long a resize's clean shutdown waits for the guest before Proxmox stops it (061). */
 const SHUTDOWN_WAIT_S = 120;
 
-/** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart exits 1, NOCHANGE, when there is nothing to grow, and 2 when it fails. */
 export const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
 disk=/dev/$(lsblk -no PKNAME "$dev")
 part=$(cat "/sys/class/block/$(basename "$dev")/partition")
