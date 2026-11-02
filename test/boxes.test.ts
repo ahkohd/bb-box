@@ -1401,6 +1401,19 @@ test("the facts a start finds replace the box's, so its status says what it has 
   assert.match(boxDetail(started), /\nDisplay mode: CPU\n/);
 });
 
+test("a box that starts again records the address it got, as a Tart VM's from the Mac's DHCP once its old lease went to another VM", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.stop(THREAD, box.name);
+  const kept = await world.boxes.start(THREAD, box.name);
+  assert.equal(kept.guest?.address, box.guest?.address, "a start that finds no address keeps the one it had");
+  await world.boxes.stop(THREAD, box.name);
+  world.backend.startAddress = "192.168.64.6";
+  const started = await world.boxes.start(THREAD, box.name);
+  assert.equal(started.guest?.address, "192.168.64.6");
+  assert.equal((await world.boxes.get(THREAD, box.name)).guest?.address, "192.168.64.6");
+});
+
 test("a box that is not enrolled is not reconnected after a start", async () => {
   const world = setup();
   world.general = { ...world.general, enrol: false };

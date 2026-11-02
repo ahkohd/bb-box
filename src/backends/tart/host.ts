@@ -773,6 +773,17 @@ state "$vm" | grep . || echo gone
 `);
 }
 
+export function leasedAddressScript(vm: string, installId: string, boxId: string | null): string {
+  return script(String.raw`vm=${quote(vm)}
+[ -e "$tart_vms/$vm" ] || { echo gone; exit 0; }
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo not-mine; exit 0; }
+if rollback_running "$vm"; then echo stopped; exit 0; fi
+now=$(state "$vm") || exit 1
+echo "${"$"}{now:-unlisted}"
+case $now in running|suspended) if leased=$(tart ip "$vm" --wait 0 2>&1); then echo "lease=$leased"; else echo "no-lease=$leased" | head -n 1; fi ;; esac
+`);
+}
+
 /**
  * How the VM's last run ended, when it names the box (#406), as `ended`
  * prints it. Prints "gone" when it is not there or not this box's.

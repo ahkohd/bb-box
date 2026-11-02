@@ -326,7 +326,7 @@ test("070 unit 10: a fork boots a new microVM from the snapshot's disk only, nev
 
 test("070 unit 10: a fork that reset holds its own value in its marker; one with its source's value, or none, is refused", () => {
   const lines = (marker: string[]) => ["version=7", "enabled=yes", "boot=reset", "marker=matches", "armed=yes", "pending=no", "box=", "source=value", ...marker, "machine_id=" + "a".repeat(64), "host_key=" + "b".repeat(64), "tailnet_node=no", "addresses_read=yes", "probes=done"].join("\n");
-  const expected = { forkMacs: [], forkValue: "bxfork0000001", sourceMacs: [], sourceBox: "bxsource00001", sourceName: "amber-fox", sourceAddress: null, ownAddress: null, boxAddresses: [], held: { machineId: "c".repeat(64), hostKeys: ["d".repeat(64)] }, safeFrom: 7 };
+  const expected = { forkMacs: [], forkValue: "bxfork0000001", sourceMacs: [], sourceBox: "bxsource00001", sourceName: "amber-fox", sourceAddresses: [], freedSourceAddresses: [], ownAddress: null, boxAddresses: [], held: { machineId: "c".repeat(64), hostKeys: ["d".repeat(64)] }, safeFrom: 7 };
   assert.deepEqual(forkVerdict(parseForkSeen(lines(["marker_value=bxfork0000001"]), 0), expected), { is: "ready" });
   assert.match((forkVerdict(parseForkSeen(lines(["marker_value=bxsource00001"]), 0), expected) as { why: string }).why, /holds amber-fox's value/);
   assert.match((forkVerdict(parseForkSeen(lines([]), 0), expected) as { why: string }).why, /holds no value, not its own bxfork0000001/);
@@ -362,7 +362,7 @@ test("070 unit 10: in an image with no ip command, as microsandbox's, the fork c
   const ran = spawnSync("/bin/sh", ["-c", forkCheckScript().replaceAll(IDENTITY_TOOL, join(bin, "bb-box-identity"))], { encoding: "utf8", env: { BBBOX_IDENTITY_ROOT: root, PATH: bin } });
   const seen = parseForkSeen(ran.stdout, ran.status);
   assert.deepEqual([seen.addresses, seen.markerValue, seen.unreadable], [["172.16.0.6", "172.16.1.1"], "bxfork0000001", []]);
-  const expected = { forkMacs: [], forkValue: "bxfork0000001", sourceMacs: [], sourceBox: "bxsource00001", sourceName: "amber-fox", sourceAddress: null, ownAddress: null, boxAddresses: [], held: { machineId: "c".repeat(64), hostKeys: [] }, safeFrom: 7 };
+  const expected = { forkMacs: [], forkValue: "bxfork0000001", sourceMacs: [], sourceBox: "bxsource00001", sourceName: "amber-fox", sourceAddresses: [], freedSourceAddresses: [], ownAddress: null, boxAddresses: [], held: { machineId: "c".repeat(64), hostKeys: [] }, safeFrom: 7 };
   assert.deepEqual(forkVerdict(seen, expected), { is: "ready" });
 });
 

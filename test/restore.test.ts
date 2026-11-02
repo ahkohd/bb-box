@@ -85,6 +85,16 @@ test("G4 on LVM-thin: a restore to the oldest of three stops the box, takes its 
   assert.equal(read(state, box, "work.txt"), "written after the last snapshot, before the stop", "the undo holds what was written before the stop");
 });
 
+test("a restored box records the address its start found, as a Tart VM's that boots again", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
+  state.backend.startAddress = "192.168.64.7";
+  const answer = await state.snapshots.restore(COMMAND, box, standing(box), "one");
+  assert.equal(answer.operation.state, "done");
+  assert.equal((await current(state, box)).guest?.address, "192.168.64.7");
+});
+
 test("G8: the access file is the first command after the restore, before the labels and BB's machine; the size is read back", async () => {
   const state = world();
   const box = await readyBox(state);

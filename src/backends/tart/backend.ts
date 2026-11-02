@@ -78,6 +78,8 @@ import {
   type SnapshotTake,
   type SnapshotTaken,
   type Snapshotting,
+  type Started,
+  type LeasedAddressNow,
   type TaskKind,
   type TaskOutcome,
   type TaskRef,
@@ -148,6 +150,7 @@ import {
   parseSpotlight,
   parseState,
   powerScript,
+  leasedAddressScript,
   vmStateScript,
   startScript,
   TART_RUN_AGAIN_SECONDS,
@@ -523,6 +526,8 @@ function diskFree(disk: HostState["disk"]): string {
 function formatMiB(value: number): string {
   return value >= MiB_PER_GiB ? `${Math.round((value / MiB_PER_GiB) * 10) / 10} GiB` : `${value} MiB`;
 }
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 function powerOf(state: string | undefined): PowerState {
   if (state === "running") return "running";
@@ -1844,7 +1849,7 @@ export class TartBackend implements Backend {
     return end ? endReason(end, windows ? "QEMU" : "tart run") : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void> {
     if (slotRefOf(guest)) return this.#slots(guest).start(guest, signal);
     const host = this.#hostOf(guest);
     const os = this.#osOf(guest);
@@ -1874,6 +1879,21 @@ export class TartBackend implements Backend {
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
     // A macOS VM resumes from its suspend with the time it stopped at.
     if (os === "macos") await this.#clock(host, address, signal);
+    return { address };
+  }
+
+  async leasedAddressNow(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow> {
+    if (slotRefOf(guest) || this.#osOf(guest) === "windows") return { power: "running", leased: guest.address };
+    const host = this.#hostOf(guest);
+    const lines = (await this.#run(host, leasedAddressScript(guest.ref, this.#context.installId, this.#boxOf(guest)), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").map((line) => line.trim());
+    const [state = "", lease = ""] = lines;
+    if (state === "gone" || state === "stopped") return { power: state, leased: null };
+    if (state === "not-mine") throw new Error(`The VM ${guest.ref} on ${host.name} is there, but its owner file does not name this box.`);
+    if (state !== "running" && state !== "suspended") throw new Error(`Tart does not list ${guest.ref} on ${host.name} as running, suspended or stopped${state ? `: it says "${state}"` : ""}.`);
+    const leased = lease.startsWith("lease=") ? lease.slice("lease=".length) : null;
+    if (leased !== null && !IPV4.test(leased)) throw new Error(`tart ip gave ${guest.ref} on ${host.name} "${leased}", not an address.`);
+    if (state === "running" && leased === null) throw new Error(`tart ip found no lease for ${guest.ref} on ${host.name}, which runs: ${lease.replace(/^no-lease=/, "") || "it said nothing"}`);
+    return { power: state, leased };
   }
 
   /**
@@ -1950,7 +1970,7 @@ export class TartBackend implements Backend {
       if (result.exitCode !== 0) throw new Error(`The box's disk grew, but Linux could not grow its root file system: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
     const read = (await this.#readSize(host, guest, signal)) ?? to;
-    return { ...guest, size: read };
+    return { ...guest, address: this.#addresses.get(ref) ?? guest.address, size: read };
   }
 
   async #shutDownWindows(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -2089,7 +2109,9 @@ export class TartBackend implements Backend {
     const host = this.#hostOf(guest);
     const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, this.#owner(box)), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
-    if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, this.#osOf(guest), box.name, signal);
+    if (from === box.name) return;
+    const address = this.#addresses.get(guest.ref) ?? (await this.#lookup(host, guest.ref).catch(() => null));
+    if (address) await this.#name(host, address, guest.ref, this.#osOf(guest), box.name, signal);
   }
 
 
@@ -2792,7 +2814,7 @@ export class TartBackend implements Backend {
     }
     let address: string | null = this.#addresses.get(guest.ref) ?? null;
     if (!address) {
-      address = (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
+      address = await this.#lookup(host, guest.ref).catch(() => null);
     }
     if (!address) throw new TransportError("unreachable", `The VM ${guest.ref} on ${host.name} has no address. It may be stopped.`);
     const os = guestOsOf(kind);
@@ -3518,7 +3540,7 @@ export class TartBackend implements Backend {
   /** Asks a Linux box's VM to shut down (powerOffScript); false when it could not be asked. */
   async #powerOff(host: TartHost, guest: Guest, os: "linux" | "macos", signal?: AbortSignal): Promise<boolean> {
     try {
-      const address = this.#addresses.get(guest.ref) ?? (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
+      const address = this.#addresses.get(guest.ref) ?? (await this.#lookup(host, guest.ref).catch(() => null));
       if (!address) return false;
       const { ssh } = await this.#keys();
       const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);

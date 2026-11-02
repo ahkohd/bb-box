@@ -8,7 +8,6 @@ import {
   type CopyHooks,
   type DoctorCheck,
   type Guest,
-  type GuestFact,
   type HeldCopyLabel,
   type HeldSnapshot,
   type KeepsPastRelease,
@@ -20,9 +19,11 @@ import {
   type SnapshotPlan,
   type Snapshotting,
   type SnapshotStorage,
+  type Started,
   type TaskKind,
   type TaskOutcome,
   type TaskRef,
+  startedGuest,
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
@@ -3002,7 +3003,7 @@ export class Snapshots {
         guest = box.guest ?? fresh;
       }
 
-      let facts: readonly GuestFact[] | undefined;
+      let started: Started | void = undefined;
       const startParts: string[] = [];
       let accessWritten = false;
       let accessFailed: unknown = null;
@@ -3028,7 +3029,7 @@ export class Snapshots {
             await writeAccess();
             await this.#deps.hold?.(operation, "answered", signal);
           };
-          facts = (await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered))?.facts;
+          started = await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered);
         } catch (error) {
           if (signal.aborted) throw error;
           if (accessFailed && context.fromSnapshot) return await this.#swapBack(context, box, `bb-box could not write its new guest's access file: ${sentence(message(accessFailed))}`);
@@ -3042,7 +3043,7 @@ export class Snapshots {
       if (ahead("size")) {
         at("size");
         to = (await this.#sizeOf(backend, guest, signal)) ?? to;
-        box = await this.#moved(box, { guest: { ...guest, ...(to ? { size: to } : {}), ...(facts ? { facts } : {}) }, ...(to ? { size: withRecordedGpu(to, box.size) } : {}) });
+        box = await this.#moved(box, { guest: { ...startedGuest(guest, started), ...(to ? { size: to } : {}) }, ...(to ? { size: withRecordedGpu(to, box.size) } : {}) });
       }
       if (ahead("access") && !accessWritten) {
         try {
@@ -3232,7 +3233,7 @@ export class Snapshots {
     if (ran) {
       try {
         const started = await backend.start!(guest, this.#stopping.signal);
-        box = await this.#moved(box, { state: "ready", error: null, restoring: null, ...(started?.facts ? { guest: { ...guest, facts: started.facts } } : {}) });
+        box = await this.#moved(box, { state: "ready", error: null, restoring: null, ...(started ? { guest: startedGuest(guest, started) } : {}) });
         back = `bb-box started box ${box.name} again as it was`;
         this.#deps.boxes.machineBack(box);
       } catch (error) {

@@ -5,14 +5,14 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { Backend, Guest, GuestIdentity } from "../src/backends/types.ts";
+import type { Backend, Guest, GuestIdentity, LeasedAddressNow } from "../src/backends/types.ts";
 import { OPERATOR, type BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, Standing } from "../src/core/snapshot.ts";
 import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
 import { forkCheckText, forkedText } from "../src/plugin/snapshot-words.ts";
 import { forkPreview, forkWhyOf } from "../src/plugin/snapshot-card.ts";
-import { IDENTITY_TOOL, forkCheckScript, forkVerdict, parseForkSeen, type ForkSeen } from "../src/core/identity.ts";
+import { IDENTITY_TOOL, forkCheckScript, forkSafetyOf, forkSafetyScript, forkVerdict, parseForkSeen, type ForkSeen } from "../src/core/identity.ts";
 import { COMMAND, THREAD, flushing, identityGuest, readIn, readyBox, rejection, standing, withIdentitySource, world, writeIn, type World } from "./snapshot-world.ts";
 
 const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
@@ -62,6 +62,12 @@ interface Forks {
   readonly roots: Map<string, string>;
   readonly macsAfterRestart: () => void;
   firstBoot: FirstBoot;
+  forkClientId: string | null;
+}
+
+function withLease(root: string, clientId: string): void {
+  mkdirSync(join(root, "run/systemd/netif/leases"), { recursive: true });
+  writeFileSync(join(root, "run/systemd/netif/leases/2"), `# This is private data. Do not parse.\nADDRESS=10.0.0.5\nCLIENTID=${clientId}\n`);
 }
 
 function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?: boolean } = {}): Forks {
@@ -75,12 +81,13 @@ function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?:
     (state.backend as unknown as Record<string, unknown>).guestIdentity = async (guest: Guest): Promise<GuestIdentity> => ({ macs: { net0: macs.get(guest.ref) ?? SOURCE_MAC.toUpperCase() }, smbios: null });
   };
   giveMacs();
-  const forks: Forks = { state, source, roots, macsAfterRestart: giveMacs, firstBoot: "reset" };
+  const forks: Forks = { state, source, roots, macsAfterRestart: giveMacs, firstBoot: "reset", forkClientId: null };
   let count = 0;
   state.provider.onForked = async (made) => {
     const root = join(tempDir("fork-root"), "root");
     cpSync(source.root, root, { recursive: true });
     rmSync(join(root, "run"), { recursive: true, force: true });
+    if (forks.forkClientId) withLease(root, forks.forkClientId);
     const mac = forks.firstBoot === "same-mac" ? SOURCE_MAC : `bc:24:11:0f:0${++count}:2c`;
     writeFileSync(join(root, "ip-link.json"), links(forks.firstBoot === "no-card" || forks.firstBoot === "late-card" ? null : mac));
     macs.set(made.ref, mac.toUpperCase());
@@ -189,6 +196,151 @@ test("070 unit 7, G14: a fork is never handed over when its first boot did not r
     assert.deepEqual(state.kinds(box!.id).filter((kind) => kind.startsWith("fork")), ["fork-asked", "fork-failed"]);
     assert.equal(fileOf(forks.source.root, "home/box/.bb-machines/bb.example/host-id"), "host_source\n");
   }
+});
+
+const SOURCE_CLIENT_ID = "01bc2411aaf1b6";
+const FORK_CLIENT_ID = "01bc24110f012c";
+
+test("where addresses are leased, a fork on its stopped source's last address is handed over only when the snapshot holds its source's DHCP client IDs and the fork shows its own; it is refused while its source runs or is suspended on its lease or recorded address, when the source cannot be read, and always where addresses are static", async () => {
+  type Source = LeasedAddressNow | "unreadable" | "static";
+  const cases: { readonly name: string; readonly source: Source; readonly recorded?: string; readonly held: boolean; readonly fork: string | null; readonly why: RegExp | null }[] = [
+    { name: "stopped, its own client ID", source: { power: "stopped", leased: null }, held: true, fork: FORK_CLIENT_ID, why: null },
+    { name: "gone, its own client ID", source: { power: "gone", leased: null }, held: true, fork: FORK_CLIENT_ID, why: null },
+    { name: "stopped, a snapshot that holds no client ID", source: { power: "stopped", leased: null }, held: false, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take what is sent to \S+/ },
+    { name: "gone, a snapshot that holds no client ID", source: { power: "gone", leased: null }, held: false, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
+    { name: "stopped, a fork with no lease file", source: { power: "stopped", leased: null }, held: true, fork: null, why: /after 0 s: it holds \S+'s last address 10\.0\.0\.5, and has no DHCP lease on record yet to show that it asked for it as itself/ },
+    { name: "stopped, a fork with its source's client ID", source: { power: "stopped", leased: null }, held: true, fork: SOURCE_CLIENT_ID, why: /it asked for its address with \S+'s DHCP client ID/ },
+    { name: "running, on its recorded address", source: { power: "running", leased: "10.0.0.8" }, held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
+    { name: "running, on its lease", source: { power: "running", leased: SOURCE_ADDRESS }, recorded: "10.0.0.8", held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
+    { name: "suspended, on its recorded address", source: { power: "suspended", leased: null }, held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
+    { name: "unreadable", source: "unreadable", held: true, fork: FORK_CLIENT_ID, why: /it could not read the address \S+ holds now, so it cannot tell that the fork does not take it: Reading it failed: the Mac did not answer\. bb-box released it/ },
+    { name: "static", source: "static", held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
+  ];
+  for (const each of cases) {
+    const forks = forkWorld({ forkWaitMs: 0 });
+    forks.firstBoot = "source-address";
+    forks.forkClientId = each.fork;
+    const { state } = forks;
+    if (each.held) withLease(forks.source.root, SOURCE_CLIENT_ID);
+    const asked: string[] = [];
+    const source = each.source;
+    if (source !== "static") {
+      Object.assign(state.backend, {
+        leasedAddressNow: async (guest: Guest): Promise<LeasedAddressNow> => {
+          asked.push(guest.ref);
+          if (source === "unreadable") throw new Error("the Mac did not answer");
+          return source;
+        },
+      });
+    }
+    const recorded = each.recorded ?? SOURCE_ADDRESS;
+    const box = (await state.boxes.update(await readyBox(state), (current) => ({ guest: { ...current.guest!, address: recorded } })))!;
+    const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" })).snapshot!;
+    assert.equal(taken.identity?.dhcpClientIds?.length ?? 0, each.held ? 1 : 0, `${each.name}: the client IDs the snapshot holds`);
+    const fork = await forked(state, (await state.snapshots.fork(COMMAND, box, standing(box), "set up")).box);
+    assert.ok(source === "static" ? asked.length === 0 : asked.every((ref) => ref === box.guest!.ref) && asked.length > 0, `${each.name}: the source's guest is asked`);
+    if (each.why === null) {
+      assert.equal(fork.state, "ready", `${each.name}: ${fork.error ?? ""}`);
+      continue;
+    }
+    assert.equal(fork.state, "failed", each.name);
+    assert.match(fork.error ?? "", each.why, each.name);
+    assert.equal(fork.guest, null, `${each.name}: the fork's guest is released`);
+    if (each.fork === null) assert.ok(asked.length > 1, `${each.name}: the source is read again at each look, ${asked.length} times`);
+  }
+});
+
+test("a source's start waits until its fork's check has passed and the fork is armed", async () => {
+  const forks = forkWorld();
+  forks.firstBoot = "source-address";
+  forks.forkClientId = FORK_CLIENT_ID;
+  const { state } = forks;
+  withLease(forks.source.root, SOURCE_CLIENT_ID);
+  const box = (await state.boxes.update(await readyBox(state), (current) => ({ guest: { ...current.guest!, address: SOURCE_ADDRESS } })))!;
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  await state.boxes.stop(THREAD, box.name);
+  const order: string[] = [];
+  const start = state.backend.start!.bind(state.backend);
+  const armFork = (state.backend as Backend).armFork!.bind(state.backend);
+  let starting: Promise<unknown> | null = null;
+  Object.assign(state.backend, {
+    start: async (guest: Guest, ...rest: [AbortSignal?, ((step: string, ms: number) => void)?, (() => Promise<void>)?]) => {
+      const started = await start(guest, ...rest);
+      if (guest.ref === box.guest!.ref) order.push("source started");
+      return started;
+    },
+    armFork: async (guest: Guest, arming: "network" | "boot", signal?: AbortSignal) => {
+      await armFork(guest, arming, signal);
+      if (arming === "boot") order.push("fork armed");
+    },
+    leasedAddressNow: async (guest: Guest): Promise<LeasedAddressNow> => {
+      order.push("source read");
+      const power = await state.backend.power(guest);
+      if (!starting) {
+        starting = state.boxes.start(THREAD, box.name);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return { power: power === "running" ? "running" : "stopped", leased: power === "running" ? SOURCE_ADDRESS : null };
+    },
+  });
+  const fork = await forked(state, (await state.snapshots.fork(COMMAND, box, standing(box), "set up")).box);
+  await starting;
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.deepEqual(order, ["source read", "fork armed", "source started"]);
+});
+
+test("a fork records the address its first start found, as a Tart VM's from the Mac's DHCP, and is refused when it does not hold it", async () => {
+  for (const [address, why] of [["10.0.0.11", null], ["10.0.0.99", /it does not hold its own address 10\.0\.0\.99, only 10\.0\.0\.11/]] as const) {
+    const forks = forkWorld();
+    const { state } = forks;
+    const box = await readyBox(state);
+    await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+    state.backend.startAddress = address;
+    const fork = await forked(state, (await state.snapshots.fork(COMMAND, box, standing(box), "set up")).box);
+    if (why === null) {
+      assert.equal(fork.state, "ready", fork.error ?? "");
+      assert.equal(fork.guest?.address, address);
+      continue;
+    }
+    assert.equal(fork.state, "failed");
+    assert.match(fork.error ?? "", why);
+  }
+});
+
+test("a fork that asked for its address with its source's DHCP client ID is refused, as a DHCP server would take it for its source; one with a client ID of its own is handed over", () => {
+  const sourceClientId = createHash("sha256").update("01bc2411aaf1b6").digest("hex");
+  const own = createHash("sha256").update("01bc24110f012c").digest("hex");
+  const expected = { ...EXPECTED, held: { ...EXPECTED.held, dhcpClientIds: [sourceClientId] } };
+  assert.deepEqual(forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${own}`]), 0), expected), { is: "ready" });
+  const same = forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${sourceClientId}`]), 0), expected);
+  assert.equal(same.is, "refused");
+  assert.match((same as { why: string }).why, /^it asked for its address with amber-fox's DHCP client ID, so a DHCP server takes it for amber-fox and may give it amber-fox's address$/);
+  assert.deepEqual(forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${sourceClientId}`]), 0), EXPECTED), { is: "ready" }, "a snapshot that held no client ID, from before bb-box read them, is checked as before");
+  const unreadable = forkVerdict(parseForkSeen(seenLines([...WHOLE, "unreadable=/run/systemd/netif/leases/2"]), 0), expected);
+  assert.match((unreadable as { why: string }).why, /could not read \/run\/systemd\/netif\/leases\/2 in it/);
+});
+
+test("the identity a snapshot holds and the fork check read the DHCP client ID of each systemd-networkd lease, hashed", () => {
+  const root = join(tempDir("client-id"), "root");
+  const bin = join(root, "..", "bin");
+  const put = (path: string, text: string, mode = 0o644) => {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, text, { mode });
+  };
+  put(join(root, "etc/machine-id"), `${SOURCE_MACHINE_ID}\n`);
+  put(join(root, "etc/ssh/ssh_host_ed25519_key.pub"), `${SOURCE_HOST_KEY}\n`);
+  put(join(root, "run/systemd/netif/leases/2"), "# This is private data. Do not parse.\nADDRESS=192.168.64.5\nSERVER_ADDRESS=192.168.64.1\nLIFETIME=1h\nCLIENTID=01f6839d58e72c\n");
+  put(join(root, "run/systemd/netif/leases/3"), "ADDRESS=10.0.0.9\n");
+  put(join(root, "etc/bb-box/identity"), "bb-box identity 1\nsource eth\nmac bc:24:11:0f:01:2c\n");
+  put(join(bin, "bb-box-identity"), `#!/bin/sh\nprintf '${STATUS_RESET.replaceAll("\n", "\\n")}\\n'\n`, 0o755);
+  put(join(bin, "id"), "#!/bin/sh\necho 0\n", 0o755);
+  const run = (script: string) => spawnSync("/bin/sh", ["-c", script.replaceAll(IDENTITY_TOOL, join(bin, "bb-box-identity"))], { encoding: "utf8", env: { BBBOX_IDENTITY_ROOT: root, PATH: `${bin}:${process.env.PATH ?? ""}` } });
+  const clientId = createHash("sha256").update("01f6839d58e72c").digest("hex");
+  const held = run(forkSafetyScript());
+  assert.deepEqual(forkSafetyOf(held.stdout, held.status).identity?.dhcpClientIds, [clientId], held.stderr);
+  const checked = run(forkCheckScript());
+  const seen = parseForkSeen(checked.stdout, checked.status);
+  assert.deepEqual([seen.identity.dhcpClientIds, seen.unreadable], [[clientId], []], checked.stderr);
 });
 
 test("070 unit 7: a fork whose card comes after its first boot is held until its settle resets it, then handed over", async () => {
@@ -309,7 +461,7 @@ function seenLines(lines: readonly string[]): string {
 const STATUS_RESET = "version=7\nenabled=yes\nboot=reset\nmarker=matches\narmed=yes\npending=no\nbox=\nsource=eth";
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
-const EXPECTED = { forkMacs: ["BC:24:11:0F:01:2C"], forkValue: null, sourceMacs: ["BC:24:11:AA:F1:B6"], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddress: "10.0.0.5", ownAddress: "10.0.0.6", boxAddresses: ["10.0.0.5", "10.0.0.6", "10.0.0.7"], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 7 };
+const EXPECTED = { forkMacs: ["BC:24:11:0F:01:2C"], forkValue: null, sourceMacs: ["BC:24:11:AA:F1:B6"], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddresses: ["10.0.0.5"], freedSourceAddresses: [], ownAddress: "10.0.0.6", boxAddresses: ["10.0.0.5", "10.0.0.6", "10.0.0.7"], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 7 };
 const WHOLE = [STATUS_RESET, `machine_id=${HASH_B}`, `host_key=${HASH_B}`, "tailnet_node=no", "marker_mac=bc:24:11:0f:01:2c", "address=10.0.0.6", "addresses_read=yes"];
 
 test("070 unit 7 reviews: the check before ready needs every observation read, its own address and no other box's, an armed marker, and a version the backend forks from; an address or MAC of another box refuses at once, before any wait", () => {
@@ -602,7 +754,7 @@ test("070 unit 8: a fork's release disarms its guest before every attempt to del
 test("070 unit 11b: on a backend whose identity source is a value, the check before ready compares the marker's value with the fork's own box ID, not MAC addresses or addresses the provider gives", () => {
   const status = "version=8\nenabled=yes\nboot=kept\nmarker=matches\narmed=yes\npending=no\nbox=\nsource=value";
   const whole = [status, `machine_id=${HASH_B}`, `host_key=${HASH_B}`, "tailnet_node=no", "marker_value=bxfork00000001", "address=203.0.113.9", "addresses_read=yes"];
-  const expected = { forkMacs: [], sourceMacs: [], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddress: null, ownAddress: null, boxAddresses: [], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 8, forkValue: "bxfork00000001" };
+  const expected = { forkMacs: [], sourceMacs: [], sourceBox: "bxsource", sourceName: "amber-fox", sourceAddresses: [], freedSourceAddresses: [], ownAddress: null, boxAddresses: [], held: { machineId: HASH_A, hostKeys: [HASH_A] }, safeFrom: 8, forkValue: "bxfork00000001" };
   assert.deepEqual(forkVerdict(parseForkSeen(seenLines(whole), 0), expected), { is: "ready" });
   const cases: readonly [string, readonly string[], RegExp][] = [
     ["the source's value", whole.map((line) => line.replace("marker_value=bxfork00000001", "marker_value=bxsource")), /its identity marker holds amber-fox's value, so its identity reset did not tell it is a copy/],

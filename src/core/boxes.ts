@@ -41,17 +41,19 @@ import {
   type GrantAnswer,
   type GrantRequest,
   type Guest,
-  type GuestFact,
   type HeldGuest,
   type KindCapabilities,
+  type LeasedAddressNow,
   type MachineNature,
   type PowerState,
   type ReleaseHooks,
   type ResizePlan,
   type Resizing,
   type SizePart,
+  type Started,
   type StopReason,
   desktopDisplays,
+  startedGuest,
 } from "../backends/types.ts";
 import { TransportError, type ByteChannel, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
@@ -742,6 +744,10 @@ export interface ForkRequest {
 }
 
 export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind"> & { readonly size: MachineSize | null };
+
+function distinctAddresses(addresses: readonly (string | null)[]): string[] {
+  return [...new Set(addresses.filter((address): address is string => !!address))];
+}
 
 function sentenceOf(text: string): string {
   const trimmed = text.trim();
@@ -2277,12 +2283,16 @@ export class Boxes {
     await backend.armFork(made, "network", signal);
     await hooks.starting();
     const booting = this.#now();
+    let started: Started | void = undefined;
     if (backend.startForForkCheck) await backend.startForForkCheck(made, signal, hooks.timing);
-    else await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
+    else started = await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
     timings.start = this.#now() - booting;
-    await this.#checkFork(box, made, backend, timings, signal);
-    await backend.armFork(made, "boot", signal);
-    return made;
+    const running = startedGuest(made, started);
+    await this.#chain(fork.source.id, async () => {
+      await this.#checkFork(box, running, backend, timings, signal);
+      await backend.armFork!(running, "boot", signal);
+    });
+    return running;
   }
 
   async #forkFailed(box: BoxRecord, backend: Backend, error: unknown, timings: Record<string, number>): Promise<void> {
@@ -2333,21 +2343,22 @@ export class Boxes {
     if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
     const own = await backend.guestIdentity!(guest, signal);
     const byEndpoint = backend.addressIsAnEndpoint === true;
-    const expected = {
+    const expectedNow = async () => ({
       forkMacs: Object.values(own.macs),
       forkValue: own.value ?? null,
       sourceMacs: fork.source.macs,
       sourceBox: fork.source.id,
       sourceName: fork.source.name,
-      sourceAddress: byEndpoint ? null : (fork.source.address ?? null),
+      ...(byEndpoint ? { sourceAddresses: [], freedSourceAddresses: [] } : await this.#sourceAddresses(box, backend, signal)),
       ownAddress: byEndpoint ? null : guest.address,
       boxAddresses: backend.boxAddresses?.() ?? [],
       held: fork.snapshot.identity,
       safeFrom: backend.snapshotting?.(box.kind)?.forkSafeFrom ?? 1,
-    };
+    });
     const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;
     for (let look = 1; ; look++) {
-      const verdict = forkVerdict(await readForkSeen(command, signal, box.capabilities.os === "macos" ? "macos" : "linux"), expected);
+      const seen = await readForkSeen(command, signal, box.capabilities.os === "macos" ? "macos" : "linux");
+      const verdict = forkVerdict(seen, await expectedNow());
       if (verdict.is === "ready") break;
       if (verdict.is === "refused" || look >= FORK_LOOKS) {
         const waited = verdict.is === "wait" ? ` after ${Math.round(waitMs / 1000)} s` : "";
@@ -2357,6 +2368,24 @@ export class Boxes {
       signal.throwIfAborted();
     }
     timings.check = this.#now() - began;
+  }
+
+  async #sourceAddresses(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<{ readonly sourceAddresses: readonly string[]; readonly freedSourceAddresses: readonly string[] }> {
+    const fork = box.fork!;
+    const asked = fork.source.address ?? null;
+    if (!backend.leasedAddressNow) return { sourceAddresses: asked ? [asked] : [], freedSourceAddresses: [] };
+    const source = await this.#read(fork.source.threadId, fork.source.id);
+    const recorded = distinctAddresses([asked, source?.guest?.address ?? null]);
+    if (!source?.guest) return { sourceAddresses: [], freedSourceAddresses: recorded };
+    let now: LeasedAddressNow;
+    try {
+      now = await backend.leasedAddressNow(source.guest, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new BoxError("failed", `bb-box did not hand fork ${box.name} over: it could not read the address ${fork.source.name} holds now, so it cannot tell that the fork does not take it: ${sentenceOf(describeError(error, "Reading it"))}`);
+    }
+    if (now.power === "stopped" || now.power === "gone") return { sourceAddresses: [], freedSourceAddresses: recorded };
+    return { sourceAddresses: distinctAddresses([now.leased, ...recorded]), freedSourceAddresses: [] };
   }
 
   async #acquire(initial: BoxRecord, signal: AbortSignal): Promise<void> {
@@ -2830,18 +2859,18 @@ export class Boxes {
     this.#event(current, "start-asked", who);
     const timings: Record<string, number> = {};
     const began = this.#now();
-    let facts: readonly GuestFact[] | undefined;
+    let changed: Started | void;
     try {
-      facts = (await start(current.guest!, signal, (step, ms) => {
+      changed = await start(current.guest!, signal, (step, ms) => {
         timings[`start.${step}`] = ms;
-      }))?.facts;
+      });
     } catch (error) {
       const observation = await this.#observedAfterFailure(current, signal, true);
       this.#event(current, "start-failed", who, { words: describeError(error, "Starting the box"), observed: observation });
       throw error;
     }
     timings["start.total"] = this.#now() - began;
-    const started = (await this.#move(current, "ready", timings, facts)) ?? current;
+    const started = (await this.#move(current, "ready", timings, changed)) ?? current;
     this.#event(current, "started", who);
     if (started.state === "ready") await this.#markIdentityAgain(started, signal);
     if (started.state === "ready" && started.restoredAt) {
@@ -3087,7 +3116,7 @@ export class Boxes {
     box: BoxRecord,
     state: "stopping" | "stopped" | "starting" | "ready",
     started?: Readonly<Record<string, number>>,
-    facts?: readonly GuestFact[],
+    changed?: Started | void,
     stoppedWith: Partial<BoxRecord> = {},
   ): Promise<BoxRecord | null> {
     const moving = state === "stopping" || state === "starting";
@@ -3098,7 +3127,7 @@ export class Boxes {
       if (moving) return { state, error: null };
       if (state === "stopped") return { state, stoppedAt: this.#now(), ...stoppedWith };
       if (!started) return { state };
-      const guest = facts && current.guest ? { guest: { ...current.guest, facts } } : {};
+      const guest = changed && current.guest ? { guest: startedGuest(current.guest, changed) } : {};
       return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest };
     });
   }
