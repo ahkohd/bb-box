@@ -83,6 +83,12 @@ export interface HelperWould {
   readonly words: string;
 }
 
+export interface HelperUnsettled {
+  readonly vmid: number;
+  readonly card: string;
+  readonly after: number;
+}
+
 export type HelperAnswer =
   | { readonly vmid: number; readonly generation: number; readonly is: "granted"; readonly part: GpuPart; readonly card: string | null }
   | { readonly vmid: number; readonly generation: number; readonly is: "refused"; readonly reason: string; readonly detail: string | null }
@@ -110,10 +116,11 @@ export interface HelperLines {
   readonly ledger: ReadonlyMap<number, LedgerEntry>;
   readonly would: readonly HelperWould[];
   readonly answers: readonly HelperAnswer[];
+  readonly unsettled: readonly HelperUnsettled[];
   readonly omitted: readonly string[];
 }
 
-export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledger: new Map(), would: [], answers: [], omitted: [] };
+export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledger: new Map(), would: [], answers: [], unsettled: [], omitted: [] };
 
 const orNull = (value: string | undefined): string | null => (value === undefined || value === "-" ? null : value);
 const numberOrNull = (value: string | undefined): number | null => (value === undefined || value === "-" ? null : Number(value));
@@ -129,6 +136,7 @@ export function parseHelperLines(notes: string): HelperLines {
   const ledger = new Map<number, LedgerEntry>();
   const would: HelperWould[] = [];
   const answers: HelperAnswer[] = [];
+  const unsettled: HelperUnsettled[] = [];
   const omitted: string[] = [];
   let ledgerReported = false;
   for (const line of reportLines(notes)) {
@@ -151,9 +159,11 @@ export function parseHelperLines(notes: string): HelperLines {
       answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "yielded", card: match[3]! });
     } else if ((match = /^claim (\d+) g(\d+) released$/.exec(line))) {
       answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "released" });
+    } else if ((match = new RegExp(`^unsettled (\\d+) (${UUID}) g(\\d+)$`).exec(line))) {
+      unsettled.push({ vmid: Number(match[1]), card: match[2]!, after: Number(match[3]) });
     } else if ((match = /^omitted (.+)$/.exec(line))) omitted.push(match[1]!);
   }
-  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledger, would, answers, omitted };
+  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledger, would, answers, unsettled, omitted };
 }
 
 export function cardName(card: HelperCard): string {
@@ -385,13 +395,14 @@ const REFUSALS: Readonly<Record<string, string>> = {
   "card-held": "another guest has its card's devices",
   copy: "another guest holds its box's claim",
   "ledger-lost": "the helper's ledger was rebuilt and its lines did not match its marker",
+  unsettled: "a guest that may hold its card has not asked again since the helper's ledger was lost",
 };
 
 export function refusalWords(reason: string, detail: string | null): string {
   const why = REFUSALS[reason] ?? `the helper's reason was ${reason}`;
   if (detail === null) return why;
   if (reason === "locked") return `it was locked (${detail})`;
-  if (/^\d+$/.test(detail) && ["whole-taken", "card-held", "copy"].includes(reason)) return `${why}: CT ${detail}`;
+  if (/^\d+$/.test(detail) && ["whole-taken", "card-held", "copy", "unsettled"].includes(reason)) return `${why}: CT ${detail}`;
   return why;
 }
 
@@ -542,6 +553,25 @@ function nameOf(guest: MigrationGuest): string {
   return guest.name ? `CT ${guest.look.vmid} (${guest.name})` : `CT ${guest.look.vmid}`;
 }
 
+function unsettledWords(lines: HelperLines, ours: ReadonlySet<number>, guests: readonly MigrationGuest[]): { readonly ours: string | null; readonly others: string | null } {
+  const say = (mine: boolean): string | null => {
+    const waiting = lines.unsettled.filter((line) => ours.has(line.vmid) === mine);
+    if (!waiting.length) return null;
+    const vmids = [...new Set(waiting.map((line) => line.vmid))];
+    const names = vmids.map((vmid) => {
+      const guest = guests.find((candidate) => candidate.look.vmid === vmid);
+      return guest ? nameOf(guest) : `CT ${vmid}`;
+    });
+    const cards = [...new Set(waiting.map((line) => line.card))].map((uuid) => {
+      const card = lines.cards.find((candidate) => candidate.uuid === uuid);
+      return card ? cardName(card) : `card ${uuid}`;
+    });
+    const whose = mine ? (vmids.length === 1 ? "This guest of this install" : `These ${vmids.length} guests of this install`) : vmids.length === 1 ? "This guest of another install" : `These ${vmids.length} guests of other installs`;
+    return `${whose} may hold a card and ${vmids.length === 1 ? "has" : "have"} not asked again since the GPU helper's ledger was lost: ${named(names)}. Until each has, ${inWords(cards)} ${cards.length === 1 ? "takes" : "take"} no new box and no whole claim.`;
+  };
+  return { ours: say(true), others: say(false) };
+}
+
 export function judgeGpuMigration(lines: HelperLines, guests: readonly MigrationGuest[], seen: Eligibility & { readonly node: string; readonly vmid: number }): GpuHelperVerdict {
   const journal = `journalctl -u bb-box-gpu on ${seen.node}`;
   if (!lines.ledgerReported) {
@@ -593,8 +623,13 @@ export function judgeGpuMigration(lines: HelperLines, guests: readonly Migration
     if ((entry?.answered ?? 0) < marker.generation) unanswered.push(nameOf(guest));
     else mismatched.push(`${nameOf(guest)}, whose marker is ${gpu[0]} while the helper's ledger holds ${claimWords(entry?.claim ?? null)}`);
   }
+  const unsettled = unsettledWords(lines, ours, guests);
   const problems: string[] = [];
   const fixes: string[] = [];
+  if (unsettled.ours) {
+    problems.push(unsettled.ours);
+    fixes.push("Run bb box gpu mark, which asks again for each of this install's guests; the helper's answer opens the card again.");
+  }
   if (unknown.length) {
     problems.push(`The device lines of ${named(unknown)} name nodes no card in the GPU helper's report has.`);
     fixes.push("Put those lines right by hand, as root on the host; the helper never writes them.");
@@ -617,10 +652,16 @@ export function judgeGpuMigration(lines: HelperLines, guests: readonly Migration
   }
   if (problems.length) return { status: "fail", detail: problems.join(" "), fix: [...new Set(fixes)].join(" ") };
   const doubts: string[] = [];
+  if (unsettled.others) doubts.push(unsettled.others);
   if (unanswered.length) doubts.push(`The GPU helper has not answered the marker of ${named(unanswered)} yet.`);
   if (othersWould.length) doubts.push(`It would write ${named(othersWould.map((vmid) => `CT ${vmid}`))}, which ${othersWould.length === 1 ? "is not a guest" : "are not guests"} of this install's pool.`);
   if (doubts.length) {
-    return { status: "warn", detail: doubts.join(" "), fix: unanswered.length ? "Run bb box doctor again in a minute: the helper answers within seconds." : `Find why with ${journal}.` };
+    const fix = unsettled.others
+      ? "Run bb box gpu mark on the BB that made each of those guests, which asks again, or take their device lines off by hand while they are stopped."
+      : unanswered.length
+        ? "Run bb box doctor again in a minute: the helper answers within seconds."
+        : `Find why with ${journal}.`;
+    return { status: "warn", detail: doubts.join(" "), fix };
   }
   const detail = cardLines.length
     ? `Each of the ${cardLines.length === 1 ? "1 guest" : `${cardLines.length} guests`} of this install with GPU device lines is marked, the GPU helper on ${seen.node} granted each marker as it stands, and it would write no guest.`

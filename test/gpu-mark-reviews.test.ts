@@ -218,7 +218,7 @@ test("the doctor never passes a report that leaves lines out, or one with no led
   assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so bb-box cannot show the helper granted each marker as it stands."]);
   bridge.guest(7301, desktop("bx7301", "new", CARD_B));
   const refused = await bridge.backend().markGpus(request());
-  assert.equal(refused.refused?.detail, "bb-box-gpu 0.3.0 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
+  assert.equal(refused.refused?.detail, "bb-box-gpu 0.3.1 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
   assert.ok(!bridge.tags(7301).some((tag) => tag.startsWith("gpu.")));
 });
 

@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.3.0';
+use constant VERSION => '0.3.1';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -581,7 +581,7 @@ sub refresh_guest {
 
 sub ledger_path { return host_path(STATE_DIR . '/ledger') }
 
-sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [] } }
+sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [], unsettled => {} } }
 
 sub load_ledger {
     my $path = ledger_path();
@@ -590,9 +590,10 @@ sub load_ledger {
     my $data = defined $text ? eval { JSON::PP->new->decode($text) } : undef;
     return (undef, 'corrupt') unless ref($data) eq 'HASH' && defined $data->{protocol} && $data->{protocol} =~ /^\d+$/;
     return (undef, 'newer', $data->{protocol}) if $data->{protocol} > PROTOCOL;
-    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY';
+    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY' && ref($data->{unsettled} // {}) eq 'HASH';
     $data->{guests} //= {};
     $data->{answers} //= [];
+    $data->{unsettled} //= {};
     return ($data, 'ok');
 }
 
@@ -664,6 +665,7 @@ sub refuse {
     my $generation = $marker ? $marker->{generation} : 0;
     $entry->{answered} = $generation if $generation > ($entry->{answered} // 0);
     $entry->{ $ctx->{writes} ? 'strip' : 'proposed_strip' } = { why => $more{strip}, generation => $generation } if $more{strip};
+    settled_by_answer($ctx, $guest);
     record_answer($ctx, {
         vmid => $guest->{vmid},
         generation => $generation,
@@ -689,6 +691,7 @@ sub grant {
     $entry->{answered} = $marker->{generation};
     $entry->{box} = $guest->{box};
     delete @$entry{qw(strip proposed_strip)};
+    settled_by_answer($ctx, $guest);
     record_answer($ctx, {
         vmid => $guest->{vmid},
         generation => $marker->{generation},
@@ -823,6 +826,54 @@ sub yields_card {
         && !$guest->{lock} && !$guest->{pending_devices};
 }
 
+sub unsettle {
+    my ($ctx, $guest) = @_;
+    return if $guest->{holds_nothing} || !%{ $guest->{named} };
+    $ctx->{ledger}{unsettled}{ $guest->{vmid} } = { generation => $guest->{marker}{generation}, box => $guest->{box}, at => int($ctx->{now}) };
+    $ctx->{ledger_dirty} = 1;
+}
+
+sub settled_by_answer {
+    my ($ctx, $guest) = @_;
+    return unless delete $ctx->{ledger}{unsettled}{ $guest->{vmid} };
+    $ctx->{ledger_dirty} = 1;
+    note("CT $guest->{vmid} asked again after the lost ledger and was answered, so no card is closed for it");
+}
+
+sub still_unsettled {
+    my ($ctx, $guests, $vmid) = @_;
+    return 0 unless $ctx->{ledger}{unsettled}{$vmid};
+    my $guest = $guests->{$vmid};
+    return 0 if !$guest && !container_exists($ctx, $vmid);
+    return 0 if $guest && !$guest->{unreadable} && ($guest->{holds_nothing} || !%{ $guest->{named} });
+    return 1;
+}
+
+sub unsettled_on {
+    my ($ctx, $guests, $uuid, $except) = @_;
+    return grep {
+        $_ != $except && still_unsettled($ctx, $guests, $_) && (!$guests->{$_} || $guests->{$_}{unreadable} || $guests->{$_}{named}{$uuid})
+    } sort { $a <=> $b } keys %{ $ctx->{ledger}{unsettled} };
+}
+
+sub standing_on {
+    my ($ctx, $guests, $guest, $uuid) = @_;
+    my $claim = claim_of($ctx, $guest->{vmid});
+    return 1 if $claim && ($claim->{card} // '') eq $uuid;
+    return $guest->{named}{$uuid} && still_unsettled($ctx, $guests, $guest->{vmid}) ? 1 : 0;
+}
+
+sub settle_unsettled {
+    my ($ctx, $guests) = @_;
+    my $unsettled = $ctx->{ledger}{unsettled};
+    for my $vmid (sort { $a <=> $b } keys %$unsettled) {
+        next if still_unsettled($ctx, $guests, $vmid);
+        delete $unsettled->{$vmid};
+        $ctx->{ledger_dirty} = 1;
+        note("CT $vmid has gone or holds no card now, so no card is closed for it after the lost ledger");
+    }
+}
+
 sub whole_blockers {
     my ($ctx, $guests, $uuid, $requester) = @_;
     my @yielders;
@@ -867,6 +918,7 @@ sub release_claim {
     delete @$entry{qw(claim strip proposed_strip)};
     $entry->{answered} = $generation;
     $entry->{box} = $guest->{box};
+    settled_by_answer($ctx, $guest);
     record_answer($ctx, { vmid => $guest->{vmid}, generation => $generation, answer => 'released', target => '-' });
     save_ledger($ctx);
     note("released CT $guest->{vmid} g$generation: its claim is cleared, and its device lines stay as they are");
@@ -896,6 +948,9 @@ sub evaluate_request {
         $desired = device_set($card, $guest->{set}) or return refuse($ctx, $guest, 'card-nodes');
         my $whole = whole_holder($ctx, $guests, $card->{uuid}, $guest->{vmid});
         return refuse($ctx, $guest, 'whole-taken', detail => $whole) if defined $whole;
+        my ($unsettled) = unsettled_on($ctx, $guests, $card->{uuid}, $guest->{vmid});
+        return refuse($ctx, $guest, 'unsettled', detail => $unsettled)
+            if defined $unsettled && ($marker->{part} eq 'whole' || !standing_on($ctx, $guests, $guest, $card->{uuid}));
         if ($marker->{part} eq 'whole') {
             my ($blocker, @found) = whole_blockers($ctx, $guests, $card->{uuid}, $guest->{vmid});
             return refuse($ctx, $guest, 'card-held', detail => $blocker) if defined $blocker;
@@ -1077,7 +1132,10 @@ sub rebuild_ledger {
         my $guest = $guests->{$vmid};
         next if $guest->{ineligible} || !$guest->{marker} || $guest->{marker}{part} eq 'release';
         my $marker = $guest->{marker};
-        next if $marker->{part} ne 'none' && card_blocked($ctx, $guests, $marker->{card}, $vmid);
+        if ($marker->{part} ne 'none' && card_blocked($ctx, $guests, $marker->{card}, $vmid)) {
+            unsettle($ctx, $guest);
+            next;
+        }
         my $desired = $marker->{part} eq 'none' ? [] : ($ctx->{cards}{ $marker->{card} } ? device_set($ctx->{cards}{ $marker->{card} }, $guest->{set}) : undef);
         push @candidates, { guest => $guest, match => defined $desired && same_lines($guest->{devices}, $desired) ? 1 : 0 };
     }
@@ -1129,6 +1187,7 @@ sub refuse_quietly {
     my $entry = entry_for($ctx, $guest);
     my $marker = $guest->{marker};
     $entry->{answered} = $marker->{generation};
+    unsettle($ctx, $guest);
     record_answer($ctx, {
         vmid => $guest->{vmid},
         generation => $marker->{generation},
@@ -1143,13 +1202,6 @@ sub lose_whole {
     my ($ctx, $guest, $because) = @_;
     delete $ctx->{ledger}{guests}{ $guest->{vmid} }{claim};
     refuse_quietly($ctx, $guest, 'ledger-lost', $because);
-}
-
-sub leave_whole_to_its_request {
-    my ($ctx, $guest) = @_;
-    my $entry = $ctx->{ledger}{guests}{ $guest->{vmid} };
-    delete $entry->{claim};
-    $entry->{answered} = 0;
 }
 
 sub settle_whole_conflicts {
@@ -1177,10 +1229,6 @@ sub settle_whole_conflicts {
             next;
         }
         next unless @yielding;
-        if (!$ctx->{writes}) {
-            leave_whole_to_its_request($ctx, $guests->{$keeper});
-            next;
-        }
         lose_whole($ctx, $guests->{$keeper}, $yielding[0]);
     }
 }
@@ -1291,6 +1339,19 @@ sub holder_lines {
     return @lines;
 }
 
+sub unsettled_lines {
+    my ($ctx, $guests) = @_;
+    my @lines;
+    for my $vmid (sort { $a <=> $b } keys %{ $ctx->{ledger}{unsettled} // {} }) {
+        next unless still_unsettled($ctx, $guests, $vmid);
+        my $guest = $guests->{$vmid};
+        for my $uuid (sort { $ctx->{cards}{$a}{row}{index} <=> $ctx->{cards}{$b}{row}{index} } keys %{ $ctx->{cards} }) {
+            push @lines, "unsettled $vmid $uuid g$ctx->{ledger}{unsettled}{$vmid}{generation}" if !$guest || $guest->{unreadable} || $guest->{named}{$uuid};
+        }
+    }
+    return @lines;
+}
+
 sub ledger_lines {
     my ($ctx) = @_;
     my $entries = $ctx->{ledger}{guests} // {};
@@ -1327,13 +1388,14 @@ sub report_lines {
     push @required, map { cut_line("error $_") } @errors[0 .. (@errors > MOST_ERROR_LINES ? MOST_ERROR_LINES : scalar @errors) - 1];
     push @required, 'error and ' . (@errors - MOST_ERROR_LINES) . ' more' if @errors > MOST_ERROR_LINES;
     my @holders = holder_lines($ctx, $guests);
+    my @unsettled = $ctx->{ledger_known} ? unsettled_lines($ctx, $guests) : ();
     my @mismatches = sort @{ $ctx->{mismatches} };
     my @would = sort map { $_->{line} } values %{ $ctx->{would} };
     my @answers = reverse @{ $ctx->{ledger}{answers} // [] };
     my @in_force = map { answer_line($_) } grep { answer_in_force($ctx, $guests, $_) } @answers;
     my %shown = map { $_ => 1 } @in_force;
     my @recent = grep { !$shown{$_}++ } map { answer_line($_) } grep { $ctx->{now} - $_->{at} < ANSWERS_KEPT_SECONDS } @answers;
-    return (\@required, [ [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'ledger lines', \@ledger ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
+    return (\@required, [ [ 'unsettled lines', \@unsettled ], [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'ledger lines', \@ledger ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
 }
 
 sub cut_line {
@@ -1376,7 +1438,7 @@ sub budgeted_report_text {
     my @body = @$required;
     my $used = length($head) + 1;
     $used += length("    $_\n") for @body;
-    my $room = REPORT_BUDGET - $used - length("    omitted 999 holder lines, 999 ledger lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
+    my $room = REPORT_BUDGET - $used - length("    omitted 999 unsettled lines, 999 holder lines, 999 ledger lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
     my @omitted;
     for my $group (@$groups) {
         my ($name, $lines) = @$group;
@@ -1586,6 +1648,7 @@ sub decide {
         last if $stopping;
         converge($ctx, $guests, $guests->{$vmid});
     }
+    settle_unsettled($ctx, $guests);
     prune_answers($ctx, $guests);
     save_ledger($ctx) if $ctx->{ledger_dirty};
 }
