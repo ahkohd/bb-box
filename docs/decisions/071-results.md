@@ -1210,3 +1210,293 @@ version.
   wait stays, as a rollback can start 0.1.0 again.
 - The doctor's pass, live, waits for writes on (unit 5). The lead agreed
   that it warns while writes are off, and skips the gate's optional step 11.
+
+## Unit 4: marking today's guests, and a helper that reports on its first pass
+
+Built on main `b15fe055`, and after the reviews rebased onto `93c25d53`.
+Nothing new is offered: no box gets a card it did not have, and no form, tool
+or setting changes. Writes stay off in both of the helper's units.
+
+### What it does
+
+- **`bb box gpu mark`** marks each guest of this install whose device lines
+  name a card with the claim those lines give: one tag,
+  `gpu.shared.<the card's UUID>.g<N>`, or `gpu.whole` where the box's record
+  says a whole card, which no record on Proxmox LXC does yet. The card is the
+  one the helper's report lists for the lines' `/dev/nvidiaN` and DRM nodes,
+  matched as the helper matches them. N is 1 for a guest the helper has never
+  answered, and otherwise one above the generation its ledger answered last,
+  so a mark after `--undo` is never behind the ledger. Guests with no GPU
+  device lines are not marked. Every Proxmox LXC backend that is on, or
+  `--on <id>`.
+- **What it reads and writes.** For each guest it reads the current config
+  and the pending changes, decides from those, and writes only the tags,
+  every other tag kept, the marker last, with the config's digest, so a
+  change in between is refused. It then reads the guest again, decides again
+  from that read, and tries once more. A config with no digest is not
+  written. It never starts, stops or resizes a guest and never sends a device
+  line. A running box is marked as it runs.
+- **What it leaves, and names.** Checked on every read, from the config just
+  read: a template, a held copy, an earlier guest, an image box, a warm guest
+  being filled or retired, a guest whose tags or description no longer name
+  this install. Then: a lock; GPU lines, or any device change, waiting in the
+  pending changes; a privileged container; raw `lxc.*` lines for GPU
+  devices; lines naming a node no card in the report has, or two cards; lines
+  that are not exactly the card's set for the guest's kind, compared as the
+  helper does, as complete sorted lists with repeats counted; a record that
+  says no GPU; a card another guest holds whole, from the ledger or the
+  holder lines; for a whole record, any other holder of the card; another
+  guest of this install naming the same box, or a ledger entry holding the
+  box for another guest; a gpu tag it did not write.
+- **The helper's answers.** A marker just written counts as granted only
+  from the helper's own `claim <vmid> g<N> granted <part> <card>` line for
+  it. A marker already there counts as granted only when the ledger line
+  holds that generation, part and card. A managed holder line is never taken
+  for a grant. It waits up to 10 s, reading the report each second. Run
+  again, a guest whose marker the helper refused, or whose ledger holds
+  another claim, is asked again with the next generation once every check
+  above passes; a refusal for a reason it does not know is left, named. It
+  exits 1 when it leaves a guest or the helper does not grant one.
+- **`--check`** says what it would mark and what it would leave, and changes
+  nothing. **`--undo`** takes the shared and whole markers off this install's
+  guests, checking each again from the config it reads, and nothing else. It
+  does not clear the claims the helper granted, which stay in its ledger
+  until a later release clears claims (unit 5). With writes off the helper
+  changes nothing; with writes on it would go on giving each stopped guest
+  the lines of the card it claimed. The command, the setup guide and this
+  file say so.
+- **bb-box keeps a marker.** A warm guest a box takes, and a box relabelled
+  for another owner (036), read the tags again just before they write them,
+  keep any gpu tag, write on the digest, and on a change in between read
+  again and retry, up to 5 times.
+- **`proxmox.gpu-migration`**, beside `proxmox.gpu-helper` and only where
+  the report has a helper line. It reads the report and each of this
+  install's guests' config and pending changes:
+
+  | Finds | Status | Fix |
+  | --- | --- | --- |
+  | the helper's own check fails | skipped | |
+  | no ledger lines in the report, as from 0.1.0 | fail | `setup-gpu.sh` from this release |
+  | a report that leaves lines out | fail | the helper's journal |
+  | GPU lines naming a node no card in the report has | fail, naming each guest and node | put the lines right on the host |
+  | a guest with GPU lines, current, pending or raw, and no marker | fail, naming each | "Run bb box gpu mark" |
+  | a write the helper would make to a guest of this install | fail, naming each and the write | the helper's journal; each must be explained before writes come on |
+  | a refusal in force for a guest of this install | fail, naming each and why | put it right, then mark again |
+  | a marker the ledger does not hold as asked | fail, naming the marker and the claim | mark again |
+  | a marker the helper has not answered yet | warn | run the doctor again in a minute |
+  | a write it would make to a guest outside this install's pool | warn, by VMID | the helper's journal |
+  | none of these | ok | |
+
+- **The helper, 0.2.0.** The service writes the report on its first pass
+  after a start, whatever has changed, and counts those writes "on start"
+  in its hourly line. The report gains `ledger entries <n>`, always, and a
+  line per ledger entry, `ledger <vmid> box <install/box|-> answered g<N>
+  claim g<M> <part> <card|-> <granted|yielded>` or `... claim none`, after
+  the `would` lines in the budget, or `ledger unknown` when it cannot read
+  its ledger. Each report also names the process that wrote it,
+  `process <pid> started <seconds since the epoch, to the millisecond>`, so
+  a helper started again within the second of the report it left still
+  writes a report that differs from it (see "After CI"). Lines are only
+  added: protocol 1 is unchanged, as the marker is, and today's bb-box skips
+  them. Both units still run it with `--dry-run`, and
+  `setup-gpu.sh --writes on` is still refused.
+- **`setup-gpu.sh`** waits 30 s for this release's helper, which reports on
+  its first pass, and still 75 s for a helper a rollback puts back, which
+  may write only on its one-minute heartbeat. `BBBOX_GPU_REPORT_WAIT` sets
+  both, as before.
+
+### What was run
+
+On a `linux` box, in a `node:26-bookworm` container as CI runs:
+
+- `test/gpu-mark.test.ts`, 13 tests, and `test/gpu-mark-reviews.test.ts`,
+  13 tests, with bb-box against the fake Proxmox API and the real helper, in
+  a dry run, on unit 2's fake node, the two sharing the guests
+  (`test/gpu-helper/bridge.ts`): each guest's tags written through the API
+  are copied to the node's config, and the helper's report back to the API.
+  - Marking today's guests (a running and a stopped desktop, a server's
+    lines, a warm desktop): only tags change, every other tag stays, one
+    `PUT` per guest with `tags` and `digest` and nothing else, the guest's
+    config on the node byte for byte but its tags line, the helper grants
+    each, would write nothing and writes no guest; untouched: a server and a
+    CPU desktop with no lines, a template, another install's guest, a guest
+    outside the pool, a held copy, an image box, a filling and a retired warm
+    guest. A second run writes nothing.
+  - `--check`; each refusal, with its words; a whole record; `--undo` and its
+    `--check`; a refusal asked again; no answer within 10 s; a config changed
+    between the read and the write; the whole run refused; the doctor's
+    outcomes; the rules alone, the CLI's words, `--json` and exit status.
+  - Each review finding, below.
+- `test/proxmox-lxc.test.ts`: a warm guest a box takes, and a relabelled
+  box, keep their marker, also one written between their read and write.
+- `test/gpu-helper.test.ts`: the first-pass report; the ledger lines, and
+  `ledger unknown` with a ledger it cannot read; the report under 8,192
+  characters with 60 holders and 120 refusals, its ledger count kept.
+- `test/gpu-setup.test.ts`, 33 tests: the version strings moved to 0.2.0 and
+  newer copies to 0.2.1 and 0.3.0, and:
+  - a helper stopped by hand and started again by `setup-gpu.sh` reports
+    on its first pass: the run took 1.4 s, inside its 30 s wait (unit 3's
+    test of this waited 60.5 s);
+  - a rollback to a copy that writes only on its heartbeat, as 0.1.0 does,
+    is still waited for: 60.3 s, past the 30 s a release's own helper gets;
+  - the node's upgrade, from such a copy to this release: 1.5 s, gpu.conf,
+    the ledger and writes off kept, no guest written or locked;
+  - a helper started again within the second of the report it left, with
+    the wall clock held by libfaketime: the run took 1.5 s, and the two
+    reports, of one second, name two processes.
+- `tsc` clean; the reference as `scripts/reference.ts` writes it; the node
+  suite, 3,527 tests, 3,232 passed, 0 failed, 295 skipped; vitest, 448
+  passed. Before the reviews, on `b15fe055`: the node suite 3,510 tests,
+  3,215 passed, 0 failed; vitest 445 passed, one run of it timing out in
+  `test/monitor-app.test.tsx`'s setup hook at 10 s and passing when run
+  again.
+- `shellcheck -x` on `setup-gpu.sh`, from its folder: clean.
+
+### After the reviews
+
+Two reviews, Opus and Astra, said to merge after fixes. Each fix has a test
+in `test/gpu-mark-reviews.test.ts`, or where named. Run against the reviewed
+commit's `src` and helper (`bde17304`, rebased), on a box, all 15 new tests
+failed: the 13 in that file, the ledger test in `test/gpu-helper.test.ts` and
+the race test in `test/proxmox-lxc.test.ts`. The older tests beside them
+passed.
+
+| Finding | Fix | Test, and how it failed before |
+| --- | --- | --- |
+| Opus 1, Astra 2: after `--undo`, mark wrote g1 again, behind the ledger, and took a managed holder line for a grant, so lines moved to card B read as "granted" while the ledger held card A | The helper's report lists its ledger. Mark asks one above the ledger's answered generation, and counts a grant only from the helper's `claim` answer to the marker it wrote, or, for a standing marker, the ledger's claim as asked | Mark A, undo, lines to B, mark: wrote g2 for B, granted at g2, nothing the helper would write. Before: it wrote g1 and said "granted" |
+| Opus 1: refused at g1, granted at g2, undone, then marked again at g1, never answered | The same | g3, granted. Before: g1, and the old refusal shown |
+| Opus 1, Astra 2: a standing marker for card B while the ledger held card A read as granted, and the doctor passed | The ledger's claim must match the marker; else mark asks again, and the doctor fails, naming both | Before: "already", granted, and the doctor ok |
+| Opus 1: `--undo` said "it writes nothing" | The command, the guide and this file say the claims stay until unit 5, and what writes on would do | The undo words. Before: the old words |
+| Opus 2, Astra 1: template, held copy, earlier guest, warm guest in flux and ownership came from the pool listing only, even after a reread | Checked from each config read, the first and the reread after a change | Each turned at the read and at the reread: left, with words, no marker. Before: marked |
+| Astra 1: `--undo` did not check ownership again | The same check, from the config it reads | A guest whose tags came to name another install: left. Before: its marker taken off |
+| Astra 1: a write without a digest was allowed | No digest, no write | A config with no digest: left. Before: written |
+| Astra 3: two guests naming one box, and a whole holder blocking a shared request, were marked; a copy's refusal was asked again by generation alone | Both are checked before writing, from the configs read and the ledger; a refusal is asked again only once every check passes | Twins left, the refused copy not asked again, a shared request on a whole-held card left. Before: written |
+| Astra 4: a guest whose lines name a node no card has fell out of the holder lines, and the check passed; an omitted line also passed | The doctor reads each guest's config and pending changes; any omission, or no ledger lines, fails | `/dev/nvidia7` named; "omitted 3 would lines" fails; no ledger lines fails, and mark refuses to run. Before: ok |
+| Astra 5: devices compared as sets | Complete sorted lists, repeats counted, as the helper compares them | A line given twice: left. Before: marked, and the helper would have rewritten it |
+| Opus 3, Astra 6: a warm claim and a relabel kept a stale tag list | Tags read again just before the write, on the digest, retried on a change | `test/proxmox-lxc.test.ts`: a marker written between their read and write stays. Before: lost |
+| Opus 4: GPU lines only in the pending changes were "no card's lines" to mark, while the doctor named them | Pending changes are always read; mark leaves and names such a guest | Before: not named |
+
+### After CI
+
+CI failed the test of a helper stopped by hand once, at 32.1 s: the
+installer waited its 30 s and rolled back. It was seen once on a box before,
+at 33 s, and put down to load; that was wrong. Reproduced on a box by
+running the GPU test files together, with the helper's output now in the
+test's failure message: the restarted helper wrote its report on its first
+pass, as its hourly line said ("1 on start"). The helper before it had run a
+single pass before the test stopped it, so the two reports fell in one
+second. The report's `at` is in whole seconds, so the two were byte for byte
+the same, and the installer, which takes a report as fresh only if it
+differs from the one there before the start, rightly could not tell them
+apart. 0.2.0 then had nothing new to write until its 60 s heartbeat, past
+the 30 s wait. Load alone did not cause it: 18 runs of the test alone,
+6 at a time with all 8 cores busy, took 1.9 to 2.2 s each.
+
+The fix is the report's `process` line: each helper process names itself,
+so the report the service writes on its first pass always differs from the
+one it replaces, in the same second or not. The line is left out when the
+helper asks whether anything has changed, so a new process alone writes no
+report: `--once`, and a release that writes only on its heartbeat, behave as
+before. The `helper` line, which today's bb-box reads, is unchanged.
+The installer's wait stays 30 s for this release's helper, against a first
+report due within about 10 s even when `nvidia-smi` gives no reading; 75 s
+for a helper a rollback puts back.
+
+- The new test, with the wall clock held at one second by libfaketime,
+  failed without the line, rolling back after the 30 s wait, and passes with
+  it in 1.5 s.
+- Under load, all 8 cores busy with `stress-ng --cpu 8`, load average 15 to
+  21: the test of a helper stopped by hand and the new test, 10 runs each,
+  all passed, 1.8 to 2.0 s each.
+- The GPU test files together, as they reproduced it, 3 rounds after the
+  fix: 190 passed, 0 failed each time, that test 1.4 to 1.5 s. Before the
+  fix, 1 round of 2 had failed it.
+
+### The live check
+
+Run before and again after the reviews' fixes, the same way: a fresh
+`npx bb-app@0.48.1`, with no account, in a container on a box, with bb-box
+installed from this branch by `bb plugin install`. Its Proxmox LXC backend
+was set up with `bb box backend add proxmox-lxc` against a throwaway HTTPS
+server on the box that answers with the tests' fake Proxmox, pinned by its
+certificate's fingerprint, and keeps its guests in a fake node's config files,
+where the real helper 0.2.0 ran as a service with `--dry-run`. The guests: a
+running and a stopped GPU desktop, one locked, one with a server's lines on a
+desktop, a server, a warm desktop (which this BB's sweep retired, as it keeps
+no warm pool), another install's desktop, a held copy and a template.
+
+After the fixes:
+
+- The doctor, on adding the backend: `proxmox.gpu-migration` failed, naming
+  the four desktops with GPU lines and no marker; `proxmox.gpu-helper`
+  warned for the dry run.
+- `bb box gpu mark --check`: would mark the two desktops at g1, left the
+  locked one and the one with short lines, with the words above, exit 1,
+  nothing written.
+- `bb box gpu mark`: marked both, each granted from the helper's `claim ...
+  g1 granted` line, 1.3 s in all; the report's ledger lines held each claim.
+- With the lock gone and the lines made whole on the fake node, a second run
+  marked those two and said the first two were marked already; the doctor's
+  check passed.
+- `bb box gpu mark --undo`: the four markers off, with the words on what it
+  leaves; the doctor failed again, naming them.
+- The stopped desktop's lines moved from card 1 to card 0 by hand on the fake
+  node, the case both reviews found: the report said the helper would put
+  card 1's lines back (`would ... for claim g1`). A third mark asked each guest
+  at g2, "The helper answered up to g1 for it before", each granted at g2,
+  the stopped desktop's for card 0; the `would` line went, and the doctor
+  passed.
+- Throughout, the helper wrote the report VM alone, no guest; each guest's
+  config changed in its tags only. The watcher, run for a few seconds
+  against the fake node, logged the ledger lines and a summary with nothing
+  the helper would write.
+
+Limits: a fake Proxmox API and a fake node, not a node; no real `pct` lock
+or pending section from the API; BB's sweep did not adopt the test guests,
+so no box records gave a part.
+
+### The live gate
+
+Waits for the lead, after merge: upgrade the helper with this release's
+`setup-gpu.sh`, mark from BB, 24 h of dry run with a watcher under
+`systemd-run`, and the doctor's check. The steps, a read-only check script
+and the watcher are in the report to the lead.
+
+### Deviations from the note
+
+- Guests with no GPU lines are not marked `gpu.none.g1` (section 5, "Dry
+  run", step 2). A guest with no marker and no lines is never written and
+  holds no card, so its marker changes nothing now; unit 5 writes markers as
+  boxes are made. The lead's brief asks for this.
+- The part comes from the box's record: shared, or whole where the record
+  says so. A record that says no GPU on a guest with a card's lines is left
+  for a person to decide.
+- `bb box gpu mark` leaves a guest the helper would refuse or rewrite,
+  rather than marking it and letting the dry run show the write; the doctor
+  names it either way.
+- A refused marker, or one the ledger does not hold as asked, is asked again
+  with the next generation.
+- `--undo` is new: the note has no way back from marking. It takes off tags
+  only.
+- `proxmox.gpu-migration` reads each guest's config, and also fails on a
+  write the helper would make, a refusal, a marker the ledger does not hold,
+  nodes no card has and an incomplete report; it warns while a marker waits
+  for its answer. The note checks only for lines without a marker.
+- The report gains `ledger` lines within protocol 1, and mark needs a helper
+  that writes them, 0.2.0 or later.
+- bb-box's relabel and warm claim keep a guest's marker.
+- The installer waits 30 s for this release's helper, as unit 2 did, and 75 s
+  only for a helper a rollback puts back.
+
+### Still open
+
+- A GPU desktop made after marking has no marker until `bb box gpu mark`
+  runs again; the doctor names it. Unit 5 writes the marker as a box is
+  made.
+- A fork's re-arm, a swap and an earlier guest replace a guest's tags, so
+  they drop its marker, as section 9 wants for the fork; unit 6 writes their
+  markers.
+- `--undo` leaves the helper's claims; unit 5 must clear them, or refuse
+  `--undo`, and must not let `--undo` take off markers it writes itself.
+- Not rehearsed under real systemd this time: the installer's code is unit
+  3's but for its two waits, and the tests run it with the fake `systemctl`.

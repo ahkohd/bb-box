@@ -95,6 +95,11 @@ export const CHECKS = {
     from: ["proxmox-lxc"],
     what: "Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run (071).",
   },
+  "proxmox.gpu-migration": {
+    name: "Markers on GPU guests",
+    from: ["proxmox-lxc"],
+    what: "Where the GPU helper, bb-box-gpu, reports: every guest of this install whose device lines name a card carries the marker bb box gpu mark gives it, the helper answered each, and, in its dry run, it would write no guest (071). It names the guests that fail.",
+  },
   "proxmox.gpu-report": { name: "Host's GPU report", from: ["proxmox-lxc"], what: "The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU." },
   "gpu.<gpu>": { name: "GPU <gpu>", from: ["proxmox-lxc"], what: "A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs." },
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: "bb-box's SSH key reads, and, where bb-box made it, its public key to install." },

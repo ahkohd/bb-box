@@ -232,6 +232,39 @@ export interface CardPlacement {
   readonly memoryMiB: number;
 }
 
+export interface GpuMarkRequest {
+  readonly check: boolean;
+  readonly undo: boolean;
+  readonly recordedParts: ReadonlyMap<string, GpuPart>;
+}
+
+export type GpuMarkOutcome = "marked" | "would-mark" | "already" | "refused" | "unmarked" | "would-unmark" | "kept";
+
+export type GpuMarkAnswer = "granted" | "refused" | "would" | "unanswered";
+
+export interface GpuMarkGuest {
+  readonly vmid: number;
+  readonly name: string;
+  readonly running: boolean;
+  readonly card: string | null;
+  readonly marker: string | null;
+  readonly outcome: GpuMarkOutcome;
+  readonly why: string | null;
+  readonly answer: GpuMarkAnswer | null;
+  readonly answerWhy: string | null;
+}
+
+export interface GpuMarking {
+  readonly backend: string;
+  readonly label: string;
+  readonly node: string | null;
+  readonly check: boolean;
+  readonly undo: boolean;
+  readonly refused: { readonly detail: string; readonly fix: string | null } | null;
+  readonly guests: readonly GpuMarkGuest[];
+  readonly withoutCards: number;
+}
+
 /**
  * How a part of a box's size changes on an offer (061): while the box runs
  * and everything in it goes on, with a clean shutdown and start that ends
@@ -765,6 +798,7 @@ export interface Backend {
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
   gpuRoom?(kind: string): Promise<GpuRoom>;
+  markGpus?(request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */

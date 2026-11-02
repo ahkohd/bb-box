@@ -5,6 +5,7 @@
 // daemon's lag, each node's own guest lists, a VM console's VNC proxy and a
 // VM's suspend to disk, whose lock refuses config changes until a start.
 
+import { createHash } from "node:crypto";
 import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
 export interface FakeGuest {
@@ -19,6 +20,7 @@ export interface FakeGuest {
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
   snapshots?: FakeSnapshot[];
+  pending?: { key: string; value?: string; pending?: string; delete?: number }[];
 }
 
 export interface FakeSnapshot {
@@ -430,6 +432,12 @@ export class FakeProxmox {
       return ok(this.#task(type === "qemu" ? "qmclone" : "vzclone", source.vmid));
     }
 
+    if (method === "GET" && (match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/pending$/.exec(path))) {
+      const guest = this.#of(match[1]!, Number(match[2]));
+      if (!guest) return this.#missing(Number(match[2]), match[1]);
+      return ok([...Object.entries(guest.config).map(([key, value]) => ({ key, value })), ...(guest.pending ?? [])]);
+    }
+
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/config$/.exec(path))) {
       const vmid = Number(match[2]);
       const guest = this.#of(match[1]!, vmid);
@@ -442,15 +450,18 @@ export class FakeProxmox {
           guest.config.template = "1";
         } else this.#templating.set(vmid, left - 1);
       }
-      if (method === "GET") return ok({ ...guest.config });
+      if (method === "GET") return ok({ ...guest.config, digest: configDigest(guest.config) });
       if (method === "PUT") {
+        if (params.digest !== undefined && params.digest !== configDigest(guest.config)) {
+          return respond(500, "detected modified configuration - file changed by other user? Try again.", { data: null });
+        }
         // Deleting `vmstate` discards a suspended VM's state, and so its lock.
         if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
           return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
         }
         // A disk given as <storage>:<GiB> is a new volume, as Proxmox allocates one.
         for (const [key, value] of Object.entries(params)) {
-          if (key === "delete") continue;
+          if (key === "delete" || key === "digest") continue;
           const fresh = /^efidisk\d$/.test(key) && typeof value === "string" ? /^([^:,]+):\d+(,.*)?$/.exec(value) : null;
           guest.config[key] = fresh ? `${fresh[1]}:vm-${vmid}-disk-${++this.volumes},${(fresh[2] ?? ",").slice(1)}${fresh[2] ? "," : ""}size=4M` : value;
         }
@@ -584,4 +595,8 @@ function ok(data: unknown): FetchResponse {
 function respond(status: number, statusText: string, body: unknown): FetchResponse {
   const text = JSON.stringify(body);
   return { ok: status >= 200 && status < 300, status, statusText, text: async () => text };
+}
+
+export function configDigest(config: Readonly<Record<string, string>>): string {
+  return createHash("sha1").update(JSON.stringify(Object.entries(config).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
 }

@@ -18,6 +18,7 @@ import { setupDocker } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
+import { gpuCommands } from "./gpu-cli.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 
 const threadOption = {
@@ -708,6 +709,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
         ...configCommands(app.configuration),
         ...snapshotCommands(app),
+        ...gpuCommands(app),
         ...monitorCommands(bb, app.monitor, app.history),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's.",

@@ -106,6 +106,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
 | `proxmox.gpu-helper` | Host's GPU helper | Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run (071). |
+| `proxmox.gpu-migration` | Markers on GPU guests | Where the GPU helper, bb-box-gpu, reports: every guest of this install whose device lines name a card carries the marker bb box gpu mark gives it, the helper answered each, and, in its dry run, it would write no guest (071). It names the guests that fail. |
 | `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
 | `gpu.<gpu>` | GPU &lt;gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |

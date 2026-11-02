@@ -730,26 +730,26 @@ test("the doctor's GPU helper check reads what real helpers report: a dry run wa
   const dryRun = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })));
   assert.deepEqual(verdict(dryRun("proxmox.gpu-helper")), [
     "warn",
-    "bb-box-gpu 0.1.0 on pve runs with writes off, a dry run: it writes the GPU report and changes no guest. Writes stay off until bb-box marks its guests and a day of dry run with the markers shows no write the helper would make (071).",
+    "bb-box-gpu 0.2.0 on pve runs with writes off, a dry run: it writes the GPU report and changes no guest. Writes stay off until bb-box marks its guests and a day of dry run with the markers shows no write the helper would make (071).",
     "Nothing to do now: a later BB Box release turns writes on, with host/setup-gpu.sh --writes on.",
   ]);
   assert.equal(dryRun("proxmox.gpu-report")?.status, "ok");
   assert.equal(verdict((await doctorOnReport(helperReport(new FakeNode({ writes: "on" }), ["--once", "--dry-run"])))("proxmox.gpu-helper"))?.[0], "warn", "--dry-run keeps writes off whatever gpu.conf says");
 
   const writing = await doctorOnReport(helperReport(new FakeNode({ writes: "on" })));
-  assert.deepEqual(verdict(writing("proxmox.gpu-helper")), ["ok", "bb-box-gpu 0.1.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on.", null]);
+  assert.deepEqual(verdict(writing("proxmox.gpu-helper")), ["ok", "bb-box-gpu 0.2.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on.", null]);
 
   const untested = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pveContainer: "6.1.15" })));
   assert.deepEqual(verdict(untested("proxmox.gpu-helper")), [
     "fail",
-    "bb-box-gpu 0.1.0 on pve was not tested on pve-container 6.1.15, so it changes no guest.",
+    "bb-box-gpu 0.2.0 on pve was not tested on pve-container 6.1.15, so it changes no guest.",
     "Run host/setup-gpu.sh from a BB Box release tested on pve-container 6.1.15, as root on pve.",
   ]);
 
   const elsewhere = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pools: ["team", "lab"] })));
-  assert.deepEqual(verdict(elsewhere("proxmox.gpu-helper")), ["fail", "bb-box-gpu 0.1.0 on pve serves pools team and lab, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  assert.deepEqual(verdict(elsewhere("proxmox.gpu-helper")), ["fail", "bb-box-gpu 0.2.0 on pve serves pools team and lab, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
   const nowhere = await doctorOnReport(helperReport(new FakeNode({ writes: "off", pools: [] })));
-  assert.equal(verdict(nowhere("proxmox.gpu-helper"))?.[1], "bb-box-gpu 0.1.0 on pve serves no pool, not this install's pool bbbox.");
+  assert.equal(verdict(nowhere("proxmox.gpu-helper"))?.[1], "bb-box-gpu 0.2.0 on pve serves no pool, not this install's pool bbbox.");
 });
 
 test("the doctor's GPU helper check fails a report 3 minutes old and a helper of another protocol, with each fix; the GPU report's fix names the helper where it writes the report (071 unit 3)", async () => {
@@ -773,7 +773,7 @@ test("the doctor's GPU helper check fails a report 3 minutes old and a helper of
   const unreadable = await doctorOnReport(withHelper("helper bb-box-gpu 0.1.0 protocol broken"), at);
   assert.deepEqual(verdict(unreadable("proxmox.gpu-helper")), ["fail", "VM 9190's report has a helper line this BB Box cannot read.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."], "a helper line with no protocol is not taken for no helper (Astra 5)");
   const many = await doctorOnReport(notes.replace(/^(\s*)serves .*$/m, "$1serves p1 p2 p3 and 40 more"), at);
-  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.1.0 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.2.0 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
 });
 
 test("the doctor's GPU helper check fails a report dated a minute or more ahead of BB's clock, as a stopped helper could pass for fresh until then (071 unit 3, Astra 4)", async () => {
@@ -786,7 +786,7 @@ test("the doctor's GPU helper check fails a report dated a minute or more ahead 
     "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.",
   ]);
   assert.equal(verdict((await doctorOnReport(notes, at - 60_000))("proxmox.gpu-helper"))?.[0], "fail");
-  assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.1.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
+  assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.2.0 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
 });
 
 test("with no GPU helper, the doctor reads as before: no helper check beside the timer's report, none with no report VM, and none for an install without GPU desktops (071 unit 3)", async () => {
@@ -1457,6 +1457,57 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
   const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
+});
+
+test("a warm guest a box takes keeps the GPU marker bb box gpu mark gave it, as does a box relabelled for another owner (071 unit 4)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  await backend.maintain();
+  const shared = marker("shared", CARD_A, 1);
+  const warm = proxmox.guests.get(7000)!;
+  warm.config.tags = `${warm.config.tags};${shared}`;
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().value, signal());
+  assert.equal(guest.ref, "7000");
+  const taken = parseTags(proxmox.guests.get(7000)!.config.tags);
+  assert.equal(ownerFromTags(taken)?.boxId, box.boxId);
+  assert.ok(taken.includes(shared), `the box keeps the warm guest's marker: ${taken.join(";")}`);
+
+  proxmox.guests.get(7000)!.config.tags = [...parseTags(proxmox.guests.get(7000)!.config.tags).filter((tag) => tag !== shared), marker("shared", CARD_B, 2)].join(";");
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" }, box.name, signal());
+  const relabelled = parseTags(proxmox.guests.get(7000)!.config.tags);
+  assert.equal(ownerFromTags(relabelled)?.threadId, "operator");
+  assert.ok(relabelled.includes(marker("shared", CARD_B, 2)), `relabelled, it keeps its marker: ${relabelled.join(";")}`);
+  assert.equal(relabelled.filter((tag) => tag.startsWith("gpu.")).length, 1);
+});
+
+test("a warm claim and a relabel read the tags again just before they write them, on the config's digest, so a marker written meanwhile stays (071 unit 4, Opus 3, Astra 6)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  await backend.maintain();
+  const meanwhile = (vmid: number, tag: string) => {
+    let done = false;
+    proxmox.intercept = (call) => {
+      if (!done && call.method === "PUT" && call.path.endsWith(`/${vmid}/config`) && call.params.tags !== undefined) {
+        done = true;
+        const config = proxmox.guests.get(vmid)!.config;
+        config.tags = `${config.tags};${tag}`;
+      }
+      return undefined;
+    };
+  };
+  meanwhile(7000, marker("shared", CARD_A, 1));
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().value, signal());
+  const taken = parseTags(proxmox.guests.get(7000)!.config.tags);
+  assert.equal(ownerFromTags(taken)?.boxId, box.boxId);
+  assert.ok(taken.includes(marker("shared", CARD_A, 1)), `the marker written meanwhile stays: ${taken.join(";")}`);
+
+  meanwhile(7000, marker("shared", CARD_A, 2));
+  proxmox.guests.get(7000)!.config.tags = parseTags(proxmox.guests.get(7000)!.config.tags).filter((tag) => !tag.startsWith("gpu.")).join(";");
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" }, box.name, signal());
+  const relabelled = parseTags(proxmox.guests.get(7000)!.config.tags);
+  assert.equal(ownerFromTags(relabelled)?.threadId, "operator");
+  assert.ok(relabelled.includes(marker("shared", CARD_A, 2)), `relabelled, the marker written meanwhile stays: ${relabelled.join(";")}`);
+  proxmox.intercept = undefined;
 });
 
 /** A stage for warmNameScript: stand-ins that keep the kernel's hostname in a file, and run as this user. */

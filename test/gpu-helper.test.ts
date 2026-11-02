@@ -126,9 +126,9 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.1\.0, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.2\.0, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.1.0 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.2.0 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -471,7 +471,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.1.0 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.2.0 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -495,7 +495,8 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   const text = crowded.report();
   assert.ok(text.length < 8192, `the report is ${text.length} characters`);
   assert.equal(lines(crowded, "holder").length, 60, "every holder is listed");
-  assert.match(crowded.reportLines().at(-1)!, /^omitted \d+ (?:refusals in force|answers)/);
+  assert.match(crowded.reportLines().at(-1)!, /^omitted \d+ (?:ledger lines|refusals in force|answers)/);
+  assert.deepEqual(lines(crowded, "ledger").filter((line) => line.startsWith("ledger entries ")), ["ledger entries 120"], "the count of ledger entries is always there, so bb-box knows when some are left out");
   assert.deepEqual(parseGpuReport(text)!.gpus.length, 2);
 });
 
@@ -541,6 +542,47 @@ test("when the node's configs cannot be read, as with pve-cluster stopped, the h
   assert.deepEqual(claims(node), answers, "no generation is answered again");
   assert.deepEqual(node.lines(1651), [], "a refused generation stays refused");
   assert.deepEqual(node.guestWrites(), []);
+});
+
+test("the service writes the report on its first pass after a start, though nothing is new, so an installer waiting for it need not wait for the heartbeat (071 unit 4)", async () => {
+  const node = new FakeNode({ writes: "off" });
+  node.guest(1750, { box: "bx1750", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  ran(node);
+  const before = node.report();
+  const written = Number(/^\s*at (\d+)$/m.exec(before)![1]);
+  await sleep(1_100);
+  const service = node.start(["--dry-run"]);
+  const began = Date.now();
+  try {
+    while (Number(/^\s*at (\d+)$/m.exec(node.report())![1]) === written) {
+      assert.ok(Date.now() - began < helperConstant("REPORT_BEAT_SECONDS") * 1000 / 4, `no report within a quarter of the heartbeat:\n${service.output()}`);
+      await sleep(50);
+    }
+    const unnamed = (report: string) => report.replace(/^\s*at \d+$/m, "").replace(/^\s*process \d+ started [\d.]+$/m, "");
+    assert.equal(unnamed(node.report()), unnamed(before), "nothing but its time and the process that wrote it is new");
+    assert.ok(node.reportLines().includes(`process ${service.pid} started ${/^\s*process \d+ started ([\d.]+)$/m.exec(node.report())![1]}`), "the report names the process that wrote it");
+    assert.deepEqual(node.guestWrites(), []);
+  } finally {
+    service.kill("SIGTERM");
+    assert.equal(await exited(service), 0);
+  }
+  assert.match(service.output(), /the report written 1 times \(1 on start, 0 for a change, 0 for memory alone, 0 as a heartbeat, 0 after a clock step\)/);
+});
+
+test("the report lists each ledger entry: its box, the generation answered and the claim, so bb-box can ask above it and read a grant exactly (071 unit 4, Opus 1)", () => {
+  const node = new FakeNode({ writes: "off" });
+  node.guest(1800, { box: "bx1800", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(1801, { box: "bx1801", marker: marker("shared", CARD_B, 3), lock: "backup" });
+  node.guest(1802, { box: "bx1802" });
+  ran(node);
+  assert.deepEqual(lines(node, "ledger"), [
+    "ledger entries 2",
+    `ledger 1800 box ${INSTALL}/bx1800 answered g1 claim g1 shared ${A} granted`,
+    `ledger 1801 box ${INSTALL}/bx1801 answered g3 claim none`,
+  ]);
+  node.write("var/lib/bb-box-gpu/ledger", JSON.stringify({ protocol: 2, guests: {}, answers: [] }));
+  ran(node);
+  assert.deepEqual(lines(node, "ledger"), ["ledger unknown"], "with a ledger it cannot read, it says so, rather than list none");
 });
 
 test("a ledger from a newer protocol: the helper acts on nothing and says so, and today's bb-box still reads the report", () => {
@@ -592,7 +634,7 @@ test("the service answers a marker within about a second, logs each write it wou
     const pid = Number(readFileSync(node.file("smi.pid"), "utf8"));
     service.kill("SIGTERM");
     assert.equal(await exited(service), 0);
-    assert.match(service.output(), /in the last 0 min: \d+ passes, [\d.]+ ms each on average, [\d.]+ ms at most; the report written \d+ times \(\d+ for a change, \d+ for memory alone, \d+ as a heartbeat, \d+ after a clock step\); this process [\d.]+ s of CPU in all, nvidia-smi [\d.]+ s, started 1 times\nstopped\n$/);
+    assert.match(service.output(), /in the last 0 min: \d+ passes, [\d.]+ ms each on average, [\d.]+ ms at most; the report written \d+ times \(\d+ on start, \d+ for a change, \d+ for memory alone, \d+ as a heartbeat, \d+ after a clock step\); this process [\d.]+ s of CPU in all, nvidia-smi [\d.]+ s, started 1 times\nstopped\n$/);
     await sleep(300);
     assert.throws(() => process.kill(pid, 0), "nvidia-smi is stopped with the helper");
   }

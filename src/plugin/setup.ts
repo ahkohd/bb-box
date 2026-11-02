@@ -12,7 +12,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import { providerName } from "../core/provider-name.ts";
 import { joinChecks, joiningWords } from "../core/join-tries.ts";
-import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
+import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
+import { recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
@@ -235,6 +236,7 @@ export interface BbBox {
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
+  gpuMark(options: { readonly check: boolean; readonly undo: boolean; readonly on?: string }, signal?: AbortSignal): Promise<GpuMarking[]>;
   /**
    * Takes back an install ID this install had before it lost its storage
    * (018). Refused while a box holds a guest, since its guest carries the
@@ -1721,6 +1723,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       return { ok: sections.every((section) => section.report.ok), sections };
+    },
+    async gpuMark({ check, undo, on }, signal) {
+      const marking = backends.active().filter((backend) => backend.markGpus && (on === undefined || backend.id === on));
+      if (!marking.length) {
+        throw new BoxError("not_found", `${on === undefined ? "No backend that is on" : `${on} is not a backend that is on and`} can mark GPU guests: only Proxmox LXC backends can, where the host runs the GPU helper.`);
+      }
+      const records = await boxes.all();
+      const markings: GpuMarking[] = [];
+      for (const backend of marking) {
+        const recordedParts = new Map(records.filter((box) => box.backend === backend.id).map((box) => [box.id, recordedGpu(box)] as const));
+        markings.push(await backend.markGpus!({ check, undo, recordedParts }, signal));
+      }
+      return markings;
     },
     async setInstallId(id) {
       requireInstallId(id);

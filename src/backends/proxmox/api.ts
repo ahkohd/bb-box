@@ -89,6 +89,10 @@ export class ProxmoxError extends Error {
   }
 
   /** Another task held the guest's lock for the 10 s Proxmox waits for it. */
+  get changedMeanwhile(): boolean {
+    return /detected modified configuration|digest/i.test(this.message);
+  }
+
   get locked(): boolean {
     return /can't lock file .* got timeout/i.test(this.message);
   }
@@ -117,6 +121,7 @@ export interface GuestSettings {
   readonly efidisk0?: string;
   /** Options to remove, such as "protection", which clones inherit from the template. */
   readonly delete?: readonly string[];
+  readonly digest?: string;
 }
 
 export interface GuestStatus {
@@ -350,6 +355,7 @@ export class Proxmox {
       protection: settings.protection === undefined ? undefined : settings.protection ? 1 : 0,
       efidisk0: settings.efidisk0,
       delete: settings.delete?.length ? settings.delete.join(",") : undefined,
+      digest: settings.digest,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
     await this.#change("PUT", this.#guest(vmid, "/config"), params, signal);
@@ -372,6 +378,15 @@ export class Proxmox {
 
   async config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, "/config"), undefined, signal)) ?? {};
+  }
+
+  async currentConfig(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, "/config"), { current: 1 }, signal)) ?? {};
+  }
+
+  async pendingChanges(vmid: number, signal?: AbortSignal): Promise<{ readonly key: string; readonly pending: string | null; readonly deleting: boolean }[]> {
+    const listed = (await this.#request<Record<string, unknown>[]>("GET", this.#guest(vmid, "/pending"), undefined, signal)) ?? [];
+    return listed.map((entry) => ({ key: String(entry.key ?? ""), pending: entry.pending === undefined || entry.pending === null ? null : String(entry.pending), deleting: Boolean(entry.delete) }));
   }
 
   /**

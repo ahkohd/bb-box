@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.1.0';
+use constant VERSION => '0.2.0';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -85,7 +85,8 @@ sub usage {
 bb-box-gpu @{[VERSION]}, protocol @{[PROTOCOL]}: the host's GPU helper for bb-box.
 
   bb-box-gpu          run as a service: scan every second, answer markers,
-                      write the report in the notes of VM @{[REPORT_VM_NAME]}
+                      write the report in the notes of VM @{[REPORT_VM_NAME]},
+                      on its first pass and whenever it has something new
   bb-box-gpu --once   one pass, with one reading of the cards, then exit
   bb-box-gpu --boot   the boot pass: put each claimed guest's device lines
                       right from its claim, before guests start
@@ -1153,6 +1154,19 @@ sub holder_lines {
     return @lines;
 }
 
+sub ledger_lines {
+    my ($ctx) = @_;
+    my $entries = $ctx->{ledger}{guests} // {};
+    my @lines;
+    for my $vmid (sort { $a <=> $b } keys %$entries) {
+        my $entry = $entries->{$vmid};
+        my $claim = $entry->{claim};
+        push @lines, join(' ', 'ledger', $vmid, 'box', $entry->{box} // '-', 'answered', 'g' . ($entry->{answered} // 0), 'claim',
+            $claim ? ("g$claim->{generation}", $claim->{part}, $claim->{card} // '-', $claim->{answer}) : 'none');
+    }
+    return @lines;
+}
+
 sub report_lines {
     my ($ctx, $guests) = @_;
     my $state = $ctx->{host_state} // {};
@@ -1169,6 +1183,9 @@ sub report_lines {
         my $was = $state->{previous_boot}{cards}{$uuid};
         push @required, "remapped $uuid was $was" if defined $was && $was ne card_mapping_text($card);
     }
+    my @ledger = $ctx->{ledger_known} ? ledger_lines($ctx) : ();
+    push @required, $ctx->{ledger_known} ? 'ledger entries ' . scalar(@ledger) : 'ledger unknown';
+    push @required, "process $$ started $ctx->{started}";
     my @errors = @{ $ctx->{errors} };
     push @required, map { cut_line("error $_") } @errors[0 .. (@errors > MOST_ERROR_LINES ? MOST_ERROR_LINES : scalar @errors) - 1];
     push @required, 'error and ' . (@errors - MOST_ERROR_LINES) . ' more' if @errors > MOST_ERROR_LINES;
@@ -1179,7 +1196,7 @@ sub report_lines {
     my @in_force = map { answer_line($_) } grep { answer_in_force($ctx, $guests, $_) } @answers;
     my %shown = map { $_ => 1 } @in_force;
     my @recent = grep { !$shown{$_}++ } map { answer_line($_) } grep { $ctx->{now} - $_->{at} < ANSWERS_KEPT_SECONDS } @answers;
-    return (\@required, [ [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
+    return (\@required, [ [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'ledger lines', \@ledger ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
 }
 
 sub cut_line {
@@ -1222,7 +1239,7 @@ sub budgeted_report_text {
     my @body = @$required;
     my $used = length($head) + 1;
     $used += length("    $_\n") for @body;
-    my $room = REPORT_BUDGET - $used - length("    omitted 999 holder lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
+    my $room = REPORT_BUDGET - $used - length("    omitted 999 holder lines, 999 ledger lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
     my @omitted;
     for my $group (@$groups) {
         my ($name, $lines) = @$group;
@@ -1244,7 +1261,7 @@ sub budgeted_report_text {
 
 sub report_signatures {
     my ($text) = @_;
-    my @lines = grep { !/^\s*at \d+\s*$/ } split /\n/, $text;
+    my @lines = grep { !/^\s*at \d+\s*$/ && !/^\s*process \d+ started / } split /\n/, $text;
     my $memory = join("\n", map { /^\s*gpu (\S+) \S+ \d+ (\d+) \d+\s*$/ ? "$1 " . int($2 / MEMORY_STEP_MIB) : () } @lines);
     my $rest = join("\n", map { /^(\s*gpu \S+ \S+ \d+) \d+ (\d+)\s*$/ ? "$1 $2" : $_ } @lines);
     return ($memory, $rest);
@@ -1298,10 +1315,11 @@ sub write_report {
             PVE::QemuConfig->lock_config($vmid, sub {
                 my $conf = PVE::QemuConfig->load_config($vmid);
                 my $current = ($conf->{description} // '') =~ s/\n+$//r;
-                my $due = report_due($ctx, $current, $text) or return;
+                my $due = ($ctx->{report_on_start} ? 'start' : report_due($ctx, $current, $text)) or return;
                 $conf->{description} = $text;
                 PVE::QemuConfig->write_config($vmid, $conf);
                 $ctx->{reports_written}{$due}++;
+                $ctx->{report_on_start} = 0;
             });
         });
         1;
@@ -1317,9 +1335,9 @@ sub note_hour {
     $ctx->{reports_written} = {};
     my $total = 0;
     $total += $_ for values %written;
-    note(sprintf('in the last %d min: %d passes, %.1f ms each on average, %.1f ms at most; the report written %d times (%d for a change, %d for memory alone, %d as a heartbeat, %d after a clock step); this process %.1f s of CPU in all, nvidia-smi %s, started %d times',
+    note(sprintf('in the last %d min: %d passes, %.1f ms each on average, %.1f ms at most; the report written %d times (%d on start, %d for a change, %d for memory alone, %d as a heartbeat, %d after a clock step); this process %.1f s of CPU in all, nvidia-smi %s, started %d times',
         (monotonic() - $hour->{since}) / 60, $passes, $hour->{total_ms} / $passes, $hour->{worst_ms},
-        $total, $written{changed} // 0, $written{memory} // 0, $written{beat} // 0, $written{clock} // 0,
+        $total, $written{start} // 0, $written{changed} // 0, $written{memory} // 0, $written{beat} // 0, $written{clock} // 0,
         cpu_seconds($$) // 0, defined $smi ? sprintf('%.1f s', $smi) : 'not running', $hour->{smi_starts} // 0));
 }
 
@@ -1402,6 +1420,7 @@ sub decide {
     $ctx->{writes} = $asked && $tested && !$dry_run_fixed ? 1 : 0;
     $ctx->{ledger} = empty_ledger();
     my ($ledger, $status, $protocol) = load_ledger();
+    $ctx->{ledger_known} = 0;
     if ($status eq 'newer') {
         push @{ $ctx->{errors} }, "the ledger is protocol $protocol, newer than this helper's " . PROTOCOL . ", so it acts on nothing";
         $ctx->{writes} = 0;
@@ -1414,6 +1433,7 @@ sub decide {
         $ctx->{ledger} = $ledger;
         start_fresh_with_writes_on($ctx, $guests) if $ctx->{writes} && ($ledger->{writes} // 'off') ne 'on';
     }
+    $ctx->{ledger_known} = 1;
     settle_identities($ctx, $guests);
     if ($mode ne 'boot') {
         for my $vmid (request_order($guests)) {
@@ -1599,6 +1619,7 @@ sub context_from {
 
 sub new_context {
     return {
+        started => sprintf('%.3f', time),
         node => PVE::INotify::nodename(),
         pve_container => installed_pve_container(),
         would => {},
@@ -1622,6 +1643,7 @@ sub new_hour {
 
 sub run_service {
     my $ctx = new_context();
+    $ctx->{report_on_start} = 1;
     my $started_version = $ctx->{pve_container};
     note("bb-box-gpu " . VERSION . ", protocol " . PROTOCOL . ", on pve-container $started_version" . ($dry_run_fixed ? ', with writes off whatever the settings say (--dry-run)' : ''));
     local $SIG{TERM} = sub { $stopping = 1 };

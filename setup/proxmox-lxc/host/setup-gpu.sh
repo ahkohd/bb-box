@@ -87,9 +87,12 @@ if [ "$asked_writes" = on ]; then
 fi
 
 helper_heartbeat=60
-report_wait=${BBBOX_GPU_REPORT_WAIT:-$((helper_heartbeat + 15))}
-[[ "$report_wait" =~ ^[1-9][0-9]{0,3}$ ]] ||
-  refuse_usage "BBBOX_GPU_REPORT_WAIT, from this process's environment, must be a whole number of seconds from 1 to 9999, not '$report_wait'"
+asked_wait=${BBBOX_GPU_REPORT_WAIT:-}
+if [ -n "$asked_wait" ] && ! [[ "$asked_wait" =~ ^[1-9][0-9]{0,3}$ ]]; then
+  refuse_usage "BBBOX_GPU_REPORT_WAIT, from this process's environment, must be a whole number of seconds from 1 to 9999, not '$asked_wait'"
+fi
+first_pass_wait=${asked_wait:-30}
+heartbeat_wait=${asked_wait:-$((helper_heartbeat + 15))}
 
 . "$here/common.sh"
 [[ "$BBBOX_POOL" =~ $pool_name_pattern ]] || die "BBBOX_POOL, '$BBBOX_POOL', cannot be a pool's name"
@@ -239,8 +242,9 @@ report_is_fresh() {
 }
 
 wait_for_report() {
-  local tries=0
-  while [ "$tries" -lt $((report_wait * 4)) ]; do
+  local seconds=$1 tries=0
+  shift
+  while [ "$tries" -lt $((seconds * 4)) ]; do
     report_is_fresh "$@" && return 0
     sleep 0.25
     tries=$((tries + 1))
@@ -405,12 +409,12 @@ roll_back() {
   local since before
   since=$(date +%s)
   before=$(description_text "$vmid")
-  if ! start_helper || ! wait_for_report "$since" "$old_version" "$old_protocol" "$before"; then
+  if ! start_helper || ! wait_for_report "$heartbeat_wait" "$since" "$old_version" "$old_protocol" "$before"; then
     hand_over_to_timer "$why, and bb-box-gpu $old_version, put back, wrote no fresh, healthy report either"
   fi
   if [ "$timer_was_there" = 0 ] && timer_present; then
     retire_timer
-    wait_for_report "$since" "$old_version" "$old_protocol" ||
+    wait_for_report "$heartbeat_wait" "$since" "$old_version" "$old_protocol" ||
       hand_over_to_timer "$why, and bb-box-gpu $old_version's report did not come back once the timer stopped"
   fi
   finish
@@ -528,13 +532,13 @@ install_helper() {
       said "started bb-box-gpu.service, with writes off"
     fi
     phase="waiting for bb-box-gpu $new_version's report"
-    wait_for_report "$since" "$new_version" "$new_protocol" "$before" ||
-      roll_back "bb-box-gpu $new_version wrote no fresh, healthy report with writes off in VM $vmid within $report_wait s"
+    wait_for_report "$first_pass_wait" "$since" "$new_version" "$new_protocol" "$before" ||
+      roll_back "bb-box-gpu $new_version wrote no fresh, healthy report with writes off in VM $vmid within $first_pass_wait s"
   else
     phase="reading bb-box-gpu's report"
     since=$(($(date +%s) - 90))
-    wait_for_report "$since" "$new_version" "$new_protocol" ||
-      hand_over_to_timer "bb-box-gpu wrote no fresh, healthy report with writes off in VM $vmid within $report_wait s"
+    wait_for_report "$heartbeat_wait" "$since" "$new_version" "$new_protocol" ||
+      hand_over_to_timer "bb-box-gpu wrote no fresh, healthy report with writes off in VM $vmid within $heartbeat_wait s"
   fi
 
   if timer_present; then
@@ -545,8 +549,8 @@ install_helper() {
       said "stopped and removed bb-box-gpu-memory.timer again, as bb-box-gpu writes the report"
     fi
     phase="waiting for bb-box-gpu's report once the timer stopped"
-    wait_for_report "$since" "$new_version" "$new_protocol" ||
-      hand_over_to_timer "bb-box-gpu's report in VM $vmid did not come back within $report_wait s once the timer stopped"
+    wait_for_report "$first_pass_wait" "$since" "$new_version" "$new_protocol" ||
+      hand_over_to_timer "bb-box-gpu's report in VM $vmid did not come back within $first_pass_wait s once the timer stopped"
   fi
   finish
 
