@@ -240,7 +240,7 @@ export interface GpuMarkRequest {
 
 export type GpuMarkOutcome = "marked" | "would-mark" | "already" | "refused" | "unmarked" | "would-unmark" | "kept";
 
-export type GpuMarkAnswer = "granted" | "refused" | "would" | "unanswered";
+export type GpuMarkAnswer = "granted" | "refused" | "would" | "unanswered" | "released";
 
 export interface GpuMarkGuest {
   readonly vmid: number;
@@ -348,6 +348,7 @@ export interface Started {
   /** The guest's facts now, in place of those kept, as a desktop's display mode when a GPU desktop fell back to the CPU (#597). */
   readonly facts?: readonly GuestFact[];
   readonly address?: string;
+  readonly claim?: CardClaim;
 }
 
 export interface LeasedAddressNow {
@@ -357,7 +358,7 @@ export interface LeasedAddressNow {
 
 export function startedGuest(guest: Guest, started: Started | void): Guest {
   if (!started) return guest;
-  return { ...guest, ...(started.facts ? { facts: started.facts } : {}), ...(started.address ? { address: started.address } : {}) };
+  return { ...guest, ...(started.facts ? { facts: started.facts } : {}), ...(started.address ? { address: started.address } : {}), ...(started.claim ? { claim: started.claim } : {}) };
 }
 
 export interface BoxOwner {

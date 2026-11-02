@@ -162,9 +162,10 @@ export class FakeNode {
         'stall() { trap "" TERM; exec sleep 3600; }',
         '[ "$(cat "$root/smi-mode" 2>/dev/null)" = silent ] && stall',
         'while :; do',
-        '  cat "$root/smi"',
+        '  cat "$root/smi" || exit 0',
         '  [ "$(cat "$root/smi-mode" 2>/dev/null)" = stall ] && stall',
-        '  [ "$loop" = 1 ] || exit 0',
+        '  [ -f "$root/smi-stderr" ] && cat "$root/smi-stderr" >&2',
+        '  [ "$loop" = 1 ] || exit "$(cat "$root/smi-exit" 2>/dev/null || echo 0)"',
         "  sleep 0.2",
         "done",
         "",
@@ -225,6 +226,18 @@ export class FakeNode {
   setMemory(cards: readonly FakeCard[]): void {
     writeFileSync(join(this.root, "smi.next"), cards.map((card) => `GPU-${card.uuid}, ${card.bus}, ${card.index}, ${card.freeMiB}, ${card.totalMiB}\n`).join(""));
     renameSync(join(this.root, "smi.next"), join(this.root, "smi"));
+  }
+
+  smiReading(rows: readonly string[], ending: { readonly exit?: number; readonly stderr?: string } = {}): void {
+    writeFileSync(join(this.root, "smi"), rows.map((row) => `${row}\n`).join(""));
+    for (const [file, value] of [["smi-exit", ending.exit ? String(ending.exit) : undefined], ["smi-stderr", ending.stderr]] as const) {
+      if (value === undefined) rmSync(join(this.root, file), { force: true });
+      else writeFileSync(join(this.root, file), `${value}\n`);
+    }
+  }
+
+  smiRow(card: FakeCard): string {
+    return `GPU-${card.uuid}, ${card.bus}, ${card.index}, ${card.freeMiB}, ${card.totalMiB}`;
   }
 
   smiMode(mode: "normal" | "stall" | "silent"): void {
@@ -352,7 +365,7 @@ export class FakeNode {
     return join(this.root, "var/lib/bb-box-gpu/ledger");
   }
 
-  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string } }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[] } {
+  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string }; proposed_strip?: { why: string } }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[] } {
     return JSON.parse(readFileSync(this.ledgerPath(), "utf8"));
   }
 

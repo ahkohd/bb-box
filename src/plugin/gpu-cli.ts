@@ -8,6 +8,7 @@ const ANSWER_WORDS: Readonly<Record<string, (guest: GpuMarkGuest) => string>> = 
   refused: (guest) => `The GPU helper refused it, as ${guest.answerWhy}.`,
   would: (guest) => `In its dry run, ${guest.answerWhy}.`,
   unanswered: () => "The GPU helper had not answered within 10 s: run bb box doctor in a minute.",
+  released: () => "The GPU helper cleared its claim; its device lines stay as they are.",
 };
 
 function outcomeWords(guest: GpuMarkGuest): string {
@@ -22,9 +23,9 @@ function outcomeWords(guest: GpuMarkGuest): string {
     case "refused":
       return marker ? `left with ${marker}.` : "not marked.";
     case "unmarked":
-      return `took off ${marker}.`;
+      return marker ? `took off ${marker}.` : "had its claim cleared.";
     case "would-unmark":
-      return `would have ${marker} taken off.`;
+      return marker ? `would have its claim cleared and ${marker} taken off.` : "would have its claim cleared.";
     case "kept":
       return `kept ${marker}.`;
   }
@@ -37,8 +38,8 @@ export function guestLine(guest: GpuMarkGuest): string {
 }
 
 const UNDO_LEAVES =
-  "This takes off tags alone: it does not clear the claims the GPU helper granted, which stay in its ledger until a later BB Box release clears claims (071 unit 5). " +
-  "With writes off the helper changes nothing; with writes on it would go on giving each stopped guest the lines of the card it claimed.";
+  "Each claim is cleared by the GPU helper first, through a gpu.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them. " +
+  "A box bb-box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again.";
 
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -50,8 +51,8 @@ function headline(marking: GpuMarking): string {
   const of = (outcome: GpuMarkGuest["outcome"]) => marking.guests.filter((guest) => guest.outcome === outcome).length;
   if (marking.undo) {
     const taken = of(marking.check ? "would-unmark" : "unmarked");
-    if (marking.check) return `${where}: would take the marker off ${count(taken, "guest")}; changes nothing (--check). ${UNDO_LEAVES}`;
-    return `${where}: took the marker off ${count(taken, "guest")}. ${UNDO_LEAVES}`;
+    if (marking.check) return `${where}: would clear the claim of ${count(taken, "guest")}; changes nothing (--check). ${UNDO_LEAVES}`;
+    return `${where}: cleared the claim of ${count(taken, "guest")}. ${UNDO_LEAVES}`;
   }
   const marked = of(marking.check ? "would-mark" : "marked");
   const already = of("already");
@@ -78,7 +79,7 @@ export function markingText(markings: readonly GpuMarking[]): string {
 
 export function markingFailed(markings: readonly GpuMarking[]): boolean {
   return markings.some(
-    (marking) => marking.refused !== null || marking.guests.some((guest) => guest.outcome === "refused" || (guest.answer !== null && guest.answer !== "granted")),
+    (marking) => marking.refused !== null || marking.guests.some((guest) => guest.outcome === "refused" || (guest.answer !== null && guest.answer !== "granted" && guest.answer !== "released")),
   );
 }
 
@@ -98,10 +99,10 @@ export function gpuCommands(app: BbBox) {
       summary:
         "Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.<card's UUID>.g<N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. " +
         "It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. " +
-        "It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo takes those markers off again, and nothing else: the claims the helper granted stay in its ledger until a later release clears claims.",
+        "It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them.",
       options: {
         check: { type: "boolean", description: "Only say what it would mark, or with --undo take off, and why; it changes nothing." },
-        undo: { type: "boolean", description: "Take the shared and whole markers off this install's guests again. Other gpu tags stay, and so do the claims the helper granted, in its ledger." },
+        undo: { type: "boolean", description: "Clear the claims the GPU helper holds for this install's guests, and take their shared and whole markers off. Device lines and other gpu tags stay. Needs bb-box-gpu 0.3.0 or later." },
         on: { type: "string", description: "Only this backend, by its ID, such as proxmox-lxc. Every Proxmox LXC backend that is on by default." },
         json: { type: "boolean", description: "Print JSON." },
       },

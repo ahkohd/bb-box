@@ -24,7 +24,7 @@ function answered(json: unknown): FetchResponse {
   return { ok: true, status: 200, statusText: "OK", text: async () => text };
 }
 
-test("after --undo, mark asks again above the helper's last answered generation, for the card the lines name now, and counts it granted only from the helper's own answer (Opus 1, Astra 2)", async () => {
+test("after --undo, mark asks again above the helper's last answered generation, for the card the lines name now, and counts it granted only from the helper's own answer (Opus 1, Astra 2); since unit 5 the undo clears the claim, so the helper never holds card A for it", async () => {
   const bridge = new Bridge();
   bridge.guest(7200, desktop("bx7200", "moved", CARD_A));
   bridge.helper();
@@ -33,12 +33,13 @@ test("after --undo, mark asks again above the helper's last answered generation,
   await backend.markGpus(request({ undo: true }));
   bridge.guest(7200, desktop("bx7200", "moved", CARD_B));
   bridge.helper();
-  assert.ok(bridge.node.reportLines().includes(`would 7200 lines ${A} desktop for claim g1`), "the helper still holds card A for it");
+  assert.ok(bridge.node.reportLines().includes(`ledger 7200 box ${INSTALL}/bx7200 answered g2 claim none`), "the undo cleared the claim on card A");
+  assert.deepEqual(bridge.node.reportLines().filter((line) => line.startsWith("would ")), [], "so the helper would not put card A's lines back");
   const again = one(await backend.markGpus(request()), 7200);
-  assert.deepEqual([again.outcome, again.marker, again.answer], ["marked", marker("shared", CARD_B, 2), "granted"]);
+  assert.deepEqual([again.outcome, again.marker, again.answer], ["marked", marker("shared", CARD_B, 3), "granted"]);
   const report = bridge.node.reportLines();
-  assert.ok(report.includes(`claim 7200 g2 granted shared ${B}`), report.join("\n"));
-  assert.ok(report.includes(`ledger 7200 box ${INSTALL}/bx7200 answered g2 claim g2 shared ${B} granted`));
+  assert.ok(report.includes(`claim 7200 g3 granted shared ${B}`), report.join("\n"));
+  assert.ok(report.includes(`ledger 7200 box ${INSTALL}/bx7200 answered g3 claim g3 shared ${B} granted`));
   assert.deepEqual(report.filter((line) => line.startsWith("would ")), [], "with the claim on card B, the helper would write nothing");
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
@@ -52,8 +53,8 @@ test("a marker refused, then granted at g2, taken off and asked again, goes to g
   assert.deepEqual([one(await backend.markGpus(request()), 7210).marker, one(await backend.markGpus(request()), 7210).outcome], [marker("shared", CARD_A, 2), "already"]);
   await backend.markGpus(request({ undo: true }));
   const again = one(await backend.markGpus(request()), 7210);
-  assert.deepEqual([again.outcome, again.marker, again.answer, again.why], ["marked", marker("shared", CARD_A, 3), "granted", "The helper answered up to g2 for it before, so it is asked with g3."]);
-  assert.ok(bridge.node.reportLines().includes(`claim 7210 g3 granted shared ${A}`));
+  assert.deepEqual([again.outcome, again.marker, again.answer, again.why], ["marked", marker("shared", CARD_A, 4), "granted", "The helper answered up to g3 for it before, so it is asked with g4."]);
+  assert.ok(bridge.node.reportLines().includes(`claim 7210 g4 granted shared ${A}`));
 });
 
 test("a standing marker counts as granted only when the helper's ledger holds that generation, part and card; otherwise it is asked again (Opus 1, Astra 2)", async () => {
@@ -217,7 +218,7 @@ test("the doctor never passes a report that leaves lines out, or one with no led
   assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so bb-box cannot show the helper granted each marker as it stands."]);
   bridge.guest(7301, desktop("bx7301", "new", CARD_B));
   const refused = await bridge.backend().markGpus(request());
-  assert.equal(refused.refused?.detail, "bb-box-gpu 0.2.0 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
+  assert.equal(refused.refused?.detail, "bb-box-gpu 0.3.0 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
   assert.ok(!bridge.tags(7301).some((tag) => tag.startsWith("gpu.")));
 });
 
@@ -234,8 +235,9 @@ test("mark writes no tags without the digest Proxmox gives with the config (Astr
   assert.deepEqual(puts(bridge), []);
 });
 
-test("--undo says plainly that the helper's claims stay until a later release clears them (Opus 1)", () => {
-  const undone: GpuMarking = { backend: "proxmox-lxc", label: "Proxmox LXC on pve", node: "pve", check: false, undo: true, refused: null, withoutCards: 0, guests: [{ vmid: 7001, name: "amber-fox", running: true, card: null, marker: marker("shared", CARD_A, 1), outcome: "unmarked", why: null, answer: null, answerWhy: null }] };
-  assert.match(markingText([undone]), /took the marker off 1 guest\. This takes off tags alone: it does not clear the claims the GPU helper granted, which stay in its ledger until a later BB Box release clears claims \(071 unit 5\)\./);
-  assert.match(markingText([{ ...undone, check: true, guests: [{ ...undone.guests[0]!, outcome: "would-unmark" }] }]), /changes nothing \(--check\)\. This takes off tags alone: it does not clear the claims/);
+test("--undo says plainly that it clears the helper's claims and leaves the device lines (Opus 1, 071 unit 5)", () => {
+  const undone: GpuMarking = { backend: "proxmox-lxc", label: "Proxmox LXC on pve", node: "pve", check: false, undo: true, refused: null, withoutCards: 0, guests: [{ vmid: 7001, name: "amber-fox", running: true, card: null, marker: marker("shared", CARD_A, 1), outcome: "unmarked", why: null, answer: "released", answerWhy: null }] };
+  assert.match(markingText([undone]), /cleared the claim of 1 guest\. Each claim is cleared by the GPU helper first, through a gpu\.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them\./);
+  assert.match(markingText([undone]), /CT 7001 amber-fox, running: took off gpu\.shared\.[0-9a-f-]+\.g1\. The GPU helper cleared its claim; its device lines stay as they are\./);
+  assert.match(markingText([{ ...undone, check: true, guests: [{ ...undone.guests[0]!, outcome: "would-unmark", answer: null }] }]), /would clear the claim of 1 guest; changes nothing \(--check\)\./);
 });

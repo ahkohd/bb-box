@@ -94,6 +94,7 @@ sub lock_full {
         sleep(0.01);
     }
     log_line('locks.log', "$kind $vmid");
+    swap_on_lock($kind, $vmid);
     print STDERR "fake-pve: locked $kind $vmid\n" if $ENV{FAKE_PVE_TRACE_LOCKS};
     local $held{"$kind $vmid"} = 1;
     my @result = eval { $code->(@param) };
@@ -102,6 +103,22 @@ sub lock_full {
     close $fh;
     die $error if $error;
     return wantarray ? @result : $result[0];
+}
+
+sub swap_on_lock {
+    my ($kind, $vmid) = @_;
+    my ($who, $from) = split /=/, ($ENV{FAKE_PVE_SWAP_ON_LOCK} // ''), 2;
+    return unless defined $from && $who eq "$kind $vmid";
+    delete $ENV{FAKE_PVE_SWAP_ON_LOCK};
+    open(my $in, '<', $from) or die "fake pve: cannot read $from: $!\n";
+    local $/;
+    my $text = <$in>;
+    close $in;
+    my $path = config_path($kind, $vmid);
+    open(my $out, '>', $path) or die "fake pve: cannot write $path: $!\n";
+    print {$out} $text;
+    close $out;
+    log_line('swaps.log', "$kind $vmid");
 }
 
 sub load {

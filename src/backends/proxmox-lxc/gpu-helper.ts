@@ -109,13 +109,17 @@ export function judgeGpuHelper(helper: GpuHelperState, seen: GpuHelperSeen): Gpu
     return { status: "fail", detail: `${named} serves ${poolsInWords(served?.listed ?? [])}, not this install's pool ${pool}.`, fix: serveIt };
   }
   if (!helper.tested) {
-    return { status: "fail", detail: `${named} was not tested on pve-container ${helper.pveContainer}, so it changes no guest.`, fix: `Run host/setup-gpu.sh from a BB Box release tested on pve-container ${helper.pveContainer}, as root on ${node}.` };
+    return {
+      status: "warn",
+      detail: `${named} was not tested on pve-container ${helper.pveContainer}, so it changes no guest: it runs as with writes off, and bb-box moves no box to another card.`,
+      fix: `Run host/setup-gpu.sh from a BB Box release tested on pve-container ${helper.pveContainer}, as root on ${node}.`,
+    };
   }
   if (helper.writes === "off") {
     return {
       status: "warn",
-      detail: `${named} runs with writes off, a dry run: it writes the GPU report and changes no guest. Writes stay off until bb-box marks its guests and a day of dry run with the markers shows no write the helper would make (071).`,
-      fix: "Nothing to do now: a later BB Box release turns writes on, with host/setup-gpu.sh --writes on.",
+      detail: `${named} runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, bb-box moves no box to another card, and a stopped box starts on the card its lines name (071).`,
+      fix: `Once bb box gpu mark has marked this install's guests and a day of dry run shows no write the helper would make, run host/setup-gpu.sh --writes on --check, then host/setup-gpu.sh --writes on, as root on ${node}.`,
     };
   }
   return { status: "ok", detail: `${named} reported ${ago(Math.max(ageMs, 0))}, with writes on, for pool ${pool}, on pve-container ${helper.pveContainer}, which it was tested on.`, fix: null };

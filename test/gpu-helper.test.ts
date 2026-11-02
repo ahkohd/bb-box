@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseGpuReport } from "../src/backends/proxmox-lxc/backend.ts";
-import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, cardLines, exited, heldCopyLabels, helperConstant, marker, otherKeys, type FakeCard } from "./gpu-helper/node.ts";
+import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, boxLabels, cardLines, exited, heldCopyLabels, helperConstant, marker, otherKeys, pciOf, type FakeCard, type GuestSpec } from "./gpu-helper/node.ts";
 
 const FAKETIME = ["/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1", "/usr/lib/aarch64-linux-gnu/faketime/libfaketime.so.1", "/usr/lib/faketime/libfaketime.so.1"].find((path) => existsSync(path));
 
@@ -119,16 +119,18 @@ test("with writes off, no path writes a guest: a request, a yield, a copy's line
   assertUnchanged(lost, lostBefore);
   assert.deepEqual(lost.guestWrites(), []);
   assert.deepEqual(lost.guestLocks(), []);
-  assert.deepEqual(lines(lost, "would"), ["would 241 lines none for copy of 240"]);
+  assert.deepEqual(lines(lost, "would"), [], "a rebuilt ledger refuses a stopped copy and leaves its lines");
+  assert.ok(claims(lost).includes(`claim 241 g3 refused copy ${A} 240`), claims(lost).join("\n"));
 });
 
 test("--help and --version say what the helper is, and an argument it cannot read is refused", () => {
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.2\.0, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.3\.0, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.2.0 protocol 1\n");
+  assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.0 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -301,7 +303,7 @@ test("whole: refused while another guest has the card's devices or holds it whol
   assert.deepEqual(node.lines(805), cardLines(CARD_B, "server"));
 });
 
-test("a lost ledger is rebuilt from the guests: matching guests are granted, a running copy keeps its card and the stopped one loses its lines, and the rest wait for bb-box's next request", () => {
+test("a lost ledger is rebuilt from the guests: matching guests are granted; a stopped copy, a guest whose lines do not match and a whole box whose card a stopped box still has are refused and keep their lines, and bb-box's next request decides them (re-review R3)", () => {
   const node = new FakeNode({ writes: "on", ledger: false });
   node.guest(900, { box: "bx900", name: "amber-fox", marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "server"), running: true });
   const copy = { box: "bx900", name: "amber-fox", hostname: "bb-box-copy-901", marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "server") };
@@ -311,27 +313,29 @@ test("a lost ledger is rebuilt from the guests: matching guests are granted, a r
   node.guest(903, yielding);
   node.guest(904, { box: "bx904", marker: marker("shared", CARD_B, 4), lines: cardLines(CARD_A, "server") });
   node.guest(905, { box: "bx905", marker: marker("none", null, 2) });
-  ran(node);
-  assert.deepEqual(node.guestWrites().sort(), ["lxc 901", "lxc 903"]);
-  rmSync(node.ledgerPath());
-  rmSync(node.file("run/fake-pve/writes.log"));
-  node.guest(901, copy);
-  node.guest(903, yielding);
+  const before = snapshot(node, [900, 901, 902, 903, 904, 905]);
   const stderr = ran(node);
-  assert.match(stderr, /the ledger was rebuilt from the guests: 3 granted, 1 yielded, 1 refused as copies, 1 refused as their lines did not match their marker/);
+  assert.match(stderr, /the ledger was rebuilt from the guests: 3 granted, 0 yielded, 1 refused as copies, 1 refused as their lines did not match their marker/);
+  assertUnchanged(node, before);
+  assert.deepEqual(node.guestWrites(), [], "recovery writes no guest");
   const ledger = node.ledger();
   assert.equal(ledger.guests["900"]!.claim!.answer, "granted");
-  assert.equal(ledger.guests["902"]!.claim!.part, "whole");
-  assert.equal(ledger.guests["903"]!.claim!.answer, "yielded");
+  assert.equal(ledger.guests["903"]!.claim!.answer, "granted");
   assert.equal(ledger.guests["905"]!.claim!.part, "none");
-  assert.equal(ledger.guests["901"]!.strip!.why, "copy of 900");
-  assert.deepEqual(node.lines(901), [], "the stopped copy loses its lines");
-  assert.deepEqual(node.lines(903), [], "a stopped shared box on a running whole box's card yields");
-  assert.deepEqual(node.lines(900), cardLines(CARD_A, "server"));
-  assert.deepEqual(node.lines(904), cardLines(CARD_A, "server"), "a guest whose lines do not match its marker is not written");
+  assert.equal(ledger.guests["902"]!.claim, undefined, "no whole grant while a stopped box still has the card's lines");
+  assert.ok(Object.values(ledger.guests).every((entry) => !entry.strip && !entry.proposed_strip), JSON.stringify(ledger.guests));
+  assert.ok(claims(node).includes(`claim 901 g3 refused copy ${A} 900`), claims(node).join("\n"));
+  assert.ok(claims(node).includes(`claim 902 g2 refused ledger-lost ${B} 903`));
   assert.ok(claims(node).includes(`claim 904 g4 refused ledger-lost ${B}`));
   ran(node);
-  assert.deepEqual(node.lines(904), cardLines(CARD_A, "server"), "its generation is not answered again");
+  ran(node, ["--boot"]);
+  assertUnchanged(node, before);
+  assert.deepEqual(node.guestWrites(), [], "nor does a later pass, or the boot pass");
+  node.mark(902, marker("whole", CARD_B, 3));
+  ran(node);
+  assert.ok(claims(node).includes(`claim 902 g3 granted whole ${B}`), "bb-box's next request for the whole box is answered");
+  assert.deepEqual(node.lines(903), [], "and the stopped shared box yields to it then");
+  assert.deepEqual(node.lines(901), cardLines(CARD_A, "server"), "the copy keeps its lines until it asks");
   node.mark(904, marker("shared", CARD_B, 5));
   ran(node);
   assert.ok(claims(node).includes(`claim 904 g5 refused whole-taken ${B} 902`), "bb-box's next request is answered");
@@ -471,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.2.0 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.3.0 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -797,7 +801,8 @@ test("with writes off, recovery stores no strip, yield or whole grant; once writ
   const stored = node.ledger().guests;
   assert.ok(Object.values(stored).every((entry) => !entry.strip && entry.claim?.answer !== "yielded"), JSON.stringify(stored));
   assert.equal(stored["2002"]?.claim, undefined, "no whole grant while another box still has the card's devices");
-  assert.deepEqual(lines(node, "would"), ["would 2001 lines none for copy of 2000", "would 2003 lines none for yield to 2002 g1"]);
+  assert.deepEqual(lines(node, "would"), ["would 2003 lines none for yield to 2002 g1"], "the stopped copy is refused, and keeps its lines");
+  assert.ok(claims(node).includes(`claim 2001 g2 refused copy ${A} 2000`), claims(node).join("\n"));
   assert.deepEqual(node.guestWrites(), []);
 
   node.remove(2000);
@@ -867,4 +872,229 @@ test("a clock stepped back an hour stops neither the passes nor the report (Opus
     service.kill("SIGTERM");
     assert.equal(await exited(service), 0);
   }
+});
+
+test("071 unit 5: a release marker clears a guest's claim and leaves its lines, running or stopped, with writes on or off; the guest then holds its card unmanaged and is never written; an ineligible guest's release is refused", () => {
+  for (const writes of ["on", "off"] as const) {
+    const node = new FakeNode({ writes });
+    node.guest(2200, { box: "bx2200", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+    node.guest(2201, { box: "bx2201", kind: "linux-desktop", marker: marker("whole", CARD_B, 2), lines: cardLines(CARD_B, "desktop") });
+    node.guest(2202, { box: "bx2202", kind: "linux-desktop", marker: "gpu.release.g1", lines: cardLines(CARD_A, "desktop"), unprivileged: false });
+    ran(node);
+    assert.deepEqual(claims(node).sort(), [`claim 2200 g1 granted shared ${A}`, `claim 2201 g2 granted whole ${B}`, `claim 2202 g1 refused privileged -`], writes);
+    const before = snapshot(node, [2200, 2201, 2202]);
+    node.mark(2200, "gpu.release.g2");
+    node.mark(2201, "gpu.release.g3");
+    const after = snapshot(node, [2200, 2201, 2202]);
+    ran(node);
+    assert.ok(claims(node).includes("claim 2200 g2 released"), claims(node).join("\n"));
+    assert.ok(claims(node).includes("claim 2201 g3 released"));
+    assert.ok(lines(node, "ledger").includes(`ledger 2200 box ${INSTALL}/bx2200 answered g2 claim none`));
+    assert.ok(lines(node, "ledger").includes(`ledger 2201 box ${INSTALL}/bx2201 answered g3 claim none`));
+    assert.ok(lines(node, "holder").includes(`holder ${A} 2200 shared running install ${INSTALL} unmanaged`), lines(node, "holder").join("\n"));
+    assert.ok(lines(node, "holder").includes(`holder ${B} 2201 shared stopped install ${INSTALL} unmanaged`), "a released whole box no longer holds its card whole");
+    assertUnchanged(node, after);
+    assert.equal(node.text(2200).replace(/^tags: .*$/m, ""), before.get(2200)!.replace(/^tags: .*$/m, ""), "only the tags moved");
+    node.mark(2200);
+    node.mark(2201);
+    node.setRunning(2200, false);
+    const unmarked = snapshot(node, [2200, 2201]);
+    ran(node);
+    ran(node, ["--boot"]);
+    assertUnchanged(node, unmarked);
+    assert.deepEqual(node.guestWrites(), [], `${writes}: no guest was written`);
+    assert.deepEqual(lines(node, "would"), []);
+    node.mark(2200, marker("shared", CARD_A, 3));
+    ran(node);
+    assert.ok(claims(node).includes(`claim 2200 g3 granted shared ${A}`), "marked again above the release, it is granted");
+  }
+  const lost = new FakeNode({ writes: "on", ledger: false });
+  lost.guest(2210, { box: "bx2210", kind: "linux-desktop", marker: "gpu.release.g4", lines: cardLines(CARD_A, "desktop") });
+  ran(lost);
+  assert.deepEqual(lines(lost, "ledger").filter((line) => line.startsWith("ledger 2210 ")), ["ledger 2210 box 4kq7/bx2210 answered g4 claim none"], "a rebuilt ledger takes a release marker for no claim");
+  assert.deepEqual(lost.guestWrites(), []);
+});
+
+test("071 unit 5: --preview shows what the first pass with writes on would do, and changes nothing: no guest is written or locked, and the ledger, the report and the helper's state stay as they were", () => {
+  const node = new FakeNode({ writes: "off" });
+  node.guest(2300, { box: "bx2300", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  node.guest(2301, { box: "bx2301", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(2302, { box: "bx2302", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop") });
+  ran(node);
+  assert.deepEqual(lines(node, "would"), [`would 2301 lines ${B} desktop for request g1`]);
+  const guests = snapshot(node, [2300, 2301, 2302]);
+  const ledger = readFileSync(node.ledgerPath(), "utf8");
+  const report = node.report();
+  const state = readFileSync(node.file("var/lib/bb-box-gpu/host"), "utf8");
+  const writesBefore = node.writes().length;
+  const preview = node.run(["--preview"]);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.0 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
+  assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
+  assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
+  assert.doesNotMatch(preview.stdout, /CT 2300|CT 2302/, "a running guest and an unmarked one are not written");
+  assertUnchanged(node, guests);
+  assert.equal(readFileSync(node.ledgerPath(), "utf8"), ledger);
+  assert.equal(node.report(), report);
+  assert.equal(readFileSync(node.file("var/lib/bb-box-gpu/host"), "utf8"), state);
+  assert.equal(node.writes().length, writesBefore, "nothing was written, the report VM included");
+  assert.deepEqual(node.guestLocks(), [], "no guest's config lock was taken");
+
+  node.mark(2301, marker("shared", CARD_A, 2));
+  ran(node);
+  const clean = node.run(["--preview"]);
+  assert.match(clean.stdout, /^preview: writes on would write no guest$/m);
+  assert.doesNotMatch(clean.stdout, /^would write /m);
+  node.write("pve-container-version", "6.2.1\n");
+  assert.match(node.run(["--preview"]).stdout, /^preview: pve-container 6\.2\.1 is not a version this release was tested on, so with writes on it would still write no guest$/m);
+});
+
+function configOf(node: FakeNode, spec: GuestSpec): string {
+  node.guest(9998, spec);
+  const text = node.text(9998);
+  node.remove(9998);
+  return text;
+}
+
+test("071 unit 5, Astra 1: after waiting for a guest's config lock, the helper writes or grants only if it is still the same box asking the same thing", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(2500, { box: "bx2500", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
+  const none = node.file("swap-2500.conf");
+  writeFileSync(none, configOf(node, { box: "bx2500", kind: "linux-desktop", marker: marker("none", null, 1) }));
+  ran(node, ["--once"], { FAKE_PVE_SWAP_ON_LOCK: `lxc 2500=${none}` });
+  assert.deepEqual(node.lines(2500), [], "a guest that came to ask for no card while the helper waited gets none");
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 2500 g1 granted shared")), claims(node).join("\n"));
+  ran(node);
+  assert.ok(claims(node).includes("claim 2500 g1 granted none"), "the request as it stands is answered on the next pass");
+
+  node.guest(2501, { box: "bx2501", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2501 g1 granted shared ${A}`));
+  node.guest(2501, { box: "bx2501", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
+  const replacement = node.file("swap-2501.conf");
+  writeFileSync(replacement, configOf(node, boxLabels("bx9901", "someone-else", "linux-desktop", "zz99")));
+  ran(node, ["--once"], { FAKE_PVE_SWAP_ON_LOCK: `lxc 2501=${replacement}` });
+  assert.deepEqual(node.lines(2501), [], "another install's guest that took the VMID is not given the old box's card");
+
+  node.guest(2510, { box: "bx2510", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+  ran(node);
+  node.guest(2511, { box: "bx2511", kind: "linux", marker: marker("whole", CARD_B, 1) });
+  const takenOver = node.file("swap-2510.conf");
+  writeFileSync(takenOver, configOf(node, { ...boxLabels("bx9902", "taken-over", "linux-desktop", "zz99"), lines: cardLines(CARD_B, "desktop") }));
+  ran(node, ["--once"], { FAKE_PVE_SWAP_ON_LOCK: `lxc 2510=${takenOver}` });
+  assert.deepEqual(node.lines(2510), cardLines(CARD_B, "desktop"), "a guest that is no longer the box that would yield keeps its lines");
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 2511 g1 granted")), "and the whole request waits for the next pass");
+  assert.deepEqual(node.guestWrites(), [], "nothing was written");
+});
+
+test("071 unit 5, Astra 3: a guest whose config cannot be read blocks every decision on the cards it may hold, is named, and fails the preview", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(2520, { box: "bx2520", kind: "linux-desktop", lines: cardLines(CARD_A, "desktop"), running: true });
+  node.guest(2521, { box: "bx2521", kind: "linux", marker: marker("whole", CARD_A, 1) });
+  node.guest(2522, { box: "bx2522", kind: "linux", marker: marker("shared", CARD_B, 1) });
+  node.guest(2523, { box: "bx2523", kind: "linux", marker: marker("none", null, 1) });
+  writeFileSync(node.configPath(2520), `${node.text(2520)}this is not a config line\n`);
+  ran(node);
+  assert.ok(!claims(node).some((line) => /^claim 252[12] g1 /.test(line)), `no request on a card CT 2520 may hold is decided: ${claims(node).join(" | ")}`);
+  assert.ok(claims(node).includes("claim 2523 g1 granted none"), "a request for no card is");
+  assert.ok(lines(node, "error").some((line) => /^error CT 2520's config cannot be read, so no card it may hold is given or claimed until it can be$/.test(line)), lines(node, "error").join("\n"));
+  assert.ok(lines(node, "holder").includes(`holder ${A} 2520 shared running other unmanaged`), "it still holds the cards it may hold");
+  assert.ok(lines(node, "holder").includes(`holder ${B} 2520 shared running other unmanaged`));
+  assert.deepEqual(node.guestWrites(), []);
+  const preview = node.run(["--preview"]);
+  assert.equal(preview.status, 1, preview.stdout);
+  assert.match(preview.stdout, /^error: CT 2520's config cannot be read/m);
+  assert.match(preview.stdout, /^preview: incomplete, as 1 error line, so it cannot show what writes on would do$/m);
+  node.guest(2520, { box: "bx2520", kind: "linux-desktop", lines: cardLines(CARD_A, "desktop"), running: true });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2521 g1 refused card-held ${A} 2520`), claims(node).join("\n"));
+  assert.ok(claims(node).includes(`claim 2522 g1 granted shared ${B}`));
+});
+
+test("071 unit 5, Astra 4 and Opus 2: the preview fails, and says why, when it read no card or has any error line", () => {
+  const node = new FakeNode({ writes: "off" });
+  node.guest(2530, { box: "bx2530", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
+  ran(node);
+  node.smiFails(true);
+  const failing = node.run(["--preview"]);
+  assert.equal(failing.status, 1, failing.stdout);
+  assert.match(failing.stdout, /^error: nvidia-smi /m);
+  assert.match(failing.stdout, /^preview: incomplete, as it read no card, and 1 error line, so it cannot show what writes on would do$/m);
+  node.smiFails(false);
+  const reading = node.run(["--preview"]);
+  assert.equal(reading.status, 0, reading.stdout);
+  assert.match(reading.stdout, /^would write CT 2530 for request g1: /m, "with the cards read, the write it would make shows");
+});
+
+test("071 unit 5, re-review R1: a reading that leaves out a card, has a row it cannot read or ends in an error decides nothing on a card it did not read, writes no guest for one, and fails the preview", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(2540, { box: "bx2540", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
+  node.guest(2541, { box: "bx2541", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(2542, { box: "bx2542", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop"), running: true });
+  const guests = snapshot(node, [2540, 2541, 2542]);
+  const partials: readonly { readonly name: string; readonly rows: readonly string[]; readonly ending?: { readonly exit?: number; readonly stderr?: string }; readonly read: "A" | "none"; readonly error: RegExp }[] = [
+    { name: "B's memory unknown, an error and exit 9", rows: [node.smiRow(CARD_A), `GPU-${CARD_B.uuid}, ${CARD_B.bus}, ${CARD_B.index}, [N/A], [N/A]`], ending: { exit: 9, stderr: "Unable to determine the device handle for GPU 00000000:D1:00.0: Unknown Error" }, read: "none", error: /^error nvidia-smi's reading was incomplete \(nvidia-smi gave no GPU memory: GPU-8c41d7b2.*\), so no request on any card is decided and no guest's lines are changed$/ },
+    { name: "every row, then exit 9", rows: [node.smiRow(CARD_A), node.smiRow(CARD_B)], ending: { exit: 9 }, read: "none", error: /^error nvidia-smi's reading was incomplete \(nvidia-smi exited with status 9\), so no request on any card is decided and no guest's lines are changed$/ },
+    { name: "B left out", rows: [node.smiRow(CARD_A)], read: "A", error: new RegExp(`^error nvidia-smi gave no reading of the card at ${pciOf(CARD_B).replace(/\./g, "\\.")}, so no request on it is decided and no guest's lines for it are changed$`) },
+  ];
+  for (const partial of partials) {
+    node.smiReading(partial.rows, partial.ending);
+    const preview = node.run(["--preview"]);
+    assert.equal(preview.status, 1, `${partial.name}: ${preview.stdout}`);
+    assert.match(preview.stdout, /^preview: incomplete, as .*nvidia-smi gave no full reading of every card.*, so it cannot show what writes on would do$/m, partial.name);
+    assert.doesNotMatch(preview.stdout, /^would write CT 2541 /m, `${partial.name}: no write for a card it did not read`);
+    ran(node);
+    assert.ok(lines(node, "error").some((line) => partial.error.test(line)), `${partial.name}: ${lines(node, "error").join(" | ")}`);
+    assert.ok(!claims(node).some((line) => line.startsWith("claim 2541 ")), `${partial.name}: the request on B waits: ${claims(node).join(" | ")}`);
+    assert.equal(claims(node).some((line) => line.startsWith(`claim 2540 g1 granted shared ${A}`)), partial.read === "A", `${partial.name}: the request on A is decided only when A's reading is whole`);
+    assert.deepEqual(node.lines(2541), cardLines(CARD_A, "desktop"), `${partial.name}: CT 2541 keeps its lines`);
+  }
+  assertUnchanged(node, new Map([...guests].filter(([vmid]) => vmid !== 2540)));
+  node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+  const whole = node.run(["--preview"]);
+  assert.equal(whole.status, 0, whole.stdout);
+  assert.match(whole.stdout, /^would write CT 2541 for request g1: /m, "with every card read, the write it would make shows");
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2541 g1 granted shared ${B}`), claims(node).join("\n"));
+  assert.deepEqual(lines(node, "error"), []);
+});
+
+test("071 unit 5, re-review R3: a lost ledger is rebuilt on no card that a guest whose config cannot be read may hold, and recovery strips no stopped box's lines, at boot or after: it refuses, and the box asks again", () => {
+  const node = new FakeNode({ writes: "on", ledger: false });
+  node.guest(2550, { box: "bx2550", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(2551, { box: "bx2551", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+  node.guest(2552, { box: "bx2552", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop") });
+  writeFileSync(node.configPath(2552), `${node.text(2552)}this is not a config line\n`);
+  const before = snapshot(node, [2550, 2551]);
+  for (const args of [["--boot"], ["--once"]]) {
+    ran(node, args);
+    assertUnchanged(node, before);
+    assert.deepEqual(node.guestWrites(), [], `${args[0]}: recovery writes no guest`);
+  }
+  assert.ok(!claims(node).some((line) => /^claim 255[01] /.test(line)), `no claim on a card CT 2552 may hold is granted or refused: ${claims(node).join(" | ")}`);
+  assert.ok(lines(node, "error").some((line) => line.startsWith("error CT 2552's config cannot be read")), lines(node, "error").join("\n"));
+  assert.ok(!existsSync(node.ledgerPath()) || Object.keys(node.ledger().guests).every((vmid) => !["2550", "2551"].includes(vmid) || !node.ledger().guests[vmid]!.claim), "no claim is stored for them");
+  node.guest(2552, { box: "bx2552", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop") });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2550 g1 granted whole ${A}`), claims(node).join("\n"));
+  assert.ok(claims(node).includes(`claim 2551 g1 granted shared ${B}`));
+  assertUnchanged(node, before);
+
+  const boot = new FakeNode({ writes: "on", ledger: false });
+  boot.guest(2560, { box: "bx2560", kind: "linux-desktop", marker: marker("shared", CARD_B, 2), lines: cardLines(CARD_A, "desktop") });
+  boot.guest(2561, { box: "bx2561", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  boot.guest(2562, { box: "bx2561", kind: "linux-desktop", hostname: "bb-box-copy-2562", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  const stopped = snapshot(boot, [2560, 2561, 2562]);
+  ran(boot, ["--boot"]);
+  ran(boot);
+  assertUnchanged(boot, stopped);
+  assert.deepEqual(boot.guestWrites(), [], "a lost ledger at boot strips no stopped box");
+  assert.ok(claims(boot).includes(`claim 2560 g2 refused ledger-lost ${B}`), claims(boot).join("\n"));
+  assert.ok(claims(boot).includes(`claim 2561 g1 refused ledger-lost ${A} 2560`), `a stopped whole box whose card other stopped boxes still have is refused, and keeps its lines: ${claims(boot).join(" | ")}`);
+  assert.ok(claims(boot).includes(`claim 2562 g1 refused copy ${A} 2561`));
+  boot.mark(2560, marker("shared", CARD_B, 3));
+  ran(boot);
+  assert.ok(claims(boot).includes(`claim 2560 g3 granted shared ${B}`), "asked again, it is decided");
+  assert.deepEqual(boot.lines(2560), cardLines(CARD_B, "desktop"));
 });
