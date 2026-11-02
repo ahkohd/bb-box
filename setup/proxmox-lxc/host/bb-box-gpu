@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.3.1';
+use constant VERSION => '0.3.2';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -241,6 +241,11 @@ sub note_unread_cards {
         $ctx->{unread}{'*'} = 'every card';
         push @{ $ctx->{errors} }, "nvidia-smi's reading was incomplete ($ctx->{reading_bad}), so no request on any card is decided and no guest's lines are changed";
     }
+}
+
+sub full_inventory {
+    my ($ctx) = @_;
+    return $ctx->{cards_known} && !%{ $ctx->{unread} // {} } ? 1 : 0;
 }
 
 sub card_unread {
@@ -835,7 +840,7 @@ sub unsettle {
 
 sub settled_by_answer {
     my ($ctx, $guest) = @_;
-    return unless delete $ctx->{ledger}{unsettled}{ $guest->{vmid} };
+    return unless full_inventory($ctx) && delete $ctx->{ledger}{unsettled}{ $guest->{vmid} };
     $ctx->{ledger_dirty} = 1;
     note("CT $guest->{vmid} asked again after the lost ledger and was answered, so no card is closed for it");
 }
@@ -845,7 +850,9 @@ sub still_unsettled {
     return 0 unless $ctx->{ledger}{unsettled}{$vmid};
     my $guest = $guests->{$vmid};
     return 0 if !$guest && !container_exists($ctx, $vmid);
-    return 0 if $guest && !$guest->{unreadable} && ($guest->{holds_nothing} || !%{ $guest->{named} });
+    return 0 if $guest && !$guest->{unreadable} && $guest->{holds_nothing};
+    return 1 unless full_inventory($ctx);
+    return 0 if $guest && !$guest->{unreadable} && !%{ $guest->{named} };
     return 1;
 }
 
@@ -1631,6 +1638,11 @@ sub decide {
     }
     if (!$ledger) {
         set_aside_ledger($ctx) if $status eq 'corrupt';
+        if (!full_inventory($ctx)) {
+            push @{ $ctx->{errors} }, 'the ledger is lost, and is rebuilt only from a full reading of every card, which nvidia-smi has not given, so nothing is decided until it does';
+            note_once('rebuild waits', 'the ledger is lost; it is rebuilt from the guests once nvidia-smi gives a full reading of every card, and nothing is decided until then');
+            return;
+        }
         rebuild_ledger($ctx, $guests, $mode eq 'boot');
     } else {
         $ctx->{ledger} = $ledger;
@@ -1696,7 +1708,7 @@ sub exit_status_soon {
     my $until = monotonic() + $seconds;
     while (1) {
         my $done = waitpid($pid, WNOHANG);
-        return $? >> 8 if $done == $pid;
+        return ($? & 127) ? 'signal ' . ($? & 127) : $? >> 8 if $done == $pid;
         return undef if $done == -1 || monotonic() >= $until;
         sleep(0.02);
     }
@@ -1770,6 +1782,18 @@ sub take_smi_line {
     finish_group($smi) if $smi->{reading} && @{ $smi->{group} } == @{ $smi->{reading} };
 }
 
+sub exited_cleanly {
+    my ($status) = @_;
+    return defined $status && $status eq '0';
+}
+
+sub exit_words {
+    my ($status) = @_;
+    return 'nvidia-smi closed its output and had not exited half a second later' unless defined $status;
+    return "nvidia-smi was killed by $status" if $status =~ /^signal /;
+    return "nvidia-smi exited with status $status";
+}
+
 sub read_smi {
     my ($smi) = @_;
     my $got = sysread($smi->{fh}, my $chunk, 65536);
@@ -1780,8 +1804,9 @@ sub read_smi {
         my $status = $smi->{pid} ? exit_status_soon($smi->{pid}, 0.5) : undef;
         $smi->{pid} = undef if defined $status;
         $smi->{exit_status} = $status;
+        $smi->{reading_bad} //= exit_words($status) unless exited_cleanly($status);
         stop_smi($smi, defined $status
-            ? "nvidia-smi exited with status $status, so no card is listed and no claim is granted"
+            ? exit_words($status) . ', so no card is listed and no claim is granted'
             : 'nvidia-smi closed its output, so it was stopped; no card is listed and no claim is granted');
         return 0;
     }
@@ -1814,8 +1839,8 @@ sub one_reading {
     $smi->{reading_bad} //= $bad;
     if (!$smi->{reading}) {
         $smi->{failure} //= 'nvidia-smi listed no card, so no claim is granted';
-    } elsif ($smi->{reading_bad} || $unfinished || ($smi->{exit_status} // 0) != 0) {
-        $smi->{reading_bad} //= $unfinished // "nvidia-smi exited with status $smi->{exit_status}";
+    } elsif ($smi->{reading_bad} || $unfinished || !exited_cleanly($smi->{exit_status})) {
+        $smi->{reading_bad} //= $unfinished // exit_words($smi->{exit_status});
         delete $smi->{failure};
     } else {
         delete $smi->{failure};

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { CardReservations, cardsView, loadOf, nextGeneration, outstandingRequests, placeShared, settleOutstanding, underCardLock, waitForAnswer, type PlaceInput, type Placed } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { CARD_A, CARD_B, ClaimsBridge, INSTALL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
+import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
 import { marker } from "./gpu-helper/node.ts";
 
 const A = CARD_A.uuid;
@@ -603,4 +603,66 @@ test("071 unit 5, lost ledger: bb-box places no new desktop on a card a guest th
   assert.ok(!bridge.node.reportLines().some((line) => line.startsWith("unsettled ")));
   const next = await backend.acquire(box(), null, hooks(), signal());
   assert.equal(cardIn(bridge.tags(Number(next.ref))), A, "asked again and answered, CT 7005 opens card 0");
+});
+
+test("071 unit 5, final review F1: a start whose marker write is retried after the guest changed meanwhile checks the guest is still this install's box first; another install's guest that took the VMID is neither marked nor started", async () => {
+  const bridge = new ClaimsBridge();
+  const original = box("linux-desktop", "swift-owl");
+  bridge.desktop(7001, CARD_A, original, INSTALL, { marker: marker("shared", CARD_A, 1) });
+  bridge.desktop(7002, CARD_A, box("linux-desktop", "lone-pine"), INSTALL, { marker: marker("shared", CARD_A, 1), running: true });
+  bridge.pass();
+  const backend = bridge.backend({ perGpu: 1 });
+  let replaced = false;
+  bridge.proxmox.intercept = (call) => {
+    if (!replaced && call.method === "PUT" && call.path.endsWith("/lxc/7001/config") && call.params.tags?.includes("gpu.")) {
+      replaced = true;
+      bridge.desktop(7001, CARD_A, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL });
+    }
+    return undefined;
+  };
+  await assert.rejects(backend.start(bridge.stoppedGuest(7001, original, 9001), signal()), /^Error: CT 7001 is no longer box bx\d+ of this install: its config names box bx\d+ of install 9zz2\. bb-box changes nothing on it and does not start it\.$/);
+  assert.ok(replaced, "the guest was replaced as bb-box wrote its marker");
+  assert.equal(bridge.proxmox.guests.get(7001)!.status, "stopped");
+  assert.deepEqual(bridge.gpuTags(7001), [], "the other install's guest has no marker of bb-box's");
+  bridge.pass();
+  assert.deepEqual(bridge.node.guestWrites(), [], "and the helper wrote nothing to it");
+  assert.equal(bridge.cardOf(7001), CARD_A);
+});
+
+test("071 unit 5, final review F2: a ledger lost while nvidia-smi fails is rebuilt once the reading is back, so bb-box places no box on the running whole box's card", async () => {
+  const bridge = new ClaimsBridge();
+  bridge.desktop(7001, CARD_A, box("linux-desktop", "whole-owl"), INSTALL, { marker: marker("whole", CARD_A, 1), running: true });
+  bridge.pass();
+  rmSync(bridge.node.ledgerPath());
+  bridge.node.smiFails(true);
+  bridge.pass();
+  const backend = bridge.backend({ templates: `9001 GPU-${A}` });
+  bridge.answering = false;
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /^BackendError: bb-box cannot claim a card for a GPU desktop now\./);
+  bridge.answering = true;
+  bridge.node.smiFails(false);
+  bridge.pass();
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /card 0 is CT 7001's whole card/);
+  assert.ok(bridge.node.reportLines().includes(`claim 7001 g1 granted whole ${A}`), bridge.node.reportLines().join("\n"));
+  assert.equal(bridge.proxmox.guests.get(7001)!.status, "running");
+  assert.deepEqual(bridge.node.guestWrites(), []);
+  rmSync(bridge.node.ledgerPath());
+  bridge.node.smiFails(true);
+  bridge.pass();
+  bridge.answering = false;
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /The GPU helper on pve reports its ledger as unknown, as while it waits to rebuild a lost ledger from a full reading of every card, so bb-box cannot see its claims\./);
+});
+
+test("071 unit 5, final review: a moved box started again while it runs keeps the GPU fact of the card it holds", async () => {
+  const bridge = new ClaimsBridge();
+  const mover = box("linux-desktop", "swift-owl");
+  bridge.desktop(7001, CARD_A, mover, INSTALL, { marker: marker("shared", CARD_A, 1) });
+  bridge.desktop(7002, CARD_A, box("linux-desktop", "lone-pine"), INSTALL, { marker: marker("shared", CARD_A, 1), running: true });
+  bridge.pass();
+  const backend = bridge.backend({ perGpu: 1 });
+  const guest = bridge.stoppedGuest(7001, mover, 9001);
+  const first = await backend.start(guest, signal());
+  const second = await backend.start(guest, signal());
+  assert.equal(first?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`);
+  assert.equal(second?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`, "the second start, of a running box, names card 1 too");
 });

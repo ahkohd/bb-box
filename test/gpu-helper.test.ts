@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.3\.1, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.3\.2, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.1 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.2 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -475,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.3.1 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.3.2 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +930,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.1 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.2 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1158,4 +1158,79 @@ test("071 unit 5, lost ledger: a card that a guest the rebuild left unresolved m
   gone.mark(2591, marker("shared", CARD_A, 2));
   ran(gone);
   assert.ok(claims(gone).includes(`claim 2591 g2 granted shared ${A}`));
+});
+
+test("071 unit 5, final review F2: a lost ledger is rebuilt only from a full reading of every card, and a guest it left unresolved keeps its card closed through any reading that is not full", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(2600, { box: "bx2600", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2600 g1 granted whole ${A}`));
+  rmSync(node.ledgerPath());
+  node.guest(2601, { box: "bx2601", kind: "linux", marker: marker("shared", CARD_A, 1) });
+  for (const [name, fail] of [["no reading", () => node.smiFails(true)], ["card 1 left out", () => (node.smiFails(false), node.smiReading([node.smiRow(CARD_A)]))]] as const) {
+    fail();
+    ran(node);
+    assert.ok(!existsSync(node.ledgerPath()), `${name}: no ledger is rebuilt`);
+    assert.ok(node.reportLines().includes("ledger unknown"), name);
+    assert.ok(lines(node, "error").includes("error the ledger is lost, and is rebuilt only from a full reading of every card, which nvidia-smi has not given, so nothing is decided until it does"), `${name}: ${lines(node, "error").join(" | ")}`);
+    assert.ok(!claims(node).some((line) => line.startsWith("claim 2601 ")), `${name}: nothing is decided`);
+  }
+  node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2600 g1 granted whole ${A}`), `rebuilt from a full reading, the running whole box holds its card: ${claims(node).join(" | ")}`);
+  node.mark(2601, marker("shared", CARD_A, 2));
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2601 g2 refused whole-taken ${A} 2600`));
+  assert.deepEqual(node.guestWrites(), []);
+
+  const held = new FakeNode({ writes: "on", ledger: false });
+  held.guest(2610, { box: "bx2610", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  held.guest(2611, { box: "bx2611", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  ran(held);
+  assert.deepEqual(lines(held, "unsettled"), [`unsettled 2610 ${A} g1`]);
+  held.smiFails(true);
+  ran(held);
+  held.mark(2610, marker("whole", CARD_A, 2));
+  ran(held);
+  assert.ok(claims(held).includes(`claim 2610 g2 refused no-cards ${A}`), claims(held).join("\n"));
+  assert.deepEqual(Object.keys(held.ledger().unsettled ?? {}), ["2610"], "a reading that failed lets no guest go, nor does a refusal for want of one");
+  held.smiFails(false);
+  ran(held);
+  assert.deepEqual(lines(held, "unsettled"), [`unsettled 2610 ${A} g1`], "and the card is closed once the reading is back");
+  held.guest(2612, { box: "bx2612", kind: "linux", marker: marker("shared", CARD_A, 1) });
+  ran(held);
+  assert.ok(claims(held).includes(`claim 2612 g1 refused unsettled ${A} 2610`));
+  held.mark(2610, marker("whole", CARD_A, 3));
+  ran(held);
+  assert.ok(claims(held).includes(`claim 2610 g3 granted whole ${A}`), claims(held).join("\n"));
+  assert.deepEqual(lines(held, "unsettled"), []);
+
+  const gone = new FakeNode({ writes: "on", ledger: false });
+  gone.guest(2620, { box: "bx2620", kind: "linux-desktop", marker: marker("shared", CARD_B, 3), lines: cardLines(CARD_A, "desktop") });
+  ran(gone);
+  assert.deepEqual(lines(gone, "unsettled"), [`unsettled 2620 ${A} g3`]);
+  gone.smiReading([gone.smiRow(CARD_B)]);
+  gone.guest(2620, { box: "bx2620", kind: "linux-desktop", marker: marker("shared", CARD_B, 3) });
+  ran(gone);
+  assert.deepEqual(Object.keys(gone.ledger().unsettled ?? {}), ["2620"], "its lines gone while card 0 is unread, it still closes card 0");
+  gone.smiReading([gone.smiRow(CARD_A), gone.smiRow(CARD_B)]);
+  ran(gone);
+  assert.deepEqual(Object.keys(gone.ledger().unsettled ?? {}), [], "a full reading that shows it holds no card lets it go");
+});
+
+test("071 unit 5, final review F3: an nvidia-smi query killed by a signal after every row is an incomplete reading: an error line, nothing decided, and the preview fails", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(2630, { box: "bx2630", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  node.smiKilled(true);
+  const preview = node.run(["--preview"]);
+  assert.equal(preview.status, 1, preview.stdout);
+  assert.match(preview.stdout, /^error: nvidia-smi's reading was incomplete \(nvidia-smi was killed by signal 9\), so no request on any card is decided and no guest's lines are changed$/m);
+  assert.match(preview.stdout, /^preview: incomplete, as .*nvidia-smi gave no full reading of every card/m);
+  ran(node);
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 2630 ")), claims(node).join("\n"));
+  assert.ok(lines(node, "error").includes("error nvidia-smi's reading was incomplete (nvidia-smi was killed by signal 9), so no request on any card is decided and no guest's lines are changed"));
+  node.smiKilled(false);
+  assert.equal(node.run(["--preview"]).status, 0);
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2630 g1 granted shared ${A}`));
 });

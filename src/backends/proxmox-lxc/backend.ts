@@ -545,6 +545,24 @@ interface StartGate {
 
 const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 
+interface GuestOwner {
+  readonly install: string;
+  readonly box: string | null;
+}
+
+class NoLongerOurs extends Error {}
+
+function ownedBy(config: Record<string, unknown>, owner: GuestOwner): boolean {
+  const names = namesOf(config);
+  return names.install === owner.install && names.box === owner.box;
+}
+
+function noLongerOursWords(vmid: number, owner: GuestOwner, config: Record<string, unknown> | null): string {
+  const names = config ? namesOf(config) : null;
+  const now = !names ? "it has gone" : `its config names ${names.box ? `box ${names.box}` : "no box"} of ${names.install === owner.install ? "this install" : names.install ? `install ${names.install}` : "no install"}`;
+  return `CT ${vmid} is no longer box ${owner.box ?? "-"} of this install: ${now}. bb-box changes nothing on it and does not start it.`;
+}
+
 function blockedWords(view: Extract<CardsView, { is: "blocked" }>): string {
   return `bb-box cannot claim a card for a GPU desktop now. ${view.why}${view.fix ? ` ${view.fix}` : ""}`;
 }
@@ -1432,7 +1450,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (!placed && offer.kind.capabilities.gpu) {
           if ((await api.status(id, signal))?.status === "running") cardClaim = await step("gpu", () => this.#markedClaim(api, id, signal));
           else {
-            const gate = await step("gpu", () => this.#gateStart(api, id, signal, (why) => `bb-box did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
+            const gate = await step("gpu", () => this.#gateStart(api, id, { install: this.#context.installId, box: box.boxId }, signal, (why) => `bb-box did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
             gated = gate.reservation;
             cardClaim = gate.claim;
             heldGpu = gate.gpu;
@@ -1441,7 +1459,9 @@ export class ProxmoxLxcBackend implements Backend {
         if (!started) await hooks.starting();
         started = true;
         await step("start", async () => {
-          if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
+          if ((await api.status(id, signal))?.status === "running") return;
+          if (gated !== null || cardClaim !== null) await this.#mustOwn(api, id, { install: this.#context.installId, box: box.boxId }, signal);
+          await api.start(id, signal);
         });
         await this.#grow(api, id, box.size.diskGiB, template, step, signal);
         // Read while the box comes up: the size it has, as Proxmox gives it.
@@ -1489,7 +1509,7 @@ export class ProxmoxLxcBackend implements Backend {
       acquiring.held = null;
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
-      if (leftover !== null && (vmid !== null || (await this.#owns(api, leftover, box.boxId).catch(() => false)))) {
+      if (leftover !== null && !(error instanceof NoLongerOurs) && (vmid !== null || (await this.#owns(api, leftover, box.boxId).catch(() => false)))) {
         await this.#forget(leftover);
         await api.destroy(leftover).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       }
@@ -1539,11 +1559,16 @@ export class ProxmoxLxcBackend implements Backend {
           }
         }
       : untimed;
+    const owner: GuestOwner = { install: this.#context.installId, box: typeof guest.data?.box === "string" ? guest.data.box : null };
     let gate = UNGATED;
-    if (status.status !== "running") {
-      if (claimMarkerOf(parseTags((await api.config(vmid, signal)).tags))) gate = await step("gpu", () => this.#gateStart(api, vmid, signal));
+    const marked = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags)) !== null;
+    if (status.status === "running") {
+      if (marked) gate = { ...UNGATED, gpu: await this.#grantedGpu(api, vmid, signal) };
+    } else {
+      if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
       const reservations = reservationsOn(this.#cardKey(api));
       try {
+        if (gate !== UNGATED) await this.#mustOwn(api, vmid, owner, signal);
         await step("boot", () => api.start(vmid, signal));
       } catch (error) {
         reservations.drop(gate.reservation);
@@ -2171,6 +2196,7 @@ export class ProxmoxLxcBackend implements Backend {
   async #retag(api: Proxmox, vmid: number, tagsFor: (tags: readonly string[]) => string[], signal?: AbortSignal): Promise<void> {
     for (let tries = 1; ; tries++) {
       const config = await api.config(vmid, signal);
+      if (namesOf(config).install !== this.#context.installId) throw new NoLongerOurs(`CT ${vmid} is no longer a guest of this install, so bb-box does not retag it.`);
       const tags = parseTags(config.tags);
       try {
         await api.configure(vmid, { tags: withGpuTagsOf(tags, tagsFor(tags)), ...(typeof config.digest === "string" ? { digest: config.digest } : {}) }, signal);
@@ -2394,7 +2420,13 @@ export class ProxmoxLxcBackend implements Backend {
   /** Whether the guest at `vmid` names the box. Box IDs are unique, so no other install's guest does. */
   async #owns(api: Proxmox, vmid: number, boxId: string, signal?: AbortSignal): Promise<boolean> {
     const config = await this.#guestConfig(api, vmid, signal);
-    return !!config && namesOf(config).box === boxId;
+    return !!config && ownedBy(config, { install: this.#context.installId, box: boxId });
+  }
+
+  async #grantedGpu(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<string | null> {
+    const lines = await this.#helperLines(api, signal).catch(() => null);
+    const claim = lines?.ledger.get(vmid)?.claim;
+    return claim?.answer === "granted" && claim.part !== "none" && claim.card ? this.#heldGpu(claim.card) : null;
   }
 
   async #templateOf(api: Proxmox, template: number, signal?: AbortSignal): Promise<TemplateInfo> {
@@ -3058,11 +3090,18 @@ export class ProxmoxLxcBackend implements Backend {
     throw new BackendError("no_capacity", answer.is === "refused" ? `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${answer.why}. bb-box released the guest; nothing else changed.` : notAnsweredWords(api.node, answer));
   }
 
-  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, signal?: AbortSignal): Promise<void> {
+  async #mustOwn(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const config = await this.#guestConfig(api, vmid, signal);
+    if (!config || !ownedBy(config, owner)) throw new NoLongerOurs(noLongerOursWords(vmid, owner, config));
+    return config;
+  }
+
+  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
     for (let tries = 1; ; tries++) {
-      const config = await api.config(vmid, signal);
+      const config = await this.#mustOwn(api, vmid, owner, signal);
+      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not write its GPU marker.`);
       try {
-        await api.configure(vmid, { tags: withMarker(parseTags(config.tags), marker), ...(typeof config.digest === "string" ? { digest: config.digest } : {}) }, signal);
+        await api.configure(vmid, { tags: withMarker(parseTags(config.tags), marker), digest: config.digest }, signal);
         this.#written.set(vmid, Math.max(this.#written.get(vmid) ?? 0, marker.generation));
         return;
       } catch (error) {
@@ -3086,9 +3125,9 @@ export class ProxmoxLxcBackend implements Backend {
     }
   }
 
-  async #askAgain(api: Proxmox, vmid: number, onGuest: number, claim: { readonly part: GpuPart; readonly card: string | null }, lines: HelperLines, notStarted: (why: string) => Error, signal?: AbortSignal): Promise<ClaimMarker> {
+  async #askAgain(api: Proxmox, vmid: number, owner: GuestOwner, onGuest: number, claim: { readonly part: GpuPart; readonly card: string | null }, lines: HelperLines, notStarted: (why: string) => Error, signal?: AbortSignal): Promise<ClaimMarker> {
     const again: ClaimMarker = { part: claim.part, card: claim.card, generation: nextGeneration(lines, vmid, onGuest, this.#written.get(vmid) ?? 0) };
-    await this.#writeMarker(api, vmid, again, signal);
+    await this.#writeMarker(api, vmid, again, owner, signal);
     const answer = await this.#askHelper(api, vmid, again, signal);
     if (answer.is === "refused") throw notStarted(`the host's GPU helper refused ${markerTag(again)}, as ${answer.why}.`);
     if (answer.is !== "granted") throw notStarted(notAnsweredWords(api.node, answer));
@@ -3102,8 +3141,8 @@ export class ProxmoxLxcBackend implements Backend {
     return named ?? `GPU-${card}`;
   }
 
-  async #gateStart(api: Proxmox, vmid: number, signal?: AbortSignal, notStartedWords = (why: string) => `Container ${vmid} was not started: ${why} It is stopped, with its disk as it was.`): Promise<StartGate> {
-    const marker = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags));
+  async #gateStart(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal, notStartedWords = (why: string) => `Container ${vmid} was not started: ${why} It is stopped, with its disk as it was.`): Promise<StartGate> {
+    const marker = claimMarkerOf(parseTags((await this.#mustOwn(api, vmid, owner, signal)).tags));
     if (!marker || marker.part === "none") return UNGATED;
     await this.#settled(api);
     const notStarted = (why: string) => new Error(notStartedWords(why));
@@ -3120,11 +3159,11 @@ export class ProxmoxLxcBackend implements Backend {
     if (!view.writes) {
       if (granted) return gpu(claimOf(marker, "granted"));
       if (!standing) throw unanswered();
-      return gpu(claimOf(await this.#askAgain(api, vmid, marker.generation, standing, view.lines, notStarted, signal), "granted"));
+      return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
     }
     if (granted && marker.part === "whole") return gpu(claimOf(marker, "granted"));
     if (!granted && answer.is !== "refused") throw unanswered();
-    if (!granted && standing?.part === "whole") return gpu(claimOf(await this.#askAgain(api, vmid, marker.generation, standing, view.lines, notStarted, signal), "granted"));
+    if (!granted && standing?.part === "whole") return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
     const key = this.#cardKey(api);
     const reservations = reservationsOn(key);
     const decided = await underCardLock(key, async () => {
@@ -3150,7 +3189,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (granted && decided.card.uuid === marker.card) return { claim: claimOf(marker, "granted"), reservation: decided.reservation, gpu: this.#gpuIdOf(marker.card, decided.notes) };
     const moved: ClaimMarker = { part: "shared", card: decided.card.uuid, generation: nextGeneration(decided.lines, vmid, marker.generation, this.#written.get(vmid) ?? 0) };
     try {
-      await this.#writeMarker(api, vmid, moved, signal);
+      await this.#writeMarker(api, vmid, moved, owner, signal);
       const movedAnswer = await this.#askHelper(api, vmid, moved, signal);
       if (movedAnswer.is === "refused") throw notStarted(`the host's GPU helper refused ${cardName(decided.card)}, as ${movedAnswer.why}.`);
       if (movedAnswer.is !== "granted") throw notStarted(notAnsweredWords(api.node, movedAnswer));

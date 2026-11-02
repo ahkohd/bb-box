@@ -113,6 +113,7 @@ export interface HelperLines {
   readonly cards: readonly HelperCard[];
   readonly holders: readonly HelperHolder[];
   readonly ledgerReported: boolean;
+  readonly ledgerUnknown: boolean;
   readonly ledger: ReadonlyMap<number, LedgerEntry>;
   readonly would: readonly HelperWould[];
   readonly answers: readonly HelperAnswer[];
@@ -120,7 +121,7 @@ export interface HelperLines {
   readonly omitted: readonly string[];
 }
 
-export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledger: new Map(), would: [], answers: [], unsettled: [], omitted: [] };
+export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledgerUnknown: false, ledger: new Map(), would: [], answers: [], unsettled: [], omitted: [] };
 
 const orNull = (value: string | undefined): string | null => (value === undefined || value === "-" ? null : value);
 const numberOrNull = (value: string | undefined): number | null => (value === undefined || value === "-" ? null : Number(value));
@@ -139,6 +140,7 @@ export function parseHelperLines(notes: string): HelperLines {
   const unsettled: HelperUnsettled[] = [];
   const omitted: string[] = [];
   let ledgerReported = false;
+  let ledgerUnknown = false;
   for (const line of reportLines(notes)) {
     let match: RegExpExecArray | null;
     if ((match = /^gpu (?:GPU-)?(\S+) \S+ (\d+) \d+ \d+$/i.exec(line))) indexes.set(match[1]!.toLowerCase(), Number(match[2]));
@@ -147,6 +149,7 @@ export function parseHelperLines(notes: string): HelperLines {
     } else if ((match = new RegExp(`^holder (${UUID}) (\\d+) (shared|whole) (running|stopped) (?:install (\\S+)|other) (managed|unmanaged)$`).exec(line))) {
       holders.push({ card: match[1]!, vmid: Number(match[2]), part: match[3] as "shared" | "whole", running: match[4] === "running", install: match[5] ?? null, managed: match[6] === "managed" });
     } else if (/^ledger entries \d+$/.test(line)) ledgerReported = true;
+    else if (line === "ledger unknown") ledgerUnknown = true;
     else if ((match = /^ledger (\d+) box (\S+) answered g(\d+) claim (?:none|g(\d+) (none|shared|whole) (\S+) (granted|yielded))$/.exec(line))) {
       const claim = match[4] === undefined ? null : { generation: Number(match[4]), part: match[5] as GpuPart, card: orNull(match[6]), answer: match[7] as "granted" | "yielded" };
       ledger.set(Number(match[1]), { vmid: Number(match[1]), box: orNull(match[2]), answered: Number(match[3]), claim });
@@ -163,7 +166,7 @@ export function parseHelperLines(notes: string): HelperLines {
       unsettled.push({ vmid: Number(match[1]), card: match[2]!, after: Number(match[3]) });
     } else if ((match = /^omitted (.+)$/.exec(line))) omitted.push(match[1]!);
   }
-  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledger, would, answers, unsettled, omitted };
+  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledgerUnknown, ledger, would, answers, unsettled, omitted };
 }
 
 export function cardName(card: HelperCard): string {
@@ -574,6 +577,9 @@ function unsettledWords(lines: HelperLines, ours: ReadonlySet<number>, guests: r
 
 export function judgeGpuMigration(lines: HelperLines, guests: readonly MigrationGuest[], seen: Eligibility & { readonly node: string; readonly vmid: number }): GpuHelperVerdict {
   const journal = `journalctl -u bb-box-gpu on ${seen.node}`;
+  if (lines.ledgerUnknown) {
+    return { status: "fail", detail: `The GPU helper on ${seen.node} reports its ledger as unknown, so bb-box cannot show the helper granted each marker as it stands. VM ${seen.vmid}'s report says why in its error lines.`, fix: `Read what it says with ${journal}.` };
+  }
   if (!lines.ledgerReported) {
     return {
       status: "fail",
