@@ -1236,7 +1236,7 @@ test("image operations on a Linux template: its build box has no Windows steps, 
   assert.match(proxmox.guests.get(9120)!.config.description!, /^bb-box linux vm template, refreshed \d{4}-\d{2}-\d{2} from Ubuntu 24\.04's cloud image 20260926\.\n\{"contract":1,/);
   const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
   assert.equal(rollback.name, "bb-box-linux-rollback");
-  assert.match(rollback.config.description!, /^bb-box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in bb-box's settings\.$/);
+  assert.match(rollback.config.description!, /^bb-box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in bb-box's settings\.\n$/);
   // The doctor lists it, as it holds a box's VMID and address (054, 057).
   const notes = (await backend.doctor()).notes.join("\n");
   assert.match(
@@ -1314,7 +1314,7 @@ test("image operations: a box from the Windows template, its capture as a templa
   assert.equal(rollback.vmid, 9702);
   assert.deepEqual([rollback.template, rollback.name, rollback.config.protection], [true, "bb-box-windows-rollback", "1"]);
   assert.deepEqual(parseTags(rollback.config.tags), ["bb-box", "install.test", "image.rollback", "kind.windows-desktop", "template.9104", "build.20260901-020000-77aa"]);
-  assert.match(rollback.config.description!, /^bb-box rollback of Windows template 9104, build\.20260901-020000-77aa, kept until its next refresh\. To use it, list 9702 as the Windows template in bb-box's settings\.$/);
+  assert.match(rollback.config.description!, /^bb-box rollback of Windows template 9104, build\.20260901-020000-77aa, kept until its next refresh\. To use it, list 9702 as the Windows template in bb-box's settings\.\n$/);
   assert.deepEqual(
     (await images.list()).builds.map((one) => [one.ref, one.image, one.current]),
     [["9104", "standard", true], ["9702", "rollback", false]],

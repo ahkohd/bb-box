@@ -3,7 +3,7 @@ import { after } from "node:test";
 import { ProxmoxLxcBackend } from "../../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../../src/backends/proxmox/api.ts";
 import type { GpuPart } from "../../src/backends/types.ts";
-import { FAKE_TOKEN, FakeProxmox, type FakeGuest } from "../fake-proxmox.ts";
+import { FAKE_TOKEN, FakeProxmox, asProxmoxStoresDescription, type FakeGuest } from "../fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, lxcConfig, testContext } from "../helpers.ts";
 import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, boxLabels, cardLines, heldCopyLabels, type GuestSpec } from "./node.ts";
 
@@ -33,7 +33,7 @@ export class Bridge {
       ...(spec.pool === null ? {} : { pool: spec.pool ?? "bbbox" }),
       status: spec.running ? "running" : "stopped",
       template: spec.template === true,
-      config: { ...parsed.keys, ...(parsed.description ? { description: parsed.description.replace(/\n$/, "") } : {}) },
+      config: { ...parsed.keys, ...(parsed.description ? { description: parsed.description } : {}) },
       ...(pending ? { pending } : {}),
     });
   }
@@ -56,7 +56,7 @@ export class Bridge {
     const run = this.node.run(["--once", "--dry-run"]);
     assert.equal(run.status, 0, run.stderr);
     this.helperRuns++;
-    this.proxmox.guests.get(REPORT_VMID)!.config.description = this.node.report();
+    this.proxmox.guests.get(REPORT_VMID)!.config.description = asProxmoxStoresDescription(this.node.report());
   }
 
   backend(): ProxmoxLxcBackend {
