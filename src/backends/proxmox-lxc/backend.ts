@@ -551,7 +551,6 @@ const POWER_ON_THE_NODE_FROM = [0, 4, 0];
 const WARM_BOUND_FROM = [0, 4, 1];
 const POWER_NODES = "gpu-helper-power";
 
-/** A node whose GPU helper bb-box last read, by API URL and node, and that helper's version. */
 interface PowerNode {
   readonly version: string;
   readonly seen: string;
