@@ -42,7 +42,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Poo
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
-import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, templateOwner, unstampedOwner, warmOwner, type GuestOwner } from "./owned.ts";
+import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -120,9 +120,9 @@ import {
   type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
-import { answerTo, cardName, claimMarkerOf, judgeGpuMigration, markerTag, parseHelperLines, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type MarkAnswer } from "./gpu-marking.ts";
+import { answerTo, cardName, claimMarkerOf, gpuDeviceLines, judgeGpuMigration, markerOf, markerTag, parseHelperLines, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type MarkAnswer } from "./gpu-marking.ts";
 import {
   ANSWER_POLL_MS,
   ANSWER_WAIT_MS,
@@ -547,6 +547,51 @@ interface StartGate {
 
 const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 
+const POWER_ON_THE_NODE_FROM = [0, 4, 0];
+const POWER_WAIT_MS = 120_000;
+const DELETED_UNANSWERED_MS = 5_000;
+const POWER_TAG = /^bb-power\.(start|stop|shutdown|delete)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.g\d+\.n[0-9a-f]{8,32}$/;
+
+function atLeast(version: string | null, from: readonly number[]): boolean {
+  if (!version) return false;
+  const parts = version.split(".").map(Number);
+  for (let at = 0; at < from.length; at++) {
+    const part = parts[at] ?? 0;
+    if (part !== from[at]) return part > from[at]!;
+  }
+  return true;
+}
+
+function powerBox(config: Record<string, unknown>): string | null {
+  const description = typeof config.description === "string" ? config.description : "";
+  const tags = parseTags(config.tags);
+  if (!description.startsWith("bb-box ") || /^bb-box install \S+ box \S+ held copy of snapshot /.test(description)) return null;
+  if (tags.includes("held-copy") || tags.includes(EARLIER_GUEST) || /^earlier guest$/m.test(description) || !/^install \S+$/m.test(description)) return null;
+  return /^box (\S+)$/m.exec(description)?.[1] ?? null;
+}
+
+const POWER_REFUSALS: Readonly<Record<string, string>> = {
+  "not-the-box": "the guest at that VMID is not the box bb-box asked for",
+  generation: "its GPU marker changed meanwhile",
+  withdrawn: "the request was gone when the helper read the guest under its lock",
+  "no-claim": "the helper holds no granted claim for its GPU marker",
+  lines: "its device lines are not its claim's card's",
+  "whole-taken": "another guest holds its card whole",
+  unreadable: "a guest whose config cannot be read may hold its card",
+  "no-cards": "the helper has no full reading of the cards",
+  "unknown-card": "the helper does not list its card",
+  "card-nodes": "the helper could not find its card's device nodes",
+  running: "it is running",
+  template: "it is a template",
+  "not-served": "its pool is not one the helper serves",
+  "not-bb-box": "its description names no bb-box install",
+  failed: "Proxmox's own call failed",
+};
+
+function powerWords(answer: HelperPower): string {
+  const why = POWER_REFUSALS[answer.reason ?? ""] ?? `the helper's reason was ${answer.reason ?? "none"}`;
+  return answer.detail ? `${why} (${answer.detail})` : why;
+}
 
 function blockedWords(view: Extract<CardsView, { is: "blocked" }>): string {
   return `bb-box cannot claim a card for a GPU desktop now. ${view.why}${view.fix ? ` ${view.fix}` : ""}`;
@@ -703,6 +748,7 @@ export class ProxmoxLxcBackend implements Backend {
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
   readonly #sightings = new Map<number, { readonly words: string; readonly at: number }>();
+  #powerSeen = false;
   #settling: Promise<void> | null = null;
   readonly #written = new Map<number, number>();
   readonly #snapshots: ProxmoxSnapshotting;
@@ -2044,14 +2090,15 @@ export class ProxmoxLxcBackend implements Backend {
         const total = last - first + 1;
         const foreign = await this.#foreignInRange(api, signal);
         const seen = [...this.#sightings.values()].map((sighting) => `${sighting.words} (${ago(this.#now() - sighting.at)})`);
+        const unseen = `The token sees only the guests it has VM.Audit on, those of pool ${pool}, so a guest elsewhere in the range, or another install's range that overlaps this one, is not seen: this check is no proof that the range is this install's alone.`;
         if (foreign.length || seen.length) {
           fail(
             VMIDS,
-            [foreign.length ? `A guest that is not this install's is in its VMID range from ${first} to ${last}: ${foreign.join("; ")}.` : "", ...seen].filter(Boolean).join(" "),
+            [foreign.length ? `A guest that is not this install's is in its VMID range from ${first} to ${last}: ${foreign.join("; ")}.` : "", ...seen, unseen].filter(Boolean).join(" "),
             "Give each install a VMID range of its own: move or delete each guest that is not this install's, or change this install's VMID range in bb-box's settings. bb-box takes no VMID meanwhile.",
           );
-        } else if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free.`);
-        else warn(VMIDS, `All ${total} VMIDs from ${first} to ${last} are in use.`, "Release boxes, or widen the VMID range.");
+        } else if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free, and no guest the token can see there is another install's or not bb-box's. ${unseen}`);
+        else warn(VMIDS, `All ${total} VMIDs from ${first} to ${last} are in use. ${unseen}`, "Release boxes, or widen the VMID range.");
         const others = await this.#others(api, guests, signal);
         if (others) notes.push(others);
       } catch (error) {
@@ -2207,10 +2254,82 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   #owned(api: Proxmox): OwnedGuests {
-    return new OwnedGuests(api, (vmid, words) => {
-      this.#sightings.set(vmid, { words, at: this.#now() });
-      this.#context.logError("a guest that is not this install's", new Error(words));
+    return new OwnedGuests(api, (vmid, words) => this.#sighted(vmid, words), {
+      handles: (config, signal) => this.#powerOnTheNode(api, config, signal),
+      ask: (vmid, action, owner, signal) => this.#askPower(api, vmid, action, owner, signal),
     });
+  }
+
+  #sighted(vmid: number, words: string): void {
+    this.#sightings.set(vmid, { words, at: this.#now() });
+    this.#context.logError("a guest that is not this install's", new Error(words));
+  }
+
+  async #powerOnTheNode(api: Proxmox, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
+    if (!gpuDeviceLines(config).length && !claimMarkerOf(parseTags(config.tags))?.card) return false;
+    const vm = await api.vmNotes(GPU_REPORT_VM, signal).catch(() => null);
+    const helper = vm ? parseGpuHelper(vm.notes) : null;
+    if (vm && atLeast(helper?.version ?? null, POWER_ON_THE_NODE_FROM)) {
+      this.#powerSeen = true;
+      const at = /^\s*at (\d+)\s*$/m.exec(vm.notes);
+      const ageMs = at ? this.#now() - Number(at[1]) * 1000 : null;
+      const throughIt = `bb-box starts, stops and deletes a guest with a GPU's device lines only through it. Run systemctl status bb-box-gpu as root on ${api.node}, and check the host's clock.`;
+      if (ageMs === null) throw new Error(`The GPU helper on ${api.node} has written no time in VM ${vm.vmid}'s report, and ${throughIt}`);
+      if (ageMs >= GPU_HELPER_FRESH_MS) throw new Error(`The GPU helper on ${api.node} last reported ${ago(ageMs)}, in VM ${vm.vmid}, and ${throughIt}`);
+      if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs, and ${throughIt}`);
+      return true;
+    }
+    if (this.#powerSeen) {
+      throw new Error(`The GPU helper on ${api.node} is not reporting, and bb-box starts, stops and deletes a guest with a GPU's device lines only through it. Try again in a minute; if it lasts, run bb box doctor.`);
+    }
+    return false;
+  }
+
+  async #askPower(api: Proxmox, vmid: number, action: PowerAction, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
+    const nonce = randomBytes(8).toString("hex");
+    const plain = new OwnedGuests(api);
+    let tag = "";
+    await plain.configure(vmid, owner, (config) => {
+      const tags = parseTags(config.tags);
+      tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
+      if (!POWER_TAG.test(tag)) throw new Error(`bb-box cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
+      return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
+    }, signal);
+    try {
+      await this.#awaitPower(api, plain, vmid, action, owner, tag, nonce, signal);
+    } finally {
+      await plain.configure(vmid, owner, (config) => {
+        const tags = parseTags(config.tags);
+        return tags.includes(tag) ? { tags: tags.filter((each) => each !== tag) } : null;
+      }, signal).catch(() => undefined);
+    }
+  }
+
+  async #awaitPower(api: Proxmox, plain: OwnedGuests, vmid: number, action: PowerAction, owner: GuestOwner, tag: string, nonce: string, signal?: AbortSignal): Promise<void> {
+    let goneAt: number | null = null;
+    for (let waited = 0; ; waited += ANSWER_POLL_MS) {
+      const answer = (await this.#helperLines(api, signal))?.power.find((each) => each.vmid === vmid && each.nonce === nonce) ?? null;
+      if (answer?.answer === "done") return;
+      if (answer) {
+        const words = `The GPU helper on ${api.node} did not ${action} CT ${vmid}, as ${powerWords(answer)}.`;
+        if (answer.reason !== "not-the-box") throw new Error(words);
+        this.#sighted(vmid, `${words} bb-box acts on it no more.`);
+        throw new NoLongerOurs(`${words} bb-box acts on it no more.`);
+      }
+      if (waited >= POWER_WAIT_MS) throw new Error(`The GPU helper on ${api.node} did not answer bb-box's request to ${action} CT ${vmid} within ${POWER_WAIT_MS / 1000} s, so bb-box withdrew it. Run bb box doctor.`);
+      const now = await plain.readIfThere(vmid, owner, signal).catch((error: unknown) => {
+        if (error instanceof NoLongerOurs) this.#sighted(vmid, error.message);
+        throw error;
+      });
+      if (!now && action !== "delete") throw new NoLongerOurs(`CT ${vmid} has gone while bb-box asked the GPU helper on ${api.node} to ${action} it.`);
+      if (!now) {
+        goneAt ??= waited;
+        if (waited - goneAt >= DELETED_UNANSWERED_MS) return;
+      } else if (!parseTags(now.tags).includes(tag)) {
+        throw new Error(`bb-box's request to ${action} CT ${vmid} was taken off it before the GPU helper on ${api.node} answered, as when bb-box asks it something else about the box meanwhile.`);
+      }
+      await (this.#options.sleep ?? pause)(ANSWER_POLL_MS, signal);
+    }
   }
 
   async #foreignInRange(api: Proxmox, signal?: AbortSignal): Promise<string[]> {
@@ -2221,10 +2340,12 @@ export class ProxmoxLxcBackend implements Backend {
     for (const guest of await api.visibleGuests(signal)) {
       if (!this.#inRange(guest.vmid) || busy.has(guest.vmid) || templates.has(guest.vmid)) continue;
       const tagged = installFromTags(guest.tags);
-      if (tagged === install || (tagged === null && guest.tags.includes(TAG))) continue;
+      if (tagged === install) continue;
       const config = await this.#guestConfig(api, guest.vmid, signal).catch(() => null);
-      if (config && !carriesAnother(config, install) && installFromDescription(config.description) === install) continue;
-      const theirs = tagged ?? (config ? installFromDescription(config.description) : null);
+      const described = config ? installFromDescription(config.description) : null;
+      if (config && !carriesAnother(config, install) && described === install) continue;
+      if (tagged === null && guest.tags.includes(TAG) && (described === null || described === install)) continue;
+      const theirs = tagged ?? described;
       found.push(theirs ? `CT ${guest.vmid}, of install ${theirs}` : `CT ${guest.vmid}, which is not bb-box's`);
     }
     return found;

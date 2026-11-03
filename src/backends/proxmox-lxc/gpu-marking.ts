@@ -83,6 +83,15 @@ export interface HelperWould {
   readonly words: string;
 }
 
+export interface HelperPower {
+  readonly vmid: number;
+  readonly nonce: string;
+  readonly action: string;
+  readonly answer: "done" | "refused";
+  readonly reason: string | null;
+  readonly detail: string | null;
+}
+
 export interface HelperUnsettled {
   readonly vmid: number;
   readonly card: string;
@@ -118,10 +127,11 @@ export interface HelperLines {
   readonly would: readonly HelperWould[];
   readonly answers: readonly HelperAnswer[];
   readonly unsettled: readonly HelperUnsettled[];
+  readonly power: readonly HelperPower[];
   readonly omitted: readonly string[];
 }
 
-export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledgerUnknown: false, ledger: new Map(), would: [], answers: [], unsettled: [], omitted: [] };
+export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledgerUnknown: false, ledger: new Map(), would: [], answers: [], unsettled: [], power: [], omitted: [] };
 
 const orNull = (value: string | undefined): string | null => (value === undefined || value === "-" ? null : value);
 const numberOrNull = (value: string | undefined): number | null => (value === undefined || value === "-" ? null : Number(value));
@@ -138,6 +148,7 @@ export function parseHelperLines(notes: string): HelperLines {
   const would: HelperWould[] = [];
   const answers: HelperAnswer[] = [];
   const unsettled: HelperUnsettled[] = [];
+  const power: HelperPower[] = [];
   const omitted: string[] = [];
   let ledgerReported = false;
   let ledgerUnknown = false;
@@ -164,9 +175,11 @@ export function parseHelperLines(notes: string): HelperLines {
       answers.push({ vmid: Number(match[1]), generation: Number(match[2]), is: "released" });
     } else if ((match = new RegExp(`^unsettled (\\d+) (${UUID}) g(\\d+)$`).exec(line))) {
       unsettled.push({ vmid: Number(match[1]), card: match[2]!, after: Number(match[3]) });
+    } else if ((match = /^power (\d+) n([0-9a-f]+) (\S+) (done|refused)(?: (\S+))?(?: (.+))?$/.exec(line))) {
+      power.push({ vmid: Number(match[1]), nonce: match[2]!, action: match[3]!, answer: match[4] as "done" | "refused", reason: match[5] ?? null, detail: match[6] ?? null });
     } else if ((match = /^omitted (.+)$/.exec(line))) omitted.push(match[1]!);
   }
-  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledgerUnknown, ledger, would, answers, unsettled, omitted };
+  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledgerUnknown, ledger, would, answers, unsettled, power, omitted };
 }
 
 export function cardName(card: HelperCard): string {

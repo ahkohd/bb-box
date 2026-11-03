@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.3.4';
+use constant VERSION => '0.4.0';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -33,6 +33,7 @@ use constant MOST_ERROR_LINES => 6;
 use constant LONGEST_REQUIRED_LINE => 300;
 use constant STATS_EVERY_SECONDS => 3600;
 use constant ONE_READING_TIMEOUT_SECONDS => 15;
+use constant SHUTDOWN_SECONDS => 60;
 use constant GUEST_LOCK_TIMEOUT_SECONDS => 2;
 use constant DEVICE_MODE => '0666';
 
@@ -86,6 +87,7 @@ sub usage {
 bb-box-gpu @{[VERSION]}, protocol @{[PROTOCOL]}: the host's GPU helper for bb-box.
 
   bb-box-gpu          run as a service: scan every second, answer markers,
+                      start, stop and delete the guests bb-box asks it to,
                       write the report in the notes of VM @{[REPORT_VM_NAME]},
                       on its first pass and whenever it has something new
   bb-box-gpu --once   one pass, with one reading of the cards, then exit
@@ -452,6 +454,14 @@ sub labels_from {
     return \%labels;
 }
 
+sub parse_power {
+    my ($tags) = @_;
+    my @asked = grep { /^bb-power\./i } @$tags;
+    return undef unless @asked;
+    return { malformed => join(' ', @asked) } unless @asked == 1 && $asked[0] =~ /^bb-power\.(start|stop|shutdown|delete)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.g(\d+)\.n([0-9a-f]{8,32})$/;
+    return { action => $1, install => $2, box => $3 eq '-' ? undef : $3, generation => $4 + 0, nonce => $5 };
+}
+
 sub parse_marker {
     my ($gpu_tags) = @_;
     return undef unless @$gpu_tags == 1;
@@ -493,6 +503,7 @@ sub describe_guest {
         named => cards_named($conf, $ctx->{cards}),
     };
     $guest->{marker} = parse_marker(\@gpu_tags);
+    $guest->{power} = parse_power(\@tags);
     $guest->{malformed} = @gpu_tags && !$guest->{marker} ? 1 : 0;
     $guest->{ineligible} = ineligibility($guest, $ctx->{served});
     $guest->{holds_nothing} = $guest->{template} || $guest->{held} || $guest->{earlier};
@@ -608,7 +619,7 @@ sub refresh_guest {
 
 sub ledger_path { return host_path(STATE_DIR . '/ledger') }
 
-sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [], unsettled => {} } }
+sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [], unsettled => {}, power => {} } }
 
 sub load_ledger {
     my $path = ledger_path();
@@ -617,10 +628,11 @@ sub load_ledger {
     my $data = defined $text ? eval { JSON::PP->new->decode($text) } : undef;
     return (undef, 'corrupt') unless ref($data) eq 'HASH' && defined $data->{protocol} && $data->{protocol} =~ /^\d+$/;
     return (undef, 'newer', $data->{protocol}) if $data->{protocol} > PROTOCOL;
-    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY' && ref($data->{unsettled} // {}) eq 'HASH';
+    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY' && ref($data->{unsettled} // {}) eq 'HASH' && ref($data->{power} // {}) eq 'HASH';
     $data->{guests} //= {};
     $data->{answers} //= [];
     $data->{unsettled} //= {};
+    $data->{power} //= {};
     return ($data, 'ok');
 }
 
@@ -731,7 +743,7 @@ sub grant {
 }
 
 sub with_guest {
-    my ($ctx, $vmid, $code) = @_;
+    my ($ctx, $vmid, $code, $always_lock) = @_;
     my $result;
     my $read = sub {
         PVE::Cluster::cfs_update();
@@ -740,7 +752,7 @@ sub with_guest {
         $result = $code->($conf, $running);
     };
     my $ok = eval {
-        if ($ctx->{writes} && !$previewing) {
+        if (($ctx->{writes} || $always_lock) && !$previewing) {
             holding(sub { PVE::LXC::Config->lock_config_full($vmid, GUEST_LOCK_TIMEOUT_SECONDS, $read) });
         } else {
             $read->();
@@ -1126,6 +1138,119 @@ sub converge {
     });
 }
 
+sub power_answer {
+    my ($ctx, $vmid, $request, $answer, $reason, $detail) = @_;
+    $ctx->{ledger}{power}{$vmid} = {
+        nonce => $request->{nonce},
+        action => $request->{action},
+        answer => $answer,
+        defined $reason ? (reason => $reason) : (),
+        defined $detail ? (detail => "$detail") : (),
+        at => int($ctx->{now}),
+    };
+    $ctx->{ledger_dirty} = 1;
+    save_ledger($ctx);
+    note("power CT $vmid $request->{action} n$request->{nonce}: $answer" . (defined $reason ? " $reason" : '') . (defined $detail ? " $detail" : ''));
+}
+
+sub start_refusal {
+    my ($ctx, $guests, $guest) = @_;
+    my $marker = $guest->{marker};
+    my $claims_card = $marker && $marker->{part} =~ /^(?:shared|whole)$/;
+    return ['pending'] if $guest->{pending_devices};
+    return undef unless $claims_card || %{ $guest->{named} } || %{ $guest->{devices} };
+    return ['no-cards'] unless full_inventory($ctx);
+    if ($claims_card) {
+        my $claim = claim_of($ctx, $guest->{vmid});
+        return ['no-claim'] unless $claim && $claim->{generation} == $marker->{generation} && $claim->{part} eq $marker->{part} && ($claim->{card} // '') eq ($marker->{card} // '');
+        my $card = $ctx->{cards}{ $claim->{card} } or return ['unknown-card'];
+        my $desired = device_set($card, $guest->{set}) or return ['card-nodes'];
+        return ['lines'] unless same_lines($guest->{devices}, $desired);
+        return undef;
+    }
+    return ['lines'] if $marker && $marker->{part} eq 'none';
+    for my $uuid (sort keys %{ $guest->{named} }) {
+        my $whole = whole_holder($ctx, $guests, $uuid, $guest->{vmid});
+        return ['whole-taken', $whole] if defined $whole;
+        my $unknown = unreadable_holder($guests, $uuid, $guest->{vmid});
+        return ['unreadable', $unknown] if defined $unknown;
+    }
+    return undef;
+}
+
+sub refuse_locked_or_ha {
+    my ($vmid, $conf) = @_;
+    require PVE::HA::Config;
+    PVE::LXC::Config->check_lock($conf);
+    die "CT $vmid is an HA resource\n" if PVE::HA::Config::service_is_configured("ct:$vmid");
+}
+
+sub destroy_guest {
+    my ($vmid, $conf) = @_;
+    require PVE::AccessControl;
+    require PVE::Firewall;
+    require PVE::ReplicationConfig;
+    require PVE::VZDump::Plugin;
+    PVE::LXC::Config->check_protection($conf, "can't remove CT $vmid");
+    die "CT $vmid is running\n" if PVE::LXC::check_running($vmid);
+    PVE::LXC::destroy_lxc_container(PVE::Cluster::cfs_read_file('storage.cfg'), $vmid, $conf, { lock => 'destroyed' }, 1);
+    PVE::AccessControl::remove_vm_access($vmid);
+    PVE::Firewall::remove_vmfw_conf($vmid);
+    PVE::ReplicationConfig::remove_vmid_jobs($vmid);
+    PVE::VZDump::Plugin::remove_vmid_from_backup_jobs($vmid);
+    PVE::LXC::Config->destroy_config($vmid);
+}
+
+sub decide_power {
+    my ($ctx, $guests, $guest) = @_;
+    my $request = $guest->{power} or return;
+    my $vmid = $guest->{vmid};
+    if ($request->{malformed}) {
+        note_once("power malformed $vmid $request->{malformed}", "CT $vmid: its power request $request->{malformed} is not one bb-box writes, so it is not acted on");
+        return;
+    }
+    my $done = $ctx->{ledger}{power}{$vmid};
+    return if $done && ($done->{nonce} // '') eq $request->{nonce};
+    my $outcome = with_guest($ctx, $vmid, sub {
+        my ($conf, $running) = @_;
+        my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
+        my $now = $fresh->{power};
+        return ['refused', 'withdrawn'] unless $now && !$now->{malformed} && $now->{nonce} eq $request->{nonce} && $now->{action} eq $request->{action};
+        return ['refused', $fresh->{ineligible}] if ($fresh->{ineligible} // '') =~ /^(?:template|not-served|not-bb-box)$/;
+        my $asked_box = defined $request->{box} ? "$request->{install}/$request->{box}" : '';
+        return ['refused', 'not-the-box', ($fresh->{box} // $fresh->{install} // '-')] unless ($fresh->{install} // '') eq $request->{install} && ($fresh->{box} // '') eq $asked_box;
+        my $generation = $fresh->{marker} ? $fresh->{marker}{generation} : 0;
+        return ['refused', 'generation', $generation] unless $generation == $request->{generation};
+        my $action = $request->{action};
+        my $acted = eval {
+            refuse_locked_or_ha($vmid, $conf);
+            if ($action eq 'start') {
+                return ['done'] if $running;
+                if (my $why = start_refusal($ctx, $guests, $fresh)) {
+                    return ['refused', @$why];
+                }
+                PVE::LXC::vm_start($vmid, $conf, 0);
+            } elsif ($action eq 'stop' || $action eq 'shutdown') {
+                return ['done'] unless $running;
+                if ($action eq 'stop') {
+                    PVE::LXC::vm_stop($vmid, 1);
+                } else {
+                    PVE::LXC::vm_stop($vmid, 0, SHUTDOWN_SECONDS, 1);
+                }
+            } else {
+                return ['refused', 'running'] if $running;
+                destroy_guest($vmid, $conf);
+            }
+            ['done'];
+        };
+        return $acted if $acted;
+        return ['refused', 'failed', substr($@ =~ s/\s+/ /gr =~ s/^\s+|\s+$//gr, 0, 120)];
+    }, 1);
+    return unless $outcome;
+    my ($answer, $reason, $detail) = @$outcome;
+    power_answer($ctx, $vmid, $request, $answer, $reason, $detail);
+}
+
 sub settle_identities {
     my ($ctx, $guests) = @_;
     my $entries = $ctx->{ledger}{guests};
@@ -1294,6 +1419,26 @@ sub prune_answers {
     }
 }
 
+sub prune_power {
+    my ($ctx, $guests) = @_;
+    my $power = $ctx->{ledger}{power};
+    for my $vmid (keys %$power) {
+        my $asked = $guests->{$vmid} ? $guests->{$vmid}{power} : undef;
+        next if $ctx->{now} - $power->{$vmid}{at} < ANSWERS_KEPT_SECONDS || ($asked && ($asked->{nonce} // '') eq ($power->{$vmid}{nonce} // ''));
+        delete $power->{$vmid};
+        $ctx->{ledger_dirty} = 1;
+    }
+}
+
+sub power_lines {
+    my ($ctx) = @_;
+    my $power = $ctx->{ledger}{power} // {};
+    return map {
+        my $answer = $power->{$_};
+        join(' ', 'power', $_, "n$answer->{nonce}", $answer->{action}, $answer->{answer}, grep { defined } $answer->{reason}, $answer->{detail})
+    } sort { $a <=> $b } keys %$power;
+}
+
 sub answer_in_force {
     my ($ctx, $guests, $answer) = @_;
     return 0 unless $answer->{answer} eq 'refused';
@@ -1418,13 +1563,14 @@ sub report_lines {
     push @required, 'error and ' . (@errors - MOST_ERROR_LINES) . ' more' if @errors > MOST_ERROR_LINES;
     my @holders = holder_lines($ctx, $guests);
     my @unsettled = $ctx->{ledger_known} ? unsettled_lines($ctx, $guests) : ();
+    my @power = $ctx->{ledger_known} ? power_lines($ctx) : ();
     my @mismatches = sort @{ $ctx->{mismatches} };
     my @would = sort map { $_->{line} } values %{ $ctx->{would} };
     my @answers = reverse @{ $ctx->{ledger}{answers} // [] };
     my @in_force = map { answer_line($_) } grep { answer_in_force($ctx, $guests, $_) } @answers;
     my %shown = map { $_ => 1 } @in_force;
     my @recent = grep { !$shown{$_}++ } map { answer_line($_) } grep { $ctx->{now} - $_->{at} < ANSWERS_KEPT_SECONDS } @answers;
-    return (\@required, [ [ 'unsettled lines', \@unsettled ], [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'ledger lines', \@ledger ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
+    return (\@required, [ [ 'power lines', \@power ], [ 'unsettled lines', \@unsettled ], [ 'holder lines', \@holders ], [ 'mismatch lines', \@mismatches ], [ 'would lines', \@would ], [ 'ledger lines', \@ledger ], [ 'refusals in force', \@in_force ], [ 'answers', \@recent ] ]);
 }
 
 sub cut_line {
@@ -1467,7 +1613,7 @@ sub budgeted_report_text {
     my @body = @$required;
     my $used = length($head) + 1;
     $used += length("    $_\n") for @body;
-    my $room = REPORT_BUDGET - $used - length("    omitted 999 unsettled lines, 999 holder lines, 999 ledger lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
+    my $room = REPORT_BUDGET - $used - length("    omitted 999 power lines, 999 unsettled lines, 999 holder lines, 999 ledger lines, 999 mismatch lines, 999 would lines, 999 refusals in force, 999 answers\n");
     my @omitted;
     for my $group (@$groups) {
         my ($name, $lines) = @$group;
@@ -1683,8 +1829,15 @@ sub decide {
         last if $stopping;
         converge($ctx, $guests, $guests->{$vmid});
     }
+    if ($mode ne 'boot' && !$previewing) {
+        for my $vmid (sort { $a <=> $b } keys %$guests) {
+            last if $stopping;
+            decide_power($ctx, $guests, $guests->{$vmid});
+        }
+    }
     settle_unsettled($ctx, $guests);
     prune_answers($ctx, $guests);
+    prune_power($ctx, $guests);
     save_ledger($ctx) if $ctx->{ledger_dirty};
 }
 

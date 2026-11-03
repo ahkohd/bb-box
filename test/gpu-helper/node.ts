@@ -279,6 +279,25 @@ export class FakeNode {
   }
 
   guest(vmid: number, spec: GuestSpec = {}): void {
+    writeFileSync(this.configPath(vmid), this.#configText(vmid, spec));
+    this.setRunning(vmid, spec.running ?? false);
+    if (spec.pool === null) this.pools.delete(vmid);
+    else this.pools.set(vmid, spec.pool ?? POOL);
+    this.#writePools();
+  }
+
+  replacementOnUnlock(vmid: number, spec: GuestSpec): void {
+    writeFileSync(`${this.configPath(vmid)}.next`, this.#configText(vmid, spec));
+  }
+
+  ask(vmid: number, request: string | null): void {
+    const text = this.text(vmid);
+    const tags = (/^tags: (.*)$/m.exec(text)?.[1] ?? "").split(";").filter((tag) => tag && !tag.startsWith("bb-power."));
+    const all = [...tags, ...(request ? [request] : [])].join(";");
+    writeFileSync(this.configPath(vmid), /^tags: .*$/m.test(text) ? text.replace(/^tags: .*$/m, `tags: ${all}`) : text.replace(/^(unprivileged: .*)$/m, `$1\ntags: ${all}`));
+  }
+
+  #configText(vmid: number, spec: GuestSpec): string {
     const labels = spec.box ? boxLabels(spec.box, spec.name ?? `box-${vmid}`, spec.kind, spec.install) : null;
     const markers = spec.marker === undefined ? [] : typeof spec.marker === "string" ? [spec.marker] : [...spec.marker];
     const tags = [...(spec.tags ?? labels?.tags ?? []), ...markers];
@@ -300,11 +319,7 @@ export class FakeNode {
     let text = sectionText(keys, spec.description ?? labels?.description, spec.lxc);
     if (spec.pending) text += `\n[pve:pending]\n${sectionText(spec.pending)}`;
     for (const [name, snapshot] of Object.entries(spec.snapshots ?? {})) text += `\n[${name}]\n${sectionText(snapshot)}`;
-    writeFileSync(this.configPath(vmid), text);
-    this.setRunning(vmid, spec.running ?? false);
-    if (spec.pool === null) this.pools.delete(vmid);
-    else this.pools.set(vmid, spec.pool ?? POOL);
-    this.#writePools();
+    return text;
   }
 
   remove(vmid: number): void {
@@ -312,6 +327,19 @@ export class FakeNode {
     this.setRunning(vmid, false);
     this.pools.delete(vmid);
     this.#writePools();
+  }
+
+  isRunning(vmid: number): boolean {
+    return existsSync(join(this.root, "run/fake-pve/running", String(vmid)));
+  }
+
+  exists(vmid: number): boolean {
+    return existsSync(this.configPath(vmid));
+  }
+
+  powerLog(): string[] {
+    const log = join(this.root, "run/fake-pve/power.log");
+    return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
   }
 
   setRunning(vmid: number, running: boolean): void {
@@ -393,7 +421,7 @@ export class FakeNode {
     return Object.assign(child, { output: () => output });
   }
 
-  holdLock(vmid: number, seconds: number, then?: "start"): ChildProcess & { locked: Promise<void> } {
+  holdLock(vmid: number, seconds: number, then?: "start" | "replace"): ChildProcess & { locked: Promise<void> } {
     const child = spawn("perl", [HOLD_LOCK, String(vmid), String(seconds), then ?? ""], { env: this.#env(), stdio: ["ignore", "pipe", "inherit"] });
     const locked = new Promise<void>((resolve) => child.stdout!.on("data", () => resolve()));
     return Object.assign(child, { locked });
