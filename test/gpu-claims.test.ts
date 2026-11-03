@@ -745,3 +745,105 @@ test("071 unit 5, go review N2: a card the helper cannot map to its device nodes
   assert.equal(bridge.proxmox.guests.get(7001)!.status, "running");
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
+
+test("071 unit 5, go review 2 G1: a guest replaced as bb-box starts it is seen at once: bb-box acts on it no more, records it, and the doctor fails, naming it, as does the next acquire", async () => {
+  const bridge = new ClaimsBridge();
+  const original = box("linux-desktop", "swift-owl");
+  bridge.desktop(7001, CARD_A, original, INSTALL, { marker: marker("shared", CARD_A, 1) });
+  bridge.desktop(7002, CARD_B, box("linux-desktop", "whole-owl"), INSTALL, { marker: marker("whole", CARD_B, 1), running: true });
+  bridge.pass();
+  const backend = bridge.backend();
+  let replaced = false;
+  bridge.proxmox.intercept = (call) => {
+    if (!replaced && call.method === "POST" && call.path.endsWith("/lxc/7001/status/start")) {
+      replaced = true;
+      bridge.desktop(7001, CARD_B, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL });
+    }
+    return undefined;
+  };
+  await assert.rejects(backend.start(bridge.stoppedGuest(7001, original, 9001), signal()), /^Error: CT 7001 held a guest that is not box bx\d+ of this install right after bb-box's start: its config names box bx\d+ of install 9zz2\. bb-box acts on it no more\.$/);
+  assert.ok(replaced);
+  const started = bridge.proxmox.calls.findIndex((call) => call.method === "POST" && call.path.endsWith("/lxc/7001/status/start"));
+  const after = bridge.proxmox.calls.slice(started + 1).filter((call) => call.method !== "GET" && call.path.includes("/lxc/7001"));
+  assert.deepEqual(after.map((call) => `${call.method} ${call.path}`), [], "nothing more is written to it, nor is it stopped");
+  assert.deepEqual(bridge.gpuTags(7001), [], "the other install's guest carries no marker of bb-box's");
+  const doctor = (await backend.doctor()).checks.find((check) => check.id === "proxmox.vmids");
+  assert.equal(doctor?.status, "fail");
+  assert.match(doctor?.detail ?? "", /A guest that is not this install's is in its VMID range from 7000 to 7049: CT 7001, of install 9zz2\./);
+  assert.match(doctor?.detail ?? "", /CT 7001 held a guest that is not box bx\d+ of this install right after bb-box's start/);
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /bb-box takes no VMID from 7000 to 7049 while a guest that is not this install's is in that range: CT 7001, of install 9zz2\./);
+});
+
+test("071 unit 5, go review 2 G1: a failed acquire's cleanup leaves another install's guest that took the VMID, whether it was there before the stop or came at the delete, and protected", async () => {
+  for (const stage of ["cleanup-status", "protected-delete"] as const) {
+    const bridge = new ClaimsBridge();
+    let failed: number | null = null;
+    let replaced = false;
+    let from = 0;
+    bridge.proxmox.intercept = (call) => {
+      const put = /\/lxc\/(\d+)\/config$/.exec(call.path);
+      if (failed === null && call.method === "PUT" && put && call.params.tags?.includes("gpu.")) {
+        failed = Number(put[1]);
+        throw new Error("the marker write failed");
+      }
+      const at = stage === "cleanup-status" ? call.method === "GET" && call.path.endsWith(`/lxc/${failed}/status/current`) : call.method === "DELETE" && call.path.endsWith(`/lxc/${failed}`);
+      if (failed !== null && !replaced && at) {
+        replaced = true;
+        from = bridge.proxmox.calls.length;
+        bridge.desktop(failed, CARD_B, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL, running: stage === "cleanup-status" });
+        if (stage === "protected-delete") bridge.proxmox.guests.get(failed)!.config.protection = "1";
+      }
+      return undefined;
+    };
+    await assert.rejects(bridge.backend({ templates: `9001 GPU-${A}` }).acquire(box(), null, hooks(), signal()), /the marker write failed/, stage);
+    assert.ok(replaced, stage);
+    const other = bridge.proxmox.guests.get(failed!);
+    assert.ok(other, `${stage}: the other install's guest is not deleted`);
+    assert.equal(other.status, stage === "cleanup-status" ? "running" : "stopped", `${stage}: nor stopped`);
+    assert.ok(parseTags(other.config.tags).includes(`install.${SECOND_INSTALL}`), stage);
+    if (stage === "protected-delete") assert.equal(other.config.protection, "1", "its protection is not cleared");
+    const changed = bridge.proxmox.calls.slice(from).filter((call) => call.method !== "GET" && call.path.includes(`/lxc/${failed}`));
+    assert.deepEqual(changed.map((call) => `${call.method} ${call.path} ${JSON.stringify(call.params)}`), [], `${stage}: once it is there, bb-box writes nothing to it, takes no protection off and deletes nothing`);
+  }
+});
+
+test("071 unit 5, go review 2 G1: a warm desktop's fill writes only the warm guest it made, not another warm guest of this install that took the VMID", async () => {
+  const bridge = new ClaimsBridge();
+  let replaced: number | null = null;
+  bridge.proxmox.intercept = (call) => {
+    const vmid = /\/lxc\/(\d+)\/config$/.exec(call.path);
+    if (replaced === null && call.method === "PUT" && vmid && call.params.tags?.includes("gpu.")) {
+      replaced = Number(vmid[1]);
+      bridge.desktop(replaced, CARD_B, box("linux-desktop", "warm-twin"), INSTALL, { description: `bb-box warm desktop\ninstall ${INSTALL}`, tags: ["bb-box", `install.${INSTALL}`, "warm", "template.9002"] });
+    }
+    return undefined;
+  };
+  await bridge.backend({ warm: 1, templates: `9001 GPU-${A}` }).maintain(signal()).catch(() => undefined);
+  assert.ok(replaced !== null);
+  assert.deepEqual(bridge.gpuTags(replaced!), [], "the other warm guest gets no marker");
+  assert.equal(bridge.proxmox.guests.get(replaced!)!.status, "stopped", "nor is it started");
+  bridge.pass();
+  assert.deepEqual(bridge.node.guestWrites(), [], "and the helper writes nothing to it");
+  assert.equal(bridge.cardOf(replaced!), CARD_B);
+});
+
+test("071 unit 5, go review 2 G1: bb-box takes no VMID while another install's guest, or a guest that is not bb-box's, is in its VMID range, and the doctor fails, naming them", async () => {
+  const bridge = new ClaimsBridge();
+  bridge.desktop(7003, CARD_B, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL });
+  bridge.proxmox.guests.set(7004, { vmid: 7004, name: "someone", pool: POOL, status: "running", template: false, config: { hostname: "someone" } });
+  bridge.pass();
+  const backend = bridge.backend();
+  const clones = () => bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
+  const before = clones();
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /^BackendError: bb-box takes no VMID from 7000 to 7049 while a guest that is not this install's is in that range: CT 7003, of install 9zz2; CT 7004, which is not bb-box's\. Give each install a VMID range of its own/);
+  assert.equal(clones(), before, "nothing is cloned");
+  const doctor = (await backend.doctor()).checks.find((check) => check.id === "proxmox.vmids");
+  assert.equal(doctor?.status, "fail");
+  assert.match(doctor?.detail ?? "", /CT 7003, of install 9zz2; CT 7004, which is not bb-box's/);
+  bridge.proxmox.guests.delete(7003);
+  bridge.proxmox.guests.delete(7004);
+  bridge.pass();
+  const made = await backend.acquire(box(), null, hooks(), signal());
+  assert.ok(made.ref, "with the range its own again, an acquire goes ahead");
+  assert.equal((await backend.doctor()).checks.find((check) => check.id === "proxmox.vmids")?.status, "ok");
+});

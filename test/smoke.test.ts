@@ -126,11 +126,11 @@ test("a smoke run first releases what an earlier smoke run left, and leaves othe
   const guest = (vmid: number, tags: string) =>
     proxmox.guests.set(vmid, { vmid, name: `left-${vmid}`, pool: "bbbox", status: "running", template: false, config: { tags } });
   guest(9900, "bb-box;install.smoke;box.box_left;thread.smoke;kind.linux;template.9000");
-  guest(9901, "bb-box;install.other;box.box_theirs;thread.thr_x;kind.linux;template.9000");
+  guest(9801, "bb-box;install.other;box.box_theirs;thread.thr_x;kind.linux;template.9000");
   const result = await smoke(values, { kind: "linux", command: "true", drivers, log });
 
   assert.deepEqual(result.problems, []);
-  assert.deepEqual([...proxmox.guests.keys()].sort(), [9000, 9901], "the earlier run's box went, and the other install's stayed");
+  assert.deepEqual([...proxmox.guests.keys()].sort(), [9000, 9801], "the earlier run's box went, and the other install's, in a VMID range of its own, stayed");
   assert.match(lines.join("\n"), /Releasing a box an earlier smoke run left in Proxmox LXC/);
 });
 

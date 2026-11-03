@@ -1980,11 +1980,80 @@ the write enumeration listed every direct write the backend made. Then, as
 root on a `linux` box, directly: `tsc` clean; the node suite, 3,608 tests,
 3,313 passed, 0 failed, 295 skipped; vitest, 448 passed.
 
+### After go review 2
+
+Go review 2 of `33a6d637` said no-go, with three gaps. Each fix has a test
+from the review's probes that fails on `c4eb8400` and passes now.
+
+- **G1: start, stop and delete.** Proxmox takes no digest for these, so a
+  guest replaced between bb-box's check and its request could still be
+  acted on, and `destroy`, a compound call, stopped, cleared protection and
+  deleted with no check between. Now:
+  - The gateway calls only Proxmox's single-step writes. A delete is its own
+    steps: check, stop if running (checked before and after), check, delete;
+    a protected guest has its protection cleared only on the digest of the
+    config just checked. A disk grows on the digest too. The enumeration
+    test fails if any code, the gateway included, calls the compound
+    `destroy` or `growRootDisk`.
+  - Right after each start, stop, shutdown, template or delete, the gateway
+    reads the config again. If the VMID now holds a guest that is not the
+    one it acted on, bb-box acts on it no more, logs it, and the doctor's
+    VMID range check fails, naming it.
+  - Every owner refuses a guest whose tags name another install, but for the
+    clone bb-box has just made, which carries its template's tags until
+    bb-box labels it, and which it knows by the description it gave the
+    clone. A warm guest is bound to the description it was made with, which
+    names it uniquely, so another warm guest of this install is not taken
+    for it.
+  - bb-box takes no VMID, for an acquire, a warm desktop, an image box, a
+    copy or a fork, while a guest that is not this install's is in its
+    VMID range: one whose tags name another install, or one that is not
+    bb-box's at all. The doctor's VMID range check fails, naming such
+    guests.
+- **G2: device nodes.** A card whose device nodes a guest needs are missing,
+  `/dev/nvidia<minor>`, `/dev/nvidiactl`, `/dev/nvidia-uvm`,
+  `/dev/nvidia-uvm-tools`, `/dev/nvidia-modeset` or its DRM card or render
+  node, a dangling link included, is an `error` line, like an unmapped card:
+  it blocks every decision and every repair, and fails the preview, so
+  `--check` and `--writes on` refuse.
+- **G3: the node scripts.** The watcher fails, logging `FAILED`, on any config,
+  power, report or journal read that fails, and on a report with no helper
+  line; `u5-watch-check.sh` fails a start or sample line with no containers
+  or no helper line. `u5-check.sh` takes a guest with no GPU lines as valid,
+  and a failed read of its config as a failure. The review's runbook probe
+  passes on the new scripts; on the scripts before, the snapshot with a CPU
+  guest failed and the watcher whose reads all failed passed its check.
+  `u5-steps-test.sh` passes its 15 cases.
+- The helper is 0.3.4.
+- Four tests had two installs share a VMID range, which bb-box now refuses;
+  each now gives the second install a range of its own and checks it still
+  leaves the first's guests alone: the conformance suite's two-install check,
+  which takes an install's refusal of a guest outside its range as leaving it
+  alone, and whose Proxmox LXC run's fake node now reports its memory less
+  what running guests use, as a node does; the LXC test of another install's
+  guests, where desktops per GPU counts each install's own boxes; the
+  doctor's full-range test; and the smoke run's.
+- Then, as root on a `linux` box, directly: `tsc` clean; the node suite,
+  3,614 tests, 3,319 passed, 0 failed, 295 skipped; vitest, 448 passed.
+
+**The residual window.** Between bb-box's last check and Proxmox acting on a
+start, stop or delete, another actor could put a guest at that VMID; Proxmox
+offers no digest or lock for those calls. The window is bounded by keeping
+each install's VMID range its own, which the doctor enforces and bb-box
+refuses to work without: in a range that holds only this install's guests,
+the only guest at a VMID is one this install made. bb-box's token can act
+only on guests it can see, and a guest it cannot see it cannot start, stop or
+delete. If another actor puts a guest in the range anyway, bb-box sees it on
+its next read, at the latest right after the call, acts on it no more, and
+the doctor names it.
+
 ### Every write to a guest
 
 `test/guest-writes.test.ts` enumerates these with TypeScript's checker: it
 fails if any code in `src/backends/proxmox-lxc` or the fork module calls one
-of Proxmox's guest writes other than `owned.ts`, hands Proxmox's client to a
+of Proxmox's guest writes other than `owned.ts`, if anything calls a
+compound one (`destroy`, `growRootDisk`), if the gateway calls other than
+the single-step ones, hands Proxmox's client to a
 function that takes the checked writes, or writes through the check from a
 function this table does not name. For the helper, it checks that the only
 container write is `change_guest`, and that each call of it is in a
@@ -2005,7 +2074,7 @@ same guest.
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
 | `adoptCopy`, `forkSnapshot` | the guest a restore or fork has just made | network, size, labels | its description names this install and the box it is made for |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
-| `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | warm guest of this install |
+| `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
@@ -2087,6 +2156,10 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
   still has is refused `ledger-lost`, as with writes on, rather than left to
   its request. Left to its request, the helper decided it again each pass,
   and the first refusal, by another guest's lines, opened the card.
+- Two installs on one Proxmox LXC backend need VMID ranges of their own (go
+  review 2). Before, an install left another's guests in its range alone and
+  went on; now it takes no VMID while one is there, and the doctor fails,
+  naming it. A pool may still be shared.
 - With the desktop kind off, or its templates cleared, a stopped box with a
   marker still goes through the start gate. It may start on the card the
   helper holds for it, and is moved to no other.

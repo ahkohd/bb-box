@@ -471,7 +471,7 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
 | `gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
 | `addresses` | `10.200.0.10-10.200.0.254` | box addresses; the n-th VMID gets the n-th address |
-| `vmid-first` | `9900` | boxes take VMIDs from this range; keep other guests out of it |
+| `vmid-first` | `9900` | boxes take VMIDs from this range; give each install a range of its own and keep other guests out of it: bb-box takes no VMID while another install's guest, or a guest that is not bb-box's, is in it, and the doctor's VMID range check fails, naming them |
 | `vmid-last` | `9999` |  |
 | `ssh-user` | `box` |  |
 | `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |

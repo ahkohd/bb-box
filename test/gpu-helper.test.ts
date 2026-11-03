@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.3\.3, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.3\.4, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.3 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.4 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -475,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.3.3 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.3.4 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +930,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.3 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.4 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1285,4 +1285,26 @@ test("071 unit 5, go review N2: a card the helper cannot map to its device nodes
   held.setCards([CARD_A, CARD_B]);
   ran(held);
   assert.deepEqual(lines(held, "unsettled"), [`unsettled 2660 ${A} g1`]);
+});
+
+test("071 unit 5, go review 2 G2: a device node a guest of a card needs that is missing, as /dev/nvidia1, its render node or /dev/nvidia-uvm, is an error line that blocks every decision and every repair, and fails the preview", () => {
+  for (const path of [`dev/nvidia${CARD_A.minor}`, `dev/dri/${CARD_A.render}`, "dev/nvidia-uvm"]) {
+    const node = new FakeNode({ writes: "off" });
+    node.guest(2670, { box: "bx2670", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+    ran(node);
+    node.guest(2670, { box: "bx2670", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_B, "desktop") });
+    node.guest(2671, { box: "bx2671", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+    rmSync(node.file(path));
+    const preview = node.run(["--preview"]);
+    assert.equal(preview.status, 1, `${path}: ${preview.stdout}`);
+    assert.match(preview.stdout, new RegExp(`^error: card [0-9a-f-]+ at \\S+ lacks device nodes a guest of it needs \\(.*/${path}.* missing\\), so the helper can neither give nor check its lines: no request on any card is decided and no guest's lines are changed$`, "m"), path);
+    assert.match(preview.stdout, /^preview: incomplete, as .*it could not map every card to its device nodes/m, path);
+    assert.doesNotMatch(preview.stdout, /^would write CT /m, `${path}: the repair CT 2670 needs is neither shown nor made`);
+    ran(node);
+    assert.ok(!claims(node).some((line) => line.startsWith("claim 2671 ")), `${path}: no request is decided: ${claims(node).join(" | ")}`);
+    assert.deepEqual(lines(node, "would"), [], path);
+    writeFileSync(node.file(path), "");
+    const back = node.run(["--preview"]);
+    assert.match(back.stdout, /^would write CT 2670 for claim g1: /m, `${path}: with the node back, the repair shows`);
+  }
 });

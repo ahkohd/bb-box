@@ -74,13 +74,29 @@ const config = lxcConfig({
   "proxmox-lxc-desktop-wayland-cpu-templates": "9004",
   "proxmox-lxc-ssh-private-key": "",
 });
+const nodeAvailable = proxmox.memory.available;
+const roomOfTheNode: typeof proxmox.fetch = (url, init) => {
+  const running = [...proxmox.guests.values()].filter((guest) => guest.status === "running").reduce((sum, guest) => sum + Number(guest.config.memory ?? 0) * 2 ** 20, 0);
+  proxmox.memory = { ...proxmox.memory, available: nodeAvailable - running };
+  return proxmox.fetch(url, init);
+};
+const otherRange = lxcConfig({
+  "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
+  "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
+  "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b",
+  "proxmox-lxc-desktop-cpu-templates": "9003",
+  "proxmox-lxc-desktop-wayland-cpu-templates": "9004",
+  "proxmox-lxc-ssh-private-key": "",
+  "proxmox-lxc-vmid-first": 9800,
+  "proxmox-lxc-vmid-last": 9899,
+});
 
 await conformance({
   name: "Proxmox LXC on fakes",
   storage: new MemoryStorage(),
   create: (storage, installId) =>
-    new ProxmoxLxcBackend(config, testContext(storage, installId), {
-      fetch: proxmox.fetch,
+    new ProxmoxLxcBackend(installId.endsWith("-other") ? otherRange : config, testContext(storage, installId), {
+      fetch: roomOfTheNode,
       sleep: async () => {},
       sshBinary: FAKE_SSH_BINARY,
       portCheck: async () => true,

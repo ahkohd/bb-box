@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.3.3';
+use constant VERSION => '0.3.4';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -251,10 +251,17 @@ sub note_unmapped_cards {
     for my $uuid (sort keys %{ $ctx->{cards} }) {
         my $card = $ctx->{cards}{$uuid};
         my @missing = grep { !defined $card->{$_} } qw(minor drm_card drm_render);
-        next unless @missing;
+        if (@missing) {
+            $ctx->{unmapped}{$uuid} = 1;
+            push @{ $ctx->{errors} }, "the helper cannot map card $uuid at $card->{pci} to its device nodes (" . join(', ', map { $MAPPING_WORDS{$_} } @missing)
+                . ' unknown), so it cannot tell which guests hold it: no request on any card is decided and no guest\'s lines are changed';
+            next;
+        }
+        my @absent = grep { !-e host_path($_) } ("/dev/nvidia$card->{minor}", '/dev/nvidiactl', '/dev/nvidia-uvm', '/dev/nvidia-uvm-tools', '/dev/nvidia-modeset', "/dev/dri/$card->{drm_render}", "/dev/dri/$card->{drm_card}");
+        next unless @absent;
         $ctx->{unmapped}{$uuid} = 1;
-        push @{ $ctx->{errors} }, "the helper cannot map card $uuid at $card->{pci} to its device nodes (" . join(', ', map { $MAPPING_WORDS{$_} } @missing)
-            . ' unknown), so it cannot tell which guests hold it: no request on any card is decided and no guest\'s lines are changed';
+        push @{ $ctx->{errors} }, "card $uuid at $card->{pci} lacks device nodes a guest of it needs (" . join(', ', @absent)
+            . ' missing), so the helper can neither give nor check its lines: no request on any card is decided and no guest\'s lines are changed';
     }
 }
 
