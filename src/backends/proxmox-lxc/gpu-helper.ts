@@ -48,6 +48,18 @@ export function parseGpuHelper(notes: string): GpuHelperState | null {
   };
 }
 
+export const STOPS_ONLY_UNTESTED_FROM = [0, 4, 1];
+
+export function atLeast(version: string | null, from: readonly number[]): boolean {
+  if (!version) return false;
+  const parts = version.split(".").map(Number);
+  for (let at = 0; at < from.length; at++) {
+    const part = parts[at] ?? 0;
+    if (part !== from[at]) return part > from[at]!;
+  }
+  return true;
+}
+
 export interface GpuHelperSeen {
   readonly node: string;
   readonly pool: string;
@@ -107,6 +119,13 @@ export function judgeGpuHelper(helper: GpuHelperState, seen: GpuHelperSeen): Gpu
       return { status: "warn", detail: `${named} serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool ${pool}.`, fix: serveIt };
     }
     return { status: "fail", detail: `${named} serves ${poolsInWords(served?.listed ?? [])}, not this install's pool ${pool}.`, fix: serveIt };
+  }
+  if (!helper.tested && atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM)) {
+    return {
+      status: "fail",
+      detail: `${named} was not tested on pve-container ${helper.pveContainer}, so it changes no guest's lines, and only stops a GPU desktop or a guest with a GPU marker: those on ${node} are neither started nor released. Boxes with no GPU there are started, stopped and released through Proxmox's API meanwhile, as before 071.`,
+      fix: `Install a bb-box-gpu release newer than ${helper.version} that was tested on pve-container ${helper.pveContainer}: run host/setup-gpu.sh from that BB Box release, as root on ${node}.`,
+    };
   }
   if (!helper.tested) {
     return {

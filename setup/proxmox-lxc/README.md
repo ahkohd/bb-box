@@ -429,22 +429,32 @@ and waits up to 10 s for the helper's answer before it starts the box
 - Where the helper is installed but cannot be used, as when its report is
   3 minutes old or does not serve this install's pool, new GPU desktops are
   refused with the reason. A helper on a pve-container its release was not
-  tested on runs as with writes off: desktops are made and marked, and none
-  is moved. With no helper and no guest of this install marked, GPU
+  tested on runs as with writes off, and from 0.4.1 only stops GPU
+  desktops and marked guests: a desktop is made and marked but not started,
+  none there starts or is released, and the doctor fails until a release
+  tested on it is installed. Boxes with no GPU there go through Proxmox's
+  API meanwhile, as before. With no helper and no guest of this install marked, GPU
   desktops are made as before, with no marker.
-- From bb-box-gpu 0.4.0, bb-box starts, stops and deletes a guest with a
-  GPU's device lines, or a marker that claims a card, only through the
-  helper, never through Proxmox's API. It adds a tag
-  `bb-power.<action>.<install>.<box>.g<generation>.n<nonce>` to the guest,
-  and the helper, inside the guest's config lock, checks that the guest is
-  still that install's box with that marker, and for a start that it holds
-  a granted claim and that card's lines, before it calls Proxmox's own
-  start, stop or delete. Its answer is a `power` line in the report, and
-  bb-box takes the tag off. It does this with writes off too. While the
-  helper is stopped, or its report is 3 minutes old, such a box neither
-  starts, stops nor is released. With an older helper, bb-box uses the API
-  as before, until the node is upgraded. Other boxes start, stop and are
-  deleted through the API, as before.
+- From bb-box-gpu 0.4.0, bb-box starts, stops and deletes every guest of
+  its install in its VMID range on that node only through the helper, GPU
+  desktop or not, never through Proxmox's API, and outside the range a
+  guest with a GPU's device lines or a GPU marker that is not a template. It
+  adds a tag
+  `bb-power.<action>.<install>.<box>.g<generation>.n<nonce>` to the guest
+  (from 0.4.1 a warm guest is named by its `warm` token), and the helper,
+  inside the guest's config lock, checks that the guest is still that
+  install's box with that marker: for a box with no GPU, that it has no
+  card's lines and no pending device change; for a start of a GPU desktop,
+  that it holds a granted claim and that card's lines, and that no guest
+  running on the card holds or claims it whole beside it. Then it calls
+  Proxmox's own start, stop or delete. Its answer is a `power` line in the
+  report, and bb-box takes the tag off. It does this with writes off too.
+  On a pve-container its release was not tested on, the helper only stops
+  guests, and bb-box sends boxes with no GPU through the API. bb-box keeps in its storage which nodes' helpers do this, so after
+  a restart too, while the helper is stopped, its report is 3 minutes old,
+  has no helper line or cannot be read, no box of the install there starts,
+  stops or is released. With an older helper, or one that does not serve the
+  install's pool, bb-box uses the API as before.
 
 Where the helper is installed, `setup-gpu-report.sh` makes the VM and its
 rights but does not put the timer back. The doctor's "Host's GPU helper"

@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.4\.0, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.4\.1, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.0 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.1 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -475,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.4.0 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.4.1 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +930,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.0 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.1 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1452,4 +1452,131 @@ test("071 unit 5, go review 3 H1: a preview and the boot pass act on no power re
   assert.ok(!node.isRunning(2730));
   ran(node);
   assert.deepEqual(node.powerLog(), ["start 2730"]);
+});
+
+test("071 unit 5, go review 4 N1: the helper starts, stops and deletes a box with no card once it is still that install's box with no card's lines, and a GPU desktop that takes its VMID while the request waits for the lock is not acted on", async () => {
+  for (const writes of ["off", "on"] as const) {
+    const node = new FakeNode({ writes });
+    node.guest(2740, { box: "bx2740", kind: "linux" });
+    node.guest(2742, { box: "bx2742", kind: "linux-desktop", marker: marker("whole", CARD_B, 1), lines: cardLines(CARD_B, "desktop"), running: true });
+    ran(node);
+    node.ask(2740, asked("start", "bx2740", 0, "6a6a6a6a"));
+    ran(node);
+    node.ask(2740, asked("stop", "bx2740", 0, "6b6b6b6b"));
+    ran(node);
+    node.ask(2740, asked("delete", "bx2740", 0, "6c6c6c6c"));
+    ran(node);
+    assert.deepEqual(node.powerLog(), ["start 2740", "stop 2740", "destroy 2740", "removed 2740"], writes);
+    assert.ok(powered(node).includes("power 2740 n6c6c6c6c delete done"));
+
+    for (const action of ["start", "stop", "delete"] as const) {
+      const running = action === "stop";
+      node.guest(2741, { box: "bx2741", kind: "linux", running });
+      ran(node);
+      const nonce = { start: "7a7a7a7a", stop: "7b7b7b7b", delete: "7c7c7c7c" }[action];
+      const request = asked(action, "bx2741", 0, nonce);
+      node.ask(2741, request);
+      node.replacementOnUnlock(2741, { box: "bx2799", kind: "linux-desktop", marker: request, lines: cardLines(CARD_B, "desktop"), running });
+      const hold = node.holdLock(2741, 1.5, "replace");
+      await hold.locked;
+      ran(node);
+      await exited(hold);
+      assert.match(node.text(2741), /^#box bx2799$/m, `${action}, writes ${writes}: the replacement is in place`);
+      assert.equal(node.powerLog().length, 4, `${action}, writes ${writes}: the GPU desktop is not started, stopped or deleted: ${node.powerLog().join(" | ")}`);
+      assert.equal(node.isRunning(2741), running);
+      assert.ok(powered(node).includes(`power 2741 n${nonce} ${action} refused not-the-box ${INSTALL}/bx2799`), `${action}, writes ${writes}: ${powered(node).join(" | ")}`);
+    }
+  }
+
+  const node = new FakeNode({ writes: "off" });
+  node.guest(2743, { box: "bx2743", kind: "linux", pending: { dev0: `/dev/nvidia${CARD_A.minor},mode=0666` } });
+  node.guest(2744, { template: true, tags: ["bb-box", `install.${INSTALL}`, "image.daily"], description: "bb-box daily image of linux, built 2026-11-03 from template 9000.\n{}" });
+  ran(node);
+  node.ask(2743, asked("start", "bx2743", 0, "8a8a8a8a"));
+  node.ask(2744, asked("start", null, 0, "8b8b8b8b"));
+  ran(node);
+  assert.ok(powered(node).includes("power 2743 n8a8a8a8a start refused pending"), "a box that would start with a card's lines it has no claim for is not started");
+  assert.ok(powered(node).includes("power 2744 n8b8b8b8b start refused template"));
+  node.ask(2744, asked("delete", null, 0, "8c8c8c8c"));
+  ran(node);
+  assert.ok(powered(node).includes("power 2744 n8c8c8c8c delete done"), "a captured build of this install, named by its install tag, is deleted");
+  assert.deepEqual(node.powerLog(), ["destroy 2744", "removed 2744"]);
+});
+
+test("071 unit 5, go review 4 N4: on a pve-container the helper was not tested on, it stops a guest, and refuses to start, shut down or delete one", () => {
+  for (const writes of ["off", "on"] as const) {
+    const node = new FakeNode({ writes, pveContainer: "6.2.3" });
+    node.guest(2745, { box: "bx2745", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+    node.guest(2746, { box: "bx2746", kind: "linux" });
+    ran(node);
+    node.ask(2745, asked("shutdown", "bx2745", 1, "9a9a9a9a"));
+    node.ask(2746, asked("start", "bx2746", 0, "9b9b9b9b"));
+    ran(node);
+    assert.ok(powered(node).includes("power 2745 n9a9a9a9a shutdown refused untested 6.2.3"), `${writes}: ${powered(node).join(" | ")}`);
+    assert.ok(powered(node).includes("power 2746 n9b9b9b9b start refused untested 6.2.3"));
+    node.ask(2746, asked("delete", "bx2746", 0, "9c9c9c9c"));
+    node.ask(2745, asked("stop", "bx2745", 1, "9d9d9d9d"));
+    ran(node);
+    assert.ok(powered(node).includes("power 2746 n9c9c9c9c delete refused untested 6.2.3"));
+    assert.ok(powered(node).includes("power 2745 n9d9d9d9d stop done"));
+    assert.deepEqual(node.powerLog(), ["stop 2745"], writes);
+  }
+});
+
+test("071 unit 5, go review 4 N5: a start is refused beside a guest running on its card when either holds or claims the card whole, and on a card a guest the lost ledger left unresolved may hold", () => {
+  const node = new FakeNode({ writes: "off" });
+  node.guest(2750, { box: "bx2750", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(2753, { box: "bx2753", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2750 g1 granted whole ${A}`) && claims(node).includes(`claim 2753 g1 granted shared ${B}`), claims(node).join(" | "));
+  node.guest(2751, { box: "bx2751", kind: "linux-desktop", lines: cardLines(CARD_A, "desktop"), running: true });
+  node.guest(2754, { box: "bx2754", kind: "linux-desktop", marker: marker("whole", CARD_B, 1), lines: cardLines(CARD_B, "desktop"), running: true });
+  ran(node);
+  node.ask(2750, asked("start", "bx2750", 1, "aaaa0001"));
+  node.ask(2753, asked("start", "bx2753", 1, "aaaa0002"));
+  ran(node);
+  assert.ok(powered(node).includes("power 2750 naaaa0001 start refused card-busy 2751"), `a whole box beside an unmarked guest running on its card: ${powered(node).join(" | ")}`);
+  assert.ok(powered(node).includes("power 2753 naaaa0002 start refused card-busy 2754"), "a shared box beside a running guest that claims its card whole");
+  node.remove(2751);
+  node.guest(2752, { box: "bx2752", kind: "linux-desktop", install: "zz99", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  ran(node);
+  node.ask(2750, asked("start", "bx2750", 1, "aaaa0003"));
+  ran(node);
+  assert.ok(powered(node).includes("power 2750 naaaa0003 start refused card-busy 2752"), "beside another install's shared guest running on its card");
+  assert.deepEqual(node.powerLog(), []);
+
+  const held = new FakeNode({ writes: "on", ledger: false });
+  held.guest(2760, { box: "bx2760", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  held.guest(2761, { box: "bx2761", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  held.guest(2762, { box: "bx2762", kind: "linux-desktop", lines: cardLines(CARD_A, "desktop") });
+  ran(held);
+  assert.deepEqual(lines(held, "unsettled"), [`unsettled 2760 ${A} g1`]);
+  held.ask(2762, asked("start", "bx2762", 0, "bbbb0001"));
+  ran(held);
+  assert.ok(powered(held).includes("power 2762 nbbbb0001 start refused unsettled 2760"), `an unmarked guest on a card a guest the lost ledger left unresolved may hold: ${powered(held).join(" | ")}`);
+  assert.deepEqual(held.powerLog(), []);
+});
+
+test("071 unit 5, go review 4 N6: a warm guest's request names its own warm token, so another warm guest of the install carrying it is not acted on", async () => {
+  const warm = (token: string): GuestSpec => ({ description: `bb-box warm desktop\ninstall ${INSTALL}\nwarm ${token}`, tags: ["bb-box", `install.${INSTALL}`, "warm", "template.9001"], marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  const node = new FakeNode({ writes: "off" });
+  node.guest(2770, warm("0123456789ab"));
+  ran(node);
+  assert.ok(claims(node).includes(`claim 2770 g1 granted shared ${A}`), claims(node).join(" | "));
+  node.ask(2770, asked("start", null, 1, "cccc0001"));
+  ran(node);
+  assert.ok(powered(node).includes(`power 2770 ncccc0001 start refused not-the-box ${INSTALL}/warm-0123456789ab`), "a request naming no warm token does not reach a warm guest");
+  node.ask(2770, asked("start", "warm-0123456789ab", 1, "cccc0002"));
+  ran(node);
+  assert.deepEqual(node.powerLog(), ["start 2770"]);
+
+  const request = asked("stop", "warm-0123456789ab", 1, "cccc0003");
+  node.ask(2770, request);
+  node.replacementOnUnlock(2770, { ...warm("fedcba987654"), marker: [marker("shared", CARD_A, 1), request], running: true });
+  const hold = node.holdLock(2770, 1.5, "replace");
+  await hold.locked;
+  ran(node);
+  await exited(hold);
+  assert.deepEqual(node.powerLog(), ["start 2770"], "the other warm guest is not stopped");
+  assert.ok(powered(node).includes(`power 2770 ncccc0003 stop refused not-the-box ${INSTALL}/warm-fedcba987654`), powered(node).join(" | "));
 });

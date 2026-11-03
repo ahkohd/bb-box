@@ -120,9 +120,9 @@ import {
   type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, atLeast, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
-import { answerTo, cardName, claimMarkerOf, gpuDeviceLines, judgeGpuMigration, markerOf, markerTag, parseHelperLines, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type MarkAnswer } from "./gpu-marking.ts";
+import { answerTo, cardName, claimMarkerOf, gpuDeviceLines, judgeGpuMigration, markerOf, markerTag, parseHelperLines, pendingDeviceChange, rawGpuLines, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type MarkAnswer } from "./gpu-marking.ts";
 import {
   ANSWER_POLL_MS,
   ANSWER_WAIT_MS,
@@ -548,27 +548,28 @@ interface StartGate {
 const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 
 const POWER_ON_THE_NODE_FROM = [0, 4, 0];
+const WARM_BOUND_FROM = [0, 4, 1];
+const POWER_NODES = "gpu-helper-power";
+
+interface PowerNode {
+  readonly version: string;
+  readonly seen: string;
+}
 const POWER_WAIT_MS = 120_000;
 const DELETED_UNANSWERED_MS = 5_000;
 const POWER_TAG = /^bb-power\.(start|stop|shutdown|delete)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.g\d+\.n[0-9a-f]{8,32}$/;
 
-function atLeast(version: string | null, from: readonly number[]): boolean {
-  if (!version) return false;
-  const parts = version.split(".").map(Number);
-  for (let at = 0; at < from.length; at++) {
-    const part = parts[at] ?? 0;
-    if (part !== from[at]) return part > from[at]!;
-  }
-  return true;
-}
-
-function powerBox(config: Record<string, unknown>): string | null {
+function powerBox(config: Record<string, unknown>, helper: string): string | null {
   const description = typeof config.description === "string" ? config.description : "";
   const tags = parseTags(config.tags);
   if (!description.startsWith("bb-box ") || /^bb-box install \S+ box \S+ held copy of snapshot /.test(description)) return null;
   if (tags.includes("held-copy") || tags.includes(EARLIER_GUEST) || /^earlier guest$/m.test(description) || !/^install \S+$/m.test(description)) return null;
-  return /^box (\S+)$/m.exec(description)?.[1] ?? null;
+  const box = /^box (\S+)$/m.exec(description)?.[1];
+  if (box) return box;
+  const warm = /^bb-box warm \S+$/m.test(description) ? /^warm ([0-9a-f]+)$/m.exec(description)?.[1] : undefined;
+  return warm && atLeast(helper, WARM_BOUND_FROM) ? `warm-${warm}` : null;
 }
+
 
 const POWER_REFUSALS: Readonly<Record<string, string>> = {
   "not-the-box": "the guest at that VMID is not the box bb-box asked for",
@@ -581,6 +582,10 @@ const POWER_REFUSALS: Readonly<Record<string, string>> = {
   "no-cards": "the helper has no full reading of the cards",
   "unknown-card": "the helper does not list its card",
   "card-nodes": "the helper could not find its card's device nodes",
+  "card-busy": "another guest is running on its card, and one of the two holds or claims the card whole",
+  unsettled: "a guest the helper's lost ledger left unresolved may hold its card",
+  pending: "a device change is pending, which a start would apply",
+  untested: "the helper was not tested on this node's pve-container, so it only stops guests on it",
   running: "it is running",
   template: "it is a template",
   "not-served": "its pool is not one the helper serves",
@@ -748,7 +753,7 @@ export class ProxmoxLxcBackend implements Backend {
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
   readonly #sightings = new Map<number, { readonly words: string; readonly at: number }>();
-  #powerSeen = false;
+  #powerNodes: Record<string, PowerNode> | undefined;
   #settling: Promise<void> | null = null;
   readonly #written = new Map<number, number>();
   readonly #snapshots: ProxmoxSnapshotting;
@@ -2255,8 +2260,8 @@ export class ProxmoxLxcBackend implements Backend {
 
   #owned(api: Proxmox): OwnedGuests {
     return new OwnedGuests(api, (vmid, words) => this.#sighted(vmid, words), {
-      handles: (config, signal) => this.#powerOnTheNode(api, config, signal),
-      ask: (vmid, action, owner, signal) => this.#askPower(api, vmid, action, owner, signal),
+      helperFor: (vmid, config, signal) => this.#powerHelper(api, vmid, config, signal),
+      ask: (vmid, action, owner, helper, signal) => this.#askPower(api, vmid, action, owner, helper, signal),
     });
   }
 
@@ -2265,33 +2270,75 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context.logError("a guest that is not this install's", new Error(words));
   }
 
-  async #powerOnTheNode(api: Proxmox, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
-    if (!gpuDeviceLines(config).length && !claimMarkerOf(parseTags(config.tags))?.card) return false;
-    const vm = await api.vmNotes(GPU_REPORT_VM, signal).catch(() => null);
+  async #powerHelper(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<string | null> {
+    const marked = claimMarkerOf(parseTags(config.tags)) !== null;
+    const gpu = marked || gpuDeviceLines(config).length > 0;
+    if (!this.#inRange(vmid) && (!gpu || isTemplate(config))) return null;
+    const key = this.#cardKey(api);
+    let vm: { readonly vmid: number; readonly notes: string } | null = null;
+    let unread: unknown = null;
+    try {
+      vm = await api.vmNotes(GPU_REPORT_VM, signal);
+    } catch (error) {
+      unread = error;
+    }
     const helper = vm ? parseGpuHelper(vm.notes) : null;
-    if (vm && atLeast(helper?.version ?? null, POWER_ON_THE_NODE_FROM)) {
-      this.#powerSeen = true;
+    const throughIt = `Run systemctl status bb-box-gpu as root on ${api.node}, and check the host's clock.`;
+    if (vm && helper?.version) {
+      await this.#rememberPower(key, helper.version);
+      if (!atLeast(helper.version, POWER_ON_THE_NODE_FROM)) return null;
+      const pool = this.#config.proxmox.pool;
+      if (helper.serves && !helper.serves.listed.includes(pool) && helper.serves.unlisted === 0) return null;
       const at = /^\s*at (\d+)\s*$/m.exec(vm.notes);
       const ageMs = at ? this.#now() - Number(at[1]) * 1000 : null;
-      const throughIt = `bb-box starts, stops and deletes a guest with a GPU's device lines only through it. Run systemctl status bb-box-gpu as root on ${api.node}, and check the host's clock.`;
-      if (ageMs === null) throw new Error(`The GPU helper on ${api.node} has written no time in VM ${vm.vmid}'s report, and ${throughIt}`);
-      if (ageMs >= GPU_HELPER_FRESH_MS) throw new Error(`The GPU helper on ${api.node} last reported ${ago(ageMs)}, in VM ${vm.vmid}, and ${throughIt}`);
-      if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs, and ${throughIt}`);
-      return true;
+      const only = `bb-box starts, stops and deletes this install's guests on ${api.node} only through it. ${throughIt}`;
+      if (ageMs === null) throw new Error(`The GPU helper on ${api.node} has written no time in VM ${vm.vmid}'s report, and ${only}`);
+      if (ageMs >= GPU_HELPER_FRESH_MS) throw new Error(`The GPU helper on ${api.node} last reported ${ago(ageMs)}, in VM ${vm.vmid}, and ${only}`);
+      if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs, and ${only}`);
+      if (helper.tested === false && atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM) && (await this.#plainGuest(api, vmid, config, signal))) return null;
+      return helper.version;
     }
-    if (this.#powerSeen) {
-      throw new Error(`The GPU helper on ${api.node} is not reporting, and bb-box starts, stops and deletes a guest with a GPU's device lines only through it. Try again in a minute; if it lasts, run bb box doctor.`);
+    const why = unread !== null ? `bb-box cannot read the GPU helper's report on ${api.node} (${message(unread)})` : vm ? `VM ${vm.vmid}'s report has no helper line bb-box can read, as while host/setup-gpu.sh restarts the helper` : `the token can read no VM named ${GPU_REPORT_VM} on ${api.node}`;
+    if (await this.#powerKnown(key)) {
+      throw new Error(`CT ${vmid} was not acted on: ${why}, and the GPU helper there, which starts, stops and deletes this install's guests, has done so before. Try again in a minute. ${throughIt}`);
     }
-    return false;
+    if (marked || (gpu && unread !== null)) {
+      throw new Error(`CT ${vmid} was not acted on: ${why}, and bb-box starts, stops and deletes a guest with a GPU marker or a GPU's device lines only while it can read the helper. Try again in a minute. ${throughIt}`);
+    }
+    return null;
   }
 
-  async #askPower(api: Proxmox, vmid: number, action: PowerAction, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
+  async #plainGuest(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
+    if (markerOf(parseTags(config.tags)) !== null || gpuDeviceLines(config).length > 0 || rawGpuLines(config).length > 0) return false;
+    return !pendingDeviceChange(await api.pendingChanges(vmid, signal));
+  }
+
+  async #powerKnown(key: string): Promise<boolean> {
+    if (this.#powerNodes === undefined) {
+      try {
+        this.#powerNodes = (await this.#context.storage.get<Record<string, PowerNode>>(POWER_NODES)) ?? {};
+      } catch (error) {
+        this.#context.logError("read which nodes' GPU helpers start, stop and delete guests", error);
+        return true;
+      }
+    }
+    return atLeast(this.#powerNodes[key]?.version ?? null, POWER_ON_THE_NODE_FROM);
+  }
+
+  async #rememberPower(key: string, version: string): Promise<void> {
+    await this.#powerKnown(key);
+    if (this.#powerNodes?.[key]?.version === version) return;
+    this.#powerNodes = { ...this.#powerNodes, [key]: { version, seen: new Date(this.#now()).toISOString() } };
+    await this.#context.storage.set(POWER_NODES, this.#powerNodes).catch((error: unknown) => this.#context.logError("record which nodes' GPU helpers start, stop and delete guests", error));
+  }
+
+  async #askPower(api: Proxmox, vmid: number, action: PowerAction, owner: GuestOwner, helper: string, signal?: AbortSignal): Promise<void> {
     const nonce = randomBytes(8).toString("hex");
     const plain = new OwnedGuests(api);
     let tag = "";
     await plain.configure(vmid, owner, (config) => {
       const tags = parseTags(config.tags);
-      tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
+      tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config, helper) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
       if (!POWER_TAG.test(tag)) throw new Error(`bb-box cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
       return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
     }, signal);
