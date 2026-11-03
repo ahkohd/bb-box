@@ -124,8 +124,9 @@ export type Sighting = (vmid: number, words: string) => void;
 export type PowerAction = "start" | "stop" | "shutdown" | "delete";
 
 export interface NodePower {
-  helperFor(vmid: number, config: Config, signal?: AbortSignal): Promise<string | null>;
+  helperFor(vmid: number, config: Config, action: PowerAction, signal?: AbortSignal): Promise<string | null>;
   ask(vmid: number, action: PowerAction, owner: GuestOwner, helper: string, signal?: AbortSignal): Promise<void>;
+  acted(vmid: number, action: PowerAction): Promise<void>;
 }
 
 export class OwnedGuests {
@@ -139,8 +140,8 @@ export class OwnedGuests {
     this.#power = power;
   }
 
-  async #helperFor(vmid: number, config: Config, signal?: AbortSignal): Promise<string | null> {
-    return this.#power === null ? null : await this.#power.helperFor(vmid, config, signal);
+  async #helperFor(vmid: number, config: Config, action: PowerAction, signal?: AbortSignal): Promise<string | null> {
+    return this.#power === null ? null : await this.#power.helperFor(vmid, config, action, signal);
   }
 
   async #configOrNull(vmid: number, signal?: AbortSignal): Promise<Config | null> {
@@ -176,13 +177,15 @@ export class OwnedGuests {
 
   async #act(vmid: number, owner: GuestOwner, what: string, run: () => Promise<void>, signal?: AbortSignal, onTheNode?: PowerAction): Promise<void> {
     const config = await this.read(vmid, owner, signal);
-    const helper = onTheNode ? await this.#helperFor(vmid, config, signal) : null;
+    const helper = onTheNode ? await this.#helperFor(vmid, config, onTheNode, signal) : null;
     if (onTheNode && helper !== null) {
       await this.#power!.ask(vmid, onTheNode, owner, helper, signal);
+      await this.#power!.acted(vmid, onTheNode);
       return;
     }
     await run();
     if (!(await this.#after(vmid, owner, what, signal))) throw new NoLongerOurs(`CT ${vmid} went right after bb-box's ${what}. bb-box acts on it no more.`);
+    if (onTheNode) await this.#power?.acted(vmid, onTheNode);
   }
 
   async writeOn(vmid: number, owner: GuestOwner, config: Config, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
@@ -253,14 +256,18 @@ export class OwnedGuests {
 
   async destroy(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
     const config = await this.#configOrNull(vmid, signal);
-    if (!config) return;
+    if (!config) {
+      await this.#power?.acted(vmid, "delete");
+      return;
+    }
     if (!owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
-    const helper = await this.#helperFor(vmid, config, signal);
+    const helper = await this.#helperFor(vmid, config, "delete", signal);
     if (helper !== null) {
       if ((await this.#api.status(vmid, signal))?.status === "running") await this.#power!.ask(vmid, "stop", owner, helper, signal);
       const now = await this.read(vmid, owner, signal);
       if (now.protection === 1 || now.protection === "1") await this.writeOn(vmid, owner, now, { delete: ["protection"] }, signal);
       await this.#power!.ask(vmid, "delete", owner, helper, signal);
+      await this.#power!.acted(vmid, "delete");
       return;
     }
     if ((await this.#api.status(vmid, signal))?.status === "running") await this.stop(vmid, owner, signal);
@@ -272,11 +279,15 @@ export class OwnedGuests {
       } catch (error) {
         if (!(error instanceof ProxmoxError && error.protected) || tries >= WRITE_TRIES) throw error;
         const protectedNow = await this.#after(vmid, owner, "delete", signal);
-        if (!protectedNow) return;
+        if (!protectedNow) {
+          await this.#power?.acted(vmid, "delete");
+          return;
+        }
         await this.writeOn(vmid, owner, protectedNow, { delete: ["protection"] }, signal);
       }
     }
     await this.#after(vmid, owner, "delete", signal);
+    await this.#power?.acted(vmid, "delete");
   }
 }
 

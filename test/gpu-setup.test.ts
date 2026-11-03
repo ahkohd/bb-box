@@ -259,7 +259,7 @@ hosted("--remove puts the timer back before it stops the helper, whether the dri
 
   rmSync(host.node.file("proc/driver/nvidia"), { recursive: true, force: true });
   host.forgetCalls();
-  const removed = host.setup(["--remove"]);
+  const removed = host.setup(["--remove", "--force"]);
   assert.equal(removed.status, 0, removed.stdout + removed.stderr);
   const calls = host.calls();
   const enable = calls.indexOf("enable --quiet bb-box-gpu-memory.timer");
@@ -276,7 +276,7 @@ hosted("--remove puts the timer back before it stops the helper, whether the dri
   assert.match(removed.stdout, /no guest's device lines or tags were changed/);
   assert.equal(readFileSync(host.node.ledgerPath(), "utf8"), ledger, "the ledger is kept");
   assert.equal(host.conf(), "pools bbbox\nwrites off\n", "gpu.conf is kept");
-  const again = host.setup(["--remove"]);
+  const again = host.setup(["--remove", "--force"]);
   assert.equal(again.status, 0);
   assert.match(again.stdout, /nothing changed/);
   host.touchedNoGuest(guests);
@@ -287,7 +287,7 @@ hosted("removed and put back, the helper starts from the kept gpu.conf and ledge
   const guests = host.guests();
   const claim = host.node.ledger().guests["214"]?.claim;
   assert.deepEqual(claim && [claim.part, claim.card, claim.answer], ["shared", CARD_A.uuid, "granted"], "a request needing no write is granted with writes off");
-  assert.equal(host.setup(["--remove"]).status, 0);
+  assert.equal(host.setup(["--remove", "--force"]).status, 0);
   assert.equal(host.helperLine(), null, "the timer's own report took over");
   assert.match(readFileSync(host.reportFile(), "utf8"), /^#\s*gpu GPU-/m);
 
@@ -334,7 +334,7 @@ hosted("--writes on is refused before the helper is installed, and goes with no 
   assert.equal(off.status, 0, off.stdout + off.stderr);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n");
   assert.match(host.setup(["--writes", "off"]).stdout, /nothing changed\n$/);
-  for (const args of [["--writes", "maybe"], ["--writes"], ["--remove", "--pool", "x"], ["--remove", "--downgrade"], ["--remove", "--writes", "off"], ["--now"], ["--check"], ["--writes", "off", "--check"], ["--writes", "on", "--pool", "x"], ["--writes", "on", "--downgrade"], ["--remove", "--check"]]) {
+  for (const args of [["--writes", "maybe"], ["--writes"], ["--remove", "--pool", "x"], ["--remove", "--downgrade"], ["--remove", "--writes", "off"], ["--now"], ["--check"], ["--writes", "off", "--check"], ["--writes", "on", "--pool", "x"], ["--writes", "on", "--downgrade"], ["--remove", "--check"], ["--force"], ["--writes", "off", "--force"]]) {
     assert.equal(host.setup(args).status, 2, args.join(" "));
   }
 });
@@ -563,7 +563,7 @@ hosted("071 unit 5, Opus 7: an upgrade with writes on runs the new release's pre
 hosted("071 unit 5: a removal leaves writes on in gpu.conf, and putting the helper back comes back with writes off until --writes on", (host) => {
   readyForWrites(host);
   assert.equal(host.setup(["--writes", "on"]).status, 0);
-  assert.equal(host.setup(["--remove"]).status, 0);
+  assert.equal(host.setup(["--remove", "--force"]).status, 0);
   assert.equal(host.conf(), "pools bbbox\nwrites on\n");
   const back = host.setup();
   assert.equal(back.status, 0, back.stdout + back.stderr);
@@ -856,10 +856,10 @@ hosted("--remove interrupted right after it stops the helper, by HUP or KILL, le
   for (const signal of ["HUP", "KILL"]) {
     assert.equal(host.setup().status, 0);
     host.forgetCalls();
-    const result = host.setup(["--remove"], { FAKE_SYSTEMCTL_SIGNAL: `disable bb-box-gpu.service=${signal}` });
+    const result = host.setup(["--remove", "--force"], { FAKE_SYSTEMCTL_SIGNAL: `disable bb-box-gpu.service=${signal}` });
     interrupted(result, signal, ["bb-box-gpu-memory.timer"]);
     assert.deepEqual(host.writers(), ["bb-box-gpu-memory.timer"], `after ${signal}`);
-    const again = host.setup(["--remove"]);
+    const again = host.setup(["--remove", "--force"]);
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.equal(existsSync(host.node.file("usr/local/sbin/bb-box-gpu")), false);
     assert.equal(host.helperLine(), null);
@@ -869,21 +869,21 @@ hosted("--remove interrupted right after it stops the helper, by HUP or KILL, le
 hosted("--remove stops the helper only once the timer runs and has written the report: a timer that cannot start or cannot write leaves the helper running and installed (Opus 1, Astra 2)", (host) => {
   assert.equal(host.setup().status, 0);
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
-  const cannotStart = host.setup(["--remove"], { FAKE_SYSTEMCTL_FAIL: "start bb-box-gpu-memory.timer" });
+  const cannotStart = host.setup(["--remove", "--force"], { FAKE_SYSTEMCTL_FAIL: "start bb-box-gpu-memory.timer" });
   assert.equal(cannotStart.status, 1, cannotStart.stdout + cannotStart.stderr);
   assert.match(cannotStart.stderr, /bb-box-gpu-memory\.timer is in place, but it could not be started or wrote no report: see journalctl -u bb-box-gpu-memory; it needs nvidia-smi to work\. So bb-box-gpu was not stopped, and nothing of it was removed/);
   assert.ok(host.active("bb-box-gpu.service") && host.enabled("bb-box-gpu.service"));
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
 
   host.node.smiFails(true);
-  const cannotWrite = host.setup(["--remove"]);
+  const cannotWrite = host.setup(["--remove", "--force"]);
   assert.equal(cannotWrite.status, 1, cannotWrite.stdout + cannotWrite.stderr);
   assert.match(cannotWrite.stderr, /So bb-box-gpu was not stopped, and nothing of it was removed; run setup-gpu\.sh --remove again once the timer can write the report/);
   assert.deepEqual(host.writers(), ["bb-box-gpu", "bb-box-gpu-memory.timer"]);
   assert.ok(existsSync(host.node.file("usr/local/sbin/bb-box-gpu")));
 
   assert.equal(host.systemctl("stop", "bb-box-gpu.service"), 0);
-  const helperStopped = host.setup(["--remove"]);
+  const helperStopped = host.setup(["--remove", "--force"]);
   assert.equal(helperStopped.status, 0, helperStopped.stdout + helperStopped.stderr);
   assert.match(helperStopped.stderr, /its first run once bb-box-gpu was gone wrote no report: see journalctl -u bb-box-gpu-memory; it needs nvidia-smi to work/);
   assert.equal(existsSync(host.node.file("usr/local/sbin/bb-box-gpu")), false, "a helper that was not running is removed: stopping it takes no writer away");
@@ -1000,8 +1000,37 @@ hosted("runs close together, as reruns after an interruption are, do not fall fo
   }
   assert.ok(host.calls().filter((call) => call === "reset-failed bb-box-gpu.service").length >= 7);
   for (let run = 0; run < 6; run++) {
-    const removed = host.setup(["--remove"], limit);
+    const removed = host.setup(["--remove", "--force"], limit);
     assert.equal(removed.status, 0, removed.stdout + removed.stderr);
     assert.doesNotMatch(removed.stderr, /wrote no report/, "the timer's service is not refused either");
   }
+});
+
+hosted("071 unit 5, go review 5 F2: --remove is refused while a helper of 0.4.0 or later is installed, changing nothing and naming the ways back; --force removes it all the same and says what each BB then does; once the 0.2.0 release has gone back with --downgrade, --remove needs no --force", (host) => {
+  assert.equal(host.setup().status, 0);
+  const guests = host.guests();
+  const ledger = readFileSync(host.node.ledgerPath(), "utf8");
+  host.forgetCalls();
+  const refused = host.setup(["--remove"]);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /^setup-gpu\.sh: bb-box-gpu 0\.4\.1 is installed, which starts, stops and deletes bb-box's guests on this host, and each BB that has read its report keeps that: with it removed, such a BB would start, stop and release none of its boxes here\. To stop its writes, run setup-gpu\.sh --writes off\. To go back to Proxmox's API, run setup-gpu\.sh --downgrade from the BB Box release with bb-box-gpu 0\.2\.0: each BB reads that version in the report at its next doctor run or box action here, and uses the API again\. --force removes it all the same\. Nothing was changed\.$/m);
+  assert.deepEqual(host.calls(), [], "no unit is touched");
+  assert.equal(host.installedVersion(), "0.4.1");
+  assert.ok(host.active("bb-box-gpu.service"));
+  assert.equal(readFileSync(host.node.ledgerPath(), "utf8"), ledger);
+  assert.match(host.setup(["--help"]).stdout, /--remove is refused while 0\.4\.0 or later is installed/);
+
+  const forced = host.setup(["--remove", "--force"]);
+  assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+  assert.match(forced.stdout, /removed bb-box-gpu 0\.4\.1 with --force: each BB that read its report starts, stops and releases none of its boxes on this host until a helper reports again/);
+  assert.equal(host.installedVersion(), null);
+
+  const older = releaseWith("0.2.9", versioned("0.2.9"));
+  assert.equal(host.setup([], {}, older).status, 0);
+  assert.equal(host.installedVersion(), "0.2.9");
+  const removed = host.setup(["--remove"]);
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  assert.equal(host.installedVersion(), null, "an older helper, which does no power, is removed with no --force");
+  assert.doesNotMatch(removed.stdout, /with --force/);
+  host.touchedNoGuest(guests);
 });

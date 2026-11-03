@@ -10,8 +10,10 @@ usage: setup-gpu.sh [--pool <name>]... [--downgrade]
        setup-gpu.sh --writes on [--check]
        setup-gpu.sh --writes off
                         turn the helper's writes on or off, on its own
-       setup-gpu.sh --remove
-                        remove it, and put back bb-box-gpu-memory.timer
+       setup-gpu.sh --remove [--force]
+                        remove it, and put back bb-box-gpu-memory.timer.
+                        Refused while bb-box-gpu 0.4.0 or later is
+                        installed, without --force, as below
 
   --pool <name>   serve this pool as well as BBBOX_POOL and the pools
                   /etc/bb-box/gpu.conf already lists; give it once per pool
@@ -48,6 +50,17 @@ newer protocol, without --downgrade.
 Removal starts the timer, and waits for it to write the report, before it
 stops the helper. It keeps gpu.conf and the ledger.
 
+From bb-box-gpu 0.4.0 the helper starts, stops and deletes bb-box's guests on
+this host, and each BB that has read its report keeps that: with the helper
+removed, such a BB starts, stops and releases none of its boxes here. So
+--remove is refused while 0.4.0 or later is installed. To stop the helper's
+writes, run --writes off; it still starts, stops and deletes guests. To go
+back to Proxmox's API, run setup-gpu.sh --downgrade from the BB Box release
+with bb-box-gpu 0.2.0: each BB reads bb-box-gpu 0.2.0 in the report at its
+next doctor run or box action here, and uses the API again. Remove it after
+that, if at all.
+  --force         with --remove: remove 0.4.0 or later all the same
+
 Whenever the helper is stopped, the timer is already running, so the report
 always has a writer, even if this run is killed. A run that is interrupted
 or fails part way leaves a writer running and says which. It keeps the
@@ -74,6 +87,7 @@ asked_pools=()
 asked_writes=""
 check_only=0
 downgrade=0
+force=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --remove) mode=remove ;;
@@ -92,6 +106,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --downgrade) downgrade=1 ;;
+    --force) force=1 ;;
     --check) check_only=1 ;;
     -h | --help) usage && exit 0 ;;
     *) refuse_usage "cannot read '$1'" ;;
@@ -100,6 +115,9 @@ while [ $# -gt 0 ]; do
 done
 if [ "$mode" = remove ] && { [ "${#asked_pools[@]}" -gt 0 ] || [ -n "$asked_writes" ] || [ "$downgrade" = 1 ] || [ "$check_only" = 1 ]; }; then
   refuse_usage "--remove takes no other option"
+fi
+if [ "$force" = 1 ] && [ "$mode" != remove ]; then
+  refuse_usage "--force goes with --remove"
 fi
 if [ "$check_only" = 1 ] && [ "$asked_writes" != on ]; then
   refuse_usage "--check goes with --writes on"
@@ -673,7 +691,17 @@ install_helper() {
   [ "$changed" = 1 ] || echo "setup-gpu.sh: nothing changed"
 }
 
+does_power() {
+  [ "$1" = 0.4.0 ] || newer_than "$1" 0.4.0
+}
+
 remove_helper() {
+  local installed="" removing=""
+  if [ -e "$program" ]; then installed=$(version_of "$program"); fi
+  if [ -n "$installed" ]; then read -r removing _ <<<"$installed"; fi
+  if [ -n "$removing" ] && does_power "$removing" && [ "$force" = 0 ]; then
+    die "bb-box-gpu $removing is installed, which starts, stops and deletes bb-box's guests on this host, and each BB that has read its report keeps that: with it removed, such a BB would start, stop and release none of its boxes here. To stop its writes, run setup-gpu.sh --writes off. To go back to Proxmox's API, run setup-gpu.sh --downgrade from the BB Box release with bb-box-gpu 0.2.0: each BB reads that version in the report at its next doctor run or box action here, and uses the API again. --force removes it all the same. Nothing was changed."
+  fi
   phase="putting bb-box-gpu-memory.timer back"
   install_timer
   local helper_ran=0 unit stuck=""
@@ -706,6 +734,9 @@ remove_helper() {
   [ -z "$stuck" ] || { echo "setup-gpu.sh: could not stop$stuck: see systemctl status" >&2; exit 1; }
   if [ "$changed" = 1 ]; then
     echo "setup-gpu.sh: kept $conf and the ledger in $state; no guest's device lines or tags were changed"
+    if [ -n "$removing" ] && does_power "$removing"; then
+      echo "setup-gpu.sh: removed bb-box-gpu $removing with --force: each BB that read its report starts, stops and releases none of its boxes on this host until a helper reports again, as after setup-gpu.sh --downgrade from the BB Box release with bb-box-gpu 0.2.0"
+    fi
     echo "setup-gpu.sh: bb-box starts a box with a GPU marker only once a helper reports its grant: to remove the helper for good, run bb box gpu mark --undo from each BB first"
   else
     echo "setup-gpu.sh: nothing changed"
