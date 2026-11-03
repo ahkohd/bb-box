@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.3\.2, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.3\.3, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.2 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.3.3 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -475,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.3.2 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.3.3 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +930,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.2 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.3\.3 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1233,4 +1233,56 @@ test("071 unit 5, final review F3: an nvidia-smi query killed by a signal after 
   assert.equal(node.run(["--preview"]).status, 0);
   ran(node);
   assert.ok(claims(node).includes(`claim 2630 g1 granted shared ${A}`));
+});
+
+function loseMapping(node: FakeNode, card: FakeCard, parts: readonly ("minor" | "drm")[]): void {
+  if (parts.includes("minor")) rmSync(node.file(`proc/driver/nvidia/gpus/${pciOf(card)}/information`));
+  if (parts.includes("drm")) for (const type of ["card", "render"]) rmSync(node.file(`dev/dri/by-path/pci-${pciOf(card)}-${type}`));
+}
+
+test("071 unit 5, go review N2: a card the helper cannot map to its device nodes is an error line that blocks every decision on every card, fails the preview, and keeps a lost ledger from being rebuilt", () => {
+  for (const parts of [["minor"], ["drm"], ["minor", "drm"]] as const) {
+    const node = new FakeNode({ writes: "off" });
+    node.guest(2640, { box: "bx2640", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+    ran(node);
+    node.guest(2640, { box: "bx2640", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_B, "desktop") });
+    node.guest(2641, { box: "bx2641", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+    loseMapping(node, CARD_A, parts);
+    const preview = node.run(["--preview"]);
+    assert.equal(preview.status, 1, `${parts.join(" and ")}: ${preview.stdout}`);
+    assert.match(preview.stdout, new RegExp(`^error: the helper cannot map card ${A} at ${pciOf(CARD_A).replace(/\./g, "\\.")} to its device nodes \\(.*unknown\\), so it cannot tell which guests hold it: no request on any card is decided and no guest's lines are changed$`, "m"), parts.join(" and "));
+    assert.match(preview.stdout, /^preview: incomplete, as .*it could not map every card to its device nodes/m);
+    assert.doesNotMatch(preview.stdout, /^would write CT /m, `${parts.join(" and ")}: no write is shown, nor made`);
+    ran(node);
+    assert.ok(!claims(node).some((line) => /^claim 2641 /.test(line)), `${parts.join(" and ")}: no request on card 1 is decided: ${claims(node).join(" | ")}`);
+    assert.deepEqual(lines(node, "would"), []);
+  }
+
+  const lost = new FakeNode({ writes: "on" });
+  lost.guest(2650, { box: "bx2650", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  ran(lost);
+  rmSync(lost.ledgerPath());
+  loseMapping(lost, CARD_A, ["minor", "drm"]);
+  ran(lost);
+  assert.ok(!existsSync(lost.ledgerPath()), "no ledger is rebuilt while a card cannot be mapped");
+  assert.ok(lost.reportLines().includes("ledger unknown"));
+  lost.setCards([CARD_A, CARD_B]);
+  ran(lost);
+  assert.ok(claims(lost).includes(`claim 2650 g1 granted whole ${A}`), claims(lost).join("\n"));
+  lost.guest(2651, { box: "bx2651", kind: "linux", marker: marker("shared", CARD_A, 1) });
+  ran(lost);
+  assert.ok(claims(lost).includes(`claim 2651 g1 refused whole-taken ${A} 2650`));
+  assert.deepEqual(lost.guestWrites(), []);
+
+  const held = new FakeNode({ writes: "on", ledger: false });
+  held.guest(2660, { box: "bx2660", kind: "linux-desktop", marker: marker("whole", CARD_A, 1), lines: cardLines(CARD_A, "desktop"), running: true });
+  held.guest(2661, { box: "bx2661", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  ran(held);
+  assert.deepEqual(lines(held, "unsettled"), [`unsettled 2660 ${A} g1`]);
+  loseMapping(held, CARD_A, ["minor"]);
+  ran(held);
+  assert.deepEqual(Object.keys(held.ledger().unsettled ?? {}), ["2660"], "an unmapped card lets no unresolved guest go");
+  held.setCards([CARD_A, CARD_B]);
+  ran(held);
+  assert.deepEqual(lines(held, "unsettled"), [`unsettled 2660 ${A} g1`]);
 });

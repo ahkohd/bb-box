@@ -813,6 +813,7 @@ export class ProxmoxQemuBackend implements Backend {
           );
         },
         sizeOf,
+        writes: (api) => api,
         logError: (operation, error) => this.#context.logError(operation, error),
       },
       ref,
@@ -828,11 +829,11 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
-    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal), writes: (api) => api }, guest, arming, signal);
   }
 
   disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
-    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId }, guest, signal);
+    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId, writes: (api) => api }, guest, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

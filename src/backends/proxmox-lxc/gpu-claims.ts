@@ -56,6 +56,14 @@ export function cardsView(notes: string | null, seen: ReportSeen): CardsView {
     return { is: "blocked", why: `VM ${seen.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so bb-box cannot see every guest that holds a card on ${seen.node}.`, fix: `Read what the helper says with journalctl -u bb-box-gpu on ${seen.node}.` };
   }
   if (!lines.cards.length) return { is: "blocked", why: `The GPU helper on ${seen.node} lists no card in VM ${seen.vmid}'s report.`, fix: `Run systemctl status bb-box-gpu and nvidia-smi as root on ${seen.node}.` };
+  const unmapped = lines.cards.filter((card) => card.minor === null || card.drmCard === null || card.drmRender === null);
+  if (unmapped.length) {
+    return {
+      is: "blocked",
+      why: `The GPU helper on ${seen.node} cannot map ${inWords(unmapped.map(cardName))} to ${unmapped.length === 1 ? "its" : "their"} device nodes, so bb-box cannot tell which guests hold ${unmapped.length === 1 ? "it" : "them"}.`,
+      fix: `Run nvidia-smi and ls -l /dev/dri/by-path as root on ${seen.node}.`,
+    };
+  }
   return { is: "on", writes: helper.writes === "on" && !untested, lines, memory: memoryOf(notes), notes };
 }
 

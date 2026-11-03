@@ -1,5 +1,6 @@
 import { ProxmoxError, type PoolGuest, type Proxmox } from "../proxmox/api.ts";
 import { isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
+import { NoLongerOurs, OwnedGuests, sameGuestOwner } from "./owned.ts";
 import { installTag, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 import type { GpuMarkAnswer, GpuMarkGuest, GpuMarkRequest, GpuMarking } from "../types.ts";
 import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
@@ -99,7 +100,8 @@ function nextTags(look: GuestLook, plan: Plan): string[] | null {
   return null;
 }
 
-async function planAndWrite(api: Proxmox, guest: PoolGuest, first: GuestLook, request: GpuMarkRequest, plan: (look: GuestLook) => Plan, signal?: AbortSignal): Promise<Planned> {
+async function planAndWrite(api: Proxmox, installId: string, guest: PoolGuest, first: GuestLook, request: GpuMarkRequest, plan: (look: GuestLook) => Plan, signal?: AbortSignal): Promise<Planned> {
+  const owner = sameGuestOwner(installId, first.config);
   let look = first;
   for (let tries = 1; ; tries++) {
     const decided = plan(look);
@@ -109,9 +111,10 @@ async function planAndWrite(api: Proxmox, guest: PoolGuest, first: GuestLook, re
       return { guest, look, plan: decided, wrote: false, failed: "Proxmox gave no digest with its config, so bb-box does not write its tags." };
     }
     try {
-      await api.configure(guest.vmid, { tags: next, digest: look.config.digest }, signal);
+      await new OwnedGuests(api).writeOn(guest.vmid, owner, look.config, { tags: next }, signal);
       return { guest, look, plan: decided, wrote: true, failed: null };
     } catch (error) {
+      if (error instanceof NoLongerOurs) return { guest, look, plan: decided, wrote: false, failed: error.message };
       const meanwhile = error instanceof ProxmoxError && error.changedMeanwhile;
       if (!meanwhile || tries >= WRITE_TRIES) {
         const why = meanwhile ? "Its config kept changing while bb-box wrote its tags. Run bb box gpu mark again." : `Proxmox refused its tags: ${error instanceof Error ? error.message : String(error)}`;
@@ -188,7 +191,7 @@ async function clearReleased(api: Proxmox, setup: MarkingSetup, planned: readonl
       continue;
     }
     const release = markerTag(each.plan.marker);
-    const takenOff = await planAndWrite(api, each.guest, await lookAt(api, each.guest.vmid, signal), { check: false, undo: true, recordedParts: new Map() }, (look) =>
+    const takenOff = await planAndWrite(api, setup.installId, each.guest, await lookAt(api, each.guest.vmid, signal), { check: false, undo: true, recordedParts: new Map() }, (look) =>
       gpuTagsOf(tagsOf(look)).includes(release) ? { is: "unmark", marker: release } : { is: "unmarked" },
     signal);
     cleared.push({ ...each, cleared: !takenOff.failed, failed: takenOff.failed ? `The helper cleared its claim, but ${takenOff.failed}` : null });
@@ -240,7 +243,7 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
     return planMark({ look, recordedPart: boxId === null ? null : (request.recordedParts.get(boxId) ?? null) }, context(look));
   };
   let planned: Planned[] = [];
-  for (const [at, guest] of ours.entries()) planned.push(await planAndWrite(api, guest, looks[at]!, request, plan, signal));
+  for (const [at, guest] of ours.entries()) planned.push(await planAndWrite(api, setup.installId, guest, looks[at]!, request, plan, signal));
   if (planned.some((each) => each.wrote)) lines = (await readLines(api, setup, signal)) ?? lines;
   if (request.undo && !request.check) planned = await clearReleased(api, setup, planned, lines, signal);
   const answers = request.undo ? new Map<number, MarkAnswer>() : await answersFor(api, setup, planned, lines, request.check, signal);

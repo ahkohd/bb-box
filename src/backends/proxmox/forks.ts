@@ -4,6 +4,12 @@ import { netKeys, netWith } from "./copies.ts";
 import { describe, installFromDescription, ownerFromDescription } from "./owner.ts";
 import { cloneWaitMs, storageOfVolume } from "./snapshotting.ts";
 
+export interface ForkWrites {
+  config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  setNetwork(vmid: number, settings: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<void>;
+  destroy(vmid: number, signal?: AbortSignal): Promise<void>;
+}
+
 export interface ForkGuests {
   readonly installId: string;
   readonly pool: string;
@@ -18,6 +24,7 @@ export interface ForkGuests {
   guest(node: string, vmid: number, template: number | null, box: string, build: string | null): Guest;
   addressed(api: Proxmox, vmid: number, made: Record<string, unknown>, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void>;
   sizeOf(config: Record<string, unknown>): MachineSize | null;
+  writes(api: Proxmox, box: string | null, made: boolean): ForkWrites;
   logError(operation: string, error: unknown): void;
 }
 
@@ -44,10 +51,11 @@ async function dropHalfMadeFork(guests: ForkGuests, api: Proxmox, previous: Gues
   if (!madeFor(await configOrNull(api, vmid, signal), box.boxId, guests.installId)) return;
   await guests.forget(vmid);
   const cannot = (why: string) => new Error(`bb-box could not delete guest ${vmid}, the copy a fork of box ${box.name} had begun before bb-box restarted, so it makes no other: ${why}`);
-  const { lockOutlasted } = await disarmBeforeDelete(guests, api, vmid, "a fork cut short by a restart", signal);
+  const writes = guests.writes(api, box.boxId, true);
+  const { lockOutlasted } = await disarmBeforeDelete(guests, writes, vmid, "a fork cut short by a restart", signal);
   if (lockOutlasted) throw cannot("Proxmox still holds its lock.");
   try {
-    await api.destroy(vmid, signal);
+    await writes.destroy(vmid, signal);
   } catch (error) {
     if (error instanceof ProxmoxError && error.gone) return;
     throw cannot(error instanceof ProxmoxError ? proxmoxWords(error) : String(error));
@@ -55,9 +63,9 @@ async function dropHalfMadeFork(guests: ForkGuests, api: Proxmox, previous: Gues
   if (madeFor(await configOrNull(api, vmid, signal), box.boxId, guests.installId)) throw cannot("it is still there after its delete.");
 }
 
-async function disarmBeforeDelete(guests: Pick<ForkGuests, "logError">, api: Proxmox, vmid: number, what: string, signal?: AbortSignal): Promise<{ readonly lockOutlasted: boolean }> {
+async function disarmBeforeDelete(guests: Pick<ForkGuests, "logError">, writes: ForkWrites, vmid: number, what: string, signal?: AbortSignal): Promise<{ readonly lockOutlasted: boolean }> {
   try {
-    await disarm(api, vmid, signal);
+    await disarm(writes, vmid, signal);
     return { lockOutlasted: false };
   } catch (error) {
     guests.logError(`disarm guest ${vmid}, ${what}, before deleting it`, error);
@@ -65,30 +73,31 @@ async function disarmBeforeDelete(guests: Pick<ForkGuests, "logError">, api: Pro
   }
 }
 
-export async function disarmFork(guests: Pick<ForkGuests, "client" | "vmid" | "installId">, guest: Guest, signal?: AbortSignal): Promise<void> {
+export async function disarmFork(guests: Pick<ForkGuests, "client" | "vmid" | "installId" | "writes">, guest: Guest, signal?: AbortSignal): Promise<void> {
   const box = typeof guest.data?.box === "string" ? guest.data.box : null;
   if (!box) return;
   const api = await guests.client();
   const vmid = guests.vmid(guest);
-  if (madeFor(await configOrNull(api, vmid, signal), box, guests.installId)) await disarm(api, vmid, signal);
+  if (madeFor(await configOrNull(api, vmid, signal), box, guests.installId)) await disarm(guests.writes(api, box, true), vmid, signal);
 }
 
-export async function disarm(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
-  const made = await api.config(vmid, signal);
+export async function disarm(writes: ForkWrites, vmid: number, signal?: AbortSignal): Promise<void> {
+  const made = await writes.config(vmid, signal);
   const nets = Object.fromEntries(netKeys(made).map((key) => [key, netWith(String(made[key]), { up: false })]));
-  await api.setNetwork(vmid, { ...nets, onboot: "0" }, signal);
+  await writes.setNetwork(vmid, { ...nets, onboot: "0" }, signal);
 }
 
-export async function armFork(guests: Pick<ForkGuests, "client" | "vmid" | "ownConfig">, guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+export async function armFork(guests: Pick<ForkGuests, "client" | "vmid" | "ownConfig" | "writes">, guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
   const api = await guests.client();
   const vmid = guests.vmid(guest);
   const config = await guests.ownConfig(api, guest, signal);
+  const writes = guests.writes(api, typeof guest.data?.box === "string" ? guest.data.box : null, false);
   if (arming === "boot") {
-    await api.setNetwork(vmid, { onboot: "1" }, signal);
+    await writes.setNetwork(vmid, { onboot: "1" }, signal);
     return;
   }
   const nets = Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { up: true })]));
-  await api.setNetwork(vmid, nets, signal);
+  await writes.setNetwork(vmid, nets, signal);
 }
 
 export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
@@ -120,7 +129,7 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
     }
     hooks.timing("copy", Math.round(performance.now() - began));
     const addressing = performance.now();
-    await disarm(api, vmid, signal);
+    await disarm(guests.writes(api, box.boxId, true), vmid, signal);
     await guests.addressed(api, vmid, await api.config(vmid, signal), box, template, signal);
     hooks.timing("address", Math.round(performance.now() - addressing));
     return { ...guest, size: guests.sizeOf(await api.config(vmid, signal)) };
@@ -128,9 +137,10 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
     const made = await configOrNull(api, vmid).catch(() => null);
     if (madeFor(made, box.boxId, guests.installId)) {
       await guests.forget(vmid);
-      const { lockOutlasted } = await disarmBeforeDelete(guests, api, vmid, "a fork that failed");
+      const writes = guests.writes(api, box.boxId, true);
+      const { lockOutlasted } = await disarmBeforeDelete(guests, writes, vmid, "a fork that failed");
       if (lockOutlasted) guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, new Error("Proxmox still holds its lock, so bb-box neither disarmed nor deleted it yet."));
-      else await api.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));
+      else await writes.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));
     }
     throw error;
   } finally {

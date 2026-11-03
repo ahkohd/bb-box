@@ -1599,7 +1599,7 @@ before. Writes stay off on the node until the lead runs
   guest keeps its lines, holds its card unmanaged, and the helper never
   writes it again. It needs bb-box-gpu 0.3.0 or later, and is refused,
   changing nothing, with an older helper or none.
-- **The helper, 0.3.2** (0.3.0 as PR 1349 merged it, 0.3.1 as PR 1350 did). Protocol 1. The marker gains `gpu.release.g<N>`:
+- **The helper, 0.3.3** (0.3.0 as PR 1349 merged it, 0.3.1 as PR 1350 did, 0.3.2 as `c26657bf` did). Protocol 1. The marker gains `gpu.release.g<N>`:
   answered by clearing the guest's claim, with writes on or off, as it
   writes no guest; a rebuilt ledger takes it for no claim. `--preview` makes
   one pass as writes on would, writing no guest, ledger, report or state and
@@ -1930,10 +1930,103 @@ lock test (Astra 1): its pass took 2.3 s against 1.5 s under the suite's
 load. Alone it passed 5 times of 5 on this commit and on `ecb9129e`, and a
 helper pass took 35 to 100 ms on both.
 
+### After the go review
+
+The go/no-go review of `c26657bf` said no-go, with three findings. Each
+review had found write paths the fix before it had not reached, so the lead
+asked to close the class: every write bb-box or the helper makes to a guest
+goes through one ownership check, a table lists them, and a test enumerates
+them.
+
+- **N1: one check for every write.** The Proxmox LXC backend, `bb box gpu
+  mark` and the fork module the backend uses no longer call Proxmox's guest
+  writes themselves. They go through `OwnedGuests` (`owned.ts`): it reads the
+  guest's config, checks the owner each caller names (this install and this
+  box, or for a held copy, a warm guest, an image box or a template what
+  makes it this install's), and writes a config change on the digest of the
+  config it just checked, so a guest changed meanwhile is not written; a
+  change refused for that is read and checked again. Proxmox takes no digest
+  for a start, stop, shutdown, disk resize, template or delete, so for those
+  the check comes immediately before. A write the check refuses changes
+  nothing, and a failed acquire then deletes nothing. The guests taken by
+  the review's probes, at an acquire's labels and marker, as that write
+  failed, and at a warm desktop's fill, are now left as they were.
+- **N2: device mappings.** A card whose `/dev/nvidia` minor, or DRM card or
+  render node, the helper cannot find is an `error` line. Like a card it
+  cannot read, it blocks every decision on every card, a request for no
+  card and every repair included; it keeps a lost ledger from being rebuilt
+  and an unresolved guest from being let go; and it fails the preview, so
+  `--check` and `--writes on` refuse. bb-box places no box while the report
+  lists a card without its mapping.
+- **N3: the node steps.** `u5-check.sh` fails, saying what is missing, when
+  it cannot read the helper, its units, settings, report, ledger or any
+  container config, and only a complete snapshot ends with `== check
+  complete`. `u5-compare.sh` compares two snapshots, printing what it
+  compared, and fails on a missing, empty or cut-short one. `u5-watch-check.sh`
+  fails on a missing or empty watcher log, one with no start or sample line,
+  or a `FAILED` line. Each step checks the lines it expects and prints them,
+  and reaches `step <X> done` only when every check had its evidence.
+  `u5-steps-test.sh`, with the node steps, replays the review's runbook
+  probe off the node: its 14 cases pass, where the scripts before exited 0
+  with no Proxmox files and printed `step F done` with no baseline or log.
+- The helper is 0.3.3, so `setup-gpu.sh --writes on` refuses 0.3.2 and
+  earlier.
+
+Each fix has a test from the review's probes that fails on `7821f2f8` and
+passes now: the acquire and the warm fill marked, retagged or deleted the
+other install's guest; the helper previewed and decided with a card it
+could not map, and rebuilt a lost ledger meanwhile; bb-box placed on it; and
+the write enumeration listed every direct write the backend made. Then, as
+root on a `linux` box, directly: `tsc` clean; the node suite, 3,608 tests,
+3,313 passed, 0 failed, 295 skipped; vitest, 448 passed.
+
+### Every write to a guest
+
+`test/guest-writes.test.ts` enumerates these with TypeScript's checker: it
+fails if any code in `src/backends/proxmox-lxc` or the fork module calls one
+of Proxmox's guest writes other than `owned.ts`, hands Proxmox's client to a
+function that takes the checked writes, or writes through the check from a
+function this table does not name. For the helper, it checks that the only
+container write is `change_guest`, and that each call of it is in a
+`with_guest` callback that holds the guest's config lock and finds it the
+same guest.
+
+| Writer | Guest | What it writes | Whose it must be |
+| --- | --- | --- | --- |
+| `acquire` | the guest it cloned, or the one it resumes | cores and memory, labels and marker, start, delete when refused or failed | box (the clone's description names this install and box until its labels do) |
+| `#grow` | the same | its disk | box |
+| `#settle`, `#settleWeight`, `settle` | a box's guest | the start weight and its tag | box |
+| `#gateStart`, `#writeMarker`, `start` | a box's stopped guest | its marker, its start | box |
+| `powerOff`, `stop` | a box's guest | stop | box |
+| `release` | a box's guest | delete | box |
+| `resize` | a box's guest | cores, memory, disk | box |
+| `hold`, `#retag`, `relabel` | a warm guest a box takes, a box's guest | name, memory, description, labels | warm guest of this install, then box |
+| `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
+| `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
+| `adoptCopy`, `forkSnapshot` | the guest a restore or fork has just made | network, size, labels | its description names this install and the box it is made for |
+| `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
+| `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | warm guest of this install |
+| `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
+| `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
+| `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
+| `change_guest`, in the helper | a container it serves | GPU device lines | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned |
+
+Not through the check, and why:
+
+- A clone or full copy makes a new guest at a free VMID; Proxmox refuses one
+  that is taken.
+- The shared snapshot module's snapshot, rollback, snapshot delete and
+  snapshot description act on a snapshot, after its `still` check that the
+  guest names this install and box, as before; Proxmox takes no digest for
+  them.
+- The helper's other write is its own report VM's notes.
+- The Proxmox QEMU backend's writes, to VMs no GPU desktop uses, are not
+  part of unit 5 and are not changed.
+
 ### The node steps
 
 Wait for the lead, after unit 4's day has passed and this unit is merged and
-deployed: the helper upgraded to 0.3.2 with writes off and the test pool
+deployed: the helper upgraded to 0.3.3 with writes off and the test pool
 served; `setup-gpu.sh --writes on --check`; `--writes on`; a watcher under
 `systemd-run`; the gate on test guests on lent VMIDs, through a test BB with
 its own pool and desktops per GPU 1. The steps, a read-only check script,
