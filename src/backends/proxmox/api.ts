@@ -402,6 +402,10 @@ export class Proxmox {
     return true;
   }
 
+  async resizeRootDisk(vmid: number, sizeGiB: number, digest: string, signal?: AbortSignal, disk = this.type === "qemu" ? "scsi0" : "rootfs"): Promise<void> {
+    await this.#change("PUT", this.#guest(vmid, "/resize"), { disk, size: `${sizeGiB}G`, digest }, signal);
+  }
+
   async start(vmid: number, signal?: AbortSignal): Promise<void> {
     await this.#change("POST", this.#guest(vmid, "/status/start"), {}, signal);
   }
@@ -475,6 +479,15 @@ export class Proxmox {
       if (!(error instanceof ProxmoxError && error.protected)) throw error;
       await this.configure(vmid, { delete: ["protection"] }, signal);
       await remove();
+    }
+  }
+
+  async remove(vmid: number, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#change("DELETE", this.#guest(vmid), { purge: 1, "destroy-unreferenced-disks": 1 }, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.gone) return;
+      throw error;
     }
   }
 
@@ -653,6 +666,14 @@ export class Proxmox {
    * for a while after a change. So they come from each node's own list,
    * which reads them as they are, when the node answers.
    */
+  async visibleGuests(signal?: AbortSignal): Promise<{ readonly vmid: number; readonly type: string; readonly pool: string | null; readonly tags: string[] }[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", "/cluster/resources", { type: "vm" }, signal);
+    return (data ?? [])
+      .filter((entry) => entry.type === "lxc" || entry.type === "qemu")
+      .map((entry) => ({ vmid: Number(entry.vmid), type: String(entry.type), pool: typeof entry.pool === "string" ? entry.pool : null, tags: parseTags(entry.tags) }))
+      .filter((entry) => Number.isInteger(entry.vmid));
+  }
+
   async listPool(pool: string, signal?: AbortSignal): Promise<PoolGuest[]> {
     const data = await this.#request<Record<string, unknown>[]>("GET", "/cluster/resources", { type: "vm" }, signal);
     const listed = (data ?? []).filter((entry) => entry.pool === pool && (entry.type === "lxc" || entry.type === "qemu"));

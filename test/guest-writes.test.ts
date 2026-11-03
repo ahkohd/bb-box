@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import ts from "typescript";
-import { GUEST_WRITES } from "../src/backends/proxmox-lxc/owned.ts";
+import { COMPOUND_WRITES, GUEST_WRITES } from "../src/backends/proxmox-lxc/owned.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const LXC = "src/backends/proxmox-lxc";
@@ -96,7 +96,10 @@ test("071 unit 5, go review: every guest write in the Proxmox LXC backend, and i
   const outside = direct.filter((site) => site.file !== GATEWAY);
   assert.deepEqual(outside.map((site) => `${site.file}:${site.line} ${site.within}: ${site.call}`), [], "a write that bypasses the ownership check");
   assert.deepEqual(passedRaw.map((site) => `${site.file}:${site.line} ${site.within}: ${site.call}`), [], "Proxmox's client handed where the fork module writes");
-  assert.ok(direct.filter((site) => site.file === GATEWAY).length >= GUEST_WRITES.length - 1, "the gateway is where each write is made");
+  const compound = direct.filter((site) => COMPOUND_WRITES.some((name) => site.call.includes(`.${name}(`)));
+  assert.deepEqual(compound.map((site) => `${site.file}:${site.line} ${site.within}: ${site.call}`), [], "Proxmox's compound writes, which stop, clear protection or read and write again inside, are called nowhere, the gateway included");
+  const primitives = [...new Set(direct.filter((site) => site.file === GATEWAY).map((site) => /\.(\w+)\(/.exec(site.call.replace(/^.*this\.#api/, ""))?.[1]))].sort();
+  assert.deepEqual(primitives, GUEST_WRITES.filter((name) => !COMPOUND_WRITES.includes(name) && name !== "hibernate").sort(), "the gateway makes each write with Proxmox's single-step calls");
   assert.ok(routed.length >= 40, `${routed.length} routed writes`);
 });
 

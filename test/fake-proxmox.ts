@@ -487,6 +487,9 @@ export class FakeProxmox {
       const guest = this.#of(match[1]!, vmid);
       if (!guest) return this.#missing(vmid, match[1]);
       const disk = params.disk ?? "";
+      if (params.digest !== undefined && params.digest !== configDigest(guest.config)) {
+        return respond(500, "detected modified configuration - file changed by other user? Try again.", { data: null });
+      }
       if (!guest.config[disk]) return respond(500, `disk '${disk}' does not exist`, { data: null });
       if (!this.nextTaskExit.has("resize")) guest.config[disk] = guest.config[disk]!.replace(/size=[^,]+/, `size=${params.size}`);
       return ok(this.#task("resize", vmid));

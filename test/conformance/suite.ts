@@ -1241,6 +1241,8 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
       describe("installs", { skip: skip.installs ?? (kinds.length ? false : "no kinds to check") }, () => {
         const kind = kinds[0]?.id ?? "";
         const isGone = (error: unknown) => error instanceof BackendError && error.code === "gone";
+        const leftAlone = (error: unknown) => isGone(error) || /leaves it alone/.test(String(error));
+        const unlessLeftAlone = <T>(work: Promise<T>, otherwise: T) => work.catch((error: unknown) => (leftAlone(error) ? otherwise : Promise.reject(error)));
 
         it("two installs on one backend leave each other's guests alone", { timeout }, async () => {
           const other = await options.create(new MemoryStorage(), `${CONFORMANCE_INSTALL}-other`);
@@ -1259,9 +1261,9 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           try {
             assert.equal((await other.held(signal())).find((guest) => guest.ref === mine.ref), undefined, "the other install does not hold this one's guest");
             assert.equal((await backend.held(signal())).find((guest) => guest.ref === theirs.ref), undefined, "this install does not hold the other's guest");
-            assert.equal(await other.power(mine, signal()), null, "to the other install, this one's guest does not exist");
-            if (other.stop) await assert.rejects(other.stop(mine, signal()), isGone);
-            await other.release(mine, releaseHooks().hooks, signal());
+            assert.equal(await unlessLeftAlone(other.power(mine, signal()), null), null, "to the other install, this one's guest does not exist, or is outside its VMID range");
+            if (other.stop) await assert.rejects(other.stop(mine, signal()), leftAlone);
+            await unlessLeftAlone(other.release(mine, releaseHooks().hooks, signal()), undefined);
             await other.maintain?.(signal());
             assert.equal(await backend.power(mine, signal()), "running", "the other install left this one's guest alone");
             assert.equal(await other.power(theirs, signal()), "running");

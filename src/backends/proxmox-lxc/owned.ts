@@ -1,6 +1,6 @@
-import { ProxmoxError, parseTags, type GuestSettings, type Proxmox } from "../proxmox/api.ts";
+import { ProxmoxError, parseTags, rootDiskGiB, type GuestSettings, type Proxmox } from "../proxmox/api.ts";
 import { copyTags, isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
-import { installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
+import { TAG, installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 
 type Config = Record<string, unknown>;
 
@@ -21,8 +21,19 @@ function isTemplate(config: Config): boolean {
   return config.template === 1 || config.template === "1";
 }
 
+export function carriesAnother(config: Config, install: string): boolean {
+  const tags = parseTags(config.tags);
+  const tagged = installFromTags(tags);
+  if (tagged === null || tagged === install) return false;
+  return ownerFromTags(tags) !== null || installFromDescription(config.description) !== install;
+}
+
+function guarded(owner: GuestOwner, install: string): GuestOwner {
+  return { words: owner.words, owns: (config) => !carriesAnother(config, install) && owner.owns(config) };
+}
+
 export function boxOwner(install: string, box: string | null): GuestOwner {
-  return {
+  return guarded({
     words: box ? `box ${box} of this install` : "this install's guest",
     owns: (config) => {
       if (box === null) return !isTemplate(config) && namesOf(config).install === install && namesOf(config).box === null;
@@ -33,11 +44,11 @@ export function boxOwner(install: string, box: string | null): GuestOwner {
       if (copyTags(tags).box !== null) return false;
       return describedFor(config, install, box);
     },
-  };
+  }, install);
 }
 
 export function madeOwner(install: string, box: string | null): GuestOwner {
-  return { words: `the guest bb-box is making for box ${box} of this install`, owns: (config) => !isTemplate(config) && describedFor(config, install, box) };
+  return guarded({ words: `the guest bb-box is making for box ${box} of this install`, owns: (config) => !isTemplate(config) && describedFor(config, install, box) }, install);
 }
 
 export function copyOwner(install: string, box: string | null): GuestOwner {
@@ -50,18 +61,15 @@ export function copyOwner(install: string, box: string | null): GuestOwner {
   };
 }
 
-export function warmOwner(install: string): GuestOwner {
-  return {
-    words: "a warm guest of this install",
-    owns: (config) => {
-      const description = typeof config.description === "string" ? config.description : "";
-      return !isTemplate(config) && description.startsWith("bb-box warm ") && installFromDescription(description) === install && copyTags(parseTags(config.tags)).box === null;
-    },
-  };
+export function warmOwner(install: string, made: string): GuestOwner {
+  return guarded({
+    words: "the warm guest of this install that bb-box made",
+    owns: (config) => !isTemplate(config) && config.description === made && made.startsWith("bb-box warm ") && installFromDescription(made) === install && copyTags(parseTags(config.tags)).box === null,
+  }, install);
 }
 
 export function imageOwner(install: string, imageBox: string, imageTag: string): GuestOwner {
-  return {
+  return guarded({
     words: "an image box or build of this install",
     owns: (config) => {
       const tags = parseTags(config.tags);
@@ -70,19 +78,19 @@ export function imageOwner(install: string, imageBox: string, imageTag: string):
       if (tags.includes(installTag(install)) && (tags.includes(imageBox) || tags.some((tag) => tag.startsWith(imageTag)))) return true;
       return description.startsWith("bb-box image box: ") && installFromDescription(description) === install;
     },
-  };
+  }, install);
 }
 
-export function templateOwner(vmid: number, as: Config): GuestOwner {
-  return { words: `template ${vmid}, as this install's settings name it`, owns: (config) => isTemplate(config) && config.description === as.description && config.hostname === as.hostname };
+export function templateOwner(install: string, vmid: number, as: Config): GuestOwner {
+  return guarded({ words: `template ${vmid}, as this install's settings name it`, owns: (config) => isTemplate(config) && config.description === as.description && config.hostname === as.hostname }, install);
 }
 
 export function eitherOwner(first: GuestOwner, second: GuestOwner): GuestOwner {
   return { words: `${first.words} or ${second.words}`, owns: (config) => first.owns(config) || second.owns(config) };
 }
 
-export function describedOwner(description: string): GuestOwner {
-  return { words: "the guest bb-box has just made", owns: (config) => config.description === description };
+export function describedOwner(install: string, description: string): GuestOwner {
+  return guarded({ words: "the guest bb-box has just made", owns: (config) => config.description === description }, install);
 }
 
 export function unstampedOwner(box: string): GuestOwner {
@@ -90,7 +98,7 @@ export function unstampedOwner(box: string): GuestOwner {
     words: `box ${box}'s guest from before install IDs`,
     owns: (config) => {
       const names = namesOf(config);
-      return names.install === null && names.box === box;
+      return parseTags(config.tags).includes(TAG) && names.install === null && names.box === box;
     },
   };
 }
@@ -100,30 +108,58 @@ export function sameGuestOwner(install: string, as: Config): GuestOwner {
   return { words: `${box ? `box ${box}` : "the guest"} of this install, as bb-box read it`, owns: (config) => namesOf(config).install === install && namesOf(config).box === box };
 }
 
+function namedWords(config: Config): string {
+  const names = namesOf(config);
+  if (!parseTags(config.tags).includes(TAG) && !names.install) return "no bb-box guest";
+  return names.box ? `box ${names.box} of ${names.install ? `install ${names.install}` : "no install"}` : names.install ? `no box, of install ${names.install}` : "no box of any install";
+}
+
 function noLongerWords(vmid: number, owner: GuestOwner, config: Config | null): string {
   if (!config) return `CT ${vmid} has gone, so it is no longer ${owner.words}. bb-box changes nothing on it.`;
-  const names = namesOf(config);
-  const now = names.box ? `box ${names.box} of ${names.install ? `install ${names.install}` : "no install"}` : names.install ? `no box, of install ${names.install}` : "no box of any install";
-  return `CT ${vmid} is no longer ${owner.words}: its config names ${now}. bb-box changes nothing on it and does not start it.`;
+  return `CT ${vmid} is no longer ${owner.words}: its config names ${namedWords(config)}. bb-box changes nothing on it and does not start it.`;
 }
+
+export type Sighting = (vmid: number, words: string) => void;
+
 
 export class OwnedGuests {
   readonly #api: Proxmox;
+  readonly #seen: Sighting;
 
-  constructor(api: Proxmox) {
+  constructor(api: Proxmox, seen: Sighting = () => {}) {
     this.#api = api;
+    this.#seen = seen;
+  }
+
+  async #configOrNull(vmid: number, signal?: AbortSignal): Promise<Config | null> {
+    try {
+      return await this.#api.config(vmid, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.gone) return null;
+      throw error;
+    }
   }
 
   async read(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<Config> {
-    let config: Config | null;
-    try {
-      config = await this.#api.config(vmid, signal);
-    } catch (error) {
-      if (!(error instanceof ProxmoxError && error.gone)) throw error;
-      config = null;
-    }
+    const config = await this.#configOrNull(vmid, signal);
     if (!config || !owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
     return config;
+  }
+
+  async #after(vmid: number, owner: GuestOwner, what: string, signal?: AbortSignal): Promise<Config | null> {
+    const config = await this.#configOrNull(vmid, signal);
+    if (config && !owner.owns(config)) {
+      const words = `CT ${vmid} held a guest that is not ${owner.words} right after bb-box's ${what}: its config names ${namedWords(config)}. bb-box acts on it no more.`;
+      this.#seen(vmid, words);
+      throw new NoLongerOurs(words);
+    }
+    return config;
+  }
+
+  async #act(vmid: number, owner: GuestOwner, what: string, run: () => Promise<void>, signal?: AbortSignal): Promise<void> {
+    await this.read(vmid, owner, signal);
+    await run();
+    if (!(await this.#after(vmid, owner, what, signal))) throw new NoLongerOurs(`CT ${vmid} went right after bb-box's ${what}. bb-box acts on it no more.`);
   }
 
   async writeOn(vmid: number, owner: GuestOwner, config: Config, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
@@ -162,40 +198,57 @@ export class OwnedGuests {
   }
 
   async start(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.read(vmid, owner, signal);
-    await this.#api.start(vmid, signal);
+    await this.#act(vmid, owner, "start", () => this.#api.start(vmid, signal), signal);
   }
 
   async stop(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.read(vmid, owner, signal);
-    await this.#api.stop(vmid, signal);
+    await this.#act(vmid, owner, "stop", () => this.#api.stop(vmid, signal), signal);
   }
 
   async shutdown(vmid: number, owner: GuestOwner, timeoutS: number, signal?: AbortSignal): Promise<void> {
-    await this.read(vmid, owner, signal);
-    await this.#api.shutdown(vmid, timeoutS, signal);
-  }
-
-  async growRootDisk(vmid: number, owner: GuestOwner, sizeGiB: number, signal?: AbortSignal): Promise<boolean> {
-    await this.read(vmid, owner, signal);
-    return this.#api.growRootDisk(vmid, sizeGiB, signal);
+    await this.#act(vmid, owner, "shutdown", () => this.#api.shutdown(vmid, timeoutS, signal), signal);
   }
 
   async makeTemplate(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.read(vmid, owner, signal);
-    await this.#api.makeTemplate(vmid, signal);
+    await this.#act(vmid, owner, "template", () => this.#api.makeTemplate(vmid, signal), signal);
+  }
+
+  async growRootDisk(vmid: number, owner: GuestOwner, sizeGiB: number, signal?: AbortSignal): Promise<boolean> {
+    for (let tries = 1; ; tries++) {
+      const config = await this.read(vmid, owner, signal);
+      const current = rootDiskGiB(config);
+      if (current !== null && current >= sizeGiB) return false;
+      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not grow its disk.`);
+      try {
+        await this.#api.resizeRootDisk(vmid, sizeGiB, config.digest, signal);
+        return true;
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.changedMeanwhile) || tries >= WRITE_TRIES) throw error;
+      }
+    }
   }
 
   async destroy(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    try {
-      await this.#api.config(vmid, signal);
-    } catch (error) {
-      if (error instanceof ProxmoxError && error.gone) return;
-      throw error;
+    const config = await this.#configOrNull(vmid, signal);
+    if (!config) return;
+    if (!owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
+    if ((await this.#api.status(vmid, signal))?.status === "running") await this.stop(vmid, owner, signal);
+    for (let tries = 1; ; tries++) {
+      await this.read(vmid, owner, signal);
+      try {
+        await this.#api.remove(vmid, signal);
+        break;
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.protected) || tries >= WRITE_TRIES) throw error;
+        const protectedNow = await this.#after(vmid, owner, "delete", signal);
+        if (!protectedNow) return;
+        await this.writeOn(vmid, owner, protectedNow, { delete: ["protection"] }, signal);
+      }
     }
-    await this.read(vmid, owner, signal);
-    await this.#api.destroy(vmid, signal);
+    await this.#after(vmid, owner, "delete", signal);
   }
 }
 
-export const GUEST_WRITES: readonly string[] = ["configure", "setNetwork", "start", "stop", "shutdown", "growRootDisk", "makeTemplate", "destroy", "hibernate"];
+export const GUEST_WRITES: readonly string[] = ["configure", "setNetwork", "start", "stop", "shutdown", "growRootDisk", "resizeRootDisk", "makeTemplate", "destroy", "remove", "hibernate"];
+
+export const COMPOUND_WRITES: readonly string[] = ["destroy", "growRootDisk"];
