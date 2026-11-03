@@ -306,7 +306,7 @@ export class FakeProxmox {
       if (!snapshot) return respond(500, `snapshot '${name}' does not exist`, { data: null });
       if (action === "config" && method === "GET") return ok({ ...(snapshot.config ?? {}) });
       if (action === "config" && method === "PUT") {
-        if (params.description !== undefined) snapshot.description = params.description;
+        if (params.description !== undefined) snapshot.description = asProxmoxStoresDescription(params.description);
         return ok(null);
       }
       if (action === "rollback" && method === "POST") {
@@ -340,7 +340,7 @@ export class FakeProxmox {
       if (method === "POST" && !name) {
         if (guest.config.lock) return ok(this.#task(`${prefix}snapshot`, vmid, `${what} is locked (${guest.config.lock})`));
         if (snapshots.some((snapshot) => snapshot.name === params.snapname)) return ok(this.#task(`${prefix}snapshot`, vmid, `snapshot name '${params.snapname}' already used`));
-        const taken: FakeSnapshot = { name: params.snapname!, description: params.description ?? "", snaptime: Math.floor(Date.now() / 1000) + this.#snapshotsTaken++, config: { ...guest.config }, ...(params.vmstate === "1" ? { vmstate: true } : {}) };
+        const taken: FakeSnapshot = { name: params.snapname!, description: asProxmoxStoresDescription(params.description ?? ""), snaptime: Math.floor(Date.now() / 1000) + this.#snapshotsTaken++, config: { ...guest.config }, ...(params.vmstate === "1" ? { vmstate: true } : {}) };
         if (this.snapshotTaskFailsWhole) {
           this.snapshotTaskFailsWhole = false;
           snapshots.push(taken);
@@ -419,7 +419,7 @@ export class FakeProxmox {
         const size = /size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G";
         config.rootfs = params.full === "1" ? `${params.storage ?? "local-lvm"}:vm-${newid}-disk-0,size=${size}` : `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${size}`;
       }
-      if (params.description) config.description = params.description;
+      if (params.description) config.description = asProxmoxStoresDescription(params.description);
       this.guests.set(newid, {
         vmid: newid,
         ...(type === "qemu" ? { type: "qemu" as const } : {}),
@@ -463,6 +463,10 @@ export class FakeProxmox {
         for (const [key, value] of Object.entries(params)) {
           if (key === "delete" || key === "digest") continue;
           const fresh = /^efidisk\d$/.test(key) && typeof value === "string" ? /^([^:,]+):\d+(,.*)?$/.exec(value) : null;
+          if (key === "description") {
+            guest.config[key] = asProxmoxStoresDescription(value);
+            continue;
+          }
           guest.config[key] = fresh ? `${fresh[1]}:vm-${vmid}-disk-${++this.volumes},${(fresh[2] ?? ",").slice(1)}${fresh[2] ? "," : ""}size=4M` : value;
         }
         for (const key of params.delete?.split(",") ?? []) {
@@ -589,6 +593,10 @@ export class FakeProxmox {
 
     return respond(501, `fake has no route for ${method} ${path}`, { data: null });
   }
+}
+
+export function asProxmoxStoresDescription(text: string): string {
+  return text === "" ? text : text.replace(/\n*$/, "\n");
 }
 
 function ok(data: unknown): FetchResponse {

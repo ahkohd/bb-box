@@ -88,7 +88,7 @@ function encode(text: string): string {
 }
 
 function sectionText(keys: Readonly<Record<string, string>>, description?: string, lxc: readonly (readonly [string, string])[] = []): string {
-  const lines = description ? description.split("\n").map((line) => `#${encode(line)}`) : [];
+  const lines = description ? description.replace(/\n+$/, "").split("\n").map((line) => `#${encode(line)}`) : [];
   for (const key of Object.keys(keys).sort()) lines.push(`${key}: ${keys[key]}`);
   for (const [key, value] of lxc) lines.push(`${key}: ${value}`);
   return lines.map((line) => `${line}\n`).join("");

@@ -42,7 +42,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Poo
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
-import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
+import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -2345,7 +2345,7 @@ export class ProxmoxLxcBackend implements Backend {
     const recorded = (await this.#unstartedClones())[this.#cardKey(api)]?.[String(vmid)];
     const tags = parseTags(config.tags);
     const filling = tags.includes(FILLING) && installFromTags(tags) === this.#context.installId && installFromDescription(config.description) === this.#context.installId;
-    if (!(recorded !== undefined ? recorded === config.description : filling)) return false;
+    if (!(recorded !== undefined ? sameDescription(config.description, recorded) : filling)) return false;
     return (await api.status(vmid, signal))?.status === "stopped";
   }
 

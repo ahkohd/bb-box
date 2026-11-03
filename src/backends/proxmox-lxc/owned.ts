@@ -13,6 +13,14 @@ export class NoLongerOurs extends Error {}
 
 const WRITE_TRIES = 3;
 
+function withoutProxmoxTrailingNewlines(description: unknown): unknown {
+  return typeof description === "string" ? description.replace(/\n+$/, "") : description;
+}
+
+export function sameDescription(read: unknown, written: unknown): boolean {
+  return withoutProxmoxTrailingNewlines(read) === withoutProxmoxTrailingNewlines(written);
+}
+
 function describedFor(config: Config, install: string, box: string | null): boolean {
   return box !== null && installFromDescription(config.description) === install && ownerFromDescription(config.description)?.boxId === box;
 }
@@ -64,7 +72,7 @@ export function copyOwner(install: string, box: string | null): GuestOwner {
 export function warmOwner(install: string, made: string): GuestOwner {
   return guarded({
     words: "the warm guest of this install that bb-box made",
-    owns: (config) => !isTemplate(config) && config.description === made && made.startsWith("bb-box warm ") && installFromDescription(made) === install && copyTags(parseTags(config.tags)).box === null,
+    owns: (config) => !isTemplate(config) && sameDescription(config.description, made) && made.startsWith("bb-box warm ") && installFromDescription(made) === install && copyTags(parseTags(config.tags)).box === null,
   }, install);
 }
 
@@ -82,7 +90,7 @@ export function imageOwner(install: string, imageBox: string, imageTag: string):
 }
 
 export function templateOwner(install: string, vmid: number, as: Config): GuestOwner {
-  return guarded({ words: `template ${vmid}, as this install's settings name it`, owns: (config) => isTemplate(config) && config.description === as.description && config.hostname === as.hostname }, install);
+  return guarded({ words: `template ${vmid}, as this install's settings name it`, owns: (config) => isTemplate(config) && sameDescription(config.description, as.description) && config.hostname === as.hostname }, install);
 }
 
 export function eitherOwner(first: GuestOwner, second: GuestOwner): GuestOwner {
@@ -90,7 +98,7 @@ export function eitherOwner(first: GuestOwner, second: GuestOwner): GuestOwner {
 }
 
 export function describedOwner(install: string, description: string): GuestOwner {
-  return guarded({ words: "the guest bb-box has just made", owns: (config) => config.description === description }, install);
+  return guarded({ words: "the guest bb-box has just made", owns: (config) => sameDescription(config.description, description) }, install);
 }
 
 export function unstampedOwner(box: string): GuestOwner {

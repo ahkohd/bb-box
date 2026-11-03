@@ -4,7 +4,7 @@ import { after } from "node:test";
 import { ProxmoxLxcBackend } from "../../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../../src/backends/proxmox/api.ts";
 import type { BoxIdentity, Guest, WarmShortfall } from "../../src/backends/types.ts";
-import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "../fake-proxmox.ts";
+import { FAKE_TOKEN, FakeProxmox, asProxmoxStoresDescription, TOKEN_ROLE } from "../fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "../helpers.ts";
 import { boxTags, describe } from "../../src/backends/proxmox/owner.ts";
 import { CARD_A, CARD_B, FakeNode, INSTALL, POOL, REPORT_VMID, cardLines, type FakeCard } from "./node.ts";
@@ -23,7 +23,7 @@ function encode(text: string): string {
 
 function configText(config: Readonly<Record<string, string>>): string {
   const { description, digest: _digest, ...keys } = config;
-  const lines = description ? description.split("\n").map((line) => `#${encode(line)}`) : [];
+  const lines = description ? description.replace(/\n+$/, "").split("\n").map((line) => `#${encode(line)}`) : [];
   for (const key of Object.keys(keys).sort()) lines.push(`${key}: ${keys[key]}`);
   return lines.map((line) => `${line}\n`).join("");
 }
@@ -97,7 +97,7 @@ export class ClaimsBridge {
       for (const key of Object.keys(guest.config)) if (/^dev\d+$/.test(key)) delete guest.config[key];
       Object.assign(guest.config, Object.fromEntries(Object.entries(this.node.config(vmid).keys).filter(([key]) => /^dev\d+$/.test(key))));
     }
-    this.proxmox.guests.get(REPORT_VMID)!.config.description = this.node.report();
+    this.proxmox.guests.get(REPORT_VMID)!.config.description = asProxmoxStoresDescription(this.node.report());
   }
 
   pass(): void {

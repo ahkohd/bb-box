@@ -119,7 +119,7 @@ test("a take records its task before it waits, and is complete only once Proxmox
   assert.equal(seen.length, 1);
   assert.match(seen[0]!.ref, /^UPID:pve:.*:vzsnapshot:7000:/);
   const listed = state.proxmox.guests.get(vmid)!.snapshots!;
-  assert.deepEqual(listed.map((snapshot) => [snapshot.name, snapshot.description]), [["bbsn7kq2m6xa4pdq", `bb-box install ${state.context.installId} box ${id.boxId} snapshot ${SNAPSHOT}`]]);
+  assert.deepEqual(listed.map((snapshot) => [snapshot.name, snapshot.description]), [["bbsn7kq2m6xa4pdq", `bb-box install ${state.context.installId} box ${id.boxId} snapshot ${SNAPSHOT}\n`]]);
   assert.deepEqual(await state.backend.providerTask(seen[0]!), { state: "ok" });
   const held = await state.backend.heldSnapshots();
   assert.deepEqual(
@@ -662,7 +662,7 @@ test("070 unit 8: Keep's held copy is a full copy of the snapshot into the box r
   for (const tag of ["held-copy", `box.${id.boxId}`, `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7", "kind.linux", `taken.${Date.UTC(2026, 9, 31, 14, 21) / 1000}`]) assert.match(copied.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), tag);
   assert.equal(copied.config.onboot, "0");
   assert.match(copied.config.net0 ?? "", /link_down=1/);
-  assert.match(copied.config.description ?? "", new RegExp(`held copy of snapshot ${SNAPSHOT} kept 2026-11-30$`));
+  assert.match(copied.config.description ?? "", new RegExp(`held copy of snapshot ${SNAPSHOT} kept 2026-11-30\n$`));
   state.proxmox.templateLag = 3;
   await state.backend.templateCopy(copy);
   assert.equal(await state.backend.copyState(copy), "template", "templateCopy returns once Proxmox lists it as a template, not when its call answers");

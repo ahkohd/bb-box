@@ -1226,7 +1226,7 @@ test("stamp records this install on its guest from before install IDs, and leave
   assert.deepEqual(stamped.data, { template: 9000, box: "box_old" });
   const config = proxmox.guests.get(7005)!.config;
   assert.deepEqual(parseTags(config.tags), ["bb-box", "install.test", "box.box_old", "thread.thr_x", "kind.linux", "template.9000"]);
-  assert.equal(config.description, "bb-box old\ninstall test\nbox box_old\nthread thr_x");
+  assert.equal(config.description, "bb-box old\ninstall test\nbox box_old\nthread thr_x\n");
   assert.deepEqual(
     (await backend.held()).map((held) => [held.ref, held.owner?.boxId]),
     [["7005", "box_old"]],
@@ -1455,6 +1455,18 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
   assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
+  const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
+  assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
+});
+
+test("a warm fill goes ready though Proxmox gives the description back ending in a newline, as its config writer stores it", async () => {
+  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 1 });
+  await backend.maintain();
+  const warm = proxmox.guests.get(7000)!;
+  assert.match(warm.config.description!, /^bb-box warm linux\ninstall test\nwarm [0-9a-f]{12}\n$/, "the fake stores the description as Proxmox does");
+  assert.equal(warm.status, "running");
+  assert.ok(parseTags(warm.config.tags).includes("warm"));
+  assert.deepEqual(context.errors, []);
   const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
 });
@@ -1952,6 +1964,30 @@ test("image operations: a box from a template, its capture as a template with it
   // A box from the replaced template, as any.
   const box2 = await backend.acquire(identity(), null, hooks().value, signal());
   assert.equal(templateFromTags(parseTags(proxmox.guests.get(Number(box2.ref))!.config.tags)), 9000);
+});
+
+test("a template replaced in place is a template again, though Proxmox gives back the description it was cloned with ending in a newline", async () => {
+  const dir = tempDir("image-replace-newline");
+  const record = { contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00Z" };
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *"cat /usr/share/bb-box/image.json"*) echo '${JSON.stringify(record)}'; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, proxmox } = setup({}, new MemoryStorage(), { sshBinary: binary });
+  proxmox.guests.get(9000)!.config.tags = "build.20260926-060000-a1b2";
+  proxmox.guests.get(9000)!.config.description = "bb-box linux template, built 2026-09-26.\n";
+  const images = backend.images;
+  const standard = (await images.list()).builds.find((build) => build.ref === "9000")!;
+  const box = await images.box(standard, "refresh of 9000", signal());
+  const captured = await images.capture(box, standard, "standard", signal());
+  proxmox.statusPass();
+  const replaced = await images.replace(captured, standard, signal());
+  assert.deepEqual([replaced.ref, replaced.current], ["9000", true]);
+  const template = proxmox.guests.get(9000)!;
+  assert.deepEqual([template.template, template.config.template, template.config.protection], [true, "1", "1"]);
+  assert.match(template.config.description!, /^bb-box linux template, refreshed \d{4}-\d{2}-\d{2}\.\n\{"contract":1,.*\}\n$/, "the fake stores the description as Proxmox does");
+  assert.deepEqual(parseTags(template.config.tags), ["build.20261003-021500-3f9c"]);
+  assert.equal(proxmox.guests.has(7000), false, "the captured build goes");
+  const after = (await images.list()).builds.find((build) => build.ref === "9000")!;
+  assert.deepEqual([after.current, after.build], [true, "build.20261003-021500-3f9c"]);
 });
 
 test("a project's box starts from its image's build, not a warm guest, and a build goes though templates are protected (049)", async () => {
