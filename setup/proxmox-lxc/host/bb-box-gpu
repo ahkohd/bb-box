@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.3.2';
+use constant VERSION => '0.3.3';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -243,14 +243,29 @@ sub note_unread_cards {
     }
 }
 
+my %MAPPING_WORDS = (minor => 'its /dev/nvidia minor', drm_card => 'its DRM card node', drm_render => 'its DRM render node');
+
+sub note_unmapped_cards {
+    my ($ctx) = @_;
+    $ctx->{unmapped} = {};
+    for my $uuid (sort keys %{ $ctx->{cards} }) {
+        my $card = $ctx->{cards}{$uuid};
+        my @missing = grep { !defined $card->{$_} } qw(minor drm_card drm_render);
+        next unless @missing;
+        $ctx->{unmapped}{$uuid} = 1;
+        push @{ $ctx->{errors} }, "the helper cannot map card $uuid at $card->{pci} to its device nodes (" . join(', ', map { $MAPPING_WORDS{$_} } @missing)
+            . ' unknown), so it cannot tell which guests hold it: no request on any card is decided and no guest\'s lines are changed';
+    }
+}
+
 sub full_inventory {
     my ($ctx) = @_;
-    return $ctx->{cards_known} && !%{ $ctx->{unread} // {} } ? 1 : 0;
+    return $ctx->{cards_known} && !%{ $ctx->{unread} // {} } && !%{ $ctx->{unmapped} // {} } ? 1 : 0;
 }
 
 sub card_unread {
     my ($ctx, $uuid) = @_;
-    return 1 if exists $ctx->{unread}{'*'};
+    return 1 if exists $ctx->{unread}{'*'} || %{ $ctx->{unmapped} // {} };
     return defined $uuid && exists $ctx->{unread}{$uuid} ? 1 : 0;
 }
 
@@ -1066,7 +1081,7 @@ sub converge {
     my ($ctx, $guests, $guest) = @_;
     my $vmid = $guest->{vmid};
     my $entry = $ctx->{ledger}{guests}{$vmid} or return;
-    return if $guest->{ineligible} || $guest->{malformed} || !$ctx->{cards_known};
+    return if $guest->{ineligible} || $guest->{malformed} || !full_inventory($ctx);
     my $claim_given = $entry->{claim} && $entry->{claim}{answer} =~ /^(?:granted|yielded)$/;
     return unless $guest->{marker} || $claim_given;
     my ($desired, $label, $why) = desired_lines($ctx, $guest, $entry);
@@ -1597,6 +1612,7 @@ sub pass {
         unless $ctx->{cards_known};
     $ctx->{cards} = $ctx->{cards_known} ? card_table($ctx->{reading}) : {};
     note_unread_cards($ctx);
+    note_unmapped_cards($ctx);
     update_host_state($ctx);
     my $guests = read_guests($ctx);
     if (!$guests) {
@@ -1900,6 +1916,7 @@ sub print_preview {
     push @why, 'it read no card' unless $ctx->{cards_known};
     push @why, scalar(@{ $ctx->{errors} }) . ' error ' . (@{ $ctx->{errors} } == 1 ? 'line' : 'lines') if @{ $ctx->{errors} };
     push @why, 'nvidia-smi gave no full reading of every card' if %{ $ctx->{unread} // {} };
+    push @why, 'it could not map every card to its device nodes' if %{ $ctx->{unmapped} // {} };
     push @why, 'it could not read every guest it would decide on' if %{ $ctx->{left} // {} };
     push @why, 'its pass did not finish' if $status;
     return 0 unless @why;

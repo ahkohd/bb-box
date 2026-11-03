@@ -33,14 +33,15 @@
 // install, count against capacity but are otherwise left alone.
 
 import { SPARES } from "../../core/boxes.ts";
-import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
+import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
-import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
+import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
+import { NoLongerOurs, OwnedGuests, boxOwner, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, templateOwner, unstampedOwner, warmOwner, type GuestOwner } from "./owned.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -545,23 +546,6 @@ interface StartGate {
 
 const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 
-interface GuestOwner {
-  readonly install: string;
-  readonly box: string | null;
-}
-
-class NoLongerOurs extends Error {}
-
-function ownedBy(config: Record<string, unknown>, owner: GuestOwner): boolean {
-  const names = namesOf(config);
-  return names.install === owner.install && names.box === owner.box;
-}
-
-function noLongerOursWords(vmid: number, owner: GuestOwner, config: Record<string, unknown> | null): string {
-  const names = config ? namesOf(config) : null;
-  const now = !names ? "it has gone" : `its config names ${names.box ? `box ${names.box}` : "no box"} of ${names.install === owner.install ? "this install" : names.install ? `install ${names.install}` : "no install"}`;
-  return `CT ${vmid} is no longer box ${owner.box ?? "-"} of this install: ${now}. bb-box changes nothing on it and does not start it.`;
-}
 
 function blockedWords(view: Extract<CardsView, { is: "blocked" }>): string {
   return `bb-box cannot claim a card for a GPU desktop now. ${view.why}${view.fix ? ` ${view.fix}` : ""}`;
@@ -825,7 +809,7 @@ export class ProxmoxLxcBackend implements Backend {
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     await this.#forget(vmid);
-    if (status.status === "running") await api.stop(vmid, signal);
+    if (status.status === "running") await this.#owned(api).stop(vmid, this.#boxOf(guest), signal);
     const key = this.#cardKey(api);
     await underCardLock(key, async () => reservationsOn(key).dropStopped(vmid));
   }
@@ -897,8 +881,9 @@ export class ProxmoxLxcBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), storageOfVolume(config.rootfs), hooks, signal, undefined, sizeOf(config)?.diskGiB ?? null);
-      await disarm(api, vmid, signal);
-      await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false }, signal);
+      const owner = copyOwner(this.#context.installId, label.box);
+      await disarm(this.#writesFor(api, owner), vmid, signal);
+      await this.#owned(api).configure(vmid, owner, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false }, signal);
       return copy;
     } finally {
       this.#reserved.delete(vmid);
@@ -929,8 +914,9 @@ export class ProxmoxLxcBackend implements Backend {
     const madeFor = `bb-box install ${this.#context.installId} box ${label.box} held copy of snapshot ${label.snapshot}`;
     if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy bb-box made of snapshot ${label.snapshot}, so bb-box does not label it as one.`);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
-    await disarm(api, vmid, signal);
-    await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false, delete: ["protection"] }, signal);
+    const owner = copyOwner(this.#context.installId, this.#boxData(copy));
+    await disarm(this.#writesFor(api, owner), vmid, signal);
+    await this.#owned(api).configure(vmid, owner, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false, delete: ["protection"] }, signal);
     return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
   }
 
@@ -951,7 +937,7 @@ export class ProxmoxLxcBackend implements Backend {
     const tags = parseTags(config.tags);
     const box = copyTags(tags).box ?? (typeof ref.guest.data?.box === "string" ? ref.guest.data.box : "");
     try {
-      await api.configure(vmid, { tags: withKeptTag(tags, kept), description: heldCopyDescription(this.#context.installId, { box, snapshot: ref.id, kept }) }, signal);
+      await this.#owned(api).configure(vmid, copyOwner(this.#context.installId, this.#boxData(ref.guest)), { tags: withKeptTag(tags, kept), description: heldCopyDescription(this.#context.installId, { box, snapshot: ref.id, kept }) }, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(`Proxmox refused to write the keep date on held copy ${vmid}: ${error.message}`);
       throw error;
@@ -973,8 +959,9 @@ export class ProxmoxLxcBackend implements Backend {
     const vmid = this.#vmid(copy);
     const config = await this.#copyConfig(api, copy, signal);
     if (!config) throw gone(vmid);
-    await api.setNetwork(vmid, Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { up: false })])), signal);
-    await api.configure(vmid, { onboot: false }, signal);
+    const owner = copyOwner(this.#context.installId, this.#boxData(copy));
+    await this.#owned(api).setNetwork(vmid, owner, (now) => Object.fromEntries(netKeys(now).map((key) => [key, netWith(String(now[key]), { up: false })])), signal);
+    await this.#owned(api).configure(vmid, owner, { onboot: false }, signal);
   }
 
   async templateCopy(copy: Guest, signal?: AbortSignal): Promise<void> {
@@ -982,7 +969,7 @@ export class ProxmoxLxcBackend implements Backend {
     const vmid = this.#vmid(copy);
     const config = await this.#copyConfig(api, copy, signal);
     if (!config) throw gone(vmid);
-    if (!isTemplate(config)) await api.makeTemplate(vmid, signal);
+    if (!isTemplate(config)) await this.#owned(api).makeTemplate(vmid, copyOwner(this.#context.installId, this.#boxData(copy)), signal);
     await untilTemplate(() => this.#copyConfig(api, copy, signal), isTemplate, (ms) => (this.#options.sleep ?? pause)(ms, signal), TEMPLATE_POLL_MS, vmid);
   }
 
@@ -1002,7 +989,7 @@ export class ProxmoxLxcBackend implements Backend {
     const described = typeof config.description === "string" && config.description.startsWith(`bb-box install ${this.#context.installId} box ${box} held copy of snapshot `);
     if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so bb-box does not delete it as one.`);
     await this.#forget(this.#vmid(copy));
-    await api.destroy(this.#vmid(copy), signal);
+    await this.#owned(api).destroy(this.#vmid(copy), copyOwner(this.#context.installId, this.#boxData(copy)), signal);
   }
 
   async adoptCopy(copy: Guest, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
@@ -1023,8 +1010,9 @@ export class ProxmoxLxcBackend implements Backend {
         const value = key === "net0" ? `${net0For(this.#config, vmid)}${mac ? `,hwaddr=${mac}` : ""}` : netWith(String(made[key]), { ...(mac ? { mac } : {}), up: true });
         nets[key] = value;
       }
-      await api.setNetwork(vmid, nets, signal);
-      await api.configure(vmid, { tags: boxTags(box, this.#context.installId, template), onboot: true, delete: ["protection"] }, signal);
+      const owner = madeOwner(this.#context.installId, box.boxId);
+      await this.#owned(api).setNetwork(vmid, owner, nets, signal);
+      await this.#owned(api).configure(vmid, owner, { tags: boxTags(box, this.#context.installId, template), onboot: true, delete: ["protection"] }, signal);
       return { ...fresh, size: sizeOf(await api.config(vmid, signal)) };
     } finally {
       this.#reserved.delete(vmid);
@@ -1049,9 +1037,11 @@ export class ProxmoxLxcBackend implements Backend {
         addressed: async (api, vmid, made, forked, template, signal) => {
           const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()},link_down=1` };
           for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: false });
-          await api.setNetwork(vmid, nets, signal);
-          await api.configure(vmid, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
+          const owner = madeOwner(this.#context.installId, forked.boxId);
+          await this.#owned(api).setNetwork(vmid, owner, nets, signal);
+          await this.#owned(api).configure(vmid, owner, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
         },
+        writes: (api, box, made) => this.#writesFor(api, made ? madeOwner(this.#context.installId, box) : boxOwner(this.#context.installId, box)),
         sizeOf,
         logError: (operation, error) => this.#context.logError(operation, error),
       },
@@ -1068,11 +1058,11 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
-    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal) }, guest, arming, signal);
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal), writes: (api, box, made) => this.#writesFor(api, made ? madeOwner(this.#context.installId, box) : boxOwner(this.#context.installId, box)) }, guest, arming, signal);
   }
 
   disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
-    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId }, guest, signal);
+    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId, writes: (api, box, made) => this.#writesFor(api, made ? madeOwner(this.#context.installId, box) : boxOwner(this.#context.installId, box)) }, guest, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {
@@ -1081,9 +1071,10 @@ export class ProxmoxLxcBackend implements Backend {
     const config = await this.#copyConfig(api, guest, signal);
     if (!config) throw gone(vmid);
     await this.#forget(vmid);
-    await api.setNetwork(vmid, Object.fromEntries(netKeys(config).map((key) => [key, netWith(String(config[key]), { mac: randomMac(), up: false })])), signal);
+    const owner = copyOwner(this.#context.installId, this.#boxData(guest));
+    await this.#owned(api).setNetwork(vmid, owner, (now) => Object.fromEntries(netKeys(now).map((key) => [key, netWith(String(now[key]), { mac: randomMac(), up: false })])), signal);
     const template = typeof guest.data?.template === "number" ? guest.data.template : null;
-    await api.configure(vmid, { onboot: false, tags: [...boxTags(box, this.#context.installId, template), EARLIER_GUEST], description: `${describe(box, this.#context.installId)}\nearlier guest` }, signal);
+    await this.#owned(api).configure(vmid, owner, { onboot: false, tags: [...boxTags(box, this.#context.installId, template), EARLIER_GUEST], description: `${describe(box, this.#context.installId)}\nearlier guest` }, signal);
     return guest;
   }
 
@@ -1304,6 +1295,7 @@ export class ProxmoxLxcBackend implements Backend {
     const offer = this.#offer(box.kind);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs);
     const api = await this.client();
+    const ours = boxOwner(this.#context.installId, box.boxId);
     const step: Step = async (name, run) => {
       const started = performance.now();
       try {
@@ -1411,21 +1403,21 @@ export class ProxmoxLxcBackend implements Backend {
           let low = false;
           let had: string[] = [];
           await step("configure", async () => {
-            const config = await api.config(id, signal);
+            const config = await this.#owned(api).read(id, ours, signal);
             low = startsLow(config);
             had = parseTags(config.tags);
-            await api.configure(id, { ...this.#settings(box.size, id), ...(low ? LOW : {}) }, signal);
+            await this.#owned(api).writeOn(id, ours, config, { ...this.#settings(box.size, id), ...(low ? LOW : {}) }, signal);
           });
           const asked: ClaimMarker | null = placed ? { part: "shared", card: placed.card.uuid, generation: nextGeneration(placed.lines, id, 0, this.#written.get(id) ?? 0) } : null;
           const labels = withStartTag(boxTags(box, this.#context.installId, template), low);
-          await step("tags", () => api.configure(id, { tags: asked ? withMarker(labels, asked) : withGpuTagsOf(had, labels) }, signal));
+          await step("tags", () => this.#owned(api).configure(id, ours, (config) => ({ tags: asked ? withMarker(labels, asked) : withGpuTagsOf(parseTags(config.tags), labels) }), signal));
           if (asked && placed) {
             const card = placed.card;
             const answer = await step("gpu", () => this.#askHelper(api, id, asked, signal));
             if (answer.is !== "granted") {
               dropPlacement();
               await this.#forget(id);
-              await api.destroy(id, signal);
+              await this.#owned(api).destroy(id, ours, signal);
               vmid = null;
               claimed = null;
               acquiring.vmid = null;
@@ -1450,7 +1442,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (!placed && offer.kind.capabilities.gpu) {
           if ((await api.status(id, signal))?.status === "running") cardClaim = await step("gpu", () => this.#markedClaim(api, id, signal));
           else {
-            const gate = await step("gpu", () => this.#gateStart(api, id, { install: this.#context.installId, box: box.boxId }, signal, (why) => `bb-box did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
+            const gate = await step("gpu", () => this.#gateStart(api, id, ours, signal, (why) => `bb-box did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
             gated = gate.reservation;
             cardClaim = gate.claim;
             heldGpu = gate.gpu;
@@ -1460,10 +1452,9 @@ export class ProxmoxLxcBackend implements Backend {
         started = true;
         await step("start", async () => {
           if ((await api.status(id, signal))?.status === "running") return;
-          if (gated !== null || cardClaim !== null) await this.#mustOwn(api, id, { install: this.#context.installId, box: box.boxId }, signal);
-          await api.start(id, signal);
+          await this.#owned(api).start(id, ours, signal);
         });
-        await this.#grow(api, id, box.size.diskGiB, template, step, signal);
+        await this.#grow(api, id, ours, box.size.diskGiB, template, step, signal);
         // Read while the box comes up: the size it has, as Proxmox gives it.
         const size = api.config(id, signal).then(sizeOf, () => null);
         await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
@@ -1474,7 +1465,7 @@ export class ProxmoxLxcBackend implements Backend {
         await this.#sawDisplay(heldGpu ?? this.#gpuOf(template), display);
         if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
           // A spare keeps its low weight until a box takes it: relabel() puts it back then.
-          if (box.threadId !== SPARES) await this.#settle(api, id, signal);
+          if (box.threadId !== SPARES) await this.#settle(api, id, ours, signal);
           const made = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build, heldGpu);
           const guest = cardClaim ? { ...made, claim: cardClaim } : made;
           reservationsOn(this.#cardKey(api)).settle(placed?.reservation ?? null, this.#now());
@@ -1491,7 +1482,7 @@ export class ProxmoxLxcBackend implements Backend {
         this.#context.logError("acquire", new Error(`Box ${box.name} started without GPU ${gpu} (${reason}), so bb-box released it and tries another GPU.`));
         dropPlacement();
         await this.#forget(id);
-        await api.destroy(id, signal);
+        await this.#owned(api).destroy(id, ours, signal);
         vmid = null;
         claimed = null;
         acquiring.vmid = null;
@@ -1511,7 +1502,7 @@ export class ProxmoxLxcBackend implements Backend {
       const leftover = vmid ?? claimed;
       if (leftover !== null && !(error instanceof NoLongerOurs) && (vmid !== null || (await this.#owns(api, leftover, box.boxId).catch(() => false)))) {
         await this.#forget(leftover);
-        await api.destroy(leftover).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+        await this.#owned(api).destroy(leftover, ours).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       }
       throw error;
     } finally {
@@ -1526,7 +1517,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#cursor.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
-    if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
+    if (await this.#still(api, guest, signal)) await this.#owned(api).destroy(this.#vmid(guest), this.#boxOf(guest), signal);
     reservationsOn(this.#cardKey(api)).dropGuest(this.#vmid(guest));
     reservationsOn(this.#cardKey(api)).deleted(this.#vmid(guest), this.#now());
     hooks.timing("delete", Math.round(performance.now() - started));
@@ -1559,7 +1550,7 @@ export class ProxmoxLxcBackend implements Backend {
           }
         }
       : untimed;
-    const owner: GuestOwner = { install: this.#context.installId, box: typeof guest.data?.box === "string" ? guest.data.box : null };
+    const owner = this.#boxOf(guest);
     let gate = UNGATED;
     const marked = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags)) !== null;
     if (status.status === "running") {
@@ -1568,8 +1559,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
       const reservations = reservationsOn(this.#cardKey(api));
       try {
-        if (gate !== UNGATED) await this.#mustOwn(api, vmid, owner, signal);
-        await step("boot", () => api.start(vmid, signal));
+        await step("boot", () => this.#owned(api).start(vmid, owner, signal));
       } catch (error) {
         reservations.drop(gate.reservation);
         throw error;
@@ -1595,7 +1585,7 @@ export class ProxmoxLxcBackend implements Backend {
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     await this.#forget(vmid);
-    if (status.status === "running") await api.stop(vmid, signal);
+    if (status.status === "running") await this.#owned(api).stop(vmid, this.#boxOf(guest), signal);
     const key = this.#cardKey(api);
     await underCardLock(key, async () => reservationsOn(key).dropStopped(vmid));
   }
@@ -1643,13 +1633,14 @@ export class ProxmoxLxcBackend implements Backend {
       throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
     const changed = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
-    if (changed) await api.configure(vmid, { cores: to.cores, memory: to.memoryMiB }, signal);
+    const owner = this.#boxOf(guest);
+    if (changed) await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB }, signal);
     if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) {
       try {
-        await api.growRootDisk(vmid, to.diskGiB, signal);
+        await this.#owned(api).growRootDisk(vmid, owner, to.diskGiB, signal);
       } catch (error) {
         if (changed) {
-          await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+          await this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
         }
         throw error;
       }
@@ -1771,8 +1762,10 @@ export class ProxmoxLxcBackend implements Backend {
     if (names.install !== null || names.box !== boxId) return stamped;
     const tags = parseTags(config.tags);
     const description = typeof config.description === "string" && config.description.startsWith("bb-box ") ? config.description : null;
-    await api.configure(
+    await this.#owned(api).writeOn(
       vmid,
+      unstampedOwner(boxId),
+      config,
       {
         tags: [TAG, installTag(this.#context.installId), ...tags.filter((tag) => tag !== TAG)],
         ...(description ? { description: description.replace(/^.*/, (first) => `${first}\ninstall ${this.#context.installId}`) } : {}),
@@ -2188,23 +2181,38 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(member.ref);
     const installId = this.#context.installId;
-    await api.configure(vmid, { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
+    const owner = boxOwner(installId, box.boxId);
+    await this.#owned(api).configure(vmid, eitherOwner(warmOwner(installId), owner), { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
     // A warm guest keeps its low CPU weight, and the tag, until the box is ready (#888).
-    await this.#retag(api, vmid, (tags) => withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)), signal);
+    await this.#retag(api, vmid, owner, (tags) => withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)), signal);
   }
 
-  async #retag(api: Proxmox, vmid: number, tagsFor: (tags: readonly string[]) => string[], signal?: AbortSignal): Promise<void> {
-    for (let tries = 1; ; tries++) {
-      const config = await api.config(vmid, signal);
-      if (namesOf(config).install !== this.#context.installId) throw new NoLongerOurs(`CT ${vmid} is no longer a guest of this install, so bb-box does not retag it.`);
+  async #retag(api: Proxmox, vmid: number, owner: GuestOwner, tagsFor: (tags: readonly string[]) => string[], signal?: AbortSignal): Promise<void> {
+    await this.#owned(api).configure(vmid, owner, (config) => {
       const tags = parseTags(config.tags);
-      try {
-        await api.configure(vmid, { tags: withGpuTagsOf(tags, tagsFor(tags)), ...(typeof config.digest === "string" ? { digest: config.digest } : {}) }, signal);
-        return;
-      } catch (error) {
-        if (!(error instanceof ProxmoxError && error.changedMeanwhile) || tries >= RETAG_TRIES) throw error;
-      }
-    }
+      return { tags: withGpuTagsOf(tags, tagsFor(tags)) };
+    }, signal);
+  }
+
+  #owned(api: Proxmox): OwnedGuests {
+    return new OwnedGuests(api);
+  }
+
+  #boxData(guest: Guest): string | null {
+    return typeof guest.data?.box === "string" ? guest.data.box : null;
+  }
+
+  #boxOf(guest: Guest): GuestOwner {
+    return boxOwner(this.#context.installId, this.#boxData(guest));
+  }
+
+  #writesFor(api: Proxmox, owner: GuestOwner): ForkWrites {
+    const owned = this.#owned(api);
+    return {
+      config: (vmid, signal) => api.config(vmid, signal),
+      setNetwork: (vmid, settings, signal) => owned.setNetwork(vmid, owner, settings, signal),
+      destroy: (vmid, signal) => owned.destroy(vmid, owner, signal),
+    };
   }
 
   #proxmox(node: string): Proxmox {
@@ -2410,17 +2418,21 @@ export class ProxmoxLxcBackend implements Backend {
    * smaller. A null size keeps the template's. Proxmox cannot shrink disks,
    * so a smaller size leaves the template's.
    */
-  async #grow(api: Proxmox, vmid: number, wanted: number | null, template: number | null, step: Step, signal?: AbortSignal): Promise<void> {
+  async #grow(api: Proxmox, vmid: number, owner: GuestOwner, wanted: number | null, template: number | null, step: Step, signal?: AbortSignal): Promise<void> {
     if (wanted === null) return;
     const templateDisk = template === null ? null : this.#templates.get(template)?.diskGiB;
     if (templateDisk != null && templateDisk >= wanted) return;
-    await step("resize", () => api.growRootDisk(vmid, wanted, signal));
+    await step("resize", () => this.#owned(api).growRootDisk(vmid, owner, wanted, signal));
   }
 
   /** Whether the guest at `vmid` names the box. Box IDs are unique, so no other install's guest does. */
   async #owns(api: Proxmox, vmid: number, boxId: string, signal?: AbortSignal): Promise<boolean> {
     const config = await this.#guestConfig(api, vmid, signal);
-    return !!config && ownedBy(config, { install: this.#context.installId, box: boxId });
+    return !!config && boxOwner(this.#context.installId, boxId).owns(config);
+  }
+
+  #image(): GuestOwner {
+    return imageOwner(this.#context.installId, IMAGE_BOX, IMAGE_TAG);
   }
 
   async #grantedGpu(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<string | null> {
@@ -2595,15 +2607,15 @@ export class ProxmoxLxcBackend implements Backend {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
       vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal);
-      await api.configure(vmid, this.#settings(null, vmid), signal);
-      await api.configure(vmid, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
-      await api.start(vmid, signal);
+      await this.#owned(api).configure(vmid, this.#image(), this.#settings(null, vmid), signal);
+      await this.#owned(api).configure(vmid, this.#image(), { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
+      await this.#owned(api).start(vmid, this.#image(), signal);
       await this.#waitReady(vmid, build.kind, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       return { ref: String(vmid), command: await this.#command(vmid) };
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);
-        await api.destroy(vmid).catch((cause) => this.#context.logError("remove an image box", cause));
+        await this.#owned(api).destroy(vmid, this.#image()).catch((cause) => this.#context.logError("remove an image box", cause));
         this.#imageBoxes.delete(vmid);
       }
       throw error;
@@ -2624,9 +2636,10 @@ export class ProxmoxLxcBackend implements Backend {
     const source = await api.config(Number(from.ref), signal);
     const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
     await this.#forget(vmid);
-    await api.shutdown(vmid, 60, signal);
-    await api.configure(
+    await this.#owned(api).shutdown(vmid, this.#image(), 60, signal);
+    await this.#owned(api).configure(
       vmid,
+      this.#image(),
       {
         hostname: typeof source.hostname === "string" ? source.hostname : IMAGE_HOSTNAME,
         ...(typeof source.net0 === "string" ? { net0: source.net0 } : {}),
@@ -2636,8 +2649,8 @@ export class ProxmoxLxcBackend implements Backend {
       },
       signal,
     );
-    await api.makeTemplate(vmid, signal);
-    await api.configure(vmid, { protection: true }, signal);
+    await this.#owned(api).makeTemplate(vmid, this.#image(), signal);
+    await this.#owned(api).configure(vmid, this.#image(), { protection: true }, signal);
     this.#imageBoxes.delete(vmid);
     return { ref: String(vmid), image, kind: from.kind, build, record, current: false };
   }
@@ -2664,16 +2677,17 @@ export class ProxmoxLxcBackend implements Backend {
     const description = `${line}${build.record ? `\n${JSON.stringify(build.record)}` : ""}`;
     const tags = [...parseTags(old.tags).filter((tag) => !tag.startsWith(BUILD)), ...(build.build ? [build.build] : [])];
     // Templates are protected against deletion: the token may clear it in the pool.
-    await api.configure(target, { delete: ["protection"] }, signal);
-    await api.destroy(target, signal);
+    const configured = templateOwner(target, old);
+    await this.#owned(api).writeOn(target, configured, old, { delete: ["protection"] }, signal);
+    await this.#owned(api).destroy(target, configured, signal);
     this.#templates.delete(target);
     const pool = this.#config.proxmox.pool;
     if (thin) await api.cloneLinked({ template: source, vmid: target, hostname, pool, description }, signal);
     else await api.cloneFull({ template: source, vmid: target, hostname, storage, pool, description }, signal);
-    await api.makeTemplate(target, signal);
-    await api.configure(target, { description, tags, protection: true }, signal);
-    await api.configure(source, { delete: ["protection"] }, signal);
-    await api.destroy(source, signal);
+    await this.#owned(api).makeTemplate(target, describedOwner(description), signal);
+    await this.#owned(api).configure(target, describedOwner(description), { description, tags, protection: true }, signal);
+    await this.#owned(api).configure(source, this.#image(), { delete: ["protection"] }, signal);
+    await this.#owned(api).destroy(source, this.#image(), signal);
     return { ...build, ref: String(target), image: "standard", current: true };
   }
 
@@ -2689,8 +2703,8 @@ export class ProxmoxLxcBackend implements Backend {
     if (configured || !ours || !this.#inRange(vmid)) throw new Error(`CT ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
     await this.#forget(vmid);
     // A captured build is protected, as templates are.
-    if (config.protection) await api.configure(vmid, { delete: ["protection"] }, signal);
-    await api.destroy(vmid, signal);
+    if (config.protection) await this.#owned(api).writeOn(vmid, this.#image(), config, { delete: ["protection"] }, signal);
+    await this.#owned(api).destroy(vmid, this.#image(), signal);
     this.#imageBoxes.delete(vmid);
   }
 
@@ -2703,21 +2717,30 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(guest.ref);
     const installId = this.#context.installId;
-    await api.configure(vmid, { hostname: box.name, description: describe(box, installId) }, signal);
-    await this.#retag(api, vmid, (tags) => withStartTag(boxTags(box, installId, templateFromTags(tags)), tags.includes(START_TAG)), signal);
+    const was = eitherOwner(this.#boxOf(guest), boxOwner(installId, box.boxId));
+    await this.#owned(api).configure(vmid, was, { hostname: box.name, description: describe(box, installId) }, signal);
+    await this.#retag(api, vmid, was, (tags) => withStartTag(boxTags(box, installId, templateFromTags(tags)), tags.includes(START_TAG)), signal);
     // A spare's low CPU weight goes back as a box takes it (#888).
-    await this.#settle(api, vmid, signal);
+    await this.#settle(api, vmid, boxOwner(installId, box.boxId), signal);
     if (from !== box.name) await this.#name(vmid, box.name, signal, from);
   }
 
   /** Puts back the CPU weight a box's guest had lowered while it started, as the sweep asks for a ready box (#888). */
   async settle(guest: Guest, signal?: AbortSignal): Promise<void> {
-    await settle(await this.client(), this.#vmid(guest), signal);
+    await this.#settleWeight(await this.client(), this.#vmid(guest), this.#boxOf(guest), signal);
+  }
+
+  async #settleWeight(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
+    const owned = this.#owned(api);
+    const config = await owned.read(vmid, owner, signal);
+    if (!parseTags(config.tags).includes(START_TAG)) return;
+    if (Number(config.cpuunits) === START_CPUUNITS) await owned.writeOn(vmid, owner, config, { delete: ["cpuunits"] }, signal);
+    await owned.configure(vmid, owner, (now) => ({ tags: withStartTag(parseTags(now.tags), false) }), signal);
   }
 
   /** settle() for an acquire or a claim: a weight not put back now is put back by the sweep. */
-  async #settle(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
-    await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
+  async #settle(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
+    await this.#settleWeight(api, vmid, owner, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
   }
 
   /** Names a claimed warm guest, or one named `from`, after its box inside. A failure is logged, and leaves the guest's name as it was. */
@@ -3090,24 +3113,9 @@ export class ProxmoxLxcBackend implements Backend {
     throw new BackendError("no_capacity", answer.is === "refused" ? `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${answer.why}. bb-box released the guest; nothing else changed.` : notAnsweredWords(api.node, answer));
   }
 
-  async #mustOwn(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const config = await this.#guestConfig(api, vmid, signal);
-    if (!config || !ownedBy(config, owner)) throw new NoLongerOurs(noLongerOursWords(vmid, owner, config));
-    return config;
-  }
-
   async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    for (let tries = 1; ; tries++) {
-      const config = await this.#mustOwn(api, vmid, owner, signal);
-      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not write its GPU marker.`);
-      try {
-        await api.configure(vmid, { tags: withMarker(parseTags(config.tags), marker), digest: config.digest }, signal);
-        this.#written.set(vmid, Math.max(this.#written.get(vmid) ?? 0, marker.generation));
-        return;
-      } catch (error) {
-        if (!(error instanceof ProxmoxError && error.changedMeanwhile) || tries >= RETAG_TRIES) throw error;
-      }
-    }
+    await this.#owned(api).configure(vmid, owner, (config) => ({ tags: withMarker(parseTags(config.tags), marker) }), signal);
+    this.#written.set(vmid, Math.max(this.#written.get(vmid) ?? 0, marker.generation));
   }
 
   async #answered(api: Proxmox, vmid: number, marker: ClaimMarker, signal?: AbortSignal): Promise<{ readonly view: CardsView; readonly granted: boolean; readonly answer: MarkAnswer }> {
@@ -3142,7 +3150,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #gateStart(api: Proxmox, vmid: number, owner: GuestOwner, signal?: AbortSignal, notStartedWords = (why: string) => `Container ${vmid} was not started: ${why} It is stopped, with its disk as it was.`): Promise<StartGate> {
-    const marker = claimMarkerOf(parseTags((await this.#mustOwn(api, vmid, owner, signal)).tags));
+    const marker = claimMarkerOf(parseTags((await this.#owned(api).read(vmid, owner, signal)).tags));
     if (!marker || marker.part === "none") return UNGATED;
     await this.#settled(api);
     const notStarted = (why: string) => new Error(notStartedWords(why));
@@ -3328,14 +3336,14 @@ export class ProxmoxLxcBackend implements Backend {
           kept.set(flavour, count + 1);
           continue;
         }
-        await api.configure(guest.vmid, { tags: [TAG, installTag(this.#context.installId), RETIRED] }, signal);
+        await this.#owned(api).configure(guest.vmid, warmOwner(this.#context.installId), { tags: [TAG, installTag(this.#context.installId), RETIRED] }, signal);
         out.push(guest.vmid);
       }
       return out;
     });
     for (const vmid of retired) {
       await this.#forget(vmid);
-      await api.destroy(vmid, signal).catch((error) => this.#context.logError("retire a warm box", error));
+      await this.#owned(api).destroy(vmid, warmOwner(this.#context.installId), signal).catch((error) => this.#context.logError("retire a warm box", error));
     }
 
     const short: WarmShortfall[] = [];
@@ -3393,17 +3401,19 @@ export class ProxmoxLxcBackend implements Backend {
       if (placed) placed.reservation.vmid = vmid;
       reservationsOn(this.#cardKey(api)).made(vmid);
       // At the template's size: a claim sets the box's. A low CPU weight until a box takes it and it is ready (#888).
-      const low = startsLow(await api.config(vmid, signal));
-      await api.configure(vmid, { ...this.#settings(null, vmid), ...(low ? LOW : {}) }, signal);
+      const warmGuest = warmOwner(this.#context.installId);
+      const made = await this.#owned(api).read(vmid, warmGuest, signal);
+      const low = startsLow(made);
+      await this.#owned(api).writeOn(vmid, warmGuest, made, { ...this.#settings(null, vmid), ...(low ? LOW : {}) }, signal);
       const asked: ClaimMarker | null = placed ? { part: "shared", card: placed.card.uuid, generation: nextGeneration(placed.lines, vmid, 0, this.#written.get(vmid) ?? 0) } : null;
       const marked = asked ? [markerTag(asked)] : [];
-      await api.configure(vmid, { tags: [...withStartTag(tags(FILLING), low), ...marked] }, signal);
+      await this.#owned(api).configure(vmid, warmGuest, { tags: [...withStartTag(tags(FILLING), low), ...marked] }, signal);
       if (asked && placed) {
         const answer = await this.#askHelper(api, vmid, asked, signal);
         if (answer.is === "refused") throw new Error(`The host's GPU helper on ${api.node} refused ${cardName(placed.card)} for a warm linux-desktop box, as ${answer.why}, so bb-box released it.`);
         if (answer.is !== "granted") throw new Error(notAnsweredWords(api.node, answer));
       }
-      await api.start(vmid, signal);
+      await this.#owned(api).start(vmid, warmGuest, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       if (offer.kind.capabilities.gpu) {
         const display = await this.#displayMode(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
@@ -3413,13 +3423,13 @@ export class ProxmoxLxcBackend implements Backend {
           throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);
         }
       }
-      await api.configure(vmid, { tags: [...withStartTag(tags(WARM), low), ...marked] }, signal);
+      await this.#owned(api).configure(vmid, warmGuest, { tags: [...withStartTag(tags(WARM), low), ...marked] }, signal);
       reservationsOn(this.#cardKey(api)).settle(placed?.reservation ?? null, this.#now());
     } catch (error) {
       reservationsOn(this.#cardKey(api)).drop(placed?.reservation ?? null);
       if (vmid !== null) {
         await this.#forget(vmid);
-        await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));
+        await this.#owned(api).destroy(vmid, warmOwner(this.#context.installId)).catch((cause) => this.#context.logError("release a failed warm box", cause));
       }
       throw error;
     } finally {

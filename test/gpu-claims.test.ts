@@ -5,7 +5,8 @@ import { CardReservations, cardsView, loadOf, nextGeneration, outstandingRequest
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
-import { marker } from "./gpu-helper/node.ts";
+import { marker, pciOf } from "./gpu-helper/node.ts";
+import { parseTags } from "../src/backends/proxmox/api.ts";
 
 const A = CARD_A.uuid;
 const B = CARD_B.uuid;
@@ -665,4 +666,82 @@ test("071 unit 5, final review: a moved box started again while it runs keeps th
   const second = await backend.start(guest, signal());
   assert.equal(first?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`);
   assert.equal(second?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`, "the second start, of a running box, names card 1 too");
+});
+
+test("071 unit 5, go review N1: an acquire whose guest is replaced by another install's as it writes the labels and marker, or as that write fails, neither labels, marks, starts nor deletes the replacement", async () => {
+  for (const stage of ["tags", "failed-tags"] as const) {
+    const bridge = new ClaimsBridge();
+    const backend = bridge.backend({ templates: `9001 GPU-${A}` });
+    let replaced: number | null = null;
+    bridge.proxmox.intercept = (call) => {
+      const vmid = /\/lxc\/(\d+)\/config$/.exec(call.path);
+      if (replaced === null && call.method === "PUT" && vmid && call.params.tags?.includes("gpu.")) {
+        replaced = Number(vmid[1]);
+        bridge.desktop(replaced, CARD_B, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL });
+        if (stage === "failed-tags") throw new Error("the write failed as the guest was replaced");
+      }
+      return undefined;
+    };
+    await assert.rejects(backend.acquire(box(), null, hooks(), signal()), stage === "tags" ? /is no longer box bx\d+ of this install: its config names box bx\d+ of install 9zz2/ : /the write failed as the guest was replaced/, stage);
+    assert.ok(replaced !== null, stage);
+    const other = bridge.proxmox.guests.get(replaced!);
+    assert.ok(other, `${stage}: the replacement is not deleted`);
+    assert.ok(parseTags(other.config.tags).includes(`install.${SECOND_INSTALL}`), `${stage}: its labels are its own: ${other.config.tags}`);
+    assert.deepEqual(bridge.gpuTags(replaced!), [], `${stage}: it has no marker of bb-box's`);
+    assert.equal(other.status, "stopped", `${stage}: it is not started`);
+    bridge.pass();
+    assert.deepEqual(bridge.node.guestWrites(), [], `${stage}: and the helper writes nothing to it`);
+    assert.equal(bridge.cardOf(replaced!), CARD_B, stage);
+  }
+});
+
+test("071 unit 5, go review N1: a warm desktop's fill whose guest is replaced by another install's as it writes its marker neither marks, starts nor deletes the replacement", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend({ warm: 1, templates: `9001 GPU-${A}` });
+  let replaced: number | null = null;
+  bridge.proxmox.intercept = (call) => {
+    const vmid = /\/lxc\/(\d+)\/config$/.exec(call.path);
+    if (replaced === null && call.method === "PUT" && vmid && call.params.tags?.includes("gpu.")) {
+      replaced = Number(vmid[1]);
+      bridge.desktop(replaced, CARD_B, box("linux-desktop", "other-owl"), SECOND_INSTALL, { pool: POOL });
+    }
+    return undefined;
+  };
+  await backend.maintain(signal()).catch(() => undefined);
+  assert.ok(replaced !== null);
+  const other = bridge.proxmox.guests.get(replaced!);
+  assert.ok(other, "the replacement is not deleted");
+  assert.ok(parseTags(other.config.tags).includes(`install.${SECOND_INSTALL}`), other.config.tags);
+  assert.deepEqual(bridge.gpuTags(replaced!), []);
+  assert.equal(other.status, "stopped");
+  bridge.pass();
+  assert.deepEqual(bridge.node.guestWrites(), []);
+});
+
+test("071 unit 5, go review N2: a card the helper cannot map to its device nodes takes no box, and a ledger lost meanwhile is rebuilt once the mapping is back, so the running whole box keeps its card", async () => {
+  const bridge = new ClaimsBridge();
+  bridge.desktop(7001, CARD_A, box("linux-desktop", "whole-owl"), INSTALL, { marker: marker("whole", CARD_A, 1), running: true });
+  bridge.pass();
+  const loseMapping = () => {
+    rmSync(bridge.node.file(`proc/driver/nvidia/gpus/${pciOf(CARD_A)}/information`));
+    rmSync(bridge.node.file(`dev/dri/by-path/pci-${pciOf(CARD_A)}-card`));
+    rmSync(bridge.node.file(`dev/dri/by-path/pci-${pciOf(CARD_A)}-render`));
+  };
+  loseMapping();
+  bridge.pass();
+  const backend = bridge.backend({ templates: `9001 GPU-${A}\n9002 GPU-${B}` });
+  bridge.answering = false;
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /The GPU helper on pve cannot map card 0 to its device nodes, so bb-box cannot tell which guests hold it\./);
+  bridge.answering = true;
+  bridge.node.setCards([CARD_A, CARD_B]);
+  rmSync(bridge.node.ledgerPath());
+  loseMapping();
+  bridge.pass();
+  bridge.node.setCards([CARD_A, CARD_B]);
+  bridge.pass();
+  const lone = bridge.backend({ templates: `9001 GPU-${A}` });
+  await assert.rejects(lone.acquire(box(), null, hooks(), signal()), /card 0 is CT 7001's whole card/);
+  assert.ok(bridge.node.reportLines().includes(`claim 7001 g1 granted whole ${A}`), bridge.node.reportLines().join("\n"));
+  assert.equal(bridge.proxmox.guests.get(7001)!.status, "running");
+  assert.deepEqual(bridge.node.guestWrites(), []);
 });

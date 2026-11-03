@@ -319,9 +319,9 @@ nodes, by writing a tag. That exposes NVIDIA's kernel driver to that guest.
   write and answer it would give. If that would write any guest, or the
   preview is incomplete (it read no card, has an error line, could not read
   every guest, or `nvidia-smi` gave no full reading of every card the driver
-  lists, or did not exit normally with status 0), writes stay off and
-  nothing changes: each such write must be explained, and each error put
-  right, first. On a pve-container
+  lists, or did not exit normally with status 0, or a card's device nodes
+  could not be found), writes stay off and nothing changes: each such write
+  must be explained, and each error put right, first. On a pve-container
   this release was not tested on, it is refused too. Then it
   writes `writes on` in `gpu.conf` and runs both units without `--dry-run`,
   which it sets together, restarts the helper and waits for its report to

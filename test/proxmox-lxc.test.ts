@@ -730,26 +730,26 @@ test("the doctor's GPU helper check reads what real helpers report: a dry run wa
   const dryRun = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })));
   assert.deepEqual(verdict(dryRun("proxmox.gpu-helper")), [
     "warn",
-    "bb-box-gpu 0.3.2 on pve runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, bb-box moves no box to another card, and a stopped box starts on the card its lines name (071).",
+    "bb-box-gpu 0.3.3 on pve runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, bb-box moves no box to another card, and a stopped box starts on the card its lines name (071).",
     "Once bb box gpu mark has marked this install's guests and a day of dry run shows no write the helper would make, run host/setup-gpu.sh --writes on --check, then host/setup-gpu.sh --writes on, as root on pve.",
   ]);
   assert.equal(dryRun("proxmox.gpu-report")?.status, "ok");
   assert.equal(verdict((await doctorOnReport(helperReport(new FakeNode({ writes: "on" }), ["--once", "--dry-run"])))("proxmox.gpu-helper"))?.[0], "warn", "--dry-run keeps writes off whatever gpu.conf says");
 
   const writing = await doctorOnReport(helperReport(new FakeNode({ writes: "on" })));
-  assert.deepEqual(verdict(writing("proxmox.gpu-helper")), ["ok", "bb-box-gpu 0.3.2 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on.", null]);
+  assert.deepEqual(verdict(writing("proxmox.gpu-helper")), ["ok", "bb-box-gpu 0.3.3 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on.", null]);
 
   const untested = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pveContainer: "6.1.15" })));
   assert.deepEqual(verdict(untested("proxmox.gpu-helper")), [
     "warn",
-    "bb-box-gpu 0.3.2 on pve was not tested on pve-container 6.1.15, so it changes no guest: it runs as with writes off, and bb-box moves no box to another card.",
+    "bb-box-gpu 0.3.3 on pve was not tested on pve-container 6.1.15, so it changes no guest: it runs as with writes off, and bb-box moves no box to another card.",
     "Run host/setup-gpu.sh from a BB Box release tested on pve-container 6.1.15, as root on pve.",
   ]);
 
   const elsewhere = await doctorOnReport(helperReport(new FakeNode({ writes: "on", pools: ["team", "lab"] })));
-  assert.deepEqual(verdict(elsewhere("proxmox.gpu-helper")), ["fail", "bb-box-gpu 0.3.2 on pve serves pools team and lab, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  assert.deepEqual(verdict(elsewhere("proxmox.gpu-helper")), ["fail", "bb-box-gpu 0.3.3 on pve serves pools team and lab, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
   const nowhere = await doctorOnReport(helperReport(new FakeNode({ writes: "off", pools: [] })));
-  assert.equal(verdict(nowhere("proxmox.gpu-helper"))?.[1], "bb-box-gpu 0.3.2 on pve serves no pool, not this install's pool bbbox.");
+  assert.equal(verdict(nowhere("proxmox.gpu-helper"))?.[1], "bb-box-gpu 0.3.3 on pve serves no pool, not this install's pool bbbox.");
 });
 
 test("the doctor's GPU helper check fails a report 3 minutes old and a helper of another protocol, with each fix; the GPU report's fix names the helper where it writes the report (071 unit 3)", async () => {
@@ -773,7 +773,7 @@ test("the doctor's GPU helper check fails a report 3 minutes old and a helper of
   const unreadable = await doctorOnReport(withHelper("helper bb-box-gpu 0.1.0 protocol broken"), at);
   assert.deepEqual(verdict(unreadable("proxmox.gpu-helper")), ["fail", "VM 9190's report has a helper line this BB Box cannot read.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."], "a helper line with no protocol is not taken for no helper (Astra 5)");
   const many = await doctorOnReport(notes.replace(/^(\s*)serves .*$/m, "$1serves p1 p2 p3 and 40 more"), at);
-  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.3.2 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.3.3 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
 });
 
 test("the doctor's GPU helper check fails a report dated a minute or more ahead of BB's clock, as a stopped helper could pass for fresh until then (071 unit 3, Astra 4)", async () => {
@@ -786,7 +786,7 @@ test("the doctor's GPU helper check fails a report dated a minute or more ahead 
     "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.",
   ]);
   assert.equal(verdict((await doctorOnReport(notes, at - 60_000))("proxmox.gpu-helper"))?.[0], "fail");
-  assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.3.2 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
+  assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.3.3 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
 });
 
 test("with no GPU helper, the doctor reads as before: no helper check beside the timer's report, none with no report VM, and none for an install without GPU desktops (071 unit 3)", async () => {
@@ -883,8 +883,8 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   const puts = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
   assert.deepEqual(
     puts.map((call) => Object.keys(call.params).sort()),
-    [["cores", "cpuunits", "delete", "memory", "net0", "onboot"], ["tags"], ["delete"], ["tags"]],
-    "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888)",
+    [["cores", "cpuunits", "delete", "digest", "memory", "net0", "onboot"], ["digest", "tags"], ["delete", "digest"], ["digest", "tags"]],
+    "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888); each on the digest of the config bb-box checked",
   );
   assert.equal(puts[0]!.params.cpuunits, "10", "a tenth of the default weight while it starts");
   assert.ok(parseTags(String(puts[1]!.params.tags)).includes("bb-box-starting"));
@@ -2255,9 +2255,11 @@ test("a spare keeps a low CPU weight until a box takes it, and held() says so, f
   assert.ok(!parseTags(vm.config.tags).includes("bb-box-starting"));
   assert.equal((await backend.held()).find((each) => each.ref === spare.ref)?.settling, undefined);
 
-  // settle() for the sweep leaves a guest bb-box did not lower as it is.
+  // settle() for the sweep, with the guest as held() reads it now, leaves a guest bb-box did not lower as it is.
   vm.config.cpuunits = "10";
-  await backend.settle!(spare, signal());
+  await assert.rejects(backend.settle!(spare, signal()), /is no longer box box_\d+ of this install/, "the spare's record names the box before relabel, which the guest no longer does");
+  const taken = (await backend.held()).find((each) => each.ref === spare.ref)!;
+  await backend.settle!(taken, signal());
   assert.equal(vm.config.cpuunits, "10", "without the tag, a weight of 10 is someone's own");
 });
 
