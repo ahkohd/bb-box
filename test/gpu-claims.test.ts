@@ -506,15 +506,13 @@ test("071 unit 5, Opus 1: the start gate places a box only on a card a desktop t
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
 
-test("071 unit 5, Opus 3 and go review 4 N4: a helper on a pve-container its release was not tested on runs as with writes off and only stops GPU desktops: one is made and marked but not started, a stopped one is not started and a running one is stopped; boxes with no GPU start, stop and are released through the API; the doctor fails, naming the version", async () => {
+test("071 unit 5, Opus 3, go review 4 N4 and go review 5 F1: a helper on a pve-container its release was not tested on runs as with writes off and only stops GPU desktops: none is made, a stopped one is not started and a running one is stopped; boxes with no GPU start, stop and are released through the API; the doctor fails, naming the version", async () => {
   const bridge = new ClaimsBridge({ pveContainer: "6.1.15" });
   assert.match(bridge.node.reportLines().find((line) => line.startsWith("helper "))!, / writes off pve-container 6\.1\.15 untested$/);
   const backend = bridge.backend({ perGpu: 1 });
   const untested = /^Error: The GPU helper on pve did not (start|delete) CT \d+, as the helper was not tested on this node's pve-container, so it only stops guests on it \(6\.1\.15\)\.$/;
-  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), untested);
-  const made = [...bridge.proxmox.guests.values()].filter((guest) => guest.vmid >= 7000 && guest.vmid < 7050);
-  assert.ok(made.length === 1 && made[0]!.status === "stopped", "the GPU desktop made is not started; its delete is refused too, so it stays for bb-box to clear once the helper is tested");
-  assert.ok(bridge.node.reportLines().includes(`claim ${made[0]!.vmid} g1 granted shared ${A}`), "it was marked and granted");
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /^BackendError: The GPU helper on pve, bb-box-gpu \S+, was not tested on pve-container 6\.1\.15, so it starts no GPU desktop there, and bb-box makes none\./);
+  assert.deepEqual([...bridge.proxmox.guests.keys()].filter((vmid) => vmid >= 7000 && vmid < 7050), [], "no GPU desktop is made");
   const owl = box("linux-desktop", "swift-owl");
   bridge.desktop(7047, CARD_A, owl, INSTALL, { marker: marker("shared", CARD_A, 1) });
   const running = box("linux-desktop", "busy-owl");
@@ -1186,4 +1184,97 @@ test("071 unit 5, go review 4 N6: a warm desktop's fill starts only the warm gue
   assert.equal(bridge.proxmox.guests.get(replaced!)!.status, "stopped", "the other warm guest is not started");
   assert.ok(!bridge.node.powerLog().some((line) => line === `start ${replaced}`), bridge.node.powerLog().join(" | "));
   assert.ok(bridge.node.reportLines().some((line) => new RegExp(`^power ${replaced} n[0-9a-f]+ start refused not-the-box ${INSTALL}/warm-fedcba987654$`).test(line)), bridge.node.reportLines().join("\n"));
+});
+
+const quiet: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+
+function untestedFrom(bridge: ClaimsBridge, version: string): void {
+  bridge.node.write("pve-container-version", `${version}\n`);
+  bridge.pass();
+}
+
+test("071 unit 5, go review 5 F1: on a pve-container the helper was not tested on, a GPU desktop acquire and a warm fill are refused before the clone, with words, and leave no guest; a box with no GPU is still made", async () => {
+  const bridge = new ClaimsBridge({ pveContainer: "6.1.15" });
+  const backend = bridge.backend({ warm: 1, templates: `9001 GPU-${A}` });
+  const clones = () => bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
+  const words = /^BackendError: The GPU helper on pve, bb-box-gpu \S+, was not tested on pve-container 6\.1\.15, so it starts no GPU desktop there, and bb-box makes none\. Install a bb-box-gpu release newer than \S+ that was tested on pve-container 6\.1\.15: run host\/setup-gpu\.sh from that BB Box release, as root on pve\.$/;
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), words);
+  assert.equal(clones(), 0, "nothing is cloned for the desktop");
+  await backend.maintain(signal());
+  assert.equal(clones(), 0, "nor for a warm desktop");
+  assert.ok(backend.short.some((pools) => pools.some((pool) => pool.kinds.includes("linux-desktop") && /was not tested on pve-container 6\.1\.15/.test(pool.reason))), JSON.stringify(backend.short));
+  assert.deepEqual([...bridge.proxmox.guests.keys()].filter((vmid) => vmid >= 7000 && vmid < 7050), [], "no guest is left");
+  const plain = await backend.acquire(box("linux"), null, hooks(), signal());
+  assert.equal(bridge.proxmox.guests.get(Number(plain.ref))!.status, "running", "a box with no GPU is made, through the API");
+});
+
+test("071 unit 5, go review 5 F1: a GPU desktop bb-box cloned and never started is deleted through the API when the node's pve-container turns untested before its start, after a restart too; a warm fill left stopped from before is swept the same way; a GPU desktop that ran is not", async () => {
+  const bridge = new ClaimsBridge();
+  const storage = new MemoryStorage();
+  let flipped: number | null = null;
+  bridge.proxmox.intercept = (call) => {
+    const put = /\/lxc\/(\d+)\/config$/.exec(call.path);
+    if (flipped === null && call.method === "PUT" && put && /gpu\.shared\./.test(call.params.tags ?? "")) {
+      flipped = Number(put[1]);
+      bridge.beforePass = () => bridge.node.write("pve-container-version", "6.1.15\n");
+    }
+    return undefined;
+  };
+  await assert.rejects(bridge.backend({ storage, templates: `9001 GPU-${A}` }).acquire(box(), null, hooks(), signal()), /did not start CT \d+, as the helper was not tested on this node's pve-container, so it only stops guests on it \(6\.1\.15\)/);
+  assert.ok(flipped !== null);
+  assert.ok(!bridge.proxmox.guests.has(flipped!), "the clone it never started is deleted");
+  assert.ok(bridge.proxmox.calls.some((call) => call.method === "DELETE" && call.path.endsWith(`/lxc/${flipped}`)), "through the API");
+  assert.deepEqual(bridge.node.powerLog(), [], "the helper started and deleted nothing");
+
+  const again = new ClaimsBridge();
+  const kept = new MemoryStorage();
+  let left: number | null = null;
+  again.proxmox.intercept = (call) => {
+    const put = /\/lxc\/(\d+)\/config$/.exec(call.path);
+    if (call.method === "PUT" && put && /gpu\.shared\./.test(call.params.tags ?? "")) {
+      left = Number(put[1]);
+      throw new Error("the marker write failed");
+    }
+    if (left !== null && call.method === "PUT" && put && Number(put[1]) === left && /bb-power\.delete\./.test(call.params.tags ?? "")) throw new Error("bb-box stopped before its cleanup");
+    return undefined;
+  };
+  await assert.rejects(again.backend({ storage: kept, templates: `9001 GPU-${A}` }).acquire(box(), null, hooks(), signal()), /the marker write failed/);
+  assert.ok(left !== null && again.proxmox.guests.has(left), "the clone is left, never started, as when bb-box stopped before its cleanup");
+  again.proxmox.intercept = undefined;
+  const fill = 7040;
+  again.desktop(fill, CARD_A, box("linux-desktop", "fill-owl"), INSTALL, { description: `bb-box warm desktop\ninstall ${INSTALL}\nwarm 0a0b0c0d0e0f`, tags: ["bb-box", `install.${INSTALL}`, "filling", "template.9001", marker("shared", CARD_A, 1)] });
+  const ran = box("linux-desktop", "ran-owl");
+  again.desktop(7041, CARD_A, ran, INSTALL, { marker: marker("shared", CARD_A, 1) });
+  untestedFrom(again, "6.1.15");
+  const restarted = again.backend({ storage: kept, templates: `9001 GPU-${A}` });
+  const held = await restarted.held(signal());
+  for (const vmid of [left!, fill]) {
+    const guest = held.find((each) => each.ref === String(vmid));
+    assert.ok(guest, `CT ${vmid} is listed for the sweep`);
+    await restarted.release(guest, quiet, signal());
+    assert.ok(!again.proxmox.guests.has(vmid), `CT ${vmid}, never started, is deleted by the sweep after a restart`);
+    assert.ok(again.proxmox.calls.some((call) => call.method === "DELETE" && call.path.endsWith(`/lxc/${vmid}`)), `CT ${vmid} through the API`);
+  }
+  await assert.rejects(restarted.release(again.stoppedGuest(7041, ran, 9001), quiet, signal()), /did not delete CT 7041, as the helper was not tested on this node's pve-container, so it only stops guests on it \(6\.1\.15\)/);
+  assert.ok(again.proxmox.guests.has(7041), "a GPU desktop bb-box has no record of leaving unstarted is kept");
+  assert.deepEqual(again.node.powerLog(), []);
+});
+
+test("071 unit 5, go review 5 F2: the doctor refreshes what bb-box keeps of the node's helper, so once a downgrade to bb-box-gpu 0.2.0 shows in the report, a report with no helper line no longer stops a box", async () => {
+  const bridge = new ClaimsBridge();
+  const storage = new MemoryStorage();
+  const plainOwl = box("linux", "plain-owl");
+  bridge.plain(7003, plainOwl, INSTALL);
+  bridge.pass();
+  const backend = bridge.backend({ storage });
+  await backend.start(plainGuest(7003, plainOwl), signal());
+  assert.deepEqual(bridge.node.powerLog(), ["start 7003"]);
+  bridge.answering = false;
+  const report = bridge.proxmox.guests.get(9190)!.config;
+  report.description = report.description!.replace(/helper bb-box-gpu \S+ protocol 1 .*$/m, "helper bb-box-gpu 0.2.0 protocol 1 writes off pve-container 6.1.14 tested");
+  await bridge.backend({ storage }).doctor();
+  bridge.timerReport();
+  await bridge.backend({ storage }).stop(plainGuest(7003, plainOwl), signal());
+  assert.equal(bridge.proxmox.guests.get(7003)!.status, "stopped");
+  assert.ok(bridge.proxmox.calls.some((call) => call.method === "POST" && call.path.endsWith("/lxc/7003/status/stop")), "through the API, as the doctor read bb-box-gpu 0.2.0");
 });

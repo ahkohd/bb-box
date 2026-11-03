@@ -550,6 +550,7 @@ const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 const POWER_ON_THE_NODE_FROM = [0, 4, 0];
 const WARM_BOUND_FROM = [0, 4, 1];
 const POWER_NODES = "gpu-helper-power";
+const UNSTARTED = "unstarted-clones";
 
 interface PowerNode {
   readonly version: string;
@@ -754,6 +755,7 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #imageBoxes = new Set<number>();
   readonly #sightings = new Map<number, { readonly words: string; readonly at: number }>();
   #powerNodes: Record<string, PowerNode> | undefined;
+  #unstarted: Record<string, Record<string, string>> | undefined;
   #settling: Promise<void> | null = null;
   readonly #written = new Map<number, number>();
   readonly #snapshots: ProxmoxSnapshotting;
@@ -1424,6 +1426,8 @@ export class ProxmoxLxcBackend implements Backend {
           let away: number | null = null;
           const cloning = performance.now();
           try {
+            const untested = offer.kind.capabilities.gpu ? await this.#untestedHere(api, signal) : null;
+            if (untested) throw new BackendError("no_capacity", untested);
             const guests = await api.listPool(this.#config.proxmox.pool, signal);
             const view = !box.from && offer.kind.capabilities.gpu ? await this.#cardsView(api, signal) : NO_CARDS;
             if (box.from) {
@@ -2010,6 +2014,7 @@ export class ProxmoxLxcBackend implements Backend {
           const fix = status(helper ? "bb-box-gpu" : "bb-box-gpu-memory.timer");
           const unnamed = report ? gpus.filter((gpu) => !report.gpus.some((reported) => namesGpu(gpu, reported))) : [];
           if (vm && helper) {
+            if (helper.version) await this.#rememberPower(this.#cardKey(api), helper.version);
             const verdict = judgeGpuHelper(helper, { node, pool, vmid: vm.vmid, ageMs: report ? this.#now() - report.at : null, ago });
             checks.push({ id: GPU_HELPER[0], name: GPU_HELPER[1], ...verdict });
             if (verdict.status === "fail") skip(GPU_MIGRATION);
@@ -2260,8 +2265,9 @@ export class ProxmoxLxcBackend implements Backend {
 
   #owned(api: Proxmox): OwnedGuests {
     return new OwnedGuests(api, (vmid, words) => this.#sighted(vmid, words), {
-      helperFor: (vmid, config, signal) => this.#powerHelper(api, vmid, config, signal),
+      helperFor: (vmid, config, action, signal) => this.#powerHelper(api, vmid, config, action, signal),
       ask: (vmid, action, owner, helper, signal) => this.#askPower(api, vmid, action, owner, helper, signal),
+      acted: (vmid, action) => (action === "start" || action === "delete" ? this.#dropUnstarted(api, vmid) : Promise.resolve()),
     });
   }
 
@@ -2270,7 +2276,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context.logError("a guest that is not this install's", new Error(words));
   }
 
-  async #powerHelper(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<string | null> {
+  async #powerHelper(api: Proxmox, vmid: number, config: Record<string, unknown>, action: PowerAction, signal?: AbortSignal): Promise<string | null> {
     const marked = claimMarkerOf(parseTags(config.tags)) !== null;
     const gpu = marked || gpuDeviceLines(config).length > 0;
     if (!this.#inRange(vmid) && (!gpu || isTemplate(config))) return null;
@@ -2295,7 +2301,10 @@ export class ProxmoxLxcBackend implements Backend {
       if (ageMs === null) throw new Error(`The GPU helper on ${api.node} has written no time in VM ${vm.vmid}'s report, and ${only}`);
       if (ageMs >= GPU_HELPER_FRESH_MS) throw new Error(`The GPU helper on ${api.node} last reported ${ago(ageMs)}, in VM ${vm.vmid}, and ${only}`);
       if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs, and ${only}`);
-      if (helper.tested === false && atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM) && (await this.#plainGuest(api, vmid, config, signal))) return null;
+      if (helper.tested === false && atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM)) {
+        if (await this.#plainGuest(api, vmid, config, signal)) return null;
+        if (action === "delete" && (await this.#unusedClone(api, vmid, config, signal))) return null;
+      }
       return helper.version;
     }
     const why = unread !== null ? `bb-box cannot read the GPU helper's report on ${api.node} (${message(unread)})` : vm ? `VM ${vm.vmid}'s report has no helper line bb-box can read, as while host/setup-gpu.sh restarts the helper` : `the token can read no VM named ${GPU_REPORT_VM} on ${api.node}`;
@@ -2306,6 +2315,47 @@ export class ProxmoxLxcBackend implements Backend {
       throw new Error(`CT ${vmid} was not acted on: ${why}, and bb-box starts, stops and deletes a guest with a GPU marker or a GPU's device lines only while it can read the helper. Try again in a minute. ${throughIt}`);
     }
     return null;
+  }
+
+  async #unstartedClones(): Promise<Record<string, Record<string, string>>> {
+    this.#unstarted ??= (await this.#context.storage.get<Record<string, Record<string, string>>>(UNSTARTED).catch((error: unknown) => {
+      this.#context.logError("read the clones bb-box has not started", error);
+      return null;
+    })) ?? {};
+    return this.#unstarted;
+  }
+
+  async #cloning(api: Proxmox, vmid: number, description: string): Promise<void> {
+    const all = await this.#unstartedClones();
+    const key = this.#cardKey(api);
+    this.#unstarted = { ...all, [key]: { ...all[key], [String(vmid)]: description } };
+    await this.#context.storage.set(UNSTARTED, this.#unstarted).catch((error: unknown) => this.#context.logError("record a clone bb-box has not started", error));
+  }
+
+  async #dropUnstarted(api: Proxmox, vmid: number): Promise<void> {
+    const all = await this.#unstartedClones();
+    const key = this.#cardKey(api);
+    if (all[key]?.[String(vmid)] === undefined) return;
+    const { [String(vmid)]: _started, ...rest } = all[key];
+    this.#unstarted = { ...all, [key]: rest };
+    await this.#context.storage.set(UNSTARTED, this.#unstarted).catch((error: unknown) => this.#context.logError("record that bb-box started or deleted a clone", error));
+  }
+
+  async #unusedClone(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
+    const recorded = (await this.#unstartedClones())[this.#cardKey(api)]?.[String(vmid)];
+    const tags = parseTags(config.tags);
+    const filling = tags.includes(FILLING) && installFromTags(tags) === this.#context.installId && installFromDescription(config.description) === this.#context.installId;
+    if (!(recorded !== undefined ? recorded === config.description : filling)) return false;
+    return (await api.status(vmid, signal))?.status === "stopped";
+  }
+
+  async #untestedHere(api: Proxmox, signal?: AbortSignal): Promise<string | null> {
+    const vm = await api.vmNotes(GPU_REPORT_VM, signal).catch(() => null);
+    const helper = vm ? parseGpuHelper(vm.notes) : null;
+    if (!helper?.version || helper.tested !== false || !atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM)) return null;
+    const pool = this.#config.proxmox.pool;
+    if (helper.serves && !helper.serves.listed.includes(pool) && helper.serves.unlisted === 0) return null;
+    return `The GPU helper on ${api.node}, bb-box-gpu ${helper.version}, was not tested on pve-container ${helper.pveContainer}, so it starts no GPU desktop there, and bb-box makes none. Install a bb-box-gpu release newer than ${helper.version} that was tested on pve-container ${helper.pveContainer}: run host/setup-gpu.sh from that BB Box release, as root on ${api.node}.`;
   }
 
   async #plainGuest(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
@@ -2743,10 +2793,12 @@ export class ProxmoxLxcBackend implements Backend {
       try {
         await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
         await before(vmid);
+        await this.#cloning(api, vmid, description);
         await api.cloneLinked({ template, vmid, hostname, pool: this.#config.proxmox.pool, description }, signal);
         return vmid;
       } catch (error) {
         if (error instanceof ProxmoxError && error.alreadyExists) {
+          await this.#dropUnstarted(api, vmid);
           skipped.add(vmid);
           continue;
         }
@@ -3568,6 +3620,11 @@ export class ProxmoxLxcBackend implements Backend {
       const builds = await this.templateBuilds(api, guests, signal);
       const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === flavour && guest.status === "running").length;
       const filling = [...this.#filling.values()].filter((template) => this.#flavourOf(template) === flavour).length;
+      const untested = offer.kind.capabilities.gpu && target - ready - filling > 0 ? await this.#untestedHere(api, signal) : null;
+      if (untested) {
+        short.push({ kinds: FLAVOUR_KINDS[flavour].filter((kind) => this.#context.warm(kind) > 0), count: target, have: ready + filling, reason: untested });
+        continue;
+      }
       for (let missing = target - ready - filling; missing > 0; missing--) {
         signal.throwIfAborted();
         const room = await this.#room(api, offer, null, await api.listPool(pool, signal), [], { ready, target }, null, signal);

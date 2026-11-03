@@ -280,7 +280,7 @@ host/setup-gpu.sh --pool team        # serve another install's pool as well
 host/setup-gpu.sh --writes on --check  # what writes on would write, changing nothing
 host/setup-gpu.sh --writes on        # let the helper write guests' GPU device lines
 host/setup-gpu.sh --writes off       # a dry run again
-host/setup-gpu.sh --remove           # remove it, and put the timer back
+host/setup-gpu.sh --remove           # remove it, and put the timer back; refused from 0.4.0, see below
 ```
 
 Turning writes on lets anything that holds bb-box's token give any
@@ -341,6 +341,16 @@ nodes, by writing a tag. That exposes NVIDIA's kernel driver to that guest.
   it stops the helper. If the timer cannot write, as when `nvidia-smi`
   fails, the helper is left running and nothing is removed. It keeps
   `gpu.conf` and the ledger.
+- From bb-box-gpu 0.4.0 the helper starts, stops and deletes bb-box's
+  guests, and each BB that has read its report keeps that in its storage:
+  with the helper removed, such a BB starts, stops and releases none of its
+  boxes on that node. So `--remove` is refused while 0.4.0 or later is
+  installed, unless `--force` is given. The ways back are `--writes off`,
+  which stops the helper's writes but keeps it starting, stopping and
+  deleting guests, and `setup-gpu.sh --downgrade` from the BB Box release
+  with bb-box-gpu 0.2.0: each BB reads that version in the report at its
+  next doctor run or box action on the node, and uses Proxmox's API again.
+  Remove the helper only after that.
 - Whenever a run stops the helper, the timer is already running, so the
   report always has a writer, even if the run is killed. A run that is
   interrupted, by Ctrl-C or a dropped SSH session, or fails part way, says
@@ -598,7 +608,9 @@ Its fix is the `build.sh` command that rebuilds the template.
    Delete `/etc/systemd/system/bb-box-network.*`,
    `/usr/local/sbin/bb-box-network` and, if nothing else needs forwarding,
    `/etc/sysctl.d/90-bb-box.conf`.
-5. Remove the GPU memory report: with the GPU helper, first run
+5. Remove the GPU memory report: with the GPU helper, first go back to
+   bb-box-gpu 0.2.0 with `setup-gpu.sh --downgrade` from that BB Box
+   release, run each BB's doctor, then run that release's
    `host/setup-gpu.sh --remove`. Then `systemctl disable --now
    bb-box-gpu-memory.timer`, delete `/etc/systemd/system/bb-box-gpu-memory.*`
    and `/usr/local/sbin/bb-box-gpu-memory`, then

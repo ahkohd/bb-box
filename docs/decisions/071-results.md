@@ -2203,6 +2203,49 @@ smaller ones. Each fix has a test from the review's probes that fails on
   11 tests named for go review 4 fail on `b53a4f93`, its source and helper
   with these tests, and pass now. `u5-steps-test.sh` passes its 22 cases.
 
+### After go review 5
+
+Go review 5 of `19678ee8` said go for the node steps, on two conditions: no
+undo with `--remove`, and no pve-container upgrade on the node until F1 is
+fixed. These are the follow-ups, each with a test that fails on `000cd517`.
+
+- **F1: no GPU desktop left behind on an untested pve-container.** There the
+  helper only stops guests, so a GPU desktop's clone could be neither started
+  nor deleted. Now:
+  - An acquire of a GPU kind, with no warm guest to take, and a warm fill of
+    one, are refused before the clone, with words naming the version and the
+    helper release to install; the warm pool's shortfall says the same.
+  - bb-box keeps in its storage, by node, each clone it makes until its first
+    start, with the description it gave it. On an untested pve-container, a
+    delete of such a clone, still stopped and with that description, goes
+    through Proxmox's API with the ownership checks, marked or not, so a
+    clone caught by the version changing between that check and its start
+    is deleted. So is a warm guest of the install left stopped in `filling`,
+    a fill that never finished, as an untested pve-container left them
+    before. bb-box's sweep releases both, after a restart too.
+  - A GPU desktop that bb-box has no record of leaving unstarted is still
+    only stopped there.
+- **F2: the way back.** From bb-box-gpu 0.4.0 the helper starts, stops and
+  deletes the install's guests, and each BB that has read it keeps that, so
+  removing it would leave those BBs refusing every box's power on the node.
+  `setup-gpu.sh --remove` is now refused while 0.4.0 or later is installed,
+  unless given `--force`, and says the ways back: `--writes off`, which keeps
+  the helper's power, or `setup-gpu.sh --downgrade` from the release with
+  bb-box-gpu 0.2.0. A BB reads that version at its next box action on the
+  node or doctor run, which now also refreshes what it keeps, and uses the
+  API again. The setup README, `--help` and the node steps say so, and offer
+  `--remove` only after that.
+- **F3: the node steps' comparisons** compare only GPU guests, those with a
+  card's device lines or a gpu tag in either snapshot, and the watcher logs
+  changes of those only, so production's plain boxes coming, going,
+  starting and stopping do not fail them. `u5-steps-test.sh` checks it.
+- The test of an untested pve-container now expects no GPU desktop made.
+- Then, as root on a `linux` box, directly: `tsc` clean; the node suite,
+  3,634 tests, 3,339 passed, 0 failed, 295 skipped; vitest, 448 passed. The
+  4 tests named for go review 5 fail on `000cd517`,
+  its source and setup with these tests, and pass now. `u5-steps-test.sh`
+  passes its 26 cases.
+
 ### Every write to a guest
 
 `test/guest-writes.test.ts` enumerates these with TypeScript's checker: it
@@ -2372,6 +2415,11 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
 - A box with no GPU on an install that has never read the node's helper, as
   on its first contact with the node, uses the API until it first does, if
   the report is missing then.
+- A GPU desktop's clone that an untested pve-container left behind before
+  go review 5, made by an acquire rather than a warm fill, is not recognised
+  as never started: it stays stopped until a tested helper deletes it, or
+  it is deleted by hand. None can exist on a node whose pve-container was
+  held at a tested version.
 - Guests with no box ID other than warm guests, that is image boxes, held
   copies and earlier guests, are named in a request by install and marker
   generation only: a replacement would have to carry bb-box's request tag

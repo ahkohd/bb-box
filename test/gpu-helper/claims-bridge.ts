@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { after } from "node:test";
 import { ProxmoxLxcBackend } from "../../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../../src/backends/proxmox/api.ts";
-import type { BoxIdentity, Guest } from "../../src/backends/types.ts";
+import type { BoxIdentity, Guest, WarmShortfall } from "../../src/backends/types.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "../fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "../helpers.ts";
 import { boxTags, describe } from "../../src/backends/proxmox/owner.ts";
@@ -115,7 +115,7 @@ export class ClaimsBridge {
     if (this.answering) this.pass();
   }
 
-  backend(options: BackendOptions = {}): ProxmoxLxcBackend {
+  backend(options: BackendOptions = {}): ProxmoxLxcBackend & { readonly errors: string[]; readonly short: (readonly WarmShortfall[])[] } {
     const first = options.first ?? (options.install === SECOND_INSTALL ? 7050 : 7000);
     const config = lxcConfig({
       "proxmox-lxc-url": this.url,
@@ -142,7 +142,7 @@ export class ClaimsBridge {
       readyTimeoutMs: 0,
     });
     made.push(backend);
-    return Object.assign(backend, { errors: context.errors });
+    return Object.assign(backend, { errors: context.errors, short: shipped.short });
   }
 
   timerReport(): void {
