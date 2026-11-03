@@ -2136,6 +2136,73 @@ ranges. Each fix has a test from the review's probes that fails on
   9 tests named for go review 3 fail on `b76f248f`, its source and helper
   with these tests, and pass now.
 
+### After go review 4
+
+Go review 4 of `b53a4f93` said no-go, but close: it confirmed the GPU power
+path against pve-container 6.1.14's source, and found three gaps and three
+smaller ones. Each fix has a test from the review's probes that fails on
+`b53a4f93` and passes now. The helper is 0.4.1.
+
+- **N1: every box's power goes through the helper.** bb-box chose between
+  the helper and the API from the config it read before the action, so a GPU
+  desktop of the same install that took a box with no GPU's VMID after that
+  read was started on a card held whole, stopped or deleted through the
+  API. Now, on a node whose helper is 0.4.0 or later and serves the
+  install's pool, every start, stop, shutdown and delete of a guest in the
+  install's VMID range goes through the helper, GPU or not, whatever the
+  read showed; outside the range, so does a guest with a GPU's lines or
+  marker that is not a template. For a box with no GPU the helper checks, in
+  the lock, that it is still that install's box, with no card's lines and no
+  pending device change, so nothing it would need a claim for. A captured
+  build, a template in the range, is deleted through it too, named by its
+  install tag; a template is never started.
+- **N2: what the node does is kept across restarts.** bb-box keeps, in its
+  storage, the helper version it last read for each node, by API URL and
+  node. While that is 0.4.0 or later, a report that is missing, has no
+  helper line or cannot be read refuses the action at once, saying why,
+  after a restart too; bb-box never falls back to the API. A report that
+  names an older helper, as after a downgrade, is read as it says. Without
+  such a record, as on an install's first contact with a node, bb-box still
+  refuses a guest with a GPU marker, and a GPU guest whose report it cannot
+  read; a box with no GPU, there, uses the API until bb-box first reads the
+  helper.
+- **N3: step D** greps for the release's own version, and
+  `u5-steps-test.sh`, given the helper, checks that every helper version the
+  steps look for is the helper's.
+- **N4: an untested pve-container.** The helper stops a guest on a
+  pve-container its release was not tested on, and refuses to start, shut
+  down or delete one, `untested`, as writes stay off there. By the lead's
+  decision, bb-box then sends a box with no GPU, one with no card's lines, no
+  marker and no pending device change, through Proxmox's API with its
+  ownership checks, as before 071, so it still starts, stops and is
+  released, a failed acquire's cleanup included. A GPU desktop or a marked
+  guest may only be stopped, and the refusal names the version. The doctor
+  fails, naming the version and the helper release to install. So the API
+  window between bb-box's check and Proxmox's action reopens for boxes with
+  no GPU, and only while the node's pve-container is one the helper was not
+  tested on.
+- **N5: a card held whole.** A start is refused, `card-busy`, while another
+  guest running on its card holds or claims the card whole, or the guest
+  starting holds or claims it whole; and `unsettled` on a card a guest the
+  lost ledger left unresolved may hold. Both happened through the API before
+  this unit too.
+- **N6: a warm guest** is named in its request by its `warm` token, which
+  its description carries uniquely, from helper 0.4.1; another warm guest of
+  the install carrying the request is refused `not-the-box`.
+- The review's crossover, restart and whole-card probes inject where bb-box
+  calls the API, which it no longer does on such a node; the tests inject
+  there and also as bb-box's request is written, and in the helper while
+  another process holds the guest's config lock. The review's probe of an
+  untested pve-container expects even a stop refused; the lead's rule keeps
+  the stop.
+- Tests that started a GPU desktop on a helper's untested pve-container, or
+  matched the stale report's words, now expect the start refused; the doctor
+  fails for an untested pve-container from 0.4.1.
+- Then, as root on a `linux` box, directly: `tsc` clean; the node suite,
+  3,630 tests, 3,335 passed, 0 failed, 295 skipped; vitest, 448 passed. The
+  11 tests named for go review 4 fail on `b53a4f93`, its source and helper
+  with these tests, and pass now. `u5-steps-test.sh` passes its 22 cases.
+
 ### Every write to a guest
 
 `test/guest-writes.test.ts` enumerates these with TypeScript's checker: it
@@ -2165,11 +2232,11 @@ same guest.
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
-| `#askPower` | a guest with a card's lines or claim that bb-box starts, stops, shuts down or deletes | the helper's request tag, added and taken off | the owner of the action asked for |
+| `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
 | `change_guest`, in the helper | a container it serves | GPU device lines | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned |
-| `decide_power`, in the helper | a container it serves that carries a request | start, stop, shutdown, delete | under the guest's config lock, the install, box and marker generation the request names |
+| `decide_power`, in the helper | a container it serves that carries a request | start, stop, shutdown, delete | under the guest's config lock, the install, box or warm token, and marker generation the request names |
 
 Not through the check, and why:
 
@@ -2210,8 +2277,11 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
   writes off. With writes on, section 3's rule applies, on cards a desktop
   template names.
 - A helper on a pve-container its release was not tested on is taken as
-  writes off: desktops are made and marked, and the doctor warns. The lead
-  decided this (Opus 3).
+  writes off: desktops are made and marked. The lead decided this (Opus 3).
+  From helper 0.4.1 it also starts, shuts down and deletes no GPU desktop or
+  marked guest there, only stops them (go review 4, N4), so a desktop is
+  made but not started, and the doctor fails rather than warns. Boxes with no
+  GPU go through the API.
 - A box with a GPU marker starts only on a grant the helper reports. With the
   helper removed, marked boxes do not start until it is back, so `bb box gpu
   mark --undo` comes before a removal for good.
@@ -2254,16 +2324,20 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
 - With the desktop kind off, or its templates cleared, a stopped box with a
   marker still goes through the start gate. It may start on the card the
   helper holds for it, and is moved to no other.
-- From helper 0.4.0, a GPU guest starts, stops and is deleted only through
-  the helper (go review 3). With the helper stopped or its report 3 minutes
-  old, a GPU box neither starts, nor stops, nor is released until it is
-  back; before, a box whose claim stood still started on a stale report.
-  The helper's pass waits for a start, and for a shutdown up to 65 s, so
-  other markers wait meanwhile.
-- The helper starts, stops and deletes with writes off too, and on a
-  pve-container its release was not tested on, as it changes no device
-  line. It refuses a guest with any lock, `mounted` included, which the API
-  allows, and an HA resource.
+- From helper 0.4.0, every guest of the install in its range on a node
+  whose helper serves its pool starts, stops and is deleted only through the
+  helper (go reviews 3 and 4). With the helper stopped, or its report 3
+  minutes old, missing or unreadable, no box there starts, stops or is
+  released until it is back; before, a box whose claim stood still started
+  on a stale report. The helper's pass waits for each start, and for a
+  shutdown up to 65 s, so other markers and requests wait meanwhile.
+- The helper starts, stops and deletes with writes off too. On a
+  pve-container its release was not tested on it only stops, so after a
+  `pve-container` upgrade the install's GPU desktops and marked guests on
+  that node are not started or released until a helper release tested on it
+  is installed; boxes with no GPU go through the API meanwhile, with its
+  window. It refuses a guest with any lock, `mounted` included, which the
+  API allows, and an HA resource.
 - Choosing among the templates on a card still counts boxes by the template
   each was made from, as does the path with no helper. A box moved to another
   card counts against its first template there. It changes only which of a
@@ -2285,11 +2359,20 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
 
 ### Follow-ups
 
-- A non-GPU guest's start, stop and delete still go through Proxmox's API,
-  which takes no digest or lock for them: another actor that puts a guest at
-  the VMID between bb-box's last check and Proxmox's action has that guest
-  acted on, and bb-box sees it only on its next read (go review 3, H1). This
-  predates 071 and is a known gap, separate from this unit. A VMID range of
-  each install's own narrows it, but the doctor sees only the token's pool,
-  so it cannot prove the range is the install's alone. Closing it needs a
-  node-side check, as GPU guests now have, or Proxmox's own.
+- On a node with no helper of 0.4.0 or later serving the install's pool, a
+  guest's start, stop and delete still go through Proxmox's API, which takes
+  no digest or lock for them: another actor that puts a guest at the VMID
+  between bb-box's last check and Proxmox's action has that guest acted on,
+  and bb-box sees it only on its next read (go review 3, H1). This predates
+  071. On a node whose helper does, every guest of the install in its range
+  goes through the helper (go review 4, N1), which closes it there for the
+  Proxmox LXC backend, but for boxes with no GPU while the node's
+  pve-container is one the helper was not tested on (N4). The Proxmox QEMU
+  backend is not changed.
+- A box with no GPU on an install that has never read the node's helper, as
+  on its first contact with the node, uses the API until it first does, if
+  the report is missing then.
+- Guests with no box ID other than warm guests, that is image boxes, held
+  copies and earlier guests, are named in a request by install and marker
+  generation only: a replacement would have to carry bb-box's request tag
+  with its random nonce.

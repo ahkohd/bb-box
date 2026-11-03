@@ -41,6 +41,7 @@ export interface BackendOptions {
   readonly warm?: number;
   readonly onSleep?: () => void;
   readonly kindsOff?: readonly string[];
+  readonly storage?: MemoryStorage;
 }
 
 let bridges = 0;
@@ -128,7 +129,7 @@ export class ClaimsBridge {
       ...(options.perGpu !== undefined ? { "proxmox-lxc-desktops-per-gpu": options.perGpu } : {}),
       ...(options.warm !== undefined ? { "proxmox-lxc-desktop-warm": options.warm } : {}),
     });
-    const shipped = testContext(new MemoryStorage(), options.install ?? INSTALL, { id: "proxmox-lxc", warm: { "linux-desktop": options.warm ?? 0 } });
+    const shipped = testContext(options.storage ?? new MemoryStorage(), options.install ?? INSTALL, { id: "proxmox-lxc", warm: { "linux-desktop": options.warm ?? 0 } });
     const context = { ...shipped, kind: (id: string) => (options.kindsOff?.includes(id) ? { ...shipped.kind(id), enabled: false } : shipped.kind(id)) };
     const backend = new ProxmoxLxcBackend(config, context, {
       fetch: this.proxmox.fetch,
@@ -172,6 +173,19 @@ export class ClaimsBridge {
 
   configs(): Map<number, string> {
     return new Map(this.#nodeVmids().map((vmid) => [vmid, this.node.text(vmid)]));
+  }
+
+  plain(vmid: number, box: BoxIdentity, install: string, more: { readonly running?: boolean; readonly tags?: readonly string[] } = {}): void {
+    const { template: _template, protection: _protection, ...config } = this.proxmox.guests.get(9000)!.config;
+    this.proxmox.guests.set(vmid, {
+      vmid,
+      name: box.name,
+      pool: install === SECOND_INSTALL ? SECOND_POOL : POOL,
+      status: more.running ? "running" : "stopped",
+      template: false,
+      config: { ...config, hostname: box.name, description: describe(box, install), tags: [...boxTags(box, install, 9000), ...(more.tags ?? [])].join(";"), rootfs: `local-lvm:base-9000-disk-0/vm-${vmid}-disk-0,size=8G` },
+    });
+    this.proxmox.statusPass();
   }
 
   desktop(vmid: number, card: FakeCard, box: BoxIdentity, install: string, more: { readonly marker?: string; readonly running?: boolean; readonly pool?: string; readonly description?: string; readonly tags?: readonly string[] } = {}): void {

@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.0';
+use constant VERSION => '0.4.1';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -1166,16 +1166,45 @@ sub start_refusal {
         my $card = $ctx->{cards}{ $claim->{card} } or return ['unknown-card'];
         my $desired = device_set($card, $guest->{set}) or return ['card-nodes'];
         return ['lines'] unless same_lines($guest->{devices}, $desired);
-        return undef;
+    } elsif ($marker && $marker->{part} eq 'none') {
+        return ['lines'];
     }
-    return ['lines'] if $marker && $marker->{part} eq 'none';
-    for my $uuid (sort keys %{ $guest->{named} }) {
+    my %cards = %{ $guest->{named} };
+    $cards{ $marker->{card} } = 1 if $claims_card;
+    my $whole_here = $claims_card && $marker->{part} eq 'whole';
+    for my $uuid (sort keys %cards) {
         my $whole = whole_holder($ctx, $guests, $uuid, $guest->{vmid});
         return ['whole-taken', $whole] if defined $whole;
         my $unknown = unreadable_holder($guests, $uuid, $guest->{vmid});
         return ['unreadable', $unknown] if defined $unknown;
+        my ($unsettled) = unsettled_on($ctx, $guests, $uuid, $guest->{vmid});
+        return ['unsettled', $unsettled] if defined $unsettled;
+        my $beside = running_beside($guests, $uuid, $guest->{vmid}, $whole_here);
+        return ['card-busy', $beside] if defined $beside;
     }
     return undef;
+}
+
+sub running_beside {
+    my ($guests, $uuid, $except, $whole_here) = @_;
+    for my $vmid (sort { $a <=> $b } keys %$guests) {
+        next if $vmid == $except;
+        my $other = $guests->{$vmid};
+        next unless $other->{running} && $other->{named}{$uuid};
+        my $other_whole = $other->{marker} && $other->{marker}{part} eq 'whole' && ($other->{marker}{card} // '') eq $uuid;
+        return $vmid if $whole_here || $other_whole;
+    }
+    return undef;
+}
+
+sub power_identity {
+    my ($guest) = @_;
+    my $description = $guest->{conf}{description} // '';
+    my @installs = map { /^install\.(.+)$/ ? $1 : () } split_list($guest->{conf}{tags});
+    my $install = $guest->{install} // (@installs == 1 ? $installs[0] : undef);
+    my $warm = $description =~ /^bb-box warm \S+$/m && $description =~ /^warm ([0-9a-f]+)$/m ? $1 : undef;
+    my $who = defined $guest->{box} ? ($guest->{box} =~ s{^[^/]*/}{}r) : defined $warm ? "warm-$warm" : '';
+    return { install => $install, who => $who };
 }
 
 sub refuse_locked_or_ha {
@@ -1216,12 +1245,16 @@ sub decide_power {
         my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
         my $now = $fresh->{power};
         return ['refused', 'withdrawn'] unless $now && !$now->{malformed} && $now->{nonce} eq $request->{nonce} && $now->{action} eq $request->{action};
-        return ['refused', $fresh->{ineligible}] if ($fresh->{ineligible} // '') =~ /^(?:template|not-served|not-bb-box)$/;
-        my $asked_box = defined $request->{box} ? "$request->{install}/$request->{box}" : '';
-        return ['refused', 'not-the-box', ($fresh->{box} // $fresh->{install} // '-')] unless ($fresh->{install} // '') eq $request->{install} && ($fresh->{box} // '') eq $asked_box;
+        my $action = $request->{action};
+        return ['refused', 'not-served'] if ($fresh->{ineligible} // '') eq 'not-served';
+        return ['refused', 'template'] if $fresh->{template} && $action ne 'delete';
+        my $identity = power_identity($fresh);
+        return ['refused', 'not-bb-box'] unless defined $identity->{install};
+        return ['refused', 'not-the-box', "$identity->{install}/" . (length $identity->{who} ? $identity->{who} : '-')]
+            unless $identity->{install} eq $request->{install} && $identity->{who} eq ($request->{box} // '');
         my $generation = $fresh->{marker} ? $fresh->{marker}{generation} : 0;
         return ['refused', 'generation', $generation] unless $generation == $request->{generation};
-        my $action = $request->{action};
+        return ['refused', 'untested', $ctx->{pve_container}] if $action ne 'stop' && !pve_container_tested($ctx->{pve_container});
         my $acted = eval {
             refuse_locked_or_ha($vmid, $conf);
             if ($action eq 'start') {
