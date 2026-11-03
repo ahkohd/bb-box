@@ -52,6 +52,7 @@ export class ClaimsBridge {
   readonly url = `https://pve-${++bridges}.example.com:8006/`;
   answering = true;
   passes = 0;
+  beforePass: (() => void) | null = null;
 
   constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string } = {}) {
     this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}) });
@@ -68,11 +69,15 @@ export class ClaimsBridge {
     return readdirSync(this.node.file("etc/pve/nodes/pve/lxc")).flatMap((name) => (/^(\d+)\.conf$/.exec(name) ? [Number(name.slice(0, -5))] : []));
   }
 
+  readonly #pushed = new Set<number>();
+
   push(): void {
     const seen = new Set<number>();
+    this.#pushed.clear();
     for (const [vmid, guest] of this.proxmox.guests) {
       if ((guest.type ?? "lxc") !== "lxc") continue;
       seen.add(vmid);
+      this.#pushed.add(vmid);
       this.node.guest(vmid, { pool: guest.pool ?? null, running: guest.status === "running" });
       this.node.write(`etc/pve/nodes/pve/lxc/${vmid}.conf`, configText(guest.config));
     }
@@ -80,8 +85,14 @@ export class ClaimsBridge {
   }
 
   pull(): void {
+    const onNode = this.#nodeVmids();
     for (const [vmid, guest] of this.proxmox.guests) {
-      if ((guest.type ?? "lxc") !== "lxc" || !this.#nodeVmids().includes(vmid)) continue;
+      if ((guest.type ?? "lxc") !== "lxc") continue;
+      if (!onNode.includes(vmid)) {
+        if (this.#pushed.has(vmid)) this.proxmox.guests.delete(vmid);
+        continue;
+      }
+      if (!guest.template) guest.status = this.node.isRunning(vmid) ? "running" : "stopped";
       for (const key of Object.keys(guest.config)) if (/^dev\d+$/.test(key)) delete guest.config[key];
       Object.assign(guest.config, Object.fromEntries(Object.entries(this.node.config(vmid).keys).filter(([key]) => /^dev\d+$/.test(key))));
     }
@@ -89,6 +100,9 @@ export class ClaimsBridge {
   }
 
   pass(): void {
+    const before = this.beforePass;
+    this.beforePass = null;
+    before?.();
     this.push();
     const run = this.node.run(["--once"]);
     assert.equal(run.status, 0, run.stderr);

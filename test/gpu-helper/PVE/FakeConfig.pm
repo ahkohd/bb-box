@@ -105,6 +105,11 @@ sub lock_full {
     return wantarray ? @result : $result[0];
 }
 
+sub require_held {
+    my ($kind, $vmid, $what) = @_;
+    die "fake pve: $what of $kind $vmid without its config lock\n" unless $held{"$kind $vmid"};
+}
+
 sub swap_on_lock {
     my ($kind, $vmid) = @_;
     my ($who, $from) = split /=/, ($ENV{FAKE_PVE_SWAP_ON_LOCK} // ''), 2;

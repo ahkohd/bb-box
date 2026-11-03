@@ -2047,6 +2047,95 @@ delete. If another actor puts a guest in the range anyway, bb-box sees it on
 its next read, at the latest right after the call, acts on it no more, and
 the doctor names it.
 
+### After go review 3
+
+Go review 3 of `552781b3` said no-go, with two gaps. The lead decided to close
+H1 on the node for GPU guests, where the harm is, rather than bound it by
+ranges. Each fix has a test from the review's probes that fails on
+`b76f248f` and passes now.
+
+- **H1: start, stop and delete of a GPU guest go through the helper.** A
+  guest with a card's device lines, or with a marker that claims a card, is
+  started, stopped, shut down and deleted only by the helper, under the
+  guest's config lock:
+  - bb-box checks the guest is the box's, then adds one tag to it on the
+    digest of that read: `bb-power.<action>.<install>.<box>.g<N>.n<nonce>`,
+    the action `start`, `stop`, `shutdown` or `delete`, `<box>` the box ID
+    the description names, or `-` for a held copy or earlier guest, `g<N>`
+    its marker's generation, or `g0` with none. It waits for
+    `power <vmid> n<nonce> <action> done` or `refused <reason>` in the
+    report, then takes the tag off. It stops waiting at once if the guest
+    at that VMID is no longer the box's or the tag is gone; a refusal
+    `not-the-box` is recorded as a sighting, so the doctor's VMID range
+    check fails, naming it.
+  - A delete is: a stop through the helper if it runs, protection cleared on
+    the digest of the config just checked, then the delete through the
+    helper.
+  - The helper, each pass after claims and repairs, with writes on or off,
+    but not in the boot pass or a preview, takes each request it has not
+    answered. Under `PVE::LXC::Config->lock_config_full` it reads the guest
+    again and refuses the request if it is gone or changed (`withdrawn`),
+    if the guest is a template or not in a pool it serves, if its install
+    or box is not the request's (`not-the-box`), or its marker's generation
+    is not (`generation`). It refuses a locked guest and an HA resource. A
+    start needs a granted claim of the marker's generation, part and card,
+    and exactly that card's device lines; a `gpu.none` guest may have no
+    card's lines; an unmarked guest with a card's lines, as an image box
+    has, starts only while no other guest holds one of its cards whole and
+    none whose config cannot be read may; a pending device change, which a
+    start would apply, is refused. A delete needs a stopped guest.
+  - Then it calls what the API's workers call inside the same lock, read
+    from pve-container 6.1.14's `PVE/API2/LXC/Status.pm`, `PVE/API2/LXC.pm`
+    and `PVE/LXC.pm` as Proxmox's package repository publishes them:
+    `vm_start($vmid, $conf, 0)`; `vm_stop($vmid, 1)` for a stop;
+    `vm_stop($vmid, 0, 60, 1)` for a shutdown, killed after 60 s as bb-box's
+    `forceStop` asked; and the delete with purge, as bb-box's API call
+    asked: `check_protection`, `check_lock`, the HA check,
+    `destroy_lxc_container` with the `destroyed` lock and unreferenced
+    disks, `remove_vm_access`, `remove_vmfw_conf`, `remove_vmid_jobs`,
+    `remove_vmid_from_backup_jobs` and `destroy_config`. None of these takes
+    the lock again. They were not run on a node; the tests run them as
+    fakes that fail when the lock is not held.
+  - Each request is acted on once: its answer is kept in the ledger's
+    `power` part until its tag is gone and the answer is 10 minutes old.
+  - bb-box sends requests to a helper of 0.4.0 or later. With an older one,
+    and none newer seen since this BB started, it uses Proxmox's API as
+    before, until the node is upgraded; `--writes on` needs 0.4.0. Once a
+    newer helper has reported, a report with no helper line, or one 3
+    minutes old or more, refuses the action at once, saying why. The
+    protocol stays 1: older helpers ignore `bb-power.` tags.
+  - The review's probes inject the replacement at Proxmox's start, stop or
+    delete call, which bb-box no longer makes for a GPU guest. The tests
+    inject it there and also where the helper acts: as bb-box's request is
+    written, by another box of the same install, or of another install,
+    carrying the request, before the helper's pass; and in the helper,
+    while another process holds the guest's config lock. The replacement is
+    not started on a card held whole, stopped or deleted.
+- **Non-GPU guests** keep Proxmox's API for start, stop and delete, with the
+  window this review found. It predates 071 and is not this unit's: see
+  Follow-ups.
+- **The doctor's VMID range check** keeps failing on a guest it can see that
+  is not this install's, a description naming another install behind a
+  bare `bb-box` tag included. It now says what it cannot see: the token sees
+  only the guests of its pool, so a guest elsewhere in the range, or another
+  install's range overlapping this one, is not seen, and the check is no
+  proof that the range is this install's alone.
+- **H2: the node scripts.** `u5-check.sh`, `u5-compare.sh` and `u5-guest.sh`
+  check each read's status: a config, ledger or report that cannot be read,
+  hashed or parsed fails the script. `u5-compare.sh` fails on `diff`'s error
+  status, 2, and reports the difference on its status 1. The review's runbook
+  probe passes on the new scripts and fails on those before;
+  `u5-steps-test.sh` passes its 21 cases.
+- The helper is 0.4.0. The setup tests' fake newer releases move above it.
+- Two tests that started a box on a stale report now expect the start
+  refused, then made through the helper once it reports again; the go
+  review 2 tests of a replacement at the start and the delete inject it
+  where the helper acts.
+- Then, as root on a `linux` box, directly: `tsc` clean; the node suite,
+  3,621 tests, 3,326 passed, 0 failed, 295 skipped; vitest, 448 passed. The
+  9 tests named for go review 3 fail on `b76f248f`, its source and helper
+  with these tests, and pass now.
+
 ### Every write to a guest
 
 `test/guest-writes.test.ts` enumerates these with TypeScript's checker: it
@@ -2076,9 +2165,11 @@ same guest.
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
+| `#askPower` | a guest with a card's lines or claim that bb-box starts, stops, shuts down or deletes | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
 | `change_guest`, in the helper | a container it serves | GPU device lines | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned |
+| `decide_power`, in the helper | a container it serves that carries a request | start, stop, shutdown, delete | under the guest's config lock, the install, box and marker generation the request names |
 
 Not through the check, and why:
 
@@ -2095,7 +2186,7 @@ Not through the check, and why:
 ### The node steps
 
 Wait for the lead, after unit 4's day has passed and this unit is merged and
-deployed: the helper upgraded to 0.3.3 with writes off and the test pool
+deployed: the helper upgraded to 0.4.0 with writes off and the test pool
 served; `setup-gpu.sh --writes on --check`; `--writes on`; a watcher under
 `systemd-run`; the gate on test guests on lent VMIDs, through a test BB with
 its own pool and desktops per GPU 1. The steps, a read-only check script,
@@ -2163,6 +2254,16 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
 - With the desktop kind off, or its templates cleared, a stopped box with a
   marker still goes through the start gate. It may start on the card the
   helper holds for it, and is moved to no other.
+- From helper 0.4.0, a GPU guest starts, stops and is deleted only through
+  the helper (go review 3). With the helper stopped or its report 3 minutes
+  old, a GPU box neither starts, nor stops, nor is released until it is
+  back; before, a box whose claim stood still started on a stale report.
+  The helper's pass waits for a start, and for a shutdown up to 65 s, so
+  other markers wait meanwhile.
+- The helper starts, stops and deletes with writes off too, and on a
+  pve-container its release was not tested on, as it changes no device
+  line. It refuses a guest with any lock, `mounted` included, which the API
+  allows, and an HA resource.
 - Choosing among the templates on a card still counts boxes by the template
   each was made from, as does the path with no helper. A box moved to another
   card counts against its first template there. It changes only which of a
@@ -2181,3 +2282,14 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
   on, today's copies give the helper no write to make: each copy's
   description names its own box from the clone, and a held copy's or an
   earlier guest's labels drop the marker.
+
+### Follow-ups
+
+- A non-GPU guest's start, stop and delete still go through Proxmox's API,
+  which takes no digest or lock for them: another actor that puts a guest at
+  the VMID between bb-box's last check and Proxmox's action has that guest
+  acted on, and bb-box sees it only on its next read (go review 3, H1). This
+  predates 071 and is a known gap, separate from this unit. A VMID range of
+  each install's own narrows it, but the doctor sees only the token's pool,
+  so it cannot prove the range is the install's alone. Closing it needs a
+  node-side check, as GPU guests now have, or Proxmox's own.

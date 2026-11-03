@@ -18,6 +18,23 @@ sub load_config {
     return PVE::FakeConfig::load('lxc', $vmid);
 }
 
+sub check_protection {
+    my ($class, $conf, $error) = @_;
+    die "$error - protection mode enabled\n" if ($conf->{protection} // '') eq '1';
+}
+
+sub check_lock {
+    my ($class, $conf) = @_;
+    die "CT is locked ($conf->{lock})\n" if $conf->{lock};
+}
+
+sub destroy_config {
+    my ($class, $vmid) = @_;
+    PVE::FakeConfig::require_held('lxc', $vmid, 'destroy_config');
+    unlink PVE::FakeConfig::config_path('lxc', $vmid) or die "fake pve: cannot remove $vmid: $!\n";
+    PVE::FakeConfig::log_line('power.log', "removed $vmid");
+}
+
 sub write_config {
     my ($class, $vmid, $conf) = @_;
     return PVE::FakeConfig::write('lxc', $vmid, $conf);

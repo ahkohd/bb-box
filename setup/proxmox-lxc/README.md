@@ -428,11 +428,23 @@ and waits up to 10 s for the helper's answer before it starts the box
   for good only after `bb box gpu mark --undo`.
 - Where the helper is installed but cannot be used, as when its report is
   3 minutes old or does not serve this install's pool, new GPU desktops are
-  refused with the reason, and boxes whose claims stand still start. A
-  helper on a pve-container its release was not tested on runs as with
-  writes off: desktops are made and marked, and none is moved. With no
-  helper and no guest of this install marked, GPU desktops are made as
-  before, with no marker.
+  refused with the reason. A helper on a pve-container its release was not
+  tested on runs as with writes off: desktops are made and marked, and none
+  is moved. With no helper and no guest of this install marked, GPU
+  desktops are made as before, with no marker.
+- From bb-box-gpu 0.4.0, bb-box starts, stops and deletes a guest with a
+  GPU's device lines, or a marker that claims a card, only through the
+  helper, never through Proxmox's API. It adds a tag
+  `bb-power.<action>.<install>.<box>.g<generation>.n<nonce>` to the guest,
+  and the helper, inside the guest's config lock, checks that the guest is
+  still that install's box with that marker, and for a start that it holds
+  a granted claim and that card's lines, before it calls Proxmox's own
+  start, stop or delete. Its answer is a `power` line in the report, and
+  bb-box takes the tag off. It does this with writes off too. While the
+  helper is stopped, or its report is 3 minutes old, such a box neither
+  starts, stops nor is released. With an older helper, bb-box uses the API
+  as before, until the node is upgraded. Other boxes start, stop and are
+  deleted through the API, as before.
 
 Where the helper is installed, `setup-gpu-report.sh` makes the VM and its
 rights but does not put the timer back. The doctor's "Host's GPU helper"
@@ -471,7 +483,7 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
 | `gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
 | `addresses` | `10.200.0.10-10.200.0.254` | box addresses; the n-th VMID gets the n-th address |
-| `vmid-first` | `9900` | boxes take VMIDs from this range; give each install a range of its own and keep other guests out of it: bb-box takes no VMID while another install's guest, or a guest that is not bb-box's, is in it, and the doctor's VMID range check fails, naming them |
+| `vmid-first` | `9900` | boxes take VMIDs from this range; give each install a range of its own and keep other guests out of it: bb-box takes no VMID while another install's guest, or a guest that is not bb-box's, is in it, and the doctor's VMID range check fails, naming them. The token sees only its pool's guests, so the check cannot see a guest elsewhere in the range, or another install's overlapping range |
 | `vmid-last` | `9999` |  |
 | `ssh-user` | `box` |  |
 | `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |

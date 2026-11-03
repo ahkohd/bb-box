@@ -10,13 +10,13 @@ const HOST = new URL("../setup/proxmox-lxc/host/", import.meta.url).pathname;
 const SETUP_BIN = new URL("./gpu-helper/setup-bin", import.meta.url).pathname;
 const FAKE_PVE = new URL("./gpu-helper", import.meta.url).pathname;
 const AS_ROOT = process.getuid?.() === 0 ? false : "setup-gpu.sh runs as root, as CI's container does";
-const RELEASED_VERSION = "use constant VERSION => '0.3.4';";
+const RELEASED_VERSION = "use constant VERSION => '0.4.0';";
 
 const STALE_REPORT = [
   "#bb-box%3A each GPU's memory and its claims, from bb-box-gpu on this host. Do not edit.",
   "#",
   "#    at 1000",
-  "#    helper bb-box-gpu 0.3.4 protocol 1 writes off pve-container 6.1.14 tested",
+  "#    helper bb-box-gpu 0.4.0 protocol 1 writes off pve-container 6.1.14 tested",
 ].join("\n");
 
 function releaseWith(name: string, edits: readonly (readonly [from: string, to: string])[]): string {
@@ -213,7 +213,7 @@ hosted("setup-gpu.sh starts the helper and retires the timer only once the helpe
   const retire = calls.findIndex((call) => /^disable --now --quiet bb-box-gpu-memory\.timer$/.test(call));
   assert.ok(restart >= 0 && retire > restart, `the helper starts before the timer is retired: ${calls.join(" | ")}`);
   assert.ok(host.helperAt() >= started, "the report the handover waited for is this install's, not the stale one");
-  assert.match(first.stdout, /setup-gpu\.sh: VM 9190's report: helper bb-box-gpu 0\.3\.4 protocol 1 writes off pve-container 6\.1\.14 tested\n/);
+  assert.match(first.stdout, /setup-gpu\.sh: VM 9190's report: helper bb-box-gpu 0\.4\.0 protocol 1 writes off pve-container 6\.1\.14 tested\n/);
   assert.match(first.stdout, /setup-gpu\.sh: VM 9190's report: serves other bbbox\n/);
   assert.match(first.stdout, /wrote .*gpu\.conf: pools other bbbox, writes off \(it said writes on, but the helper's units did not run it so; writes stay off until setup-gpu\.sh --writes on\)/);
   assert.equal(host.conf(), "pools other bbbox\nwrites off\n");
@@ -232,7 +232,7 @@ hosted("when the helper writes no fresh report, setup-gpu.sh stops it, keeps the
   host.staleReport();
   const result = host.setup([], { FAKE_PVE_REFUSE_WRITE: `qemu ${REPORT_VMID}` });
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stderr, /bb-box-gpu 0\.3\.4 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu is stopped and disabled, and bb-box-gpu-memory\.timer writes the report/);
+  assert.match(result.stderr, /bb-box-gpu 0\.4\.0 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu is stopped and disabled, and bb-box-gpu-memory\.timer writes the report/);
   assert.ok(host.timerInstalled(), "the timer's files stay");
   assert.ok(host.enabled("bb-box-gpu-memory.timer") && host.active("bb-box-gpu-memory.timer"));
   assert.equal(host.active("bb-box-gpu.service"), false);
@@ -325,7 +325,7 @@ hosted("--pool adds a pool and restarts the helper, which reports serving it; a 
 hosted("--writes on is refused before the helper is installed, and goes with no other option; --writes off is taken; a bad value or a stray option is a usage error", (host) => {
   const refused = host.setup(["--writes", "on"]);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /writes come on only for this release's helper once it runs, and bb-box-gpu none is installed: run setup-gpu\.sh without --writes first, to install bb-box-gpu 0\.3\.4 with writes off, then --writes on\. Nothing was changed\./);
+  assert.match(refused.stderr, /writes come on only for this release's helper once it runs, and bb-box-gpu none is installed: run setup-gpu\.sh without --writes first, to install bb-box-gpu 0\.4\.0 with writes off, then --writes on\. Nothing was changed\./);
   assert.deepEqual(host.calls(), [], "no systemctl call");
   assert.equal(existsSync(host.node.file("usr/local/sbin/bb-box-gpu")), false);
   assert.equal(existsSync(host.node.file("etc/bb-box/gpu.conf")), false);
@@ -343,7 +343,7 @@ function readyForWrites(host: Host): Record<string, string> {
   host.node.mark(216);
   const installed = host.setup();
   assert.equal(installed.status, 0, installed.stdout + installed.stderr);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.4 protocol 1 writes off /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 1 writes off /);
   return host.guests();
 }
 
@@ -356,7 +356,7 @@ hosted("071 unit 5: --writes on --check prints what the helper's first pass with
   host.forgetCalls();
   const check = host.setup(["--writes", "on", "--check"]);
   assert.equal(check.status, 0, check.stdout + check.stderr);
-  assert.match(check.stdout, /setup-gpu\.sh: preview: bb-box-gpu 0\.3\.4 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(check.stdout, /setup-gpu\.sh: preview: bb-box-gpu 0\.4\.0 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(check.stdout, /setup-gpu\.sh: preview: writes on would write no guest\n/);
   assert.match(check.stdout, /--check: writes on would write no guest; nothing was changed\. Run setup-gpu\.sh --writes on to turn them on\./);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n");
@@ -369,10 +369,10 @@ hosted("071 unit 5: --writes on --check prints what the helper's first pass with
   assert.match(on.stdout, /preview: writes on would write no guest\n/);
   assert.match(on.stdout, /wrote .*gpu\.conf: pools bbbox, writes on\n/);
   assert.match(on.stdout, /restarted bb-box-gpu\.service with writes on, which were off; the ledger is kept/);
-  assert.match(on.stdout, /VM 9190's report: helper bb-box-gpu 0\.3\.4 protocol 1 writes on pve-container 6\.1\.14 tested\n/);
+  assert.match(on.stdout, /VM 9190's report: helper bb-box-gpu 0\.4\.0 protocol 1 writes on pve-container 6\.1\.14 tested\n/);
   assert.equal(host.conf(), "pools bbbox\nwrites on\n");
   assert.deepEqual(units(host), ["/usr/local/sbin/bb-box-gpu", "/usr/local/sbin/bb-box-gpu --boot"]);
-  assert.doesNotMatch(readFileSync(host.state("bb-box-gpu.service.log"), "utf8").split("bb-box-gpu 0.3.4, protocol 1").at(-1)!, /--dry-run/);
+  assert.doesNotMatch(readFileSync(host.state("bb-box-gpu.service.log"), "utf8").split("bb-box-gpu 0.4.0, protocol 1").at(-1)!, /--dry-run/);
   assert.equal(host.node.ledger().guests["214"]?.claim?.answer, "granted", "the claim granted with writes off stands");
   host.touchedNoGuest(guests);
   assert.match(host.setup(["--writes", "on"]).stdout, /nothing changed\n$/);
@@ -389,7 +389,7 @@ hosted("071 unit 5: --writes on is refused, changing nothing, when the helper's 
   assert.equal(refused.status, 1);
   assert.match(refused.stdout, /setup-gpu\.sh: would write CT 216 for request g2: remove nothing; add \/dev\/nvidia0,mode=0666/);
   assert.match(refused.stdout, /preview: writes on would write 1 guest\n/);
-  assert.match(refused.stderr, /with writes on, bb-box-gpu 0\.3\.4 would write the guests above on its first pass, so writes stay off\. Find why with journalctl -u bb-box-gpu and the report's would lines: each write must be explained before writes come on\. Nothing was changed\./);
+  assert.match(refused.stderr, /with writes on, bb-box-gpu 0\.4\.0 would write the guests above on its first pass, so writes stay off\. Find why with journalctl -u bb-box-gpu and the report's would lines: each write must be explained before writes come on\. Nothing was changed\./);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n");
   assert.deepEqual(units(host), ["/usr/local/sbin/bb-box-gpu --dry-run", "/usr/local/sbin/bb-box-gpu --boot --dry-run"]);
   assert.deepEqual(host.calls().filter((call) => !/^is-active /.test(call)), [], "nothing is started or stopped");
@@ -411,25 +411,25 @@ hosted("071 unit 5: --writes on is refused for an older helper than this release
   for (let tries = 0; tries < 100 && !/ untested$/.test(host.helperLine() ?? ""); tries++) await new Promise((resolve) => setTimeout(resolve, 100));
   const untested = host.setup(["--writes", "on"]);
   assert.equal(untested.status, 1, untested.stdout + untested.stderr);
-  assert.match(untested.stderr, /bb-box-gpu 0\.3\.4 was not tested on the pve-container installed here \(helper bb-box-gpu 0\.3\.4 protocol 1 writes off pve-container 6\.1\.15 untested\), so it would write no guest even with writes on\. Nothing was changed\./);
+  assert.match(untested.stderr, /bb-box-gpu 0\.4\.0 was not tested on the pve-container installed here \(helper bb-box-gpu 0\.4\.0 protocol 1 writes off pve-container 6\.1\.15 untested\), so it would write no guest even with writes on\. Nothing was changed\./);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n");
 });
 
 hosted("071 unit 5: an upgrade keeps writes on, a failed one puts the helper before it back with writes on, and --writes off is a dry run again with the ledger kept", (host) => {
   const guests = readyForWrites(host);
   assert.equal(host.setup(["--writes", "on"]).status, 0);
-  const newer = releaseWith("0.3.5", versioned("0.3.5"));
+  const newer = releaseWith("0.4.1", versioned("0.4.1"));
   const upgrade = host.setup([], {}, newer);
   assert.equal(upgrade.status, 0, upgrade.stdout + upgrade.stderr + host.told());
-  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.3\.5, which was 0\.3\.4, with writes on; gpu\.conf and the ledger are kept/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.5 protocol 1 writes on /);
+  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.4\.1, which was 0\.4\.0, with writes on; gpu\.conf and the ledger are kept/);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.1 protocol 1 writes on /);
   assert.deepEqual(units(host), ["/usr/local/sbin/bb-box-gpu", "/usr/local/sbin/bb-box-gpu --boot"]);
 
-  const broken = releaseWith("0.3.6-broken", [...versioned("0.3.6"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.2-broken", [...versioned("0.4.2"), WRITES_NO_REPORT]);
   const failed = host.setup([], {}, broken);
   assert.equal(failed.status, 1);
-  assert.match(failed.stderr, /bb-box-gpu 0\.3\.6 wrote no fresh, healthy report with writes on in VM 9190 within 6 s, so bb-box-gpu 0\.3\.5 is back as it was, with its settings and ledger/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.5 protocol 1 writes on /);
+  assert.match(failed.stderr, /bb-box-gpu 0\.4\.2 wrote no fresh, healthy report with writes on in VM 9190 within 6 s, so bb-box-gpu 0\.4\.1 is back as it was, with its settings and ledger/);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.1 protocol 1 writes on /);
   assert.equal(host.conf(), "pools bbbox\nwrites on\n");
 
   const ledger = host.node.ledger().guests;
@@ -437,7 +437,7 @@ hosted("071 unit 5: an upgrade keeps writes on, a failed one puts the helper bef
   assert.equal(off.status, 0, off.stdout + off.stderr);
   assert.match(off.stdout, /wrote .*gpu\.conf: pools bbbox, writes off\n/);
   assert.match(off.stdout, /restarted bb-box-gpu\.service with writes off, which were on; the ledger is kept/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.5 protocol 1 writes off /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.1 protocol 1 writes off /);
   assert.deepEqual(units(host), ["/usr/local/sbin/bb-box-gpu --dry-run", "/usr/local/sbin/bb-box-gpu --boot --dry-run"]);
   assert.deepEqual(host.node.ledger().guests["214"]?.claim, ledger["214"]?.claim, "the claims stay in the ledger");
   host.touchedNoGuest(guests);
@@ -544,20 +544,20 @@ hosted("071 unit 5, go review 2 G2: --writes on and --writes on --check refuse a
 hosted("071 unit 5, Opus 7: an upgrade with writes on runs the new release's preview first, and changes nothing if it is incomplete", (host) => {
   readyForWrites(host);
   assert.equal(host.setup(["--writes", "on"]).status, 0);
-  const newer = releaseWith("0.3.5", versioned("0.3.5"));
+  const newer = releaseWith("0.4.1", versioned("0.4.1"));
   host.node.smiFails(true);
   host.forgetCalls();
   const refused = host.setup([], {}, newer);
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
-  assert.match(refused.stdout, /writes are on, so bb-box-gpu 0\.3\.5's preview runs before it replaces 0\.3\.4:/);
-  assert.match(refused.stderr, /so bb-box-gpu 0\.3\.4 stays as it is; run setup-gpu\.sh --writes off first to upgrade with writes off\./);
-  assert.equal(host.installedVersion(), "0.3.4");
+  assert.match(refused.stdout, /writes are on, so bb-box-gpu 0\.4\.1's preview runs before it replaces 0\.4\.0:/);
+  assert.match(refused.stderr, /so bb-box-gpu 0\.4\.0 stays as it is; run setup-gpu\.sh --writes off first to upgrade with writes off\./);
+  assert.equal(host.installedVersion(), "0.4.0");
   assert.deepEqual(host.calls().filter((call) => !/^is-active /.test(call)), [], "nothing is started or stopped");
   host.node.smiFails(false);
   const upgraded = host.setup([], {}, newer);
   assert.equal(upgraded.status, 0, upgraded.stdout + upgraded.stderr + host.told());
   assert.match(upgraded.stdout, /setup-gpu\.sh: preview: writes on would write no guest\n/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.5 protocol 1 writes on /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.1 protocol 1 writes on /);
 });
 
 hosted("071 unit 5: a removal leaves writes on in gpu.conf, and putting the helper back comes back with writes off until --writes on", (host) => {
@@ -568,7 +568,7 @@ hosted("071 unit 5: a removal leaves writes on in gpu.conf, and putting the help
   const back = host.setup();
   assert.equal(back.status, 0, back.stdout + back.stderr);
   assert.match(back.stdout, /wrote .*gpu\.conf: pools bbbox, writes off \(it said writes on, but the helper's units did not run it so; writes stay off until setup-gpu\.sh --writes on\)/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.4 protocol 1 writes off /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 1 writes off /);
 });
 
 hosted("an upgrade replaces the program and restarts the helper, keeps gpu.conf, the ledger and writes off, writes no guest, and leaves no moment without a writer of the report; then it changes nothing", (host) => {
@@ -576,15 +576,15 @@ hosted("an upgrade replaces the program and restarts the helper, keeps gpu.conf,
   const guests = host.guests();
   const conf = host.conf();
   const claims = host.node.ledger().guests;
-  const newer = releaseWith("0.3.5", versioned("0.3.5"));
+  const newer = releaseWith("0.4.1", versioned("0.4.1"));
   host.forgetCalls();
   const started = Math.floor(Date.now() / 1000);
   const upgrade = host.setup([], {}, newer);
   assert.equal(upgrade.status, 0, upgrade.stdout + upgrade.stderr);
   assert.match(upgrade.stdout, /installed .*\/usr\/local\/sbin\/bb-box-gpu\n/);
-  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.3\.5, which was 0\.3\.4, with writes off; gpu\.conf and the ledger are kept/);
-  assert.match(upgrade.stdout, /VM 9190's report: helper bb-box-gpu 0\.3\.5 protocol 1 writes off pve-container 6\.1\.14 tested/);
-  assert.equal(host.installedVersion(), "0.3.5");
+  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.4\.1, which was 0\.4\.0, with writes off; gpu\.conf and the ledger are kept/);
+  assert.match(upgrade.stdout, /VM 9190's report: helper bb-box-gpu 0\.4\.1 protocol 1 writes off pve-container 6\.1\.14 tested/);
+  assert.equal(host.installedVersion(), "0.4.1");
   assert.ok(host.helperAt() >= started);
   assert.equal(host.conf(), conf);
   assert.deepEqual(host.node.ledger().guests, claims, "the ledger's claims are as they were");
@@ -605,7 +605,7 @@ hosted("an upgrade replaces the program and restarts the helper, keeps gpu.conf,
 });
 
 hosted("an older release refuses to replace a newer helper without --downgrade, changing nothing; with it, it installs and keeps the ledger", (host) => {
-  const newer = releaseWith("0.4.0", versioned("0.4.0"));
+  const newer = releaseWith("0.5.0", versioned("0.5.0"));
   assert.equal(host.setup([], {}, newer).status, 0);
   const guests = host.guests();
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
@@ -613,35 +613,35 @@ hosted("an older release refuses to replace a newer helper without --downgrade, 
   host.forgetCalls();
   const refused = host.setup();
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
-  assert.match(refused.stderr, /bb-box-gpu 0\.4\.0 is installed, newer than this release's 0\.3\.4: run the newer release's setup-gpu\.sh, or give --downgrade to install 0\.3\.4\. Nothing was changed\./);
+  assert.match(refused.stderr, /bb-box-gpu 0\.5\.0 is installed, newer than this release's 0\.4\.0: run the newer release's setup-gpu\.sh, or give --downgrade to install 0\.4\.0\. Nothing was changed\./);
   assert.deepEqual(host.calls(), []);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.ok(host.active("bb-box-gpu.service"));
 
   const down = host.setup(["--downgrade"]);
   assert.equal(down.status, 0, down.stdout + down.stderr);
-  assert.match(down.stdout, /restarted bb-box-gpu\.service on 0\.3\.4, which was 0\.4\.0, with writes off/);
-  assert.equal(host.installedVersion(), "0.3.4");
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.4 protocol 1 writes off /);
+  assert.match(down.stdout, /restarted bb-box-gpu\.service on 0\.4\.0, which was 0\.5\.0, with writes off/);
+  assert.equal(host.installedVersion(), "0.4.0");
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 1 writes off /);
   assert.deepEqual(host.node.ledger().guests, ledger);
   assert.match(host.setup().stdout, /nothing changed\n$/);
   host.touchedNoGuest(guests);
 });
 
 hosted("a ledger from a newer protocol is refused without --downgrade; with it, the ledger is set aside and the helper rebuilds it from the guests", (host) => {
-  const newer = releaseWith("0.4.0-protocol-2", versioned("0.4.0", 2));
+  const newer = releaseWith("0.5.0-protocol-2", versioned("0.5.0", 2));
   assert.equal(host.setup([], {}, newer).status, 0);
   assert.equal(host.node.ledger().protocol, 2);
   const guests = host.guests();
   const written = host.node.ledger();
   const refused = host.setup();
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /bb-box-gpu 0\.4\.0 is installed, newer than this release's 0\.3\.4/);
+  assert.match(refused.stderr, /bb-box-gpu 0\.5\.0 is installed, newer than this release's 0\.4\.0/);
 
   rmSync(host.node.file("usr/local/sbin/bb-box-gpu"));
   const ledgerOnly = host.setup();
   assert.equal(ledgerOnly.status, 1, ledgerOnly.stdout + ledgerOnly.stderr);
-  assert.match(ledgerOnly.stderr, /the ledger, .*\/var\/lib\/bb-box-gpu\/ledger, was written by protocol 2, newer than this release's protocol 1: run the newer release's setup-gpu\.sh, or give --downgrade to set the ledger aside, which bb-box-gpu 0\.3\.4 then rebuilds from the guests\. Nothing was changed\./);
+  assert.match(ledgerOnly.stderr, /the ledger, .*\/var\/lib\/bb-box-gpu\/ledger, was written by protocol 2, newer than this release's protocol 1: run the newer release's setup-gpu\.sh, or give --downgrade to set the ledger aside, which bb-box-gpu 0\.4\.0 then rebuilds from the guests\. Nothing was changed\./);
   assert.equal(host.node.ledger().protocol, 2);
 
   const down = host.setup(["--downgrade"]);
@@ -650,28 +650,28 @@ hosted("a ledger from a newer protocol is refused without --downgrade; with it, 
   assert.ok(aside, "the newer ledger is kept beside");
   const kept = JSON.parse(readFileSync(host.node.file(`var/lib/bb-box-gpu/${aside}`), "utf8"));
   assert.deepEqual([kept.protocol, kept.guests], [2, written.guests]);
-  assert.match(down.stdout, /set aside the ledger, written by protocol 2, as .*ledger\.protocol-2-\d+: bb-box-gpu 0\.3\.4 speaks protocol 1 and rebuilds it from the guests/);
+  assert.match(down.stdout, /set aside the ledger, written by protocol 2, as .*ledger\.protocol-2-\d+: bb-box-gpu 0\.4\.0 speaks protocol 1 and rebuilds it from the guests/);
   assert.equal(host.node.ledger().protocol, 1);
   assert.equal(host.node.ledger().guests["214"]?.claim?.answer, "granted", "the rebuilt ledger takes the marked guest whose lines match as granted");
   host.touchedNoGuest(guests);
 });
 
 hosted("an upgrade whose helper writes no fresh report puts the helper before it back as it was, with its gpu.conf, and exits 1; the timer that wrote the report meanwhile goes again", (host) => {
-  const before = releaseWith("0.3.4-quick-heartbeat", [QUICK_HEARTBEAT]);
+  const before = releaseWith("0.4.0-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const guests = host.guests();
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
   const ledger = host.node.ledger().guests;
-  const broken = releaseWith("0.3.5-broken", [...versioned("0.3.5"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.1-broken", [...versioned("0.4.1"), WRITES_NO_REPORT]);
   const started = Math.floor(Date.now() / 1000);
   const failed = host.setup(["--pool", "team"], {}, broken);
   assert.equal(failed.status, 1, failed.stdout + failed.stderr);
-  assert.match(failed.stderr, /bb-box-gpu 0\.3\.5 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.3\.4 is back as it was, with its settings and ledger/);
+  assert.match(failed.stderr, /bb-box-gpu 0\.4\.1 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.0 is back as it was, with its settings and ledger/);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n", "gpu.conf is as it was before the run");
   assert.ok(host.active("bb-box-gpu.service") && host.enabled("bb-box-gpu.service"));
   assert.ok(host.helperAt() >= started);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.4 /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 /);
   assert.equal(host.timerInstalled(), false);
   assert.deepEqual(host.node.ledger().guests, ledger);
   host.touchedNoGuest(guests);
@@ -679,32 +679,32 @@ hosted("an upgrade whose helper writes no fresh report puts the helper before it
 
 hosted("an upgrade whose helper and the one put back both write no report hands the report to the timer and exits 1", (host) => {
   assert.equal(host.setup().status, 0);
-  const newer = releaseWith("0.3.5", versioned("0.3.5"));
+  const newer = releaseWith("0.4.1", versioned("0.4.1"));
   const failed = host.setup([], { FAKE_PVE_REFUSE_WRITE: `qemu ${REPORT_VMID}` }, newer);
   assert.equal(failed.status, 1, failed.stdout + failed.stderr);
-  assert.match(failed.stderr, /bb-box-gpu 0\.3\.5 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, and bb-box-gpu 0\.3\.4, put back, wrote no fresh, healthy report either, so bb-box-gpu is stopped and disabled, and bb-box-gpu-memory\.timer writes the report/);
+  assert.match(failed.stderr, /bb-box-gpu 0\.4\.1 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, and bb-box-gpu 0\.4\.0, put back, wrote no fresh, healthy report either, so bb-box-gpu is stopped and disabled, and bb-box-gpu-memory\.timer writes the report/);
   assert.ok(host.timerInstalled() && host.enabled("bb-box-gpu-memory.timer") && host.active("bb-box-gpu-memory.timer"));
   assert.equal(host.active("bb-box-gpu.service"), false);
-  assert.equal(host.installedVersion(), "0.3.4");
+  assert.equal(host.installedVersion(), "0.4.0");
   assert.equal(host.helperLine(), null, "the timer's report replaced the helper's");
 });
 
 hosted("a downgrade that set a newer ledger aside, and whose helper writes no report, puts the newer helper and its ledger back", (host) => {
-  const newer = releaseWith("0.4.0-protocol-2", [...versioned("0.4.0", 2), QUICK_HEARTBEAT]);
+  const newer = releaseWith("0.5.0-protocol-2", [...versioned("0.5.0", 2), QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, newer).status, 0);
   const written = host.node.ledger();
   const guests = host.guests();
-  const broken = releaseWith("0.3.4-broken", [WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.0-broken", [WRITES_NO_REPORT]);
   const failed = host.setup(["--downgrade"], {}, broken);
   assert.equal(failed.status, 1, failed.stdout + failed.stderr);
-  assert.match(failed.stderr, /so bb-box-gpu 0\.4\.0 is back as it was, with its settings and ledger/);
-  assert.equal(host.installedVersion(), "0.4.0");
+  assert.match(failed.stderr, /so bb-box-gpu 0\.5\.0 is back as it was, with its settings and ledger/);
+  assert.equal(host.installedVersion(), "0.5.0");
   assert.equal(host.node.ledger().protocol, 2);
   assert.deepEqual(host.node.ledger().guests, written.guests);
   const files = readdirSync(host.node.file("var/lib/bb-box-gpu"));
-  assert.ok(files.some((name) => name.startsWith("ledger.from-0.3.4-")), `the older helper's ledger is kept beside: ${files.join(" ")}`);
+  assert.ok(files.some((name) => name.startsWith("ledger.from-0.4.0-")), `the older helper's ledger is kept beside: ${files.join(" ")}`);
   assert.ok(!files.some((name) => name.startsWith("ledger.protocol-")), "the set-aside ledger is back in place");
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 2 /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.5\.0 protocol 2 /);
   host.touchedNoGuest(guests);
 });
 
@@ -712,7 +712,7 @@ hosted("on a pve-container this release was not tested on, setup-gpu.sh says so;
   writeFileSync(host.node.file("pve-container-version"), "6.1.15\n");
   const result = host.setup();
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /VM 9190's report: helper bb-box-gpu 0\.3\.4 protocol 1 writes off pve-container 6\.1\.15 untested\n/);
+  assert.match(result.stdout, /VM 9190's report: helper bb-box-gpu 0\.4\.0 protocol 1 writes off pve-container 6\.1\.15 untested\n/);
   assert.match(result.stdout, /this release was not tested on the pve-container installed here, so its helper would change no guest on this host even with writes on/);
 });
 
@@ -762,9 +762,9 @@ hosted("the node's upgrade, from a helper that writes its report only on its hea
   const took = Date.now() - began;
   assert.equal(upgrade.status, 0, upgrade.stdout + upgrade.stderr);
   assert.ok(took < 20_000, `the run took ${took} ms`);
-  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.3\.4, which was 0\.1\.9, with writes off; gpu\.conf and the ledger are kept/);
-  assert.match(upgrade.stdout, /VM 9190's report: helper bb-box-gpu 0\.3\.4 protocol 1 writes off pve-container 6\.1\.14 tested/);
-  assert.equal(host.installedVersion(), "0.3.4");
+  assert.match(upgrade.stdout, /restarted bb-box-gpu\.service on 0\.4\.0, which was 0\.1\.9, with writes off; gpu\.conf and the ledger are kept/);
+  assert.match(upgrade.stdout, /VM 9190's report: helper bb-box-gpu 0\.4\.0 protocol 1 writes off pve-container 6\.1\.14 tested/);
+  assert.equal(host.installedVersion(), "0.4.0");
   assert.equal(host.conf(), conf);
   assert.deepEqual(host.node.ledger().guests, ledger);
   assert.deepEqual(host.writers(), ["bb-box-gpu"]);
@@ -781,7 +781,7 @@ hosted("a helper put back by a rollback that writes its report only on its heart
   const result = host.setup([], { BBBOX_GPU_REPORT_WAIT: "", FAKE_SYSTEMCTL_FAIL_NTH: "start bb-box-gpu.service#1" });
   const took = Date.now() - began;
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stderr, /bb-box-gpu 0\.3\.4 did not start, so bb-box-gpu 0\.1\.9 is back as it was, with its settings and ledger/);
+  assert.match(result.stderr, /bb-box-gpu 0\.4\.0 did not start, so bb-box-gpu 0\.1\.9 is back as it was, with its settings and ledger/);
   assert.ok(took > 30_000, `the helper put back wrote only on its heartbeat, after the 30 s a release's own helper is given: the run took ${took} ms`);
   assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.1\.9 /);
   assert.deepEqual(host.writers(), ["bb-box-gpu"]);
@@ -793,19 +793,19 @@ for (const [how, fault] of [
   ["stops it but says it failed (Opus 1)", { FAKE_SYSTEMCTL_FAIL_AFTER: "stop bb-box-gpu.service" }],
 ] as const) {
   hosted(`a downgrade whose systemctl ${how} before the ledger is set aside puts every file back, with the newer helper running and the timer gone`, (host) => {
-    const newer = releaseWith("0.4.0-protocol-2-quick", [...versioned("0.4.0", 2), QUICK_HEARTBEAT]);
+    const newer = releaseWith("0.5.0-protocol-2-quick", [...versioned("0.5.0", 2), QUICK_HEARTBEAT]);
     assert.equal(host.setup([], {}, newer).status, 0);
     const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
     const guests = host.guests();
     const result = host.setup(["--downgrade", "--pool", "team"], fault);
     assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.match(result.stderr, /bb-box-gpu\.service could not be stopped, so bb-box-gpu 0\.4\.0 is back as it was, with its settings and ledger/);
+    assert.match(result.stderr, /bb-box-gpu\.service could not be stopped, so bb-box-gpu 0\.5\.0 is back as it was, with its settings and ledger/);
     assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
     assert.equal(host.conf(), "pools bbbox\nwrites off\n");
     assert.equal(host.node.ledger().protocol, 2);
     assert.ok(!readdirSync(host.node.file("var/lib/bb-box-gpu")).some((name) => name.startsWith("ledger.") || name.startsWith("setup-backup")), "no ledger set aside, and no backup left");
     assert.deepEqual(host.writers(), ["bb-box-gpu"]);
-    assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 2 /);
+    assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.5\.0 protocol 2 /);
     assert.equal(host.timerInstalled(), false);
     host.touchedNoGuest(guests);
   });
@@ -829,10 +829,10 @@ for (const [after, signals, writers] of [
   ["disable bb-box-gpu-memory.timer", ["HUP", "KILL"], ["bb-box-gpu"]],
 ] as const) {
   hosted(`an upgrade interrupted by ${signals.join(", ")} right after "${after}" leaves a writer of the report, says which, keeps the backup, and a second run finishes it (Opus 1, Astra 1)`, (host) => {
-    const newer = releaseWith("0.3.5", versioned("0.3.5"));
+    const newer = releaseWith("0.4.1", versioned("0.4.1"));
     for (const signal of signals) {
       assert.equal(host.setup().status, 0);
-      assert.equal(host.installedVersion(), "0.3.4");
+      assert.equal(host.installedVersion(), "0.4.0");
       const guests = host.guests();
       host.forgetCalls();
       const result = host.setup([], { FAKE_SYSTEMCTL_SIGNAL: `${after}=${signal}` }, newer);
@@ -841,7 +841,7 @@ for (const [after, signals, writers] of [
       assert.ok(host.backupKept(), "the install from before is kept");
       const again = host.setup([], {}, newer);
       assert.equal(again.status, 0, again.stdout + again.stderr);
-      assert.match(again.stdout, /VM 9190's report: helper bb-box-gpu 0\.3\.5 protocol 1 writes off /);
+      assert.match(again.stdout, /VM 9190's report: helper bb-box-gpu 0\.4\.1 protocol 1 writes off /);
       assert.deepEqual(host.writers(), ["bb-box-gpu"]);
       assert.equal(host.timerInstalled(), false);
       assert.equal(host.backupKept(), false);
@@ -892,19 +892,19 @@ hosted("--remove stops the helper only once the timer runs and has written the r
 
 hosted("a handover after a failed rollback, killed right after it stops the helper, leaves the timer writing the report (Opus 1, Astra 2)", (host) => {
   assert.equal(host.setup().status, 0);
-  const newer = releaseWith("0.3.5", versioned("0.3.5"));
+  const newer = releaseWith("0.4.1", versioned("0.4.1"));
   host.forgetCalls();
   const result = host.setup([], { FAKE_PVE_REFUSE_WRITE: `qemu ${REPORT_VMID}`, FAKE_SYSTEMCTL_SIGNAL: "disable bb-box-gpu.service bb-box-gpu-boot.service=KILL" }, newer);
   interrupted(result, "KILL", []);
   assert.deepEqual(host.writers(), ["bb-box-gpu-memory.timer"]);
-  assert.equal(host.installedVersion(), "0.3.4", "the rollback had put 0.3.4 back");
+  assert.equal(host.installedVersion(), "0.4.0", "the rollback had put 0.4.0 back");
 });
 
 hosted("a rollback interrupted right after it stops the failed helper leaves the timer writing the report, and a second run puts the helper before back from the kept install (Opus 1, Astra 1)", (host) => {
-  const before = releaseWith("0.3.4-quick-heartbeat", [QUICK_HEARTBEAT]);
+  const before = releaseWith("0.4.0-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
-  const broken = releaseWith("0.3.5-broken", [...versioned("0.3.5"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.1-broken", [...versioned("0.4.1"), WRITES_NO_REPORT]);
   host.forgetCalls();
   const result = host.setup([], { FAKE_SYSTEMCTL_SIGNAL: "stop bb-box-gpu.service#2=TERM" }, broken);
   interrupted(result, "TERM", ["bb-box-gpu-memory.timer"]);
@@ -912,7 +912,7 @@ hosted("a rollback interrupted right after it stops the failed helper leaves the
   const again = host.setup([], {}, broken);
   assert.equal(again.status, 1, again.stdout + again.stderr);
   assert.match(again.stdout, /an earlier run did not finish, so the install from before it, kept in .*setup-backup, is the one a rollback puts back/);
-  assert.match(again.stderr, /so bb-box-gpu 0\.3\.4 is back as it was, with its settings and ledger/);
+  assert.match(again.stderr, /so bb-box-gpu 0\.4\.0 is back as it was, with its settings and ledger/);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.deepEqual(host.writers(), ["bb-box-gpu"]);
   assert.equal(host.timerInstalled(), false, "the timer was not there before the first run, so it goes again");
@@ -920,30 +920,30 @@ hosted("a rollback interrupted right after it stops the failed helper leaves the
 });
 
 hosted("an upgrade killed while its helper fails to report is put right by the next run, from the backup the killed run kept on disk (Astra 1)", (host) => {
-  const before = releaseWith("0.3.4-quick-heartbeat", [QUICK_HEARTBEAT]);
+  const before = releaseWith("0.4.0-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
-  const broken = releaseWith("0.3.5-broken", [...versioned("0.3.5"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.1-broken", [...versioned("0.4.1"), WRITES_NO_REPORT]);
   host.forgetCalls();
   interrupted(host.setup([], { FAKE_SYSTEMCTL_SIGNAL: "start bb-box-gpu.service=KILL" }, broken), "KILL", []);
   assert.deepEqual(host.writers(), ["bb-box-gpu", "bb-box-gpu-memory.timer"]);
   assert.ok(host.backupKept());
   const again = host.setup([], {}, broken);
   assert.equal(again.status, 1, again.stdout + again.stderr);
-  assert.match(again.stderr, /bb-box-gpu 0\.3\.5 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.3\.4 is back as it was/);
+  assert.match(again.stderr, /bb-box-gpu 0\.4\.1 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.0 is back as it was/);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.deepEqual(host.writers(), ["bb-box-gpu"]);
   assert.equal(host.timerInstalled(), false);
 });
 
 hosted("a rollback that fails part way under set -e leaves the timer writing the report and the backup in place; the release before then installs cleanly (Astra 1)", (host) => {
-  const before = releaseWith("0.3.4-quick-heartbeat", [QUICK_HEARTBEAT]);
+  const before = releaseWith("0.4.0-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
-  const broken = releaseWith("0.3.5-broken", [...versioned("0.3.5"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.1-broken", [...versioned("0.4.1"), WRITES_NO_REPORT]);
   host.forgetCalls();
   const result = host.setup([], { FAKE_SYSTEMCTL_FAIL_NTH: "daemon-reload#3" }, broken);
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stderr, /stopped part way, while putting back bb-box-gpu 0\.3\.4 \(exit status 1\); the report is written by bb-box-gpu-memory\.timer/);
+  assert.match(result.stderr, /stopped part way, while putting back bb-box-gpu 0\.4\.0 \(exit status 1\); the report is written by bb-box-gpu-memory\.timer/);
   assert.match(result.stderr, /the install from before this run is kept in .*setup-backup; run setup-gpu\.sh again/);
   assert.deepEqual(host.writers(), ["bb-box-gpu-memory.timer"]);
   const again = host.setup([], {}, before);
@@ -953,10 +953,10 @@ hosted("a rollback that fails part way under set -e leaves the timer writing the
 });
 
 hosted("a failed upgrade across a protocol change puts back the ledger the helper before kept, keeps the newer one beside, and the helper put back reports healthy (Opus 2, Astra 3)", async (host) => {
-  const before = releaseWith("0.3.4-quick-heartbeat", [QUICK_HEARTBEAT]);
+  const before = releaseWith("0.4.0-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const guests = host.guests();
-  const broken = releaseWith("0.4.0-protocol-2-broken", [...versioned("0.4.0", 2), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.5.0-protocol-2-broken", [...versioned("0.5.0", 2), WRITES_NO_REPORT]);
   const running = host.setupLater([], {}, broken);
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline && !host.calls().includes("start bb-box-gpu.service")) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -968,12 +968,12 @@ hosted("a failed upgrade across a protocol change puts back the ledger the helpe
   assert.equal(host.node.ledger().protocol, 2, "the newer helper wrote the ledger under its protocol while the installer waited");
   const result = await running;
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stderr, /so bb-box-gpu 0\.3\.4 is back as it was, with its settings and ledger; the ledger bb-box-gpu 0\.4\.0 wrote is kept as .*ledger\.from-0\.4\.0-\d+/);
+  assert.match(result.stderr, /so bb-box-gpu 0\.4\.0 is back as it was, with its settings and ledger; the ledger bb-box-gpu 0\.5\.0 wrote is kept as .*ledger\.from-0\.5\.0-\d+/);
   assert.equal(host.node.ledger().protocol, 1);
-  const kept = readdirSync(host.node.file("var/lib/bb-box-gpu")).find((name) => name.startsWith("ledger.from-0.4.0-"));
+  const kept = readdirSync(host.node.file("var/lib/bb-box-gpu")).find((name) => name.startsWith("ledger.from-0.5.0-"));
   assert.equal(JSON.parse(readFileSync(host.node.file(`var/lib/bb-box-gpu/${kept}`), "utf8")).protocol, 2);
   assert.doesNotMatch(readFileSync(host.reportFile(), "utf8"), /error the ledger is protocol/);
-  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.3\.4 protocol 1 /);
+  assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.0 protocol 1 /);
   const rerun = host.setup([], {}, before);
   assert.equal(rerun.status, 0, rerun.stdout + rerun.stderr);
   assert.deepEqual(host.guests(), marked);

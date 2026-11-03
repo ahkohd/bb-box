@@ -121,14 +121,26 @@ function noLongerWords(vmid: number, owner: GuestOwner, config: Config | null): 
 
 export type Sighting = (vmid: number, words: string) => void;
 
+export type PowerAction = "start" | "stop" | "shutdown" | "delete";
+
+export interface NodePower {
+  handles(config: Config, signal?: AbortSignal): Promise<boolean>;
+  ask(vmid: number, action: PowerAction, owner: GuestOwner, signal?: AbortSignal): Promise<void>;
+}
 
 export class OwnedGuests {
   readonly #api: Proxmox;
   readonly #seen: Sighting;
+  readonly #power: NodePower | null;
 
-  constructor(api: Proxmox, seen: Sighting = () => {}) {
+  constructor(api: Proxmox, seen: Sighting = () => {}, power: NodePower | null = null) {
     this.#api = api;
     this.#seen = seen;
+    this.#power = power;
+  }
+
+  async #onTheNode(config: Config, signal?: AbortSignal): Promise<boolean> {
+    return this.#power !== null && (await this.#power.handles(config, signal));
   }
 
   async #configOrNull(vmid: number, signal?: AbortSignal): Promise<Config | null> {
@@ -138,6 +150,12 @@ export class OwnedGuests {
       if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
+  }
+
+  async readIfThere(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<Config | null> {
+    const config = await this.#configOrNull(vmid, signal);
+    if (config && !owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
+    return config;
   }
 
   async read(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<Config> {
@@ -156,8 +174,12 @@ export class OwnedGuests {
     return config;
   }
 
-  async #act(vmid: number, owner: GuestOwner, what: string, run: () => Promise<void>, signal?: AbortSignal): Promise<void> {
-    await this.read(vmid, owner, signal);
+  async #act(vmid: number, owner: GuestOwner, what: string, run: () => Promise<void>, signal?: AbortSignal, onTheNode?: PowerAction): Promise<void> {
+    const config = await this.read(vmid, owner, signal);
+    if (onTheNode && (await this.#onTheNode(config, signal))) {
+      await this.#power!.ask(vmid, onTheNode, owner, signal);
+      return;
+    }
     await run();
     if (!(await this.#after(vmid, owner, what, signal))) throw new NoLongerOurs(`CT ${vmid} went right after bb-box's ${what}. bb-box acts on it no more.`);
   }
@@ -198,15 +220,15 @@ export class OwnedGuests {
   }
 
   async start(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.#act(vmid, owner, "start", () => this.#api.start(vmid, signal), signal);
+    await this.#act(vmid, owner, "start", () => this.#api.start(vmid, signal), signal, "start");
   }
 
   async stop(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.#act(vmid, owner, "stop", () => this.#api.stop(vmid, signal), signal);
+    await this.#act(vmid, owner, "stop", () => this.#api.stop(vmid, signal), signal, "stop");
   }
 
   async shutdown(vmid: number, owner: GuestOwner, timeoutS: number, signal?: AbortSignal): Promise<void> {
-    await this.#act(vmid, owner, "shutdown", () => this.#api.shutdown(vmid, timeoutS, signal), signal);
+    await this.#act(vmid, owner, "shutdown", () => this.#api.shutdown(vmid, timeoutS, signal), signal, "shutdown");
   }
 
   async makeTemplate(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
@@ -232,6 +254,13 @@ export class OwnedGuests {
     const config = await this.#configOrNull(vmid, signal);
     if (!config) return;
     if (!owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
+    if (await this.#onTheNode(config, signal)) {
+      if ((await this.#api.status(vmid, signal))?.status === "running") await this.#power!.ask(vmid, "stop", owner, signal);
+      const now = await this.read(vmid, owner, signal);
+      if (now.protection === 1 || now.protection === "1") await this.writeOn(vmid, owner, now, { delete: ["protection"] }, signal);
+      await this.#power!.ask(vmid, "delete", owner, signal);
+      return;
+    }
     if ((await this.#api.status(vmid, signal))?.status === "running") await this.stop(vmid, owner, signal);
     for (let tries = 1; ; tries++) {
       await this.read(vmid, owner, signal);
