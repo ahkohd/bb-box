@@ -228,8 +228,10 @@ export class SelkiesSession implements Kept {
   /** Whether the video is stopped, while no tab shows it or the browser hides the page. */
   #stopped = false;
   readonly #onVisibility = () => {
-    if (document.visibilityState === "hidden") this.#letGo();
+    const visible = document.visibilityState === "visible";
+    if (!visible) this.#letGo();
     this.#video();
+    if (visible && !this.hidden && !this.#everShown && !this.#device && this.connection.state === "disconnected") this.connect();
   };
   /** The window regains focus, as after the person was away: the video starts again, as a tab coming back does. */
   readonly #onFocus = () => {
@@ -536,6 +538,7 @@ export class SelkiesSession implements Kept {
     if (stop) {
       clearTimeout(this.#firstFrame);
       this.#firstFrame = undefined;
+      if (!this.#everShown && !this.#device) clearTimeout(this.#retry);
     } else this.#awaitFirstFrame();
     // Not connected: the next connection starts as this says.
     if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
@@ -575,7 +578,7 @@ export class SelkiesSession implements Kept {
   }
 
   #awaitFirstFrame(): void {
-    if (this.#firstFrame !== undefined || this.#everShown || this.#device || this.#stopped) return;
+    if (this.#firstFrame !== undefined || this.#everShown || this.#device || this.#stopped || this.#socket?.readyState !== WebSocket.OPEN) return;
     this.#firstFrame = setTimeout(() => {
       this.#firstFrame = undefined;
       if (this.#everShown || this.#stopped || this.#disposed) return;
@@ -599,7 +602,6 @@ export class SelkiesSession implements Kept {
     if (this.#disposed) return;
     clearTimeout(this.#retry);
     this.#stopped = this.#hidden || document.visibilityState === "hidden";
-    this.#awaitFirstFrame();
     const socket = new WebSocket(this.#url);
     socket.binaryType = "arraybuffer";
     this.#socket = socket;
@@ -688,6 +690,7 @@ export class SelkiesSession implements Kept {
       this.onEnded?.();
       return;
     }
+    if (!this.#everShown && !this.#device && document.visibilityState === "hidden") return;
     this.#retry = setTimeout(() => this.connect(), wait);
   }
 

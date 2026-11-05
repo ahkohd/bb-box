@@ -5315,7 +5315,10 @@ test("an open video desktop retries refused connections after a restart and show
     await startBox(handlers, slot, "box_2");
     await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
     for (const delay of [1_000, 2_000]) {
-      act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
+      act(() => {
+        FakeSocket.made.at(-1)!.open();
+        FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980");
+      });
       expect(novnc.FakeRfb.made).toHaveLength(0);
       act(() => vi.advanceTimersByTime(delay));
     }
@@ -5352,7 +5355,10 @@ test("an open video desktop falls back once when Selkies never listens after a r
     await startBox(handlers, slot, "box_2");
     await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
     for (const delay of [1_000, 2_000, 4_000]) {
-      act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
+      act(() => {
+        FakeSocket.made.at(-1)!.open();
+        FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980");
+      });
       act(() => vi.advanceTimersByTime(delay));
     }
     act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
@@ -5389,6 +5395,7 @@ test("video startup has one deadline across refused, silent and unopened sockets
     const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
     const fallback = vi.fn();
     session.onFallback = fallback;
+    FakeSocket.made.at(-1)!.open();
     FakeSocket.made.at(-1)!.end(1011, "Connection refused");
     vi.advanceTimersByTime(1_000);
     FakeSocket.made.at(-1)!.open();
@@ -5418,13 +5425,14 @@ test("video startup has one deadline across refused, silent and unopened sockets
   }
 });
 
-test("a video startup deadline pauses while hidden and resumes when visible", () => {
+test("a video startup deadline pauses while hidden and resumes when visible", async () => {
   const undo = withVideo();
   vi.useFakeTimers();
+  const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
   try {
-    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
     const fallback = vi.fn();
     session.onFallback = fallback;
+    FakeSocket.made.at(-1)!.open();
     vi.advanceTimersByTime(2_000);
     session.hidden = true;
     vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
@@ -5434,8 +5442,64 @@ test("a video startup deadline pauses while hidden and resumes when visible", ()
     expect(fallback).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(fallback).toHaveBeenCalledExactlyOnceWith("No video came within 10 s.");
-    session.dispose();
   } finally {
+    session.dispose();
+    await decodesMacroblocks();
+    undo();
+  }
+});
+
+test.each([true, false])("a desktop in a background browser tab defers startup retries until visible, initially hidden: %s", async (hiddenAtStart) => {
+  const undo = withVideo();
+  vi.useFakeTimers();
+  let pageHidden = hiddenAtStart;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => pageHidden ? "hidden" : "visible");
+  const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+  try {
+    const fallback = vi.fn();
+    session.onFallback = fallback;
+    const first = FakeSocket.made.at(-1)!;
+    first.open();
+    first.end(1011, "Connection refused");
+    pageHidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.made).toHaveLength(1);
+    expect(fallback).not.toHaveBeenCalled();
+    pageHidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeSocket.made).toHaveLength(2);
+    const resumed = FakeSocket.made.at(-1)!;
+    resumed.open();
+    resumed.onmessage?.({ data: videoFrame(1, true) });
+    expect(session.connection.state).toBe("connected");
+    expect(fallback).not.toHaveBeenCalled();
+  } finally {
+    session.dispose();
+    await decodesMacroblocks();
+    visibility.mockRestore();
+    undo();
+  }
+});
+
+test("a slow relay socket open leaves the desktop a full ten seconds for its first video frame", async () => {
+  const undo = withVideo();
+  vi.useFakeTimers();
+  const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+  try {
+    const fallback = vi.fn();
+    session.onFallback = fallback;
+    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(FakeSocket.made).toHaveLength(1);
+    FakeSocket.made.at(-1)!.open();
+    vi.advanceTimersByTime(FIRST_FRAME_MS - 1);
+    expect(fallback).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fallback).toHaveBeenCalledExactlyOnceWith("No video came within 10 s.");
+  } finally {
+    session.dispose();
+    await decodesMacroblocks();
     undo();
   }
 });
