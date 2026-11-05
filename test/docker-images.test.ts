@@ -190,7 +190,7 @@ const WAYLAND_FREE_GB = 18;
  * /usr/share/bb-box/image.json, and a curl that gives `digest` as BB's app's,
  * gives none ("none"), or fails ("fail").
  */
-function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}') {
+function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}', extra: { readonly imageError?: string; readonly startError?: string } = {}) {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -211,8 +211,14 @@ case "$cmd" in
       *bb-box-df*)
         if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
         ;;
+      *)
+        if [ -n "\${FAKE_IMAGE_ERROR:-}" ]; then echo "$FAKE_IMAGE_ERROR" >&2; exit 125; fi
+        ;;
     esac
     echo c0
+    ;;
+  start)
+    if [ -n "\${FAKE_START_ERROR:-}" ]; then echo "$FAKE_START_ERROR" >&2; exit 1; fi
     ;;
   cp)
     src=$1
@@ -254,7 +260,7 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
 `,
   );
   chmodSync(join(bin, "curl"), 0o755);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}) };
+  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}), ...(extra.imageError ? { FAKE_IMAGE_ERROR: extra.imageError } : {}), ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}) };
   const result = spawnSync("bash", [BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
   // Each target's build, then a second one, from the cache, that labels it with its record (049).
@@ -318,6 +324,20 @@ test("build.sh labels each image with its own record, and stops at an image with
     [none.status, none.stderr, none.built, none.labelled],
     [1, "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0\n", ["linux"], []],
   );
+});
+
+test("build.sh reports Docker's own error when it cannot create a container to read an image, or start one to read the disk", () => {
+  const record = '{"contract":1,"kind":"linux","build":"build.x"}';
+  const image = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { imageError: "Error response from daemon: No such image: bbbox/linux:1" });
+  assert.equal(image.status, 1);
+  assert.equal(image.stderr, "Error response from daemon: No such image: bbbox/linux:1\n");
+  assert.deepEqual(image.built, ["linux"]);
+  assert.deepEqual(image.labelled, []);
+
+  const start = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { startError: "Error response from daemon: failed to start container" });
+  assert.equal(start.status, 0, start.stderr);
+  assert.equal(start.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Error response from daemon: failed to start container\n");
+  assert.deepEqual(start.built, ["linux"]);
 });
 
 test("build.sh with BB's URL passes on the digest of BB's app that the server gives, and stops when it gives none (#95)", () => {
