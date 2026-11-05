@@ -22,7 +22,7 @@ import { pageUrl } from "./desktop.tsx";
 import { CameraGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
 import { canResize, ResizeDialog } from "./resize.tsx";
-import { screensOf, type Screen } from "./screens.ts";
+import { screensOf } from "./screens.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh" | "forget" | "enrol";
@@ -55,7 +55,6 @@ interface NewThreadDraft {
   readonly error: string | null;
 }
 
-const MACHINE_SCREENS: readonly Screen[] = ["desktop"];
 
 const NO_DRAFT: NewThreadDraft = { prompt: "", starting: false, error: null };
 
@@ -81,7 +80,7 @@ function GatedItem({ why, icon, words, onSelect }: { why: string | null; icon: R
 
 function forgetWords(box: Pick<BoxView, "name" | "backendLabel">): string {
   const host = hostOf(box.backendLabel);
-  return `bb-box removes its record of ${box.name}, and nothing else. Its box is not deleted: if it still runs${host ? ` on ${host}` : ""}, it keeps running there.`;
+  return `bb-box removes its record of ${box.name}, and nothing else. Its box is not deleted: if it still runs${host ? ` on ${host}` : ""}, it keeps running there. If its backend comes back, bb-box takes the box back into its records, because a running box left untracked costs money and cannot be released.`;
 }
 
 export function BoxMenu({
@@ -135,8 +134,8 @@ export function BoxMenu({
   const gone = notInSettings(box);
   const unfinished = releaseUnfinished(box);
   const silent = silentWhy(box);
-  const viewsOpen = !onPage && hasViewer(box) && ready;
-  const screens = machine ? MACHINE_SCREENS : screensOf(box);
+  const screens = onPage ? (machine ? screensOf(box).filter((screen) => screen === "device") : []) : screensOf(box);
+  const viewsOpen = ready && screens.length > 0 && (onPage || hasViewer(box));
   const inBrowser = machine ? machine.inBrowser : true;
   const offersNewThread = !!thread && thread.offersThread && !thread.held && ready && box.enrol.state === "enrolled";
   const offersTerminal = !onPage && canOpenTerminal(box);

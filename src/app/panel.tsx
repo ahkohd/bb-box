@@ -12,6 +12,7 @@ import { BoxRow, type Held } from "./box-row.tsx";
 import type { BoxAction } from "./box-menu.tsx";
 import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
+import { leaveModifiedClick } from "./modified-click.ts";
 import { useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
@@ -106,7 +107,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
       <EmptyPanel title="BB Box is not set up yet">
         <p className="mt-1">Set a backend up in its settings and turn it on.</p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <UrlLink href={SETTINGS_PATH}>
+          <UrlLink href={SETTINGS_PATH} onClick={leaveModifiedClick}>
             <Icon name="Settings" aria-hidden />
             Open BB Box settings
           </UrlLink>

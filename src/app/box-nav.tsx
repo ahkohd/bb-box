@@ -5,6 +5,7 @@ import { SETTINGS_PATH } from "./common.tsx";
 import { DESKTOP_PAGE } from "./desktop.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
 import { boxView, cameFrom, currentPath, LIST, movedTo, rememberMove, subPathOf, wayBack, type BoxesRoute, type BoxPageRoute, type BoxViewRoute, type Origin } from "./box-route.ts";
+import { opensInNewTab } from "./modified-click.ts";
 
 const SETTINGS_BACK_WORDS = "Back to BB Box settings";
 
@@ -19,10 +20,6 @@ export function boxesPath(pluginId: string, route: BoxesRoute): string {
 
 export function boxesUrl(pluginId: string, route: BoxesRoute): string {
   return new URL(boxesPath(pluginId, route), window.location.origin).href;
-}
-
-function opensInNewTab(event: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">): boolean {
-  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
 
 function leftToTheBrowser(event: MouseEvent<HTMLAnchorElement>): boolean {

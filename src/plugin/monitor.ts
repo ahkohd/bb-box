@@ -65,6 +65,10 @@ export function offlineMachineWords(name: string): string {
   return `bb-box cannot read box ${name} now: its BB machine is not answering BB, and it runs no shell bb-box can read without it.`;
 }
 
+export function unreadReason(name: string, enrol: { readonly state: string; readonly hostId: string | null }): string {
+  return enrol.state === "enrolled" || enrol.hostId !== null ? offlineMachineWords(name) : unreadableWords(name);
+}
+
 export function readableState(state: string): boolean {
   return state === "ready" || state === "stopping";
 }

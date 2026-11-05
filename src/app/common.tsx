@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
 import { platformWord } from "../core/device.ts";
 import { runsWayland } from "./boxes-filter.ts";
+import { leaveModifiedClick } from "./modified-click.ts";
 import { screenWord } from "./screens.ts";
 
 export function message(error: unknown): string {
@@ -426,7 +427,7 @@ export function IconLink({ label, icon, href, className }: { label: string; icon
       <Tooltip>
         <TooltipTrigger asChild>
           <Button asChild variant="ghost" size="icon" className={cn("size-7 p-0 text-muted-foreground hover:text-foreground", className)}>
-            <UrlLink href={href} aria-label={label}>
+            <UrlLink href={href} aria-label={label} onClick={leaveModifiedClick}>
               {typeof icon === "string" ? <Icon name={icon} className="size-4" aria-hidden /> : icon}
             </UrlLink>
           </Button>

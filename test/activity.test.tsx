@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
@@ -9,6 +9,7 @@ import { forgetLive } from "../src/app/common.tsx";
 import { forgetActivity } from "../src/app/activity.tsx";
 import { upWords } from "../src/app/monitor/status.tsx";
 import { sidebarTitle } from "../src/app/desktop.tsx";
+import { HistoryChart, peakRuns } from "../src/app/history-chart.tsx";
 
 const BOX_ID = "bxcalmotter001";
 const THREAD = "thr_ui";
@@ -354,6 +355,32 @@ test("a chart holds still while it has focus, so a screen reader does not hear i
   fireEvent.blur(usage, { relatedTarget: document.body });
   await waitFor(() => expect(card.textContent).toMatch(/% used, the last 6 min/));
 }, 20_000);
+
+test("a step with no neighbour draws a point and a busiest band", () => {
+  const at = Date.UTC(2026, 9, 30, 0, 0, 0);
+  expect(peakRuns([30], [78], [at], 60 * 60_000)).toEqual([[[at, 30, 78]]]);
+  const view = render(
+    <HistoryChart
+      series={[{ key: "cpu", label: "CPU", color: "var(--chart-1)", values: [30], peaks: [78], format: (value) => `${value}%` }]}
+      times={[at]}
+      window={{ from: at, to: at + 60 * 60_000 }}
+      longestStepMs={60 * 60_000}
+      ceiling={100}
+      height={176}
+      ticks={[{ at, words: "0" }]}
+      label="CPU over 7 days"
+      summary="one step"
+      axis={["0%", "100%"]}
+      timeWords={() => "Fri 00:00"}
+      gapWords="No reading"
+    />,
+  );
+  const point = view.container.querySelector("[data-point]");
+  const band = view.container.querySelector("[data-busiest]");
+  expect(point?.getAttribute("width")).toBe("6");
+  expect(band?.getAttribute("width")).toBe("8");
+  expect(Number(band?.getAttribute("height"))).toBeGreaterThan(2);
+});
 
 test("the Monitor's up label says whose clock it counts, so it does not contradict the page's up from the last start", () => {
   expect(upWords(snapshot(), false)).toBe("up 1h 0m");

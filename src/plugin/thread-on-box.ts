@@ -11,10 +11,18 @@ export interface BbThread {
   readonly updatedAt?: unknown;
 }
 
+export function chosenThreadTitle(thread: { readonly id: string; readonly title?: string | null; readonly titleFallback?: string | null }): string | null {
+  const title = thread.title?.trim() ?? "";
+  if (title && title !== thread.id) return title;
+  const fallback = thread.titleFallback?.trim() ?? "";
+  if (fallback && fallback !== thread.id) return fallback;
+  return null;
+}
+
 export function threadOnBox(thread: BbThread): ThreadOnBox {
   return {
     id: thread.id,
-    title: thread.title ?? thread.titleFallback ?? null,
+    title: chosenThreadTitle(thread),
     running: WORKING_STATUSES.has(thread.status) || thread.hasPendingInteraction === true,
     ...(typeof thread.updatedAt === "number" ? { activeAt: thread.updatedAt } : {}),
   };

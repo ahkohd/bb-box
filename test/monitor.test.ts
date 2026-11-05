@@ -9,9 +9,18 @@ import { snapshotSchema, type MonitorSnapshot } from "../src/monitor/snapshot.ts
 import { monitorHandlers } from "../src/host/monitor.ts";
 import { MONITOR_DEFAULTS, monitorConfig, readDraft } from "../src/core/document.ts";
 import { DRIVERS } from "../src/backends/index.ts";
-import { BOX_MACHINE_PREFIX, MonitorOffError, SERVER_MACHINE, asSlotReading, createLightSampler, listMachines, monitorChecks, monitorRpcHandlers, type MonitoredBox, type MonitorHost } from "../src/plugin/monitor.ts";
+import { BOX_MACHINE_PREFIX, MonitorOffError, SERVER_MACHINE, asSlotReading, createLightSampler, listMachines, monitorChecks, monitorRpcHandlers, offlineMachineWords, readableState, unreadReason, unreadableWords, type MonitoredBox, type MonitorHost } from "../src/plugin/monitor.ts";
 import { monitorSnapshotText } from "../src/plugin/monitor-cli.ts";
 import { flush, startTestMonitor } from "./monitor-helpers.ts";
+
+test("a box whose BB machine is known is not called no BB machine when that machine is offline", () => {
+  assert.equal(unreadReason("calm-otter", { state: "enrolled", hostId: "host_1" }), offlineMachineWords("calm-otter"));
+  assert.equal(unreadReason("calm-otter", { state: "failed", hostId: "host_1" }), offlineMachineWords("calm-otter"));
+  assert.equal(unreadReason("calm-otter", { state: "failed", hostId: null }), unreadableWords("calm-otter"));
+  assert.equal(unreadableWords("calm-otter").includes("not a BB machine"), true);
+  assert.equal(offlineMachineWords("calm-otter").includes("not a BB machine"), false);
+  assert.equal(readableState("ready"), true);
+});
 
 test("CPU deltas handle warmup, idle, full utilization, and counter resets", () => {
   assert.equal(calculateCpuUsage(null, { idle: 0, total: 100 }), null);

@@ -56,7 +56,9 @@ import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from
 import { BoxPage, Loading, NotHere, THREADS_RECHECK_MS, useBoxPage } from "./box-page.tsx";
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
+import { silentWhy } from "./box-words.ts";
 import { threadTitle, ThreadWorking } from "./thread-chips.tsx";
+import { chosenThreadTitle } from "../plugin/thread-on-box.ts";
 import { BarNumbers, OtherViews, otherViewsNow, useBarNumbersShown, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
@@ -1121,7 +1123,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   const deviceShown = shows === "device";
   const showsNow = useRef(shows);
   showsNow.current = shows;
-  const showing = box !== null && box.state === "ready" && (deviceShown ? hasDevice : box.display !== null);
+  const quiet = box !== null && silentWhy(box) !== null;
+  const showing = box !== null && box.state === "ready" && !quiet && (deviceShown ? hasDevice : box.display !== null);
   const mine = box?.control?.owner === "human" && box.control.holder === viewer;
   const taken = box?.control?.owner === "agent" && box.control.takenFrom === viewer;
   const resizable = box?.display?.resizable ?? false;
@@ -1271,7 +1274,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = key !== null && (ready || keptFree(key) !== undefined);
+  const wanted = key !== null && !quiet && (ready || keptFree(key) !== undefined);
 
   // The viewer's session is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept frame is in the page before it paints.
@@ -1699,6 +1702,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   } else if (box && box.state !== "ready") {
     tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
     words = statusOf(box, Date.now()).items[0]?.text ?? box.state;
+  } else if (box && quiet) {
+    tone = "warn";
+    words = box.reach?.is === "not-answering" ? "Not answering" : "Not checked";
   } else if (box && connection.state === "connecting") {
     words = deviceShown ? `${deviceWaitWords(device)}…` : "Connecting…";
   } else if (box && connection.state === "disconnected") {
@@ -1938,6 +1944,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           <Notice>{box.name} was deleted outside bb-box.</Notice>
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
+        ) : quiet ? (
+          <Notice>{silentWhy(box)}</Notice>
         ) : connection.state === "connecting" && deviceShown && !(device?.model ?? box.device?.model) ? (
           <Notice detail={deviceWaitWords(device)}>The device</Notice>
         ) : connection.state === "connecting" && deviceShown ? null : connection.state === "connecting" ? (
@@ -2414,9 +2422,11 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const offered = choices(tabBoxes);
   const kept = Object.fromEntries(TAG_GROUPS.map((group) => [group, filters[group].filter((value) => offered[group].includes(value))])) as unknown as Filters;
   const threadOf = new Map(threads.flatMap((entry) => (entry.thread ? [[entry.threadId, entry.thread] as const] : [])));
-  const titleOf = (threadId: string) => {
+  const titleOf = (threadId: string): string | undefined => {
     const thread = threadOf.get(threadId);
-    return thread?.title ? threadTitle(thread) : titles[threadId];
+    const chosen = thread ? chosenThreadTitle({ id: threadId, title: thread.title }) : null;
+    if (chosen) return threadTitle({ id: threadId, title: chosen, running: thread?.running ?? false });
+    return titles[threadId];
   };
   const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => thread.title ?? ""), activeAt: mineNow.get(entry.box.id)?.activeAt }));
   const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [titleOf(threadId) ?? ""], activeAt }));
@@ -2515,10 +2525,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             ) : null}
             {tab === "threads"
               ? [...groups].map(([threadId, rows]) => (
-                  <section key={threadId} aria-label={titleOf(threadId) ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
+                  <section key={threadId} aria-label={titleOf(threadId) ?? "Thread"} className="overflow-hidden rounded-lg border border-border bg-card">
                     <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">
                       <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
-                        {titleOf(threadId) ?? threadId}
+                        {titleOf(threadId) ?? ""}
                       </button>
                       <ThreadWorking thread={threadOf.get(threadId)} />
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
