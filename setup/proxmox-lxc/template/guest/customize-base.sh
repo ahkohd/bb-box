@@ -7,7 +7,8 @@
 #
 # usage: customize-base.sh <build-dir>
 # <build-dir>/build.env sets BOX_USER, BOX_DNS and BB_URL (see build.sh), and
-# BOX_RUNTIME: lxc (the default), docker, or vm (a Tart Linux VM).
+# BOX_RUNTIME: lxc (the default), docker, or vm (a Tart Linux VM), and
+# LINUX_GPU: none (the default), or nvidia for NVIDIA's userspace (071).
 set -Eeuo pipefail
 trap 'echo "customize-base: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022
@@ -294,6 +295,15 @@ if [ "${BOX_IDENTITY_RESET:-off}" = on ]; then
   [ "${BOX_IDENTITY_MACHINE:-own}" != provider ] || identity_options+=(--machine-from-provider)
   /usr/local/sbin/bb-box-identity enable "${identity_options[@]}"
 fi
+
+case "${LINUX_GPU:-none}" in
+  none) ;;
+  nvidia)
+    nvidia=$(bash "$build/guest/nvidia-userspace.sh" "$build")
+    echo "nvidia=$nvidia" >>"$build/extra-release"
+    ;;
+  *) die "LINUX_GPU must be none or nvidia" ;;
+esac
 
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
 # does in a login shell. Once: a refresh (049) runs this on a built image,

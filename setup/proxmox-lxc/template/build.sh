@@ -1,20 +1,24 @@
 #!/bin/bash
 # Builds bb-box's CT templates on a Proxmox host, as root.
 #
-#   build.sh linux <vmid>
-#       the Linux template: development tools, agent CLIs and Docker.
-#       build.sh headless, its earlier name, does the same
+#   build.sh linux <vmid> [--cpu]
+#       the Linux template: development tools, agent CLIs and Docker, and on a
+#       host with an NVIDIA driver NVIDIA's userspace for it, so its boxes can
+#       be given a card (071). --cpu leaves the userspace out. build.sh
+#       headless, its earlier name, does the same
 #   build.sh desktop <vmid> [--gpu <pci-address> | --cpu] [--wayland]
 #       the desktop template: everything in the Linux one, plus XFCE, VNC,
-#       Chrome and Cua Driver, on one NVIDIA GPU (the only one, if --gpu is
-#       left out), or with --cpu on no GPU at all: no device nodes, no NVIDIA
-#       userspace, and the display always on the CPU. A host without an
-#       NVIDIA driver gets a CPU template without --cpu. With --wayland, the
-#       Wayland desktop (048) instead of XFCE: Sway with floating windows,
-#       Waybar and wayvnc, on the CPU only, so --wayland implies --cpu.
+#       Chrome and Cua Driver, with NVIDIA's userspace and no device lines:
+#       the host's GPU helper gives each box its card, and a box with none
+#       draws on the CPU (071). --gpu gives the template one card's device
+#       lines, for a host without the helper. With --cpu, no NVIDIA userspace
+#       and the display always on the CPU. A host without an NVIDIA driver
+#       gets a CPU template without --cpu. With --wayland, the Wayland desktop
+#       (048) instead of XFCE: Sway with floating windows, Waybar and wayvnc,
+#       on the CPU only, so --wayland implies --cpu.
 #   build.sh copy-desktop <from-vmid> <vmid> --gpu <pci-address>
-#       a copy of a desktop template for another GPU, so desktops can spread
-#       across cards
+#       a copy of a desktop template with another GPU's device lines, for a
+#       host without the GPU helper, so desktops can spread across cards
 #
 # Options: --keep     stop before finalizing and leave the build CT running.
 #          --replace  <vmid> may be a bb-box template of the same kind
@@ -29,7 +33,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
 shift || usage
 [ "$kind" != headless ] || kind=linux
@@ -51,17 +55,20 @@ done
 [[ "$vmid" =~ ^[0-9]+$ ]] || die "VMID must be a number"
 [ "$from" != "$vmid" ] || die "copy-desktop needs another VMID for the copy"
 [ -z "$cpu" ] || [ -z "$gpu" ] || die "--gpu and --cpu exclude each other"
-[ -z "$cpu" ] || [ "$kind" = desktop ] || die "--cpu is for desktop templates"
+[ -z "$cpu" ] || [ "$kind" != copy-desktop ] || die "--cpu is for linux and desktop templates"
+[ -z "$gpu" ] || [ "$kind" != linux ] || die "--gpu is for desktop templates: a Linux box gets its card from the host's GPU helper"
 if [ -n "$wayland" ]; then
   [ "$kind" = desktop ] || die "--wayland is for desktop templates"
   # Wayland on NVIDIA needs the host's nvidia-drm with modeset=1 (048).
   [ -z "$gpu" ] || die "a Wayland desktop is CPU only for now (048): leave out --gpu"
   cpu=1
 fi
-if [ "$kind" = desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/driver/nvidia/gpus ]; then
-  echo "no NVIDIA driver on this host: building a CPU-only desktop template"
+if [ "$kind" != copy-desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/driver/nvidia/gpus ]; then
+  echo "no NVIDIA driver on this host: building a $kind template without NVIDIA's userspace"
   cpu=1
 fi
+nvidia_run=
+[ -n "$cpu" ] || [ "$kind" = copy-desktop ] || nvidia_run=NVIDIA-Linux-x86_64-$(cat /sys/module/nvidia/version 2>/dev/null).run
 command -v jq >/dev/null || die "jq is required (apt install jq)"
 # The build ID: a tag of its own on each template this makes, which the build
 # CT carries from the start and the template keeps through --replace. Warm
@@ -143,20 +150,26 @@ gpu_lines() {
   for node in "nvidia$minor" nvidiactl nvidia-uvm nvidia-uvm-tools nvidia-modeset; do
     [ -c "/dev/$node" ] || die "/dev/$node is missing: run host/setup-host.sh"
   done
-  echo "--dev0 /dev/nvidia$minor,mode=0666 --dev1 /dev/nvidiactl,mode=0666 --dev2 /dev/nvidia-uvm,mode=0666"
-  echo "--dev3 /dev/nvidia-uvm-tools,mode=0666 --dev4 /dev/nvidia-modeset,mode=0666"
-  echo "--dev5 /dev/dri/$render,mode=0666 --dev6 /dev/dri/$card,mode=0666"
+  printf '%s\n' "/dev/nvidia$minor,mode=0666" /dev/nvidiactl,mode=0666 /dev/nvidia-uvm,mode=0666 /dev/nvidia-uvm-tools,mode=0666 \
+    /dev/nvidia-modeset,mode=0666 "/dev/dri/$render,mode=0666" "/dev/dri/$card,mode=0666"
   echo "# gpu $pci"
 }
+add_devices() { # ct device...
+  local ct=$1 config n=0 device
+  shift
+  config=$(pct config "$ct")
+  for device in "$@"; do
+    while grep -q "^dev$n:" <<<"$config"; do n=$((n + 1)); done
+    pct set "$ct" "--dev$n" "$device"
+    config=$(pct config "$ct")
+  done
+}
+devices_of() { grep -v '^#' <<<"$1" || true; }
 # /dev/net/tun, so boxes can run Tailscale and other VPNs with a TUN device
-# (050), as CT <ct>'s next free devN: a GPU's nodes take dev0 to dev6. A copy
-# keeps the line its template has.
+# (050), as CT <ct>'s next free devN. A copy keeps the line its template has.
 add_tun() { # ct
-  local config n=0
-  config=$(pct config "$1")
-  ! grep -Eq '^dev[0-9]+: /dev/net/tun(,|$)' <<<"$config" || return 0
-  while grep -q "^dev$n:" <<<"$config"; do n=$((n + 1)); done
-  pct set "$1" "--dev$n" /dev/net/tun
+  ! pct config "$1" | grep -Eq '^dev[0-9]+: /dev/net/tun(,|$)' || return 0
+  add_devices "$1" /dev/net/tun
 }
 
 make_template() { # vmid description
@@ -189,9 +202,10 @@ replace_with() { # ct vmid hostname description
 
 if [ "$kind" = copy-desktop ]; then
   pct config "$from" | grep -q '^template: 1' || die "$from is not a template"
-  # A CPU-only template has no NVIDIA driver in it, so it cannot use a GPU.
-  pct config "$from" | grep -q '^dev[0-9]*: /dev/nvidia' \
-    || die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
+  pvesh get "/nodes/$BBBOX_NODE/lxc/$from/config" --output-format json | jq -r '.description // ""' | grep '^{' | tail -1 |
+    jq -e '.nvidia != null and .kind == "linux-desktop"' >/dev/null 2>&1 ||
+    pct config "$from" | grep -q '^dev[0-9]*: /dev/nvidia' ||
+    die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
   lines=$(gpu_lines "$gpu")
   note=$(grep '^#' <<<"$lines" | cut -c3-)
   # The copy has its source's image record (049), from the description's second line.
@@ -200,8 +214,10 @@ if [ "$kind" = copy-desktop ]; then
 $record}"
   copy_ct "$from" "$ct" "bb-box-desktop-$vmid"
   pct set "$ct" --delete protection 2>/dev/null || true
-  # shellcheck disable=SC2046
-  pct set "$ct" --tags "$build" $(grep -v '^#' <<<"$lines")
+  for key in $(pct config "$ct" | sed -n 's|^\(dev[0-9]*\): /dev/\(nvidia\|dri/\).*|\1|p'); do pct set "$ct" --delete "$key"; done
+  pct set "$ct" --tags "$build"
+  mapfile -t devices < <(devices_of "$lines")
+  add_devices "$ct" "${devices[@]}"
   add_tun "$ct"
   if [ "$ct" != "$vmid" ]; then
     replace_with "$ct" "$vmid" "bb-box-desktop-$vmid" "$description"
@@ -220,7 +236,8 @@ fi
   echo "created the plugin's SSH key $BBBOX_SSH_KEY"
 }
 artifacts=$kind
-[ -z "$cpu" ] || artifacts=desktop-cpu
+[ "$kind" != linux ] || [ -n "$cpu" ] || artifacts=linux-nvidia
+[ "$kind" != desktop ] || [ -z "$cpu" ] || artifacts=desktop-cpu
 [ -z "$wayland" ] || artifacts=desktop-wayland-cpu
 bash "$here/fetch-artifacts.sh" "$cache" "$artifacts"
 rm -rf "$stage"
@@ -229,11 +246,14 @@ cp -r "$here/guest" "$here/pins.json" "$here/desktop-pins.tsv" "$here/baseline-p
 cp "$BBBOX_SSH_KEY.pub" "$stage/plugin-key.pub"
 desktop_gpu=nvidia
 [ -z "$cpu" ] || desktop_gpu=none
+linux_gpu=none
+[ "$kind" != linux ] || [ -n "$cpu" ] || linux_gpu=nvidia
 cat >"$stage/build.env" <<EOF
 BOX_USER=box
 BOX_DNS="$BBBOX_DNS"
 BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=$desktop_gpu
+LINUX_GPU=$linux_gpu
 DESKTOP_SESSION=${wayland:+wayland}
 BUILD_ID=$build
 BOX_IDENTITY_RESET=on
@@ -241,7 +261,9 @@ PREPARE=$(sha256sum "$0" | awk 'NR==1{print $1}')
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in
-    *.run | *.run.sha256sum | *.deb | cua-driver-* | rustup-init) [ "$kind" = desktop ] || continue ;;
+    "$nvidia_run" | "$nvidia_run.sha256sum") [ -n "$nvidia_run" ] || continue ;;
+    *.run | *.run.sha256sum) continue ;;
+    *.deb | cua-driver-* | rustup-init) [ "$kind" = desktop ] || continue ;;
   esac
   ln "$f" "$stage/artifacts/" 2>/dev/null || cp "$f" "$stage/artifacts/"
 done
@@ -261,17 +283,18 @@ fi
 size=16 cores=2 memory=4096
 [ "$kind" = linux ] || size=24 cores=4 memory=8192
 lines=
-if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
-[ -z "$cpu" ] || lines="# cpu only"
+[ "$kind" != linux ] || [ -n "$cpu" ] || lines="# NVIDIA $(cat /sys/module/nvidia/version), no card"
+if [ "$kind" = desktop ] && [ -z "$cpu" ]; then
+  if [ -n "$gpu" ]; then lines=$(gpu_lines "$gpu"); else lines="# NVIDIA $(cat /sys/module/nvidia/version), no card"; fi
+fi
+[ -z "$cpu" ] || [ "$kind" != desktop ] || lines="# cpu only"
 [ -z "$wayland" ] || lines="# Wayland, cpu only"
 pct create "$ct" "$os_template" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
   --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" --tags "$build" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \
   --nameserver "$BBBOX_DNS" --ostype ubuntu --onboot 0
-# Device lines are root@pam only; the plugin's clones copy them.
-devices=$(grep -v '^#' <<<"$lines" || true)
-# shellcheck disable=SC2086
-[ -z "$devices" ] || pct set "$ct" $devices
+mapfile -t devices < <(devices_of "$lines")
+[ "${#devices[@]}" -eq 0 ] || add_devices "$ct" "${devices[@]}"
 add_tun "$ct"
 pct start "$ct"
 for _ in $(seq 1 60); do
@@ -302,11 +325,13 @@ if [ -n "$keep" ]; then
   exit 0
 fi
 
+pct exec "$ct" -- sh -c "cat $in_ct/extra-release 2>/dev/null || true" >"$stage/extra-release"
 push --exclude=./artifacts
 pct exec "$ct" -- bash "$in_ct/guest/finalize.sh" "$in_ct" "$kind"
 # The image's record (049), which the template's description carries for the
 # plugin's doctor, as its second line.
 record=$(pct exec "$ct" -- cat /usr/share/bb-box/image.json | jq -c .) || die "the template has no image record"
+pct fstrim "$ct" || echo "pct fstrim $ct failed: the template keeps the blocks its build deleted"
 pct shutdown "$ct" --timeout 60
 # Clones get their address from the plugin; without one they have none.
 pct set "$ct" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \

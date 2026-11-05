@@ -117,7 +117,7 @@ Acquire a box for a thread and wait until it answers.
 
 ```text
 Usage:
-  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--device <value>] [--no-slim] [--dedicated] [--shared] [--no-wait]
+  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--device <value>] [--no-slim] [--gpu <value>] [--dedicated] [--shared] [--no-wait]
 
 Arguments:
   <kind>  The kind of box, from bb box kinds. (required)
@@ -133,6 +133,7 @@ Options:
   --image <value>              The image to start from: a project's image, from bb box image list, or "standard". The thread's project's image for the kind by default.
   --device <value>             For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default.
   --no-slim                    For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Shared for linux-desktop and none for linux by default.
   --dedicated                  For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Without it, an ios box is shared where a shared iOS host has room. Give it with a size: where a shared iOS host is set up, a size without it is refused.
   --shared                     For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: a macOS user on a Mac or VM shared with ios boxes, ready in seconds, for commands, builds and the iOS Simulator, with its own files and keychain, but no sudo, Homebrew installs, desktop or app windows, and cores, ports and processes shared. Only where a shared iOS host is set up; box_list says.
   --no-wait                    Return once the box is recorded.

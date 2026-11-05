@@ -14,7 +14,7 @@ import { RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, re
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
-import { claimOf, recordedGpu, userspaceOf, type NvidiaUserspace } from "../core/gpu.ts";
+import { claimOf, gpuPartsOffered, holdsCard, recordedGpu, userspaceOf, type NvidiaUserspace } from "../core/gpu.ts";
 import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -163,7 +163,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     readyAt: box.readyAt,
     os: box.capabilities.os,
     arch: box.capabilities.arch,
-    gpu: box.capabilities.gpu,
+    gpu: holdsCard(recordedGpu(box)),
     gpuPart: recordedGpu(box),
     claim: claimOf(box),
     nvidiaUserspace: userspaceOf(box),
@@ -303,6 +303,7 @@ export interface OfferView {
   readonly hostOs: GuestOs | null;
   /** A GPU desktop's GPUs as the backend last read them (#603); null when it reads none. */
   readonly gpuRoom: GpuRoom | null;
+  readonly gpuParts?: readonly GpuPart[];
 }
 
 /** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
@@ -317,8 +318,8 @@ export async function gpuRooms(offered: readonly OfferedKind[]): Promise<Record<
   const rooms: Record<string, GpuRoom> = {};
   await Promise.all(
     offered.map(async ({ kind, backend }) => {
-      const room = kind.capabilities.gpu ? await backend.gpuRoom?.(kind.id).catch(() => null) : null;
-      if (room?.readings.length) rooms[`${kind.id}|${backend.id}`] = room;
+      const room = gpuPartsOffered(kind).some(holdsCard) ? await backend.gpuRoom?.(kind.id).catch(() => null) : null;
+      if (room?.readings.length || room?.parts) rooms[`${kind.id}|${backend.id}`] = room;
     }),
   );
   return rooms;
@@ -373,6 +374,7 @@ export function kindViews(
       docker,
       hostOs: backend.hostOs ?? null,
       gpuRoom: gpus[key] ?? null,
+      gpuParts: gpuPartsOffered(kind),
     };
     const computerUse = kind.capabilities.computerUse !== null;
     const offerDevices = kind.capabilities.device;
@@ -505,7 +507,7 @@ function seconds(ms: number): string {
 /** One line per box, for lists. */
 export function boxLine(box: BoxRecord): string {
   const size = sizeWords(box);
-  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${box.capabilities.gpu ? ", GPU" : ""}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
+  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${holdsCard(recordedGpu(box)) ? `, GPU ${recordedGpu(box)}` : ""}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
   if (box.role === "machine") parts.push("this thread's machine");
   else if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
@@ -653,6 +655,16 @@ function neverReady(box: BoxRecord): boolean {
   return box.readyAt === null && !box.restoredAt;
 }
 
+export function gpuLine(box: BoxRecord): string | null {
+  const part = recordedGpu(box);
+  const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? null;
+  if (!holdsCard(part)) return fact;
+  const card = fact ?? part;
+  if (/: (nvidia-smi in it|CUDA's driver)/.test(card)) return `${card}. Ask the user${/NVIDIA userspace is/.test(card) ? " to update its NVIDIA userspace" : ""}.`;
+  const userspace = box.nvidiaUserspace;
+  return `${card}. Run nvidia-smi to see it.${userspace && userspace !== "unknown" && userspace !== "none" ? ` NVIDIA's userspace in it: ${userspace}.` : ""}`;
+}
+
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
   const lines = [
@@ -664,7 +676,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
     ...(box.kind === "ios" || inSlot(box) ? [`Where: ${placementWords(placementOf(box))}`] : []),
     ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
-    `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${desktopDisplays(capabilities.displays).length ? ", with a desktop" : ""}`,
+    `System: ${capabilities.os} ${capabilities.arch}${holdsCard(recordedGpu(box)) ? " with a GPU" : ""}${desktopDisplays(capabilities.displays).length ? ", with a desktop" : ""}`,
   ];
   const admin = adminLine(capabilities, box.kind, inSlot(box));
   if (admin) lines.push(admin);
@@ -680,7 +692,9 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
   if (box.fork) lines.push(`Origin: ${forkedFromWords(box.fork)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
-  for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form") lines.push(`${fact.label}: ${fact.value}`);
+  for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form" && fact.label !== "GPU") lines.push(`${fact.label}: ${fact.value}`);
+  const gpu = gpuLine(box);
+  if (gpu) lines.push(`GPU: ${gpu}`);
   if (control && capabilities.displays.length) lines.push(controlLine(control.owner, deviceDisplayOf(capabilities.displays) ? "device" : "desktop"));
   const enrol: Record<EnrolState, string> = {
     off:

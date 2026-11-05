@@ -9,6 +9,7 @@ import { installFromDescription, ownerFromDescription, ownerFromTags, templateFr
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
+import { gpuWhenNotAsked } from "../src/core/gpu.ts";
 import { quote } from "../src/transports/process.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { judgeGpuHelper, parseGpuHelper } from "../src/backends/proxmox-lxc/gpu-helper.ts";
@@ -62,7 +63,7 @@ const waiting = (...kinds: string[]) => kinds.map((kind) => ({ kind, size: sized
 let boxCounter = 0;
 function identity(kind = "linux", threadId = "thr_abc123", size = sized(kind)): BoxIdentity {
   boxCounter++;
-  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
+  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: gpuWhenNotAsked(kind) } };
 }
 
 function hooks() {
@@ -419,7 +420,7 @@ test("a GPU's memory is read as a desktop on it starts and each minute while one
 
   await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   assert.deepEqual(await backend.gpuRoom("linux-desktop"), { readings: [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384, source: "desktop" }], fullUntil: null });
-  assert.deepEqual(await backend.gpuRoom("linux"), { readings: [], fullUntil: null }, "a kind without a GPU has none");
+  assert.deepEqual(await backend.gpuRoom("linux"), { readings: [], fullUntil: null, parts: ["none"], withheld: "pve: it has no GPU helper to give a box a card" }, "a server has no GPU on a node without the GPU helper");
   const booted = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(booted.hosts[0]!.limits.find((limit) => limit.resource === "gpu-memory"), undefined, "the display service gives no total");
 
@@ -789,15 +790,20 @@ test("the doctor's GPU helper check fails a report dated a minute or more ahead 
   assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.4.2 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
 });
 
-test("with no GPU helper, the doctor reads as before: no helper check beside the timer's report, none with no report VM, and none for an install without GPU desktops (071 unit 3)", async () => {
+test("071 unit 7: a node with cards and no GPU helper warns that servers get no GPU, whole cards and changes of card need it; a node with no cards has no helper check", async () => {
   const now = 1_790_000_000_000;
   const timer = await doctorOnReport(reportNotes(now, [[UUID_A, "00000000:01:00.0", 6100]]), now, { "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });
-  assert.equal(timer("proxmox.gpu-helper"), undefined);
+  assert.equal(timer("proxmox.gpu-helper")?.status, "warn");
+  assert.match(timer("proxmox.gpu-helper")!.detail, /^pve has no GPU helper, so its servers get no GPU, and no box gets a whole card or changes card\. GPU desktops go on as before, on the cards their templates name\. GPU on servers, whole cards and changes of card need host\/setup-gpu\.sh\.$/);
+  assert.equal(timer("proxmox.gpu-helper")!.fix, "Run host/setup-gpu.sh from the setup guide as root on pve.");
   assert.equal(timer("proxmox.gpu-report")?.status, "ok");
   const { backend } = setup({ "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });
-  assert.equal((await backend.doctor()).checks.some((check) => check.id === "proxmox.gpu-helper"), false);
+  assert.equal((await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-helper")?.status, "warn");
+  const noCards = setup({ "proxmox-lxc-desktop-templates": "" });
+  assert.equal((await noCards.backend.doctor()).checks.some((check) => check.id === "proxmox.gpu-helper"), false);
   const noDesktops = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })), Date.now(), { "proxmox-lxc-desktop-templates": "" });
-  assert.equal(noDesktops("proxmox.gpu-helper"), undefined);
+  assert.equal(noDesktops("proxmox.gpu-helper")?.status, "warn");
+  assert.match(noDesktops("proxmox.gpu-helper")!.detail, /writes off/);
 });
 
 test("the GPU helper's lines are read by their protocol's grammar, and a pool list the report cut short says how many it left out (071 unit 3)", () => {
@@ -1830,6 +1836,7 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["template.9000.image", "Image of Linux template 9000", "warn"],
       ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
       ["template.9001.image", "Image of GPU desktop template 9001 (GPU gpu-a)", "warn"],
+      ["proxmox.gpu-helper", "Host's GPU helper", "warn"],
       ["proxmox.gpu-report", "Host's GPU report", "skipped"],
       ["gpu.gpu-a", "GPU gpu-a", "skipped"],
       ["proxmox.bridge", "Network bridge", "ok"],

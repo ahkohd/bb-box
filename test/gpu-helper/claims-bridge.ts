@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after } from "node:test";
 import { ProxmoxLxcBackend } from "../../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../../src/backends/proxmox/api.ts";
@@ -7,6 +8,8 @@ import type { BoxIdentity, Guest, WarmShortfall } from "../../src/backends/types
 import { FAKE_TOKEN, FakeProxmox, asProxmoxStoresDescription, TOKEN_ROLE } from "../fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "../helpers.ts";
 import { boxTags, describe } from "../../src/backends/proxmox/owner.ts";
+import { addressFor } from "../../src/backends/proxmox/settings.ts";
+import type { LxcConfig } from "../../src/backends/proxmox-lxc/config.ts";
 import { CARD_A, CARD_B, FakeNode, INSTALL, POOL, REPORT_VMID, cardLines, type FakeCard } from "./node.ts";
 
 export const SECOND_INSTALL = "9zz2";
@@ -42,6 +45,7 @@ export interface BackendOptions {
   readonly onSleep?: () => void;
   readonly kindsOff?: readonly string[];
   readonly storage?: MemoryStorage;
+  readonly readyTimeoutMs?: number;
 }
 
 let bridges = 0;
@@ -54,6 +58,8 @@ export class ClaimsBridge {
   answering = true;
   passes = 0;
   beforePass: (() => void) | null = null;
+  readonly #configs: LxcConfig[] = [];
+  readonly seenInBox = new Map<number, { readonly onCard?: string; readonly shows: string }>();
 
   constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string } = {}) {
     this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}) });
@@ -96,8 +102,23 @@ export class ClaimsBridge {
       if (!guest.template) guest.status = this.node.isRunning(vmid) ? "running" : "stopped";
       for (const key of Object.keys(guest.config)) if (/^dev\d+$/.test(key)) delete guest.config[key];
       Object.assign(guest.config, Object.fromEntries(Object.entries(this.node.config(vmid).keys).filter(([key]) => /^dev\d+$/.test(key))));
+      if (!guest.template) this.#nvidiaSmiIn(vmid);
     }
     this.proxmox.guests.get(REPORT_VMID)!.config.description = asProxmoxStoresDescription(this.node.report());
+  }
+
+  #nvidiaSmiIn(vmid: number): void {
+    const card = this.cardOf(vmid);
+    const custom = this.seenInBox.get(vmid);
+    const shown = custom && (custom.onCard === undefined || custom.onCard === card?.uuid) ? custom.shows : card ? `GPU-${card.uuid}, NVIDIA Fake Card, ${card.totalMiB}` : null;
+    for (const config of this.#configs) {
+      const address = vmid >= config.vmids.first && vmid <= config.vmids.last ? addressFor(config, vmid) : null;
+      if (!address) continue;
+      const bin = join(this.ssh.home(address), "bin");
+      mkdirSync(bin, { recursive: true });
+      if (shown === null) rmSync(join(bin, "nvidia-smi"), { force: true });
+      else writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncase "$*" in\n  *memory.free*) echo '${card?.freeMiB ?? 0}, ${card?.totalMiB ?? 0}' ;;\n  *) printf '%s\\n' '${shown}' ;;\nesac\n`, { mode: 0o755 });
+    }
   }
 
   pass(): void {
@@ -129,6 +150,7 @@ export class ClaimsBridge {
       ...(options.perGpu !== undefined ? { "proxmox-lxc-desktops-per-gpu": options.perGpu } : {}),
       ...(options.warm !== undefined ? { "proxmox-lxc-desktop-warm": options.warm } : {}),
     });
+    this.#configs.push(config);
     const shipped = testContext(options.storage ?? new MemoryStorage(), options.install ?? INSTALL, { id: "proxmox-lxc", warm: { "linux-desktop": options.warm ?? 0 } });
     const context = { ...shipped, kind: (id: string) => (options.kindsOff?.includes(id) ? { ...shipped.kind(id), enabled: false } : shipped.kind(id)) };
     const backend = new ProxmoxLxcBackend(config, context, {
@@ -139,7 +161,7 @@ export class ClaimsBridge {
       },
       sshBinary: FAKE_SSH_BINARY,
       portCheck: async () => true,
-      readyTimeoutMs: 0,
+      readyTimeoutMs: options.readyTimeoutMs ?? 0,
     });
     made.push(backend);
     return Object.assign(backend, { errors: context.errors, short: shipped.short });

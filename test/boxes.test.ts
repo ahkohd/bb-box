@@ -483,9 +483,9 @@ test("capacity is told each pending box's kind and size, and a box recorded befo
   await world.kv.set(`box/${THREAD}/${first.id}`, before);
   await world.boxes.acquire({ threadId: "thr_three", projectId: null, kind: "linux" });
   assert.deepEqual(asked.map((call) => call.size), [
-    { cores: 8, memoryMiB: 16 * GiB, diskGiB: null },
-    { cores: 6, memoryMiB: 8 * GiB, diskGiB: null },
-    { cores: 2, memoryMiB: 4 * GiB, diskGiB: null },
+    { cores: 8, memoryMiB: 16 * GiB, diskGiB: null, gpu: "none" },
+    { cores: 6, memoryMiB: 8 * GiB, diskGiB: null, gpu: "none" },
+    { cores: 2, memoryMiB: 4 * GiB, diskGiB: null, gpu: "none" },
   ]);
   assert.deepEqual(asked[1]!.pending, [{ kind: "linux", size: { cores: 8, memoryMiB: 16 * GiB, diskGiB: null } }]);
   assert.deepEqual(
@@ -3691,4 +3691,60 @@ test("071 unit 1: a box on a backend with cards carries the backend's claim, by 
   assert.deepEqual((await world.boxes.find(desktop.id))?.guest?.claim, claim);
   assert.deepEqual((await world.backend.cards())[0]!.holders.map((holder) => holder.box), [desktop.id]);
   await world.boxes.idle();
+});
+
+const GPU_CARDS = [{ card: "GPU-3f9a2c1e-55b0-4c1d-9e2a-0b7d6c4a1f00", index: 0, model: "Fake RTX", memoryMiB: 24_576 }] as const;
+const AGENT = { is: "agent", threadId: THREAD } as const;
+
+function gpuWorld(cards: boolean) {
+  const world = setup({ id: "fake:plain" });
+  if (cards) {
+    const linux = { ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] as const };
+    world.others.push(new FakeBackend({ root: tempDir("gpu-boxes"), storage: scopedStorage(world.kv, "backend/cards/"), id: "fake:cards", kinds: [linux], cards: GPU_CARDS, boxesPerCard: 4 }));
+  }
+  return world;
+}
+
+test("071 unit 7: box_acquire's gpu shared goes only to a provider that gives the kind a GPU, its record keeps the part, and gpu left out on linux is none", async () => {
+  const world = gpuWorld(true);
+  const shared = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  assert.equal(shared.backend, "fake:cards", "the first provider gives linux boxes no GPU, so it is passed over");
+  assert.equal(shared.size?.gpu, "shared");
+  assert.equal(shared.guest?.claim?.card, GPU_CARDS[0].card);
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(plain.backend, "fake:plain");
+  assert.equal(plain.size?.gpu, "none");
+  assert.match(boxDetail(shared), /^GPU: shared\. Run nvidia-smi to see it\.$/m);
+  assert.match(boxDetail(shared), /^System: linux x86_64 with a GPU$/m);
+  assert.doesNotMatch(boxDetail(plain), /with a GPU|^GPU:/m);
+  assert.match(boxLine(shared), /\(linux, GPU shared, /);
+});
+
+test("071 unit 7: a GPU no provider gives is refused before any box, never turned into none, in words for an agent and for the person; a desktop with no GPU is refused where every desktop has one", async () => {
+  const world = gpuWorld(false);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), (error: unknown) => {
+    assert.ok(error instanceof BoxError && error.code === "unsupported");
+    assert.equal(error.message, "Not made: no provider here gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.");
+    return true;
+  });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), {
+    message: "No provider gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none.",
+  });
+  assert.deepEqual(await world.boxes.list(THREAD), [], "no box was made");
+  const desktops = setup({ id: "fake:gpu", kinds: [{ ...FAKE_KINDS[1]!, id: "linux-desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } }] });
+  await assert.rejects(desktops.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop", gpu: "none", who: AGENT }), {
+    message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. bb-box changed nothing.",
+  });
+});
+
+test("071 unit 7: a provider's own refusal reaches an agent in the words it gives an agent, and the person in theirs", async () => {
+  class Refusing extends FakeBackend {
+    override async capacity() {
+      return { ok: false, message: "No card has room. Release a box on a card.", agentMessage: "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.", warm: null, hosts: [] };
+    }
+  }
+  const world = setup({ id: "fake:plain" });
+  world.backend = new Refusing({ root: tempDir("gpu-refusing"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }] });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), { code: "no_capacity", message: "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing." });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), { code: "no_capacity", message: "No card has room. Release a box on a card." });
 });

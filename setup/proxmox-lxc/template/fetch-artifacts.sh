@@ -9,8 +9,9 @@
 # Docker host; any directory of such files, such as a Proxmox host's
 # artifacts, seeds a build too.
 #
-# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu|desktop-wayland-cpu [x86_64|arm64]
-# (headless is linux's earlier name). The architecture is the image's, by
+# usage: fetch-artifacts.sh <dir> linux|linux-nvidia|desktop|desktop-cpu|desktop-wayland-cpu [x86_64|arm64]
+# (headless is linux's earlier name; linux-nvidia is linux with NVIDIA's
+# installer for the host's driver). The architecture is the image's, by
 # default x86_64; it picks the tools in pins.json and desktop-pins.tsv.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -21,6 +22,7 @@ kind=$2
 arch=${3:-x86_64}
 case "$arch" in x86_64 | arm64) ;; *) die "architecture must be x86_64 or arm64" ;; esac
 [ "$kind" != desktop ] || [ "$arch" = x86_64 ] || die "a desktop on $arch is CPU-only: use desktop-cpu"
+[ "$kind" != linux-nvidia ] || [ "$arch" = x86_64 ] || die "NVIDIA's userspace is for x86_64 boxes only: use linux"
 mkdir -p "$art"
 cache=${BBBOX_ARTIFACT_CACHE:-}
 [ -z "$cache" ] || mkdir -p "$cache"
@@ -120,7 +122,18 @@ if [ -n "$BBBOX_BB_URL" ]; then
   echo "bb-app $digest"
 fi
 
-case "$kind" in linux | headless) exit 0 ;; esac
+nvidia_installer() {
+  local version base run sha
+  version=$(cat /sys/module/nvidia/version 2>/dev/null) || die "no NVIDIA driver is loaded on this host"
+  base=https://download.nvidia.com/XFree86/Linux-x86_64/$version
+  run=NVIDIA-Linux-x86_64-$version.run
+  curl -fsSL "${retried_download_limits[@]}" -o "$art/$run.sha256sum" "$base/$run.sha256sum"
+  sha=$(awk -v f="$run" '$2 == f { print $1 }' "$art/$run.sha256sum")
+  [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "no SHA-256 for $run from NVIDIA"
+  fetch "$base/$run" "$sha" "$run"
+}
+
+case "$kind" in linux | headless) exit 0 ;; linux-nvidia) nvidia_installer; exit 0 ;; esac
 
 while IFS=$'\t' read -r name file url sha pin_arch; do
   case "$name" in '' | \#*) continue ;; esac
@@ -134,12 +147,4 @@ while IFS=$'\t' read -r name file url sha pin_arch; do
 done <"$here/desktop-pins.tsv"
 [ "$kind" = desktop ] || exit 0
 
-# NVIDIA's installer for exactly the host's driver, checked against the
-# SHA-256 NVIDIA publishes next to it.
-version=$(cat /sys/module/nvidia/version 2>/dev/null) || die "no NVIDIA driver is loaded on this host"
-base=https://download.nvidia.com/XFree86/Linux-x86_64/$version
-run=NVIDIA-Linux-x86_64-$version.run
-curl -fsSL "${retried_download_limits[@]}" -o "$art/$run.sha256sum" "$base/$run.sha256sum"
-sha=$(awk -v f="$run" '$2 == f { print $1 }' "$art/$run.sha256sum")
-[[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "no SHA-256 for $run from NVIDIA"
-fetch "$base/$run" "$sha" "$run"
+nvidia_installer

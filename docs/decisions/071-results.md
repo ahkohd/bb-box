@@ -2264,7 +2264,7 @@ same guest.
 | `acquire` | the guest it cloned, or the one it resumes | cores and memory, labels and marker, start, delete when refused or failed | box (the clone's description names this install and box until its labels do) |
 | `#grow` | the same | its disk | box |
 | `#settle`, `#settleWeight`, `settle` | a box's guest | the start weight and its tag | box |
-| `#gateStart`, `#gateOnPin`, `#writeMarker`, `start` | a box's stopped guest | its marker, its start; `#gateOnPin` reads only, for a restore's start on the card it holds | box |
+| `#gateStart`, `#gateOnPin`, `#writeMarker`, `start`, `#startOnAnotherCard` | a box's stopped guest | its marker, its start; `#gateOnPin` reads only, for a restore's start on the card it holds; `#startOnAnotherCard` stops a server bb-box has just started that did not see its card, and starts it once more on another (unit 7) | box |
 | `powerOff`, `stop` | a box's guest | stop | box |
 | `release` | a box's guest | delete | box |
 | `resize` | a box's guest | cores, memory, disk | box |
@@ -2595,3 +2595,221 @@ test BB with one install; S's identity marker by hand.
 - I4's other path, where the helper does not give the claim back, was not
   run on the node, as it needs the production helper paused. The tests cover
   it.
+
+## Unit 7: servers with a shared GPU on Proxmox LXC
+
+Built on main `98753c5e`, on branch `u71-7`. No helper change: bb-box-gpu
+0.4.2 already gives a guest whose kind is not a desktop the server set of
+device nodes. No GPU server is offered on a node until one of its Linux
+templates has NVIDIA's userspace for the host's driver, so production is
+unchanged until the lead rebuilds its Linux template, after the gate.
+
+### What it does
+
+- **The Linux template carries NVIDIA's userspace.** `build.sh linux` on a
+  host with a driver installs exactly that driver's userspace, with no kernel
+  modules, as `build.sh desktop` does; `--cpu` leaves it out, and a host with
+  no driver builds without it. Both templates share one installer script,
+  `guest/nvidia-userspace.sh`. It gives the installer Ubuntu's paths,
+  `--x-library-path=/usr/lib/x86_64-linux-gnu
+  --x-module-path=/usr/lib/xorg/modules`, so the X driver lands in
+  `/usr/lib/xorg/modules` on a server too, not the `/usr/lib64` the installer
+  guesses where there is no X server (unit 0, step 8). The template's
+  description and image record carry the version.
+- **NVIDIA's EGL and Vulkan drivers only in a box with a card**, as the lead
+  decided. `bb-box-nvidia-drivers.service`, a oneshot early in each boot,
+  renames NVIDIA's EGL vendor file, its EGL external platforms, its Vulkan
+  ICD and its implicit Vulkan layer to `<name>.bb-box-no-card` while the box
+  has no `/dev/nvidiactl` and `/dev/nvidiaN`, and back once it has. NVIDIA's
+  GBM platform is shown only with a DRM render node too, which a server's
+  card does not have. A file the installer puts back while hidden is the one
+  kept.
+- **`pct fstrim` before the template.** Each build trims its CT's file
+  system, after `finalize.sh` and before the shutdown, so the template does
+  not keep the installer's deleted blocks (about 2 GB, unit 0, step 8). A
+  storage that cannot discard says so and the build goes on.
+- **The image record keeps `nvidia`.** `build.sh`'s second push wiped the
+  build directory in the CT, `extra-release` with it, so every Proxmox LXC
+  template's record had `nvidia` null, desktops' included. The file is now
+  carried across the push. bb-box reads a Linux template's userspace from
+  its record.
+- **One GPU desktop template with no device lines.** `build.sh desktop`
+  gives the template no device lines; `--gpu <pci>` still gives it one
+  card's, and `copy-desktop` another's, for a host without the helper. The
+  devices go on the next free `devN`, so a copy's TUN line is never
+  overwritten. The GPU desktop templates setting takes a VMID alone for such
+  a template, which serves every card the helper lists while its writes are
+  on: the helper writes the placed card's desktop set into the stopped clone,
+  as unit 5's start gate does.
+- **Desktops with no GPU from it.** `linux-desktop` with `gpu` none is cloned
+  from a GPU desktop template with no GPU ID, gets no marker and no lines,
+  takes no warm guest, and its display takes the CPU path, as it does in a
+  box with no NVIDIA nodes. Proxmox LXC offers `linux-desktop` with `gpu`
+  none only where such a template is listed.
+- **Placement for servers.** A `linux` box with `gpu` shared takes no warm
+  guest. Under the card lock it goes to a card that no guest holds whole,
+  with fewer of this install's boxes than the desktops per GPU (unit 5's
+  boxes per card), with 1,024 MiB free when last read less what is
+  reserved, that no box lately failed to see, and on which no running box
+  is on the wrong card; then section 3's order. It is cloned from the least
+  used Linux template whose userspace is the host's driver, its marker goes
+  in the same write as its labels, and it starts only on the helper's grant.
+  Every refusal names each card and has words for the person and for an
+  agent (`Capacity.agentMessage`), and an agent's never tells it to release
+  a box or change a setting.
+- **The check after each start** bb-box makes of a box with a card:
+  `nvidia-smi --query-gpu=uuid,name,memory.total` lists the claimed card,
+  and `cuInit(0)` returns 0, through Python's `ctypes`, which takes no card
+  memory; a box with no `python3` is checked by `nvidia-smi` alone. A fresh
+  acquire that fails it is released and made again on another card within
+  the kind's time, and that card is left out for 10 minutes. A stopped
+  server that fails it is stopped, placed once on another card and started
+  again; if that fails too, it is left stopped with its disk, and the start
+  says why. A box whose userspace is not the host's driver is not moved,
+  and its GPU fact says so. The GPU fact reads as section 11's words: "card
+  1, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96
+  GiB".
+- **The sweep's check.** Every 10 minutes the backend's upkeep runs
+  `nvidia-smi` in each running box of this install that holds a granted
+  card. A box that lists another card or none is logged, placements leave
+  out both cards until it is put right, and the doctor's new
+  `proxmox.gpu-cards` check fails, naming it, as it does for the helper's
+  `mismatch` lines. bb-box never stops it.
+- **The tools.** `box_acquire` and `bb box acquire` take `gpu`, none or
+  shared. Left out, it is the kind's: none for `linux`, shared for
+  `linux-desktop`. Each offer says the GPU parts it gives (`gpuParts`), and
+  the registry passes over offers that do not give the part asked for: a
+  shared GPU is never met by a provider without one. `box_list` says, per
+  provider, whether servers can have a GPU now and the room on each card
+  with the reading's age, or why not; `box_status` and `box_acquire`'s answer
+  have a `GPU:` line with the card's words.
+- **The doctor.** `proxmox.gpu-helper` warns on a node with cards and no
+  helper: "GPU on servers, whole cards and changes of card need
+  host/setup-gpu.sh." A Linux template whose userspace is not the host's
+  driver warns, saying GPU placements from it are off and boxes with no GPU
+  are made as usual; it never fails for it. The GPU checks run where the
+  desktop templates name no GPU, from the report's cards.
+
+### On a box with no card, the installer and the drivers' unit
+
+Run on a `linux` box, in `ubuntu:24.04` containers with libglvnd, Mesa's
+EGL, GL and Vulkan drivers, `mesa-utils` and `vulkan-tools`, once without X
+and once with `xserver-xorg-core`: `nvidia-userspace.sh` with NVIDIA's
+580.142 installer, checked against NVIDIA's SHA-256, then the unit's script
+by hand. The container has no card's nodes.
+
+| | Without the userspace | With it, files hidden | With it, files shown |
+| --- | --- | --- | --- |
+| `eglinfo -B` | exit 3 | exit 3 | exit 139, a segmentation fault |
+| `vulkaninfo --summary` | exit 0, 33 to 34 ms | exit 0, 23 ms, llvmpipe | exit 0, 128 to 138 ms, and the loader's error for NVIDIA's ICD |
+| X driver | | `/usr/lib/xorg/modules/drivers/nvidia_drv.so`, with or without X; no `/usr/lib64/xorg` | |
+| Installer | | 4.2 to 4.7 s | |
+
+Hidden, a box with the userspace and no card behaves as one without it,
+for EGL and Vulkan alike. NVIDIA's OpenCL ICD (`/etc/OpenCL/vendors`) is
+left as it is.
+
+The X paths, in a bare `ubuntu:24.04` (no libglvnd, no Vulkan loader, no X,
+as bb-box's Linux template) and in one with libglvnd, the Vulkan loader and
+`xserver-xorg-core` (as the desktop template), each installer run exiting 0:
+
+| X flags | Bare: X driver, and what the installer said | With X and libglvnd |
+| --- | --- | --- |
+| none | `/usr/lib64/xorg/modules`, "forced to guess the X library path '/usr/lib64'" | `/usr/lib/xorg/modules` |
+| `--x-module-path` alone | `/usr/lib/xorg/modules`, the same guess for the library path | `/usr/lib/xorg/modules` |
+| both, as the script gives them | `/usr/lib/xorg/modules`, no guess | `/usr/lib/xorg/modules` |
+
+In the bare container every run also said "ERROR: Unable to get file
+properties for '/usr/lib/libGL.so.1'" and warned that NVIDIA's Vulkan ICD
+needs a loader: the Linux template has no libglvnd and no Vulkan loader,
+and `--no-install-libglvnd` leaves them out. CUDA, NVML and `nvidia-smi` do
+not need them (`libcuda.so.1`, `libnvidia-ml.so.1` and `nvidia-smi` were
+there; `cuInit` gave 100, no device, as a box with no card does). A server
+that installs Mesa or the Vulkan loader later gets the drivers' unit's
+hiding. Limits: containers on one box, one driver version, no card;
+timings of one run each.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root, as CI runs them:
+
+- `tsc` clean. The node suite as root: 3,710 tests, 3,415 passed, 0
+  failed, 295 skipped. vitest: 462 passed.
+- `test/gpu-servers.test.ts`, against the real helper 0.4.2 on unit 2's fake
+  node through unit 5's bridge, whose boxes now have an `nvidia-smi` that
+  lists the card their lines name: a shared server placed, marked in the
+  same write as its labels, given the server set while stopped and started
+  on its card; a server with no GPU as before; refusals before any copy,
+  for each audience, with no Linux template userspace, an old one, writes
+  off and no helper; the 1,024 MiB need and the limit per card; a fresh
+  server that lists another card released and made again on the other, the
+  first card then left out; a desktop with no GPU from a template with no
+  device lines; a shared desktop from it on each card; a stopped server
+  that does not see its card moved once, and left stopped where no card has
+  room; the sweep's mismatch failing the doctor and closing both cards; and
+  the words of `box_list`.
+- `test/nvidia-drivers.test.ts`: the drivers' unit on a fake root: hidden
+  with no card, shown with one, GBM only with a render node, a file the
+  installer put back kept, `--check`.
+- `test/boxes.test.ts`: `gpu` shared goes only to a provider that gives it,
+  its record keeps it, `gpu` left out on `linux` is none; a GPU no provider
+  gives is refused before any box, for each audience; a provider's own
+  refusal reaches an agent in its agent's words.
+- `test/lxc-config.test.ts`: a desktop template with no GPU ID.
+- The installer probe above, and `shellcheck` on the scripts this unit
+  changed: no new findings (`build.sh` keeps its three from before).
+
+### The live check
+
+On a fresh `npx bb-app@0.48.1` in a `linux` box, with no account, bb-box
+installed from this branch's tree, and Docker set up by `bb box setup
+docker`: a provider with no cards.
+
+| Command | Answer |
+| --- | --- |
+| `bb box kinds --json` | `linux` from Docker, `gpuParts` `["none"]` |
+| `bb box acquire linux` | ready in 2.4 s, `gpuPart` none, no claim, `System: linux x86_64`, no `GPU:` line |
+| `bb box acquire linux --gpu none` | the same |
+| `bb box acquire linux --gpu shared` | exit 1 before any box: "No provider gives linux boxes a shared GPU: Docker on <host> gives linux boxes no GPU. Ask for gpu none. (unsupported)" |
+| `bb box acquire linux --gpu bogus` | exit 1: "--gpu takes none or shared, not bogus." |
+
+A server with a card, a desktop with no GPU from the GPU template, its time
+to ready and an agent's `box_acquire` need the node's cards: node steps A
+to G, through the lead.
+
+### Deviations from the note
+
+- `linux-desktop-cpu` is still cloned from the CPU desktop template, with
+  its warm guests, as today. Section 1 has it come from the GPU desktop
+  template on a host with a driver; that moves every production CPU desktop
+  and is a call for the lead. `linux-desktop` with `gpu` none comes from the
+  GPU template.
+- A desktop whose check after a start fails is not stopped and moved: its
+  GPU fact says what the check found, as #597 does for its display. Servers
+  are moved, as section 3 says.
+- The sweep's mismatch shows in the doctor and closes the cards to new
+  boxes; the box's page gets it with unit 14.
+- Boxes per card is still the desktops per GPU setting, counting servers and
+  desktops of this install together; 1,024 MiB is a constant until unit 15's
+  setting.
+- Refusals name guests by VMID and cards by index, not boxes by name: the
+  backend does not know the names. Unit 8's refusals can carry them.
+- The kind's GPU when not asked for applies on offers that have a GPU part.
+  An offer whose kind has none (no such `linux-desktop` exists today) takes a
+  request that leaves `gpu` out as none. A part that is asked for is never
+  turned into none.
+- A GPU desktop's GPU fact now reads "card 1, shared, <model>, <memory>",
+  not the template's GPU ID, and every GPU desktop's acquire runs the card
+  check: about one SSH command more.
+- A Linux template whose userspace is not the host's driver warns; a desktop
+  template's still fails, as 049 has it.
+- NVIDIA's OpenCL ICD is left visible.
+- `bb box acquire` takes `--gpu` too.
+
+### Still open
+
+- EGL's GBM platform on a server with a card's nvidia nodes and no DRM
+  nodes: node step D4 answers it. Hidden there in any case.
+- The gate, through the lead: node steps A to G.
+- Whether `linux-desktop-cpu` should move to the GPU desktop template now
+  (above).

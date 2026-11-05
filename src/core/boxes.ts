@@ -93,7 +93,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { chooseGpu, gpuBeforeGpuParts, holdsCard, machineSizeOf, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -529,10 +529,6 @@ function withoutStartSteps(timings: Readonly<Record<string, number>>): Record<st
 export interface BackendSilence {
   readonly since: number;
   readonly error: string;
-}
-
-function gpuTheOfferHas(asked: GpuPart, capabilities: Pick<KindCapabilities, "gpu">): GpuPart {
-  return holdsCard(asked) && capabilities.gpu ? asked : "none";
 }
 
 function changedParts(from: MachineSize, to: MachineSize | null): SizePart[] {
@@ -1194,6 +1190,7 @@ export class Boxes {
     slim?: boolean;
     dedicated?: boolean;
     shared?: boolean;
+    gpu?: GpuPart;
     who?: Actor;
   }): Promise<BoxRecord> {
     const requested = this.#now();
@@ -1231,10 +1228,16 @@ export class Boxes {
       const offered = [...new Set(everywhere.flatMap((candidate) => (candidate.kind.capabilities.device ? offeredModels(candidate.kind.capabilities.device) : [])))];
       throw new BoxError("unknown_device", `No backend offers the ${askedDevice} now.${offered.length ? ` The ${wanted} devices offered are: ${offered.join(", ")}.` : ""}`);
     }
+    const gpuChoice = chooseGpu(input.kind, input.gpu);
+    if (!gpuChoice.ok) throw new BoxError("unsupported", gpuChoice.message);
+    const askedGpu = gpuChoice.gpu;
+    const gpuAsked = input.gpu !== undefined;
+    const gpuFor = (kind: BoxKind) => gpuOnOffer(kind, askedGpu, gpuAsked);
+    const forAgent = who.is === "agent";
     // The named providers are the only ones tried, in acquire order (044).
     const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
     const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
-    const offered = named ? named.offers : withDevice;
+    const offered = this.#takingGpu(named ? named.offers : withDevice, wanted, askedGpu, gpuAsked, forAgent);
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
@@ -1266,9 +1269,6 @@ export class Boxes {
     const bootsDevice = askedDevice ?? ofKind.find((candidate) => candidate.kind.capabilities.device)?.kind.capabilities.device?.devices[0].model;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size, bootsDevice);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
-    const gpuChoice = chooseGpu(input.kind);
-    if (!gpuChoice.ok) throw new BoxError("unsupported", gpuChoice.message);
-    const askedGpu = gpuChoice.gpu;
     const { box, claimed } = await this.#admission.run(() =>
       this.#locked(input.threadId, async () => {
         const existing = await this.list(input.threadId);
@@ -1281,7 +1281,7 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, askedGpu, taken, requested, image?.name ?? null) : null);
+        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, gpuFor, taken, requested, image?.name ?? null) : null);
         const spare = slotByDefault ? null : await claimSpare();
         if (spare) return { box: spare.box, claimed: spare.from };
         const id = newBoxId(this.#random);
@@ -1309,7 +1309,7 @@ export class Boxes {
           if (fallback) return { box: fallback.box, claimed: fallback.from };
         }
         const placedIn: Record<string, number> = slot ? { "shared-host": this.#now() - createdAt } : {};
-        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features).catch((error: unknown) => {
+        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named, forAgent, gpuFor }, offered, withDevice, withGpu(sized.size, askedGpu), features).catch((error: unknown) => {
           throw this.#withNoSlotWords(this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered), noSlotWords);
         });
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
@@ -1329,7 +1329,7 @@ export class Boxes {
           backendLabel: chosen.backend.label,
           nature: chosen.backend.nature,
           role,
-          size: withGpu(sized.size, gpuTheOfferHas(askedGpu, chosen.kind.capabilities)),
+          size: withGpu(sized.size, gpuFor(chosen.kind)),
           guest: slot?.guest ?? null,
           state: "acquiring",
           error: null,
@@ -1468,7 +1468,7 @@ export class Boxes {
     offered: OfferedKind[],
     features: readonly string[],
     size: MachineSize,
-    gpu: GpuPart,
+    gpuFor: (kind: BoxKind) => GpuPart,
     taken: Set<string>,
     requested: number,
     /** The project's image the box gets, whose spares alone it claims; a kind's spares have none. */
@@ -1479,14 +1479,15 @@ export class Boxes {
       let stale = false;
       const claimed = await (async () => {
         for (const spare of await this.list(SPARES)) {
-          if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
+          const spareOffer = offered.find((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind);
+          if (!spareOffer) continue;
           if ((spare.image?.name ?? null) !== imageName) continue;
           // An image's spare from a build that is no longer current there is not claimed: the upkeep replaces it.
           if (imageName && (spare.image?.state !== "baked" || (await this.#deps.baked?.(imageName, spare.backend, spare.kind).catch(() => null))?.ref !== spare.image.from)) continue;
           // A spare made before its backend's offer gained a feature lacks it.
           if (!hasFeatures(spare.capabilities, features)) continue;
           if (input.askedDevice && !offersModel(spare.capabilities.device, input.askedDevice)) continue;
-          if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), withGpu(size, gpuTheOfferHas(gpu, spare.capabilities)))) continue;
+          if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), withGpu(size, gpuFor(spareOffer.kind)))) continue;
           // A spare of an older build of its kind's image than its backend starts
           // boxes from now is not claimed, from the moment the image is
           // replaced, not only once the upkeep has replaced the spare. The
@@ -2123,6 +2124,16 @@ export class Boxes {
     return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
   }
 
+  #takingGpu(offered: OfferedKind[], kind: string, gpu: GpuPart, asked: boolean, forAgent: boolean): OfferedKind[] {
+    const taking = offered.filter((candidate) => offersGpuPart(candidate.kind, gpuOnOffer(candidate.kind, gpu, asked)));
+    if (taking.length || !offered.length) return taking;
+    const providers = [...new Set(offered.map((candidate) => this.#providerName(candidate.backend)))].join(" and ");
+    const why = gpu === "none" ? `${kind} boxes from ${providers} always have a GPU` : `${providers} ${offered.length === 1 ? "gives" : "give"} ${kind} boxes no GPU`;
+    const instead = gpu === "none" ? (kind === "linux-desktop" ? "Ask for linux-desktop-cpu for a desktop drawn by the CPU" : "Leave gpu out") : asked ? "Ask for gpu none" : `Ask for gpu none, or for another kind`;
+    if (forAgent) throw new BoxError("unsupported", `Not made: no provider here gives ${kind} boxes ${gpuPartWords(gpu)}: ${why}. ${instead}, or ask the user. bb-box changed nothing.`);
+    throw new BoxError("unsupported", `No provider gives ${kind} boxes ${gpuPartWords(gpu)}: ${why}. ${instead}.`);
+  }
+
   /**
    * The offers `on` names (044): one provider, or a list for the first with
    * room among them. Each name is matched among the active backends by the
@@ -2180,8 +2191,16 @@ export class Boxes {
    * refusal gives each named provider's reason, then names the kind's
    * other providers (044).
    */
-  async #place(input: { threadId: string; named: Named | null }, offered: OfferedKind[], everywhere: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
-    const choose = () => (input.threadId === SPARES ? this.#choose(offered, size, features) : this.#chooseFreeing(offered, size, features));
+  async #place(
+    input: { threadId: string; named: Named | null; forAgent?: boolean; gpuFor?: (kind: BoxKind) => GpuPart },
+    offered: OfferedKind[],
+    everywhere: OfferedKind[],
+    size: BoxSize,
+    features: readonly string[],
+  ): Promise<OfferedKind> {
+    const forAgent = input.forAgent ?? false;
+    const gpuFor = input.gpuFor ?? (() => size.gpu);
+    const choose = () => (input.threadId === SPARES ? this.#choose(offered, size, features, forAgent, gpuFor) : this.#chooseFreeing(offered, size, features, forAgent, gpuFor));
     if (!input.named) return choose();
     let reasons: string[];
     if (offered.length) {
@@ -2200,16 +2219,16 @@ export class Boxes {
   }
 
   /** The first backend with room for a box of the kind and size, and still the features asked for, or the reasons none has. */
-  async #choose(offered: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
+  async #choose(offered: OfferedKind[], size: BoxSize, features: readonly string[], forAgent = false, gpuFor: (kind: BoxKind) => GpuPart = () => size.gpu): Promise<OfferedKind> {
     const reasons: string[] = [];
     const full: string[] = [];
     let lacking = 0;
     for (const candidate of offered) {
       const pending = await this.#pending(candidate.backend.id);
       try {
-        const capacity = await candidate.backend.capacity(candidate.kind.id, size, pending);
+        const capacity = await candidate.backend.capacity(candidate.kind.id, { ...size, gpu: gpuFor(candidate.kind) }, pending);
         if (!capacity.ok) {
-          reasons.push(capacity.message ?? `${candidate.backend.label} has no room.`);
+          reasons.push((forAgent ? capacity.agentMessage : null) ?? capacity.message ?? `${candidate.backend.label} has no room.`);
           full.push(candidate.backend.id);
           continue;
         }
@@ -2236,16 +2255,16 @@ export class Boxes {
    * backend that had none gives its room back and the choice is made once
    * more: on a Mac a spare holds one of its two VM slots (#120).
    */
-  async #chooseFreeing(offered: OfferedKind[], size: MachineSize, features: readonly string[]): Promise<OfferedKind> {
+  async #chooseFreeing(offered: OfferedKind[], size: BoxSize, features: readonly string[], forAgent = false, gpuFor: (kind: BoxKind) => GpuPart = () => size.gpu): Promise<OfferedKind> {
     try {
-      return await this.#choose(offered, size, features);
+      return await this.#choose(offered, size, features, forAgent, gpuFor);
     } catch (error) {
       if (!(error instanceof Unplaced)) throw error;
       const spares = (await this.list(SPARES)).filter((spare) => spare.state !== "releasing" && !this.#holdsNothing(spare));
       const spare = error.full.map((backend) => spares.find((spare) => spare.backend === backend)).find((spare) => !!spare);
       if (!spare) throw error;
       if (await this.#release(spare, `a thread's ${offered[0]!.kind.id} box needs its room`)) throw error;
-      return this.#choose(offered, size, features);
+      return this.#choose(offered, size, features, forAgent, gpuFor);
     }
   }
 

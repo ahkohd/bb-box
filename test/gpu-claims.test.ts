@@ -6,6 +6,7 @@ import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type CopyHooks, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
 import { MemoryStorage } from "./helpers.ts";
+import { gpuWhenNotAsked } from "../src/core/gpu.ts";
 import { REPORT_VMID, cardLines, marker, pciOf } from "./gpu-helper/node.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { boxTags } from "../src/backends/proxmox/owner.ts";
@@ -17,7 +18,7 @@ const B = CARD_B.uuid;
 let counter = 0;
 function box(kind = "linux-desktop", name?: string): BoxIdentity {
   counter++;
-  return { boxId: `bx${counter}`, threadId: "thr_claims", name: name ?? `claim-box-${counter}`, kind, createdAt: Date.UTC(2026, 10, 2), size: { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: "shared" } };
+  return { boxId: `bx${counter}`, threadId: "thr_claims", name: name ?? `claim-box-${counter}`, kind, createdAt: Date.UTC(2026, 10, 2), size: { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: gpuWhenNotAsked(kind) } };
 }
 
 function hooks(): AcquireHooks & { calls: string[] } {
@@ -205,7 +206,7 @@ test("071 unit 5 gate: with writes on, a stopped shared desktop whose card is fu
   assert.equal(bridge.cardOf(7010), CARD_B, "it starts on card 1's lines");
   assert.deepEqual(bridge.gpuTags(7010), [marker("shared", CARD_B, 2)]);
   assert.deepEqual(started && "claim" in started ? started.claim : null, { card: B, part: "shared", generation: 2, answer: "granted" });
-  assert.deepEqual(started?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: `GPU-${B}` }, "Opus 6: its GPU fact names the card it holds now, not its template's");
+  assert.deepEqual(started?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: "card 1, shared, NVIDIA Fake Card, 96 GiB" }, "Opus 6: its GPU fact names the card it holds now, not its template's");
   assert.deepEqual(bridge.node.guestWrites(), ["lxc 7010"], "the helper wrote the stopped guest once");
   for (const [vmid, text] of before) if (vmid !== 7010) assert.equal(bridge.node.text(vmid), text, `CT ${vmid} is as it was`);
 
@@ -619,7 +620,7 @@ test("071 unit 5, re-review R4 and go review 3 H1: a moved box's GPU is the card
   const guest = bridge.stoppedGuest(7010, owl, 9001);
   const moved = await backend.start(guest, signal());
   assert.equal(bridge.cardOf(7010), CARD_B);
-  assert.deepEqual(moved?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: `GPU-${B}` });
+  assert.deepEqual(moved?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: "card 1, shared, NVIDIA Fake Card, 96 GiB" });
   await backend.stop(guest, signal());
   bridge.pass();
   bridge.answering = false;
@@ -632,7 +633,7 @@ test("071 unit 5, re-review R4 and go review 3 H1: a moved box's GPU is the card
   const again = await backend.start(guest, signal());
   assert.equal(bridge.proxmox.guests.get(7010)!.status, "running");
   assert.deepEqual(again && "claim" in again ? again.claim : null, { card: B, part: "shared", generation: 2, answer: "granted" });
-  assert.deepEqual(again?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: `GPU-${B}` }, "started on a stale report, its GPU fact still names the card it holds");
+  assert.deepEqual(again?.facts?.find((fact) => fact.label === "GPU"), { label: "GPU", value: "card 1, shared, NVIDIA Fake Card, 96 GiB" }, "started on a stale report, its GPU fact still names the card it holds");
 });
 
 test("071 unit 5, lost ledger: bb-box places no new desktop on a card a guest the rebuild left unresolved may hold, and the doctor names that guest until it has asked again", async () => {
@@ -716,8 +717,8 @@ test("071 unit 5, final review: a moved box started again while it runs keeps th
   const guest = bridge.stoppedGuest(7001, mover, 9001);
   const first = await backend.start(guest, signal());
   const second = await backend.start(guest, signal());
-  assert.equal(first?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`);
-  assert.equal(second?.facts?.find((fact) => fact.label === "GPU")?.value, `GPU-${B}`, "the second start, of a running box, names card 1 too");
+  assert.equal(first?.facts?.find((fact) => fact.label === "GPU")?.value, "card 1, shared, NVIDIA Fake Card, 96 GiB");
+  assert.equal(second?.facts?.find((fact) => fact.label === "GPU")?.value, "card 1, shared, NVIDIA Fake Card, 96 GiB", "the second start, of a running box, names card 1 too");
 });
 
 test("071 unit 5, go review N1: an acquire whose guest is replaced by another install's as it writes the labels and marker, or as that write fails, neither labels, marks, starts nor deletes the replacement", async () => {

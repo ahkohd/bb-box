@@ -199,6 +199,7 @@ export interface BoxKind {
   /** The longest an acquire of this kind may take, to ready. */
   readonly readyTimeoutMs: number;
   readonly slotsOnly?: boolean;
+  readonly gpuParts?: readonly GpuPart[];
 }
 
 /** Cores, memory and root disk (028). */
@@ -430,6 +431,7 @@ export interface Capacity {
   readonly ok: boolean;
   /** What is full and what to release, in words for the user. Null when ok. */
   readonly message: string | null;
+  readonly agentMessage?: string | null;
   /** The warm pool for the kind asked about. Null for a real backend, whose free machines are its `machines` limit. */
   readonly warm: { readonly ready: number; readonly target: number } | null;
   readonly hosts: readonly HostCapacity[];
@@ -462,12 +464,27 @@ export interface GpuReading {
   readonly source: "host" | "desktop";
 }
 
+export interface CardRoom {
+  readonly index: number | null;
+  readonly boxes: number;
+  readonly whole: boolean;
+  readonly freeMiB: number | null;
+  readonly totalMiB: number | null;
+}
+
 /** The room on the GPUs a GPU desktop kind's boxes use (#603). */
 export interface GpuRoom {
   /** Each GPU that has been read, as last read. */
   readonly readings: readonly GpuReading[];
   /** Until when a new box is refused, as every GPU was lately read full; null when it is not. */
   readonly fullUntil: number | null;
+  readonly parts?: readonly GpuPart[];
+  readonly withheld?: string | null;
+  readonly cards?: readonly CardRoom[];
+  readonly host?: string;
+  readonly limit?: number | null;
+  readonly at?: number | null;
+  readonly neededMiB?: number;
 }
 
 export interface Limit {
@@ -608,7 +625,7 @@ export interface Backend {
    */
   capacity(
     kind: string,
-    size: MachineSize,
+    size: MachineSize & { readonly gpu?: GpuPart },
     pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
   ): Promise<Capacity>;

@@ -36,6 +36,7 @@ import {
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
 import { KIND_INFO } from "../../src/backends/kinds.ts";
+import { gpuWhenNotAsked } from "../../src/core/gpu.ts";
 import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
 import { deviceModel, isTestOffer, type DevicePlatform } from "../../src/core/device.ts";
@@ -161,7 +162,7 @@ export function sizeOf(kind: string): MachineSize {
 
 export function identity(kind: string, size = sizeOf(kind)): BoxIdentity {
   const suffix = randomBytes(3).toString("hex");
-  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size: { ...size, gpu: "none" } };
+  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size: { ...size, gpu: gpuWhenNotAsked(kind) } };
 }
 
 /** Checks a size a guest reports, which may be null when the backend cannot read it. */

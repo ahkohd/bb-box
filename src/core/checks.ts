@@ -93,7 +93,12 @@ export const CHECKS = {
   "proxmox.gpu-helper": {
     name: "Host's GPU helper",
     from: ["proxmox-lxc"],
-    what: "Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run (071).",
+    what: "Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this bb-box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run, and on a node with cards and no helper, where servers get no GPU (071).",
+  },
+  "proxmox.gpu-cards": {
+    name: "Boxes on their cards",
+    from: ["proxmox-lxc"],
+    what: "Where the GPU helper reports: every running box with a GPU lists its claimed card in nvidia-smi, as bb-box checks every 10 minutes, and the helper reports no running guest on another card's lines. It fails naming each box on the wrong card or none (071).",
   },
   "proxmox.gpu-migration": {
     name: "Markers on GPU guests",
