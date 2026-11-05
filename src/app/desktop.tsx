@@ -1124,7 +1124,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   const showsNow = useRef(shows);
   showsNow.current = shows;
   const quiet = box !== null && silentWhy(box) !== null;
-  const showing = box !== null && box.state === "ready" && !quiet && (deviceShown ? hasDevice : box.display !== null);
+  const streamHeld = box !== null && box.state === "ready" && (deviceShown ? hasDevice : box.display !== null);
+  const showing = streamHeld && !quiet;
   const mine = box?.control?.owner === "human" && box.control.holder === viewer;
   const taken = box?.control?.owner === "agent" && box.control.takenFrom === viewer;
   const resizable = box?.display?.resizable ?? false;
@@ -1274,7 +1275,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = key !== null && !quiet && (ready || keptFree(key) !== undefined);
+  const kept = key ? keptFree<ViewerSession>(key) : undefined;
+  const connected = connection.state === "connected" || kept?.connection.state === "connected";
+  const wanted = key !== null && ((streamHeld && connected) || (!quiet && (ready || kept !== undefined)));
 
   // The viewer's session is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept frame is in the page before it paints.
@@ -1434,14 +1437,13 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
-    if (state && !showing && key) dropKept(key);
+    if (state && key && !(streamHeld && (connected || !quiet))) dropKept(key);
     if (state && box?.state !== "ready") dropKept(deviceKeyOf(shown));
-  }, [state, showing, key]);
+  }, [state, key, streamHeld, connected, quiet, box?.state, shown]);
 
   // The box's clipboard comes back while this tab has control, when it
   // changes there, as a macOS desktop's input reports it (#406), or as bb-box
   // reads it in a desktop whose server moves none (#464).
-  const connected = connection.state === "connected";
   useEffect(() => {
     if (!mine || !connected) return;
     let stopped = false;
@@ -1945,7 +1947,15 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
         ) : quiet ? (
-          <Notice>{silentWhy(box)}</Notice>
+          <Notice
+            action={
+              <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void act(() => rpc.call("refresh", { threadId, box: boxId }))}>
+                Check now
+              </Button>
+            }
+          >
+            {silentWhy(box)}
+          </Notice>
         ) : connection.state === "connecting" && deviceShown && !(device?.model ?? box.device?.model) ? (
           <Notice detail={deviceWaitWords(device)}>The device</Notice>
         ) : connection.state === "connecting" && deviceShown ? null : connection.state === "connecting" ? (
@@ -2524,22 +2534,25 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
               </div>
             ) : null}
             {tab === "threads"
-              ? [...groups].map(([threadId, rows]) => (
-                  <section key={threadId} aria-label={titleOf(threadId) ?? "Thread"} className="overflow-hidden rounded-lg border border-border bg-card">
-                    <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">
-                      <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
-                        {titleOf(threadId) ?? ""}
-                      </button>
-                      <ThreadWorking thread={threadOf.get(threadId)} />
-                      <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
-                    </div>
-                    <div className="mt-1.5 divide-y divide-border px-4">
-                      {rows.map(({ box, busy }) => (
-                        <BoxRow key={box.id} box={box} threadId={threadId} opening={{ page: ways.page(box.id) }} act={actOn(threadId)} now={now} opens={ways.opens} busy={busy} threading={false} />
-                      ))}
-                    </div>
-                  </section>
-                ))
+              ? [...groups].map(([threadId, rows]) => {
+                  const heading = titleOf(threadId) ?? "Thread";
+                  return (
+                    <section key={threadId} aria-label={heading} className="overflow-hidden rounded-lg border border-border bg-card">
+                      <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">
+                        <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
+                          {heading}
+                        </button>
+                        <ThreadWorking thread={threadOf.get(threadId)} />
+                        <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
+                      </div>
+                      <div className="mt-1.5 divide-y divide-border px-4">
+                        {rows.map(({ box, busy }) => (
+                          <BoxRow key={box.id} box={box} threadId={threadId} opening={{ page: ways.page(box.id) }} act={actOn(threadId)} now={now} opens={ways.opens} busy={busy} threading={false} />
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })
               : null}
           </div>
           )}

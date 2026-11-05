@@ -6208,6 +6208,21 @@ test("the Desktop tab opened bare opens the thread's one desktop, lists several,
   expect(none.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "boxes", title: "Box" } }]);
 });
 
+test("a thread card says Thread until its title loads", async () => {
+  let give: (thread: ReturnType<typeof makeThreadResponse>) => void = () => undefined;
+  const pending = new Promise<ReturnType<typeof makeThreadResponse>>((resolve) => {
+    give = resolve;
+  });
+  const { handlers } = server([box()]);
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: () => pending } } });
+  const card = await list.findByRole("region", { name: "Thread" });
+  expect(within(card).getByRole("button", { name: (name) => name === "Thread" }).textContent).toBe("Thread");
+  give(makeThreadResponse({ title: "UI thread" }));
+  expect(await list.findByRole("button", { name: "UI thread" })).toBeTruthy();
+  expect(list.getByRole("region", { name: "UI thread" })).toBeTruthy();
+});
+
 test("the Boxes page lists every box under its thread, servers as well as desktops, and shows one desktop for a browser tab", async () => {
   const { handlers } = server([box(), desktopBox()]);
   const [page] = app.navPanels;
@@ -9172,10 +9187,76 @@ test("Ctrl+Shift+Up from a terminal tab with no other view lands on Leave the te
   fake.textarea!.focus();
   const leave = new KeyboardEvent("keydown", { key: "ArrowUp", ctrlKey: true, shiftKey: true, cancelable: true });
   expect(fake.keys!(leave)).toBe(false);
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Leave the terminal" }));
+  const leaveButton = screen.getByRole("button", { name: "Leave the terminal" });
+  expect(leaveButton.tabIndex).toBe(-1);
+  expect(document.activeElement).toBe(leaveButton);
 });
 
 const NOT_ANSWERING = { is: "not-answering" as const, since: Date.now() - 12 * 60_000, lastAnswered: null, nextCheckAt: Date.now() + 4 * 60_000, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" };
+
+test("a terminal opens once the loaded box answers, even when the panel still lists it as not answering", async () => {
+  const quiet = desktopBox({ reach: NOT_ANSWERING });
+  const { handlers } = server([quiet]);
+  const loadState = handlers.state;
+  const loadDesktop = handlers.desktop;
+  const answering: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    state: async (input) => ({ ...(await loadState(input)), boxes: [quiet] }),
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== quiet.id) return answer;
+      return { ...answer, box: { ...answer.box, reach: null } };
+    },
+  };
+  const seen = panel(answering);
+  await seen.findByText("bold-heron");
+  cleanup();
+  terminalTab(answering, quiet.id);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+});
+
+test("a connected terminal or desktop stays up when a reach check fails, and Check now asks again", async () => {
+  const hers = desktopBox();
+  const { handlers, changes } = server([hers]);
+  let reach: BoxView["reach"] = null;
+  const loadDesktop = handlers.desktop;
+  const live: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== hers.id) return answer;
+      return { ...answer, box: { ...answer.box, reach } };
+    },
+  };
+  const term = terminalTab(live, hers.id);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  const socket = FakeSocket.made[0]!;
+  act(() => socket.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  reach = NOT_ANSWERING;
+  await term.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await term.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(term.getByText("Not answering")).toBeTruthy();
+  expect(socket.readyState).toBe(FakeSocket.OPEN);
+  expect(FakeSocket.made).toHaveLength(1);
+  fireEvent.click(term.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(changes).toEqual(["refresh box_2"]));
+  cleanup();
+
+  reach = null;
+  const desk = desktopTab(live, hers.id);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]!;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  expect(await desk.findByText("The agent has control.")).toBeTruthy();
+  reach = NOT_ANSWERING;
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(client.disconnected).toBe(false);
+  expect(novnc.FakeRfb.made).toHaveLength(1);
+  fireEvent.click(desk.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(changes).toEqual(["refresh box_2", "refresh box_2"]));
+});
 
 test("a desktop or terminal of a box that does not answer does not connect, and says why", async () => {
   const quiet = desktopBox({ reach: NOT_ANSWERING });

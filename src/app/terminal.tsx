@@ -517,7 +517,8 @@ export function BoxTerminal({
   const lastName = useRef<string | null>(null);
   if (box) lastName.current = box.name;
   const path = state?.terminalPath ?? terminalPath(pluginId);
-  const can = box !== null && canOpenTerminal(box) && silentWhy(box) === null;
+  const openable = box !== null && canOpenTerminal(box);
+  const can = openable && silentWhy(box) === null;
   const listed = rememberedLive<PanelState>(threadId)?.boxes.find(
     (each) => each.id === boxId,
   );
@@ -535,10 +536,12 @@ export function BoxTerminal({
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const ready = can || readyAsListed;
-  const quiet = (box ? silentWhy(box) : null) ?? (listed ? silentWhy(listed) : null);
+  const quiet = box ? silentWhy(box) : listed ? silentWhy(listed) : null;
+  const kept = keptFree<TerminalClient>(key);
+  const connected = connection.state === "connected" || kept?.connection.state === "connected";
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = quiet === null && (ready || keptFree(key) !== undefined);
+  const wanted = connected || (quiet === null && (ready || kept !== undefined));
 
   // The shell's terminal is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept terminal is in the page before it paints.
@@ -578,8 +581,8 @@ export function BoxTerminal({
 
   // A box that stops or goes takes its shell with it.
   useEffect(() => {
-    if (state && !can) dropKept(key);
-  }, [state, can, key]);
+    if (state && !openable) dropKept(key);
+  }, [state, openable, key]);
 
   const renew = () => {
     dropKept(key);
@@ -590,6 +593,18 @@ export function BoxTerminal({
     setActing(true);
     try {
       setProblem((await rpc.call("start", { threadId, box: boxId })).error);
+    } catch (caught) {
+      setProblem(message(caught));
+    } finally {
+      setActing(false);
+    }
+    await refresh();
+  };
+
+  const check = async () => {
+    setActing(true);
+    try {
+      setProblem((await rpc.call("refresh", { threadId, box: boxId })).error);
     } catch (caught) {
       setProblem(message(caught));
     } finally {
@@ -654,7 +669,7 @@ export function BoxTerminal({
         {otherViews?.("terminal")}
         <span className="ml-auto flex items-center gap-1.5">
           {numbers}
-          <button type="button" data-leave-terminal className="sr-only">
+          <button type="button" data-leave-terminal tabIndex={-1} className="sr-only">
             Leave the terminal
           </button>
           {can && connection.state === "ended" ? (
@@ -724,7 +739,15 @@ export function BoxTerminal({
             {box.name} has no terminal.
           </Notice>
         ) : silentWhy(box) ? (
-          <Notice>{silentWhy(box)}</Notice>
+          <Notice
+            action={
+              <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void check()}>
+                Check now
+              </Button>
+            }
+          >
+            {silentWhy(box)}
+          </Notice>
         ) : connection.state === "ended" ? (
           <Notice
             detail={connection.reason}
