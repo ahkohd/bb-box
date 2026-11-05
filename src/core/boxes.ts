@@ -92,6 +92,7 @@ import {
 import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameMachineSize, sameSize, type SizeRequest } from "./sizes.ts";
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
+import { forkCapacityWords } from "./snapshot-refusals.ts";
 import { chooseGpu, gpuBeforeGpuParts, holdsCard, machineSizeOf, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 
 export type BoxState =
@@ -744,7 +745,7 @@ export interface ForkRequest {
   readonly who: Actor;
 }
 
-export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind"> & { readonly size: MachineSize | null };
+export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind" | "gpu"> & { readonly size: MachineSize | null };
 
 function distinctAddresses(addresses: readonly (string | null)[]): string[] {
   return [...new Set(addresses.filter((address): address is string => !!address))];
@@ -1398,8 +1399,9 @@ export class Boxes {
     }
     if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
     const size = request.size ?? defaultSize(kindSizes(kind.id, (await this.#deps.general()).sizes));
-    const room = await backend.capacity(kind.id, size, await this.#pending(backend.id));
-    if (!room.ok) throw new BoxError("no_capacity", `${backend.label} has no room for the fork: ${room.message ?? "it did not say why"}`);
+    const gpu = request.gpu ?? "none";
+    const room = await backend.capacity(kind.id, withGpu(size, gpu), await this.#pending(backend.id));
+    if (!room.ok) throw new BoxError("no_capacity", forkCapacityWords(`${backend.label} has no room for the fork: ${room.message ?? "it did not say why"}`, gpu));
     return offered;
   }
 

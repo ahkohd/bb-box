@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BuildLog } from "./build-log.ts";
-import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
+import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, identityResetFor, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
 import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
@@ -122,7 +122,7 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string,
     ...(build.gpu ? [`DESKTOP_GPU=${build.gpu}`] : []),
     ...(build.session ? [`DESKTOP_SESSION=${build.session}`] : []),
     `BUILD_ID=${buildId}`,
-    `BOX_IDENTITY_RESET=${kind === "linux" || kind === "linux-arm64" ? "on" : "off"}`,
+    `BOX_IDENTITY_RESET=${identityResetFor(kind)}`,
     `PREPARE=${prepare}`,
     "EOF",
     'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',

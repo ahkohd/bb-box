@@ -2,13 +2,13 @@
 set -uo pipefail
 umask 022
 
-readonly VERSION=8
+readonly VERSION=9
 readonly MARKER_HEADER="bb-box identity 1"
 readonly VALUE_NAME=BBBOX_IDENTITY
 readonly KNOWN_HOST_KEY_TYPES=" ed25519 ecdsa rsa "
 readonly UNIT=bb-box-identity.service
 readonly SETTLE_UNIT=bb-box-identity-settle.service
-readonly IDENTITY_USERS="ssh.service tailscaled.service"
+readonly IDENTITY_USERS="ssh.service tailscaled.service user@.service bb-box-display.service bb-box-session.service bb-box-vnc.service bb-box-vnc-password.service bb-box-selkies.service"
 readonly GATED_UNITS="systemd-networkd.service NetworkManager.service ssh.service ssh.socket tailscaled.service user@.service docker.service docker.socket containerd.service bb-box-docker-containers.service bb-box-display.service bb-box-session.service bb-box-vnc.service bb-box-vnc-password.service bb-box-selkies.service bb-box-device-firewall.service"
 root=${BBBOX_IDENTITY_ROOT:-}
 marker=$root/etc/bb-box/identity
@@ -333,6 +333,19 @@ forget_access() {
   rm -f "$root"/home/*/.config/bb-box/env "$root"/root/.config/bb-box/env
 }
 
+forget_desktop_locks() {
+  [ -x "$root/usr/local/libexec/bb-box/display" ] || return 0
+  local home profile
+  for home in "$root"/home/* "$root"/root; do
+    [ -d "$home" ] || continue
+    for profile in "$home"/.config/google-chrome "$home"/.config/google-chrome-* "$home"/.config/chromium; do
+      [ -d "$profile" ] || continue
+      rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie" || return 1
+    done
+    rm -f "$home"/.dbus/session-bus/* "$home/.cache/cua-driver/cua-driver.sock" || return 1
+  done
+}
+
 renew_ssh_host_keys() {
   local key type types=()
   for key in "$root"/etc/ssh/ssh_host_*_key; do
@@ -392,6 +405,7 @@ reset_identity() {
   forget_tailnet_node || { say "could not remove the tailnet node's state"; return 1; }
   forget_bb_machines || { say "could not remove BB's machine credentials"; return 1; }
   forget_access || { say "could not remove the thread's access file"; return 1; }
+  forget_desktop_locks || { say "could not remove the desktop's copied session locks"; return 1; }
   if [ "$machine_from_provider" = no ]; then
     renew_ssh_host_keys || { say "could not make new SSH host keys"; return 1; }
     renew_machine_id || { say "could not make a new machine ID"; return 1; }
@@ -580,7 +594,7 @@ Description=bb-box: services that use the box's identity wait until it is known
 DefaultDependencies=no
 Requires=$UNIT
 After=$UNIT
-Before=$IDENTITY_USERS shutdown.target
+Before=$(printf '%s' "$IDENTITY_USERS" | tr ' ' '\n' | grep -v '@' | tr '\n' ' ')shutdown.target
 Conflicts=shutdown.target
 RefuseManualStop=yes
 

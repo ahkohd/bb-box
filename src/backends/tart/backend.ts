@@ -27,6 +27,7 @@
 //   counts its memory and QEMU's own, but not against the two macOS VMs.
 
 import type { CheckId } from "../../core/checks.ts";
+import { withDesktopForkSafety } from "../../core/identity.ts";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -194,7 +195,7 @@ import {
 import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import {
-  LINUX_FORK_KIND,
+  LINUX_FORK_KINDS,
   MIN_FREE_GIB,
   NO_IMAGE_ATTACH,
   deleteScript as snapshotDeleteScript,
@@ -2123,7 +2124,7 @@ export class TartBackend implements Backend {
 
   snapshotting(kind: string): Snapshotting | null {
     const os = this.#snapshotOs(kind);
-    return os ? tartOffer(os, os === "macos" || kind === LINUX_FORK_KIND) : null;
+    return os ? withDesktopForkSafety(kind, tartOffer(os, os === "macos" || LINUX_FORK_KINDS.includes(kind))) : null;
   }
 
   identitySource(kind: string): IdentitySource | null {

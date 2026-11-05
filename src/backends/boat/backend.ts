@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
-import { IDENTITY_TOOL, IDENTITY_VARIABLE } from "../../core/identity.ts";
+import { IDENTITY_TOOL, IDENTITY_VARIABLE, withDesktopForkSafety } from "../../core/identity.ts";
 import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
@@ -718,7 +718,7 @@ export class BoatBackend implements Backend {
 
   snapshotting(kind: string): Snapshotting | null {
     if (!(this.#offered() as readonly string[]).includes(kind)) return null;
-    return boatOffer(this.#lastLimits, this.#lastAllowance);
+    return withDesktopForkSafety(kind, boatOffer(this.#lastLimits, this.#lastAllowance));
   }
 
   async snapshotBill(signal?: AbortSignal): Promise<SnapshotBill> {

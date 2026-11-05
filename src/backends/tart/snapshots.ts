@@ -5,9 +5,9 @@ import { named, parseConfig, parseFields, script, sections, type VmConfig } from
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
 export const MACOS_FORK_SAFE_FROM = 3;
 export const LINUX_FORK_SAFE_FROM = 8;
-export const LINUX_FORK_KIND = "linux-arm64";
+export const LINUX_FORK_KINDS: readonly string[] = ["linux-arm64", "linux-arm64-desktop-cpu"];
 export const TART_EXCLUDES = "the VM's network address, which the Mac's DHCP gives again";
-export const LINUX_DESKTOP_NO_FORKS = "bb-box forks and keeps only Tart's plain Linux boxes, not its Linux desktops, whose image has no identity reset turned on, as on Proxmox and boat.dev";
+export const LINUX_NO_FORKS = "this Linux kind has no supported identity reset";
 export const MIN_FREE_GIB = 20;
 export const NO_IMAGE_ATTACH = "the Mac's diskutil has no image attach, which bb-box needs to clean a fork's disk of its source's identity before the fork first boots, and which macOS 27 has. So bb-box makes no macOS forks on it, and keeps no macOS snapshot past its box's release";
 const GiB = 1024 ** 3;
@@ -74,7 +74,7 @@ export function tartOffer(os: "macos" | "linux", forks = true): Snapshotting {
         outlivesGuest: true,
         price: null,
         excludes: TART_EXCLUDES,
-        forkWhy: LINUX_DESKTOP_NO_FORKS,
+        forkWhy: LINUX_NO_FORKS,
       };
 }
 

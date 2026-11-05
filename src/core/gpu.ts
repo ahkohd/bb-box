@@ -106,6 +106,12 @@ export function snapshotGpuOf(box: GpuOfRecord & { readonly nvidiaUserspace?: Nv
   return { part, card: claim && part !== "none" ? claim.card : null, index: null, userspace: userspaceOf(box) };
 }
 
+export function snapshotGpuWords(gpu: SnapshotGpu | null | undefined): string {
+  if (!gpu) return "GPU not recorded";
+  const card = gpu.part === "none" ? "" : gpu.index !== null ? `, card ${gpu.index}` : gpu.card ? `, ${gpu.card}` : "";
+  return `GPU: ${gpu.part}${card}; NVIDIA userspace: ${gpu.userspace}`;
+}
+
 export function gpuStayWords(part: GpuPart, index: number | null): string {
   if (part === "none") return "Its GPU stays as it is now: none.";
   return `Its GPU stays as it is now: ${part}, ${index === null ? "its card" : `card ${index}`}.`;

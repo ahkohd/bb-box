@@ -30,7 +30,7 @@ import {
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
-import { gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu } from "./gpu.ts";
+import { gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
 import { currentKindId } from "../backends/kinds.ts";
 import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
@@ -853,6 +853,7 @@ export class Snapshots {
     }
     const { box, backend, offer, plan, memory } = await this.#takeContext(boxId, input.memory);
     const safety = await this.#forkSafe(box, backend);
+    const gpu = await this.#snapshotGpu(box, backend);
     const spends = takeSpends(plan, memory);
     const reserved = memory && plan.take.memory ? { storage: plan.take.memory.storage.key, bytes: plan.take.memory.addsBytes } : { storage: plan.storage.key, bytes: plan.take.addsBytes ?? 0 };
     const now = this.#now();
@@ -896,7 +897,7 @@ export class Snapshots {
         forkSafe: safety.version,
         forkSafeWhy: safety.version === null ? (safety.why ?? null) : null,
         identity: safety.identity,
-        gpu: snapshotGpuOf(box),
+        gpu,
         dependsOn: [],
         picture: null,
         ref: null,
@@ -1860,6 +1861,31 @@ export class Snapshots {
     }
   }
 
+  async #snapshotGpu(box: BoxRecord, backend: Backend): Promise<SnapshotGpu> {
+    let gpu = snapshotGpuOf(box);
+    if (!box.guest || box.capabilities.os !== "linux") return gpu;
+    if (backend.readGpuClaim) {
+      try {
+        const held = await backend.readGpuClaim(box.guest, this.#stopping.signal);
+        if (held) gpu = { ...gpu, part: held.part, card: held.part === "none" ? null : held.card, index: held.part === "none" ? null : held.index };
+      } catch (error) {
+        if (this.#stopping.signal.aborted) throw error;
+      }
+    }
+    if (box.state !== "ready" || gpu.userspace !== "unknown" || (gpu.part === "none" && !box.kind.includes("desktop"))) return gpu;
+    try {
+      const version = await withinWait(async (late) => {
+        const command = (await backend.transports(box.guest!, box.kind)).command;
+        const read = await command?.run('f=/usr/share/bb-box/nvidia-version; if [ ! -e "$f" ]; then echo none; else cat "$f"; fi', { timeoutMs: 2_000, signal: AbortSignal.any([this.#stopping.signal, late]), maxOutputBytes: 128 });
+        return read?.exitCode === 0 ? read.stdout.trim() : "unknown";
+      }, 2_000);
+      if (version === "none" || /^\d+\.[\d.]+$/.test(version)) gpu = { ...gpu, userspace: version as SnapshotGpu["userspace"] };
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+    }
+    return gpu;
+  }
+
   async #forkSafe(box: BoxRecord, backend: Backend): Promise<ForkSafety> {
     const none: ForkSafety = { version: null, identity: null };
     const system = box.capabilities.os;
@@ -2293,6 +2319,7 @@ export class Snapshots {
       if (stale) throw new BoxError("in_use", `What restoring box ${box.name} would do changed after the yes was asked for, so bb-box restored nothing. Ask again with box_restore if it is still wanted.`);
     }
     const wantsUndo = input.undo !== false;
+    const gpu = wantsUndo ? await this.#snapshotGpu(box, backend) : null;
     const now = this.#now();
     const operationId = newOperationId(this.#random);
     const undoId = wantsUndo ? newSnapshotId(this.#random) : null;
@@ -2334,7 +2361,7 @@ export class Snapshots {
           forkSafe: forkSafe.version,
           forkSafeWhy: forkSafe.version === null ? (forkSafe.why ?? null) : null,
           identity: forkSafe.identity,
-          gpu: snapshotGpuOf(box),
+          gpu,
           dependsOn: [],
           picture: null,
           ref: null,
@@ -2553,6 +2580,7 @@ export class Snapshots {
       backendLabel: backend.label,
       kind: box.kind,
       size: box.guest.size ?? box.size ?? null,
+      gpu: input.gpu ?? "none",
     });
   }
 

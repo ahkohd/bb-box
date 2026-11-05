@@ -29,6 +29,7 @@
 
 import { SPARES } from "../../core/boxes.ts";
 import type { CheckId } from "../../core/checks.ts";
+import { withDesktopForkSafety } from "../../core/identity.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
@@ -522,11 +523,11 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   identitySource(kind: string): IdentitySource | null {
-    return kind === "linux" && this.kinds().some((offered) => offered.id === kind) ? "device" : null;
+    return LINUX_KINDS.some((linux) => linux.id === kind) && this.kinds().some((offered) => offered.id === kind) ? "device" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return LINUX_KINDS.some((linux) => linux.id === kind) && this.kinds().some((offered) => offered.id === kind) ? this.#snapshots.offer() : null;
+    return LINUX_KINDS.some((linux) => linux.id === kind) && this.kinds().some((offered) => offered.id === kind) ? withDesktopForkSafety(kind, this.#snapshots.offer()) : null;
   }
 
   async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
@@ -604,7 +605,7 @@ export class ProxmoxQemuBackend implements Backend {
     return { macs, smbios: /(?:^|,)uuid=([^,]+)/.exec(String(config.smbios1 ?? ""))?.[1] ?? null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
@@ -662,7 +663,7 @@ export class ProxmoxQemuBackend implements Backend {
     const config = await this.#ownOrCopyConfig(api, ref.guest, signal);
     const disk = bootDisk(config);
     const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
-    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Release a box, or widen the VMID range in bb-box's settings.`));
+    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Try again later, or ask the user to make room for the copy.`));
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
@@ -795,7 +796,7 @@ export class ProxmoxQemuBackend implements Backend {
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
         sourceConfig: (api, guest, signal) => this.#ownOrCopyConfig(api, guest, signal),
         rootDisk: bootDisk,
-        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so bb-box has none for the fork. Try again later, or ask the user. bb-box copied nothing.`)),
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
         guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, build),

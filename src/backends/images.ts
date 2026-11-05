@@ -179,9 +179,8 @@ const PREPARE_FILES: Readonly<Record<string, string>> = {
   boat: "boat/template.sh",
 };
 
-/** What a Linux image's build writes for BOX_IDENTITY_RESET: on for a headless Linux image, off for a desktop. */
 export function identityResetFor(kind: string): "on" | "off" {
-  return kind === "linux" || kind === "linux-arm64" ? "on" : "off";
+  return kind === "linux" || kind.startsWith("linux-") ? "on" : "off";
 }
 
 /** The SHA-256 of a backend's prepare script, or null when this bb-box has no such file. */

@@ -25,7 +25,7 @@ const SNAPSHOT_HINTS: Partial<Record<BoxErrorCode, string>> = {
   in_use: "Tell the person, in the thread, what the refusal names: it says what would have to change first.",
   not_owner: "Ask the person, in the thread, if it should be done.",
   needs_yes: "Call box_restore again: it asks for a yes in the thread with a form. Then end your turn.",
-  no_capacity: "Release a box you no longer need, then fork again.",
+  no_capacity: "Try again later, or ask the person to make room.",
   unsupported: "Call box_status to see what the box can do: its Snapshots line says what its backend offers.",
 };
 

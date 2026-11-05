@@ -141,7 +141,7 @@ export interface TemplateDeps {
 }
 
 export const IDENTITY_VALUE_FILE = "/run/ascii-secrets/env.sh";
-export const IDENTITY_RESET_KINDS: readonly BoatKind[] = ["linux"];
+export const IDENTITY_RESET_KINDS: readonly BoatKind[] = ["linux", "linux-desktop-cpu"];
 
 export function identityBuildSettings(kind: BoatKind): readonly string[] {
   if (!IDENTITY_RESET_KINDS.includes(kind)) return ["BOX_IDENTITY_RESET=off"];

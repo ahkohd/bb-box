@@ -1,5 +1,5 @@
 import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
-import type { SnapshotGpu } from "./gpu.ts";
+import { snapshotGpuWords, type SnapshotGpu } from "./gpu.ts";
 import type { Actor } from "./box-log.ts";
 import type { Charge } from "./snapshot-cost.ts";
 import type { HeldIdentity, NotForkSafe } from "./identity.ts";
@@ -78,7 +78,7 @@ export interface SnapshotRecord {
   readonly forkSafeWhy?: NotForkSafe | null;
   readonly identity?: HeldIdentity | null;
   readonly unflushed?: string | null;
-  readonly gpu?: SnapshotGpu;
+  readonly gpu?: SnapshotGpu | null;
   readonly dependsOn: readonly string[];
   readonly picture: PictureState | null;
   readonly ref: string | null;
@@ -559,6 +559,7 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     ...(snapshot.guest === "held-copy" ? [`a held copy, guest ${snapshot.livesOn.ref}`] : []),
     ...(snapshot.guest === "earlier" ? [`on ${snapshot.box.name}'s earlier guest ${snapshot.livesOn.ref}: fork only`] : []),
     ...(notForkSafe(snapshot) ? [`not fork-safe: ${snapshot.box.name} had no working identity reset when it was taken`] : []),
+    snapshotGpuWords(snapshot.gpu),
     ...(snapshot.unflushed ? ["may miss its last writes"] : []),
   ];
   return parts.join(" · ");

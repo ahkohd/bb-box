@@ -3,6 +3,11 @@ import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 
 export const IDENTITY_TOOL = "/usr/local/sbin/bb-box-identity";
+export const DESKTOP_FORK_SAFE_FROM = 9;
+
+export function withDesktopForkSafety(kind: string, offer: Snapshotting): Snapshotting {
+  return kind.startsWith("linux-") && kind.includes("desktop") && offer.fork === "copy" ? { ...offer, forkSafeFrom: Math.max(DESKTOP_FORK_SAFE_FROM, offer.forkSafeFrom ?? 1) } : offer;
+}
 export const IDENTITY_TOOL_MISSING = 64;
 export const IDENTITY_VARIABLE = "BBBOX_IDENTITY";
 export const MARKER_WRITE_MS = 20_000;

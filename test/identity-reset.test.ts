@@ -183,6 +183,46 @@ function assertReset(root: string, before: ReturnType<typeof identityOf>): void 
   assert.equal(read(root, "home/box/.config/bb-box/access-a17e70a62012"), "");
 }
 
+test("a desktop copy drops only host-bound session locks, keeps its profile, keyring and desktop setup, and a same-box restart changes none of them", () => {
+  for (const source of ["eth", "device", "value"] as const) {
+    const nic = { ...LXC_ETH0, ...(source === "device" ? { device: true } : {}) };
+    const root = guest([LOOP, nic]);
+    const kept = [
+      "home/box/.config/google-chrome/Local State",
+      "home/box/.config/google-chrome/Default/Preferences",
+      "home/box/.config/google-chrome/Default/Cookies",
+      "home/box/.local/share/keyrings/login.keyring",
+      "home/box/.cache/sessions/xfce4-session-source:99",
+      "etc/bb-box/sway.conf",
+      "usr/local/libexec/bb-box/display",
+      "usr/local/libexec/bb-box/selkies",
+      "usr/local/bin/cua-driver",
+    ];
+    const locks = [
+      "home/box/.config/google-chrome/SingletonLock",
+      "home/box/.config/google-chrome/SingletonSocket",
+      "home/box/.config/google-chrome/SingletonCookie",
+      "home/box/.dbus/session-bus/copied-machine-id-99",
+      "home/box/.cache/cua-driver/cua-driver.sock",
+    ];
+    for (const path of [...kept, ...locks]) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), path, { mode: 0o755 });
+    }
+    boot(root, source === "value" ? "bxsource1" : undefined);
+    written(root, "bxsource1", source);
+    assert.equal(boot(root, source === "value" ? "bxsource1" : undefined).code, 0);
+    for (const path of [...kept, ...locks]) assert.equal(read(root, path), path, `same box: ${path}`);
+    const before = identityOf(root);
+    setNics(root, [LOOP, { ...nic, mac: "bc:24:11:00:00:99" }]);
+    assert.equal(boot(root, source === "value" ? "bxfork1" : undefined).code, 0);
+    assertReset(root, before);
+    for (const path of locks) assert.equal(read(root, path), null, `copy: ${path}`);
+    for (const path of kept) assert.equal(read(root, path), path, `copy: ${path}`);
+    assert.equal(status(root).boot, "reset");
+  }
+});
+
 test("a box made before the change, with the reset in its image but no marker, keeps its identity at every boot", () => {
   const root = guest([LOOP, LXC_ETH0]);
   const before = identityOf(root);
@@ -192,7 +232,7 @@ test("a box made before the change, with the reset in its image but no marker, k
     assert.match(ran.out, /kept: bb-box has written no identity marker here/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
+  assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
 });
 
 test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
@@ -221,7 +261,7 @@ test("on Proxmox LXC the marker holds the eth interfaces only, and a box with Do
     assert.match(ran.out, /kept: the identity marker of box bxsource1 matches/);
   }
   assert.deepEqual(identityOf(root), before);
-  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
+  assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "kept", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "eth" });
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
@@ -269,7 +309,7 @@ test("a copy with new MAC addresses, as any Proxmox clone gets, resets every ite
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource eth\nmac bc:24:11:5e:77:01\nreset \d{4}-\d\d-\d\dT[\d:]+Z\n$/);
   assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /Z none of the marker's MAC addresses .*; BB machines removed: host_source\n$/);
   assert.equal(existsSync(join(root, "var/lib/bb-box/identity-reset-pending")), false);
-  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
+  assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "eth" });
   const once = identityOf(root);
   assert.match(boot(root).out, /kept: the identity marker of box none matches/);
   assert.deepEqual(identityOf(root), once, "the next boot does not reset again");
@@ -497,14 +537,14 @@ test("enable writes the unit before the network and identity services, and requi
   const before = /^Before=(.*)$/m.exec(unit)?.[1]?.split(" ") ?? [];
   for (const unitName of ["network-pre.target", "systemd-networkd.service", "ssh.service", "tailscaled.service", "docker.service", "containerd.service", "bb-box-display.service"]) assert.ok(before.includes(unitName), unitName);
   assert.match(unit, /^ExecStart=\/usr\/local\/sbin\/bb-box-identity boot$/m);
-  for (const gated of ["systemd-networkd.service", "user@.service", "docker.service", "docker.socket", "containerd.service", "bb-box-docker-containers.service", "bb-box-display.service", "bb-box-selkies.service"]) {
+  for (const gated of ["systemd-networkd.service", "docker.service", "docker.socket", "containerd.service", "bb-box-docker-containers.service"]) {
     assert.equal(read(root, `etc/systemd/system/${gated}.d/10-bb-box-identity.conf`), "[Unit]\nRequires=bb-box-identity.service\nAfter=bb-box-identity.service\n", gated);
   }
-  for (const user of ["ssh.service", "tailscaled.service"]) {
+  for (const user of ["ssh.service", "tailscaled.service", "user@.service", "bb-box-display.service", "bb-box-session.service", "bb-box-vnc.service", "bb-box-vnc-password.service", "bb-box-selkies.service"]) {
     assert.equal(read(root, `etc/systemd/system/${user}.d/10-bb-box-identity.conf`), "[Unit]\nRequires=bb-box-identity.service bb-box-identity-settle.service\nAfter=bb-box-identity.service bb-box-identity-settle.service\n", user);
   }
   const settleUnit = read(root, "etc/systemd/system/bb-box-identity-settle.service") ?? "";
-  assert.match(settleUnit, /^Before=ssh\.service tailscaled\.service shutdown\.target$/m, "it holds only what uses the identity, never the network or the console");
+  assert.match(settleUnit, /^Before=ssh\.service tailscaled\.service bb-box-display\.service bb-box-session\.service bb-box-vnc\.service bb-box-vnc-password\.service bb-box-selkies\.service shutdown\.target$/m);
   assert.match(settleUnit, /^After=bb-box-identity\.service$/m);
   assert.match(settleUnit, /^TimeoutStartSec=infinity$/m);
   assert.ok(existsSync(join(root, "etc/systemd/system/multi-user.target.wants/bb-box-identity-settle.service")));
@@ -523,16 +563,17 @@ test("enable writes the unit before the network and identity services, and requi
   assert.equal(read(docker, "usr/local/lib/bb-box/identity-reset-on"), "on\n");
 });
 
-test("only the checked builds turn the reset on; every image has the program, and finalizing clears what a box wrote", () => {
+test("every Linux build turns the reset on, including desktops; finalizing clears what a box wrote", () => {
   const base = readFileSync(CUSTOMIZE_BASE, "utf8");
   assert.match(base, /install -m 0755 "\$build\/guest\/bb-box-identity\.sh" \/usr\/local\/sbin\/bb-box-identity\n\/usr\/local\/sbin\/bb-box-identity disable\nif \[ "\$\{BOX_IDENTITY_RESET:-off\}" = on \]; then/);
   const on = (file: string) => readFileSync(fileURLToPath(new URL(`../setup/${file}`, import.meta.url)), "utf8");
-  for (const build of ["proxmox-lxc/template/build.sh", "proxmox-qemu/build-linux.sh", "docker/customize.sh"]) {
-    assert.match(on(build), /BOX_IDENTITY_RESET=\$\(\[ "\$kind" = linux \] && echo on \|\| echo off\)/, build);
+  for (const build of ["proxmox-lxc/template/build.sh", "docker/customize.sh"]) {
+    assert.match(on(build), /^BOX_IDENTITY_RESET=on$/m, build);
   }
+  assert.match(on("proxmox-qemu/build-linux.sh"), /BOX_IDENTITY_RESET=\$\(\[ "\$kind" != android \] && echo on \|\| echo off\)/);
   const tart = on("tart/prepare-linux-image.sh");
   assert.match(tart, /kind=linux-arm64 artifacts=linux finalize=linux identity_reset=on\n/);
-  assert.match(tart, /kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=off\n/);
+  assert.match(tart, /kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=on\n/);
   assert.match(tart, /BUILD_ID=%s\\nBOX_IDENTITY_RESET=%s\\nPREPARE=%s\\n' "\$bb_url" "\$build_id" "\$identity_reset" "\$prepare" \| as_root sh -c "cat >\$src\/build\.env"/);
   for (const unchecked of ["boat/template.sh", "boat/customize-sandbox.sh"]) assert.doesNotMatch(on(unchecked), /BOX_IDENTITY_RESET/, unchecked);
   assert.match(readFileSync(FINALIZE, "utf8"), /rm -f \/etc\/bb-box\/identity .*\/var\/lib\/bb-box\/identity-armed/);
@@ -963,7 +1004,7 @@ test("version 8: enable can read the value from a file a provider writes, and le
   assert.equal(identity(root, ["enable", "--value-file", "/run/env.sh"]).code, 0);
   assert.equal(identity(root, ["disable"]).code, 0);
   assert.equal(existsSync(join(root, "usr/local/lib/bb-box/identity-options")), false);
-  assert.equal(identity(root, ["version"]).out, "8\n");
+  assert.equal(identity(root, ["version"]).out, "9\n");
 });
 
 test("version 8, boat: the value is read from the file boat writes, never from the boot's arguments; a stop and start, a resize and a same-box swap keep the box, as the value is the box's own", () => {
@@ -971,12 +1012,12 @@ test("version 8, boat: the value is read from the file boat writes, never from t
   boatValue(root, "bxsource1");
   assert.match(boot(root).out, /no identity marker/);
   assert.equal(written(root, "bxsource1", "value"), "bb-box identity 1\nbox bxsource1\nsource value\nvalue bxsource1\n");
-  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "unarmed", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "value" });
+  assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "unarmed", marker: "matches", armed: "yes", pending: "no", box: "bxsource1", source: "value" });
   const before = identityOf(root);
   setNics(root, [LOOP, { name: "enp0s1", mac: "02:00:00:00:00:99", device: true }]);
   for (let start = 0; start < 3; start++) assert.match(boot(root, "bxother9").out, /kept: the identity marker of box bxsource1 matches/, "a new machine with new MAC addresses, and an argument that is not the file's");
   assert.deepEqual(identityOf(root), before);
-  assert.equal(forkSafeVersion(parseIdentityStatus(identity(root, ["status"]).out)), 8);
+  assert.equal(forkSafeVersion(parseIdentityStatus(identity(root, ["status"]).out)), 9);
 });
 
 test("version 8, boat: a fork's new value resets BB's machine credentials and host ID, the access file and the tailnet node, and leaves the SSH host keys and machine ID, which boat makes new on every machine, alone", () => {
@@ -1000,7 +1041,7 @@ test("version 8, boat: a fork's new value resets BB's machine credentials and ho
   assert.equal(after.machineId, before.machineId);
   assert.equal(read(root, WORKTREE_FILE), "the thread's work");
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource value\nvalue bxfork1\nreset /, "the fork's own marker, naming no box");
-  assert.deepEqual(status(root), { version: "8", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "value" });
+  assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "reset", marker: "matches", armed: "yes", pending: "no", box: "", source: "value" });
   assert.match(boot(root).out, /kept/, "it does not reset again");
 });
 
@@ -1077,9 +1118,9 @@ test("version 8: with a value file, wait holds BB's daemon until this machine's 
   assert.equal((await ended(waitFor(off, "bb-host-daemon-bb-example-com-host_source.service"))).code, 0);
 });
 
-test("version 8: only boat's linux template turns the reset on with boat's settings; customize-base passes them to enable", () => {
-  assert.match(buildEnvFor("build.1", "linux"), /^BOX_IDENTITY_RESET=on\nBOX_IDENTITY_VALUE_FILE=\/run\/ascii-secrets\/env\.sh\nBOX_IDENTITY_MACHINE=provider$/m);
-  for (const kind of ["linux-desktop-cpu", "android"] as const) {
+test("boat's Linux and desktop templates turn the reset on with boat's settings; Android does not", () => {
+  for (const kind of ["linux", "linux-desktop-cpu"] as const) assert.match(buildEnvFor("build.1", kind), /^BOX_IDENTITY_RESET=on\nBOX_IDENTITY_VALUE_FILE=\/run\/ascii-secrets\/env\.sh\nBOX_IDENTITY_MACHINE=provider$/m);
+  for (const kind of ["android"] as const) {
     assert.match(buildEnvFor("build.1", kind), /^BOX_IDENTITY_RESET=off$/m, kind);
     assert.doesNotMatch(buildEnvFor("build.1", kind), /BOX_IDENTITY_VALUE_FILE/, kind);
   }

@@ -1289,6 +1289,10 @@ function desktopBox(gpu: "none" | "shared"): BoxIdentity {
 test("071 unit 6: a fork of a GPU desktop writes gpu none or shared in the re-arm, a shared fork is refused before any copy when no card can take it, a held copy loses its lines before it is a template, and a swap moves the claim with a gap where neither guest holds it", async () => {
   const bridge = new ClaimsBridge();
   const backend = bridge.backend({ perGpu: 1 });
+  for (const kind of backend.kinds().map((kind) => kind.id)) {
+    assert.equal(backend.identitySource(kind), "eth", kind);
+    if (kind.includes("desktop")) assert.equal(backend.snapshotting(kind)?.forkSafeFrom, 9, kind);
+  }
   const source = desktopBox("shared");
   bridge.desktop(7040, CARD_A, source, INSTALL, { marker: marker("shared", CARD_A, 1) });
   bridge.pass();
@@ -1303,6 +1307,10 @@ test("071 unit 6: a fork of a GPU desktop writes gpu none or shared in the re-ar
   assert.ok(armed, "the re-arm wrote the fork's labels");
   assert.match(armed!.tags ?? "", /gpu\.none\.g\d+/);
   assert.deepEqual(bridge.lines(noneVmid), []);
+  assert.equal(noneFork.facts?.some((fact) => fact.label === "GPU") ?? false, false);
+  const seenNone = (await backend.held()).find((held) => held.ref === noneFork.ref)!;
+  assert.ok(seenNone);
+  assert.equal(seenNone.facts?.some((fact) => fact.label === "GPU") ?? false, false);
 
   const forkShared = desktopBox("shared");
   await backend.placeForkGpu(forkShared, "shared", signal());
@@ -1319,7 +1327,16 @@ test("071 unit 6: a fork of a GPU desktop writes gpu none or shared in the re-ar
   full.desktop(7041, CARD_B, desktopBox("shared"), INSTALL, { marker: marker("shared", CARD_B, 1), running: true });
   full.pass();
   const calls = full.proxmox.calls.length;
-  await assert.rejects(fullBackend.placeForkGpu(desktopBox("shared"), "shared", signal()), /bb-box copied nothing/);
+  const noneCapacity = await fullBackend.capacity("linux-desktop", desktopBox("none").size, []);
+  assert.equal(noneCapacity.ok, true, noneCapacity.message ?? "");
+  const sharedCapacity = await fullBackend.capacity("linux-desktop", desktopBox("shared").size, []);
+  assert.equal(sharedCapacity.ok, false);
+  await assert.rejects(fullBackend.placeForkGpu(desktopBox("shared"), "shared", signal()), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /^Not forked: .*Fork it with gpu none, or ask the user\. bb-box copied nothing\.$/);
+    assert.doesNotMatch(error.message, /Release|raise|settings/);
+    return true;
+  });
   assert.equal(full.proxmox.calls.slice(calls).some((call) => call.path.endsWith("/clone")), false);
 
   const held = await backend.copyGuest(guest, { box: source.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, copyHooks, signal());
