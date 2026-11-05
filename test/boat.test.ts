@@ -563,6 +563,84 @@ test("a trial fork left by a reload is checked again by the next bb-box, which r
   }
 });
 
+test("a failed trial leaves a template another instance recorded, named ready, or is still checking", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  const mode: { current: "record" | "ready" | "trial" } = { current: "record" };
+  world.answerTrials(async (sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    const templateId = world.fake.sandboxes.get(sandbox)?.labels[LABELS.template];
+    const template = templateId ? world.fake.sandboxes.get(templateId) : undefined;
+    assert.ok(template);
+    if (mode.current === "record") await world.storage.set("template/linux", { kind: "linux", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null });
+    if (mode.current === "ready") template.name = templateName("linux", "ready");
+    if (mode.current === "trial") world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", [LABELS.template]: template.id }, state: "ready" });
+    return { ...OK_RUN, exitCode: 1, stdout: "services                          FAIL ssh\n" };
+  });
+  const templates = new BoatTemplates(world.deps());
+  try {
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const recorded = world.templateSandboxes()[0]!;
+    assert.notEqual(recorded.state, "deleted", "a template another instance recorded stays");
+    assert.equal((await templates.record("linux"))?.sandbox, recorded.id);
+
+    mode.current = "ready";
+    await world.storage.delete("template/linux");
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const named = world.templateSandboxes().find((sandbox) => sandbox.name === templateName("linux", "ready"));
+    assert.ok(named && named.state !== "deleted", "a template already named ready stays");
+
+    mode.current = "trial";
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const held = world.templateSandboxes().filter((sandbox) => sandbox.state !== "deleted" && sandbox.name === templateName("linux", "checking"));
+    assert.equal(held.length, 1, "a template another instance is still trialing stays");
+    assert.equal([...world.fake.sandboxes.values()].filter((sandbox) => sandbox.labels[LABELS.role] === TRIAL_ROLE && sandbox.state === "ready").length, 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a trial retries its check once when the first Docker start cannot start its scope", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  let checks = 0;
+  world.answerTrials(async (_sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    checks += 1;
+    if (checks === 1) return { ...OK_RUN, exitCode: 1, stdout: "first docker command                 FAIL unable to start unit docker-abc123.scope\n" };
+    return null;
+  });
+  const templates = new BoatTemplates(world.deps());
+  try {
+    const record = await templates.build("linux", "test");
+    assert.equal(checks, 2);
+    assert.equal(world.fake.sandboxes.get(record.sandbox)?.name, templateName("linux", "ready"));
+    checks = 0;
+    world.answerTrials(async (_sandbox, script) => {
+      if (!script.startsWith("bb-box-check")) return null;
+      checks += 1;
+      return { ...OK_RUN, exitCode: 1, stderr: "unable to start unit docker-def456.scope" };
+    });
+    await world.storage.delete("template/linux-desktop-cpu");
+    await assert.rejects(templates.build("linux-desktop-cpu", "test"), /unable to start unit docker-def456.scope/);
+    assert.equal(checks, 2, "one retry, then the failure stands");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a left Android build whose licence was cleared is not due, and following it leaves the sandbox and records no failure", async () => {
+  const world = templateWorld();
+  try {
+    const made = world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, name: templateName("android", "building"), state: "ready" });
+    const templates = new BoatTemplates(world.deps({ androidLicence: () => null }));
+    assert.deepEqual(await templates.due(), []);
+    await assert.rejects(templates.build("android", LEFT_BUILD_WHY), (error: unknown) => error instanceof BuildLeftRunning && error.message.includes(made.id) && /licence is not accepted/.test(error.message));
+    assert.equal(made.state, "ready");
+    assert.equal(await templates.failedBuild("android"), null);
+  } finally {
+    world.dispose();
+  }
+});
+
 test("the Android template's build stages the licence's acceptance with the guest scripts, and keeps the devices its build made", { skip: GUEST_SKIP }, async () => {
   const world = templateWorld({ guestReady: (guest) => writeFileSync(join(guest.control, "android-devices.json"), JSON.stringify(ANDROID_DEVICES)) });
   try {

@@ -298,6 +298,11 @@ export function failedChecks(output: string): string[] {
   return output.split("\n").filter((line) => /\bFAIL\b/.test(line) && !CHECKS_BOAT_ANSWERS_FOR.some((check) => check.test(line)));
 }
 
+function dockerUnitDidNotStart(check: RunResult): boolean {
+  if (check.exitCode === 0 && !failedChecks(check.stdout).length) return false;
+  return /unable to start unit docker-\S+\.scope/i.test(`${check.stdout}\n${check.stderr}`);
+}
+
 export class BoatTemplates {
   readonly #deps: TemplateDeps;
   readonly #building = new Map<BoatKind, Promise<TemplateRecord>>();
@@ -409,6 +414,7 @@ export class BoatTemplates {
     for (const kind of Object.keys(TEMPLATE_STEP) as BoatKind[]) {
       if (this.#building.has(kind)) continue;
       if (left.some((sandbox) => sandbox.labels[this.#deps.labelKeys.kind] === kind)) {
+        if (TEMPLATE_STEP[kind] === "android" && !this.#deps.androidLicence?.()) continue;
         due.unshift({ kind, why: LEFT_BUILD_WHY });
         continue;
       }
@@ -465,9 +471,12 @@ export class BoatTemplates {
     const key = this.key();
     const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
     const licence = TEMPLATE_STEP[kind] === "android" ? (this.#deps.androidLicence?.() ?? null) : null;
-    if (TEMPLATE_STEP[kind] === "android" && !licence) throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
     this.#stillHere();
     const left = await this.leftBuild(kind);
+    if (TEMPLATE_STEP[kind] === "android" && !licence) {
+      if (left) throw new BuildLeftRunning(`boat leaves the Android template build ${left.id} until it expires, because the Android SDK's licence is not accepted.`);
+      throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
+    }
     if (left) log(`boat: following the ${kind} template build ${left.id}, which bb-box started before it restarted, rather than build another.`);
     else log(`boat: building the ${kind} template, as ${why}.`);
     const made = left ?? (await this.#create(kind, key, size));
@@ -486,8 +495,10 @@ export class BoatTemplates {
       return record;
     } catch (error) {
       if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`bb-box is stopping, so it leaves boat's template build ${made.id} to the bb-box that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
-      await this.#deps.forget(made.id);
-      await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      if (!(await this.#templateStays(made.id, kind))) {
+        await this.#deps.forget(made.id);
+        await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      }
       throw error;
     } finally {
       this.#buildSandboxes.delete(made.id);
@@ -585,7 +596,9 @@ export class BoatTemplates {
         await this.#must((await this.#deps.reach(trial.id, "box")).run(this.#deps.cuaReady ?? CUA_READY, { timeoutMs: 240_000 }), "get Cua Driver answering in a fork of the template");
       }
       this.#stillHere();
-      const check = await (await this.#deps.reach(trial.id, "box")).run(TEMPLATE_CHECK[kind], { timeoutMs: 10 * 60_000 });
+      const readCheck = async () => (await this.#deps.reach(trial.id, "box")).run(TEMPLATE_CHECK[kind], { timeoutMs: 10 * 60_000 });
+      let check = await readCheck();
+      if (dockerUnitDidNotStart(check)) check = await readCheck();
       const failed = failedChecks(check.stdout);
       if (check.exitCode !== 0 || failed.length) throw new Error(`boat's ${kind} template failed its check in a fork of it: ${failed.join("; ") || check.stderr.trim().slice(-400) || `exit ${check.exitCode}`}`);
     } catch (error) {
@@ -598,6 +611,15 @@ export class BoatTemplates {
         await api.delete(trial.id).catch((cause) => log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       }
     }
+  }
+
+  async #templateStays(id: string, kind: BoatKind): Promise<boolean> {
+    if ((await this.record(kind))?.sandbox === id) return true;
+    const sandbox = await this.#deps.api.get(id).catch(() => null);
+    if (sandbox?.name === templateName(kind, "ready")) return true;
+    const labels = this.#deps.labelKeys;
+    const trials = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: id }).catch(() => []);
+    return trials.some((trial) => (isRunning(trial.state) || isStarting(trial.state)) && !this.#buildSandboxes.has(trial.id));
   }
 
   async #desktopUp(sandbox: string, deadline: number): Promise<void> {
