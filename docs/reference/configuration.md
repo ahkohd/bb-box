@@ -271,7 +271,7 @@ Setup: [setup/docker/README.md](../../setup/docker/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `host` | Host | string | connection |  | The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, or bb:&lt;machine ID> for a BB machine, which bb-box reaches through BB. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. |
+| `host` | Host | string | connection |  | The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:&lt;machine ID> for a BB machine, which bb-box reaches through BB. wsl:// reaches Docker in that WSL distribution through wsl.exe and docker system dial-stdio, not through WSL's localhost forwarder. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image Linux boxes run. setup/docker/build.sh builds it. Empty turns them off. |
 | `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image Linux desktops run: those drawn by the CPU, and those on a GPU when GPU desktops are on. setup/docker/build.sh builds it. Empty turns them off. |
 | `wayland-desktop-image` | Wayland desktop image | string | boxes | `bbbox/linux-desktop-wayland:1` | The image Linux desktops on Wayland run: Sway, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off. |

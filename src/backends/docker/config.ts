@@ -7,6 +7,7 @@
 // runs an image the setup guide builds from the same guest scripts as the
 // Proxmox LXC templates (setup/docker/README.md).
 
+import { endpointOf } from "../../host/relay.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
 export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"] as const;
@@ -17,9 +18,10 @@ export const IMAGE_VERSION = "1";
 
 export interface DockerConfig {
   /**
-   * A unix:// or ssh:// address, bb:<machine ID> for a BB machine reached
-   * through bb-box's relay (042), or null for the docker CLI's own default:
-   * DOCKER_HOST, its context, or the local socket.
+   * A unix://, tcp://, ssh:// or wsl:// address, bb:<machine ID> for a BB
+   * machine reached through bb-box's relay (042), or null for the docker
+   * CLI's own default: DOCKER_HOST, its context, or the local socket.
+   * wsl://distro reaches Docker in that WSL distribution through wsl.exe.
    */
   readonly host: string | null;
   /** The BB machine's ID when the host is one, else null. */
@@ -65,7 +67,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.",
+      "The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. wsl:// reaches Docker in that WSL distribution through wsl.exe and docker system dial-stdio, not through WSL's localhost forwarder. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.",
     group: "connection",
     default: "",
   },
@@ -158,6 +160,11 @@ const UNIX = /^unix:\/\/\/[^\s'"]+$/;
 export const BB_MACHINE = /^bb:([A-Za-z0-9_-]{1,64})$/;
 const SSH = /^ssh:\/\/(?:[a-z_][a-z0-9_.-]{0,31}@)?(?:\[[0-9a-fA-F:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]*)(?::\d{1,5})?$/;
 
+function directHost(host: string): boolean {
+  if (!host.startsWith("tcp://") && !host.startsWith("wsl://")) return false;
+  return endpointOf(host) !== null;
+}
+
 /** Docker's part of bb-box's configuration (029), with each problem at its field. */
 export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> {
   const values = part.fields;
@@ -165,8 +172,8 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const problem = (path: string, message: string) => problems.push({ path, message });
 
   const host = text(values, DOCKER_KEYS.host);
-  if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host)) {
-    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host or bb:<machine ID>, or empty for the docker CLI's default.`);
+  if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host) && !directHost(host)) {
+    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID>, or empty for the docker CLI's default.`);
   }
 
   const linux = text(values, DOCKER_KEYS.linuxImage, DOCKER_DEFAULTS.linuxImage);

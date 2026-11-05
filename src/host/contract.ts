@@ -38,6 +38,7 @@ export const hostContract = defineRpcContract({
         found: z.boolean(),
         reason: z.string().nullable(),
         refused: z.boolean().optional(),
+        attached: z.boolean().optional(),
         /** The machine's OS: windows for a Windows PC, whose BB daemon runs in WSL; macos for a Mac; else linux. */
         platform: z.enum(["linux", "macos", "windows"]).optional(),
         /** What first-run setup needs to know of the machine: who BB's daemon runs as and how it restarts, KVM, and free disk. */

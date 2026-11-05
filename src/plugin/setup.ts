@@ -1339,6 +1339,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (answer.platform && (await machinePlatforms.learn(hostId, answer.platform))) notify(null);
       // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
       if (answer.refused) throw new Error(answer.reason ?? "Docker's socket refused BB's daemon.");
+      if (answer.attached === false) throw new Error(answer.reason ?? "WSL's localhost forwarder dropped the attached output.");
       return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;
     },
     async docker(hostId, signal) {
