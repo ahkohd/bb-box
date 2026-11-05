@@ -82,8 +82,6 @@ case "${targets[*]}" in
 esac
 base=$(sed -n 's/^ARG UBUNTU=//p' "$here/Dockerfile")
 
-# Copies path out of image into dest/, which is a directory. docker cp is the
-# archive API. On failure, docker's own error is already on stderr.
 copy_from_image() {
   local platform=$1 image=$2 path=$3 dest=$4
   local id status=0
@@ -93,8 +91,6 @@ copy_from_image() {
   return "$status"
 }
 
-# Runs df in a container of image and copies its output to dest/bb-box-df.
-# start and wait are not attached. On failure, docker's own error is on stderr.
 host_disk() {
   local platform=$1 image=$2 dest=$3
   local id status=0
