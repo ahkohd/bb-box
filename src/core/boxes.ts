@@ -2448,7 +2448,7 @@ export class Boxes {
     if (!backend) {
       // The backend was switched off or its settings broke. The claim stays
       // recorded, and the sweep carries on when the backend is back.
-      await this.update(box, () => ({ error: this.#backendOff(box) }));
+      await this.update(box, () => this.#backendOff(box));
       return;
     }
     const timings: Record<string, number> = { ...box.timings };
@@ -2647,13 +2647,17 @@ export class Boxes {
     return box.role !== "machine" && box.capabilities.enrol && !!this.#deps.enrol && (box.threadId === OPERATOR || (await this.#deps.general()).enrol);
   }
 
-  #backendOff(box: BoxRecord): string {
-    return `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
+  #backendOff(box: BoxRecord): { readonly error: string; readonly agentError: { readonly of: string; readonly words: string } } {
+    const error = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
+    return { error, agentError: { of: error, words: `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.` } };
   }
 
   #backend(box: BoxRecord): Backend {
     const backend = this.#deps.backends.get(box.backend);
-    if (!backend) throw new BoxError("backend_off", this.#backendOff(box));
+    if (!backend) {
+      const off = this.#backendOff(box);
+      throw new BoxError("backend_off", off.error, off.agentError.words);
+    }
     return backend;
   }
 
@@ -2738,8 +2742,9 @@ export class Boxes {
     }
     if (box.guest) {
       if (!backend) {
-        failed(this.#backendOff(box), null);
-        return this.update(box, () => ({ error: this.#backendOff(box) }));
+        const off = this.#backendOff(box);
+        failed(off.error, null);
+        return this.update(box, () => off);
       }
       const timings: Record<string, number> = {};
       const hooks: ReleaseHooks = {

@@ -2610,10 +2610,21 @@ test("a box whose backend is off can be seen but says what to fix, and is kept",
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.active = false;
-  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /backend that holds box .* is not in bb-box.s settings, or its settings need fixing/);
+  const error = await world.boxes.run(THREAD, box.name, "true").then(
+    () => null,
+    (thrown: unknown) => thrown,
+  );
+  assert.ok(error instanceof BoxError);
+  const person = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
+  const agent = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.`;
+  assert.equal(error.message, person);
+  assert.equal(error.agentMessage, agent);
+  const said = failure(error, "Running the command") as { readonly content: readonly { readonly text: string }[] };
+  assert.equal(said.content[0]!.text, agent);
   const kept = await world.boxes.release(THREAD, box.name, "the test asked");
   assert.equal(kept?.state, "releasing");
-  assert.match(kept!.error!, /its settings need fixing/);
+  assert.equal(kept!.error, person);
+  assert.equal(errorForAgent(kept!), agent);
   await world.boxes.sweep();
   assert.ok(await world.boxes.find(box.id));
   world.active = true;
