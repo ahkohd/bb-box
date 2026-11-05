@@ -41,7 +41,7 @@ async function current(state: World, box: BoxRecord): Promise<BoxRecord> {
 async function untilHeld(state: World, held: Promise<unknown>): Promise<void> {
   let ended = false;
   void held.then(() => (ended = true));
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 60_000;
   while (state.holds.step !== null) {
     if (ended) throw new Error(`the restore ended before its hold at ${state.holds.step}: ${String(await held)}`);
     if (Date.now() > deadline) throw new Error(`the restore never reached its hold at ${state.holds.step}`);

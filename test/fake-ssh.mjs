@@ -27,6 +27,28 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+function appendLog(root, line) {
+  const lock = join(root, "log.lock");
+  for (let attempt = 0; attempt < 400; attempt++) {
+    try {
+      mkdirSync(lock);
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+        continue;
+      }
+      throw error;
+    }
+    try {
+      appendFileSync(join(root, "log"), line);
+    } finally {
+      rmSync(lock, { recursive: true });
+    }
+    return;
+  }
+  throw new Error("timed out writing the ssh log");
+}
+
 const args = process.argv.slice(2);
 const control = args.includes("-O") ? args[args.indexOf("-O") + 1] : args.includes("-N") ? "master" : null;
 // `ssh -tt <target>`, as a terminal opens, has no command: the box user's shell, here sh.
@@ -36,7 +58,7 @@ const target = args[split - 1];
 const command = interactive ? "" : args.slice(split + 1).join(" ");
 const host = target.slice(target.indexOf("@") + 1);
 const root = process.env.FAKE_SSH_DIR;
-appendFileSync(join(root, "log"), JSON.stringify({ target, command, args: args.slice(0, split - 1), ...(control ? { control } : {}), ...(interactive ? { interactive: true } : {}) }) + "\n");
+appendLog(root, JSON.stringify({ target, command, args: args.slice(0, split - 1), ...(control ? { control } : {}), ...(interactive ? { interactive: true } : {}) }) + "\n");
 const socket = args.find((arg) => arg.startsWith("ControlPath="))?.slice("ControlPath=".length);
 if (control === "exit") rmSync(socket, { force: true });
 if (control && control !== "master") process.exit(0);

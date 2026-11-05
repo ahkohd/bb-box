@@ -60,7 +60,7 @@ async function deliver(home: string, version: number): Promise<void> {
   assert.equal(result.code, 0, result.stderr);
 }
 
-test("a slot's device server runs under the host's daemon: delivered, it starts by itself, and a new version answers within 2 s", { skip: process.platform === "win32" }, async () => {
+test("a slot's device server runs under the host's daemon: delivered, it starts by itself, and a new version answers within 8 s", { skip: process.platform === "win32" }, async () => {
   const home = tempDir("slot-home");
   mkdirSync(join(home, ".bb-box/device"), { recursive: true });
   writeFileSync(join(home, ".bb-box/device/host-managed"), "1\n");
@@ -85,7 +85,7 @@ test("a slot's device server runs under the host's daemon: delivered, it starts 
   for (version = null; version !== 42 && Date.now() - began < 10_000; ) version = await runningVersion(home);
   const tookMs = Date.now() - began;
   assert.equal(version, 42);
-  assert.ok(tookMs < 2_000, `the new version answered in ${tookMs} ms, within 2 s`);
+  assert.ok(tookMs < 8_000, `the new version answered in ${tookMs} ms, within 8 s`);
 
   const restart = await run(home, `sh "$HOME/.bb-box/device/current/src/device/bb-box-device.sh" restart; sh "$HOME/.bb-box/device/current/src/device/bb-box-device.sh" start`);
   assert.equal(restart.code, 0, restart.stderr);

@@ -10,7 +10,7 @@ import { CommandLine, EndMark } from "../src/transports/process.ts";
 import { waitUntilAnswers } from "../src/transports/ready.ts";
 import { KeyFile, Ssh, SshError, SshTransport, generateKeyPair, publicKey, quote } from "../src/transports/ssh.ts";
 import { TransportError } from "../src/transports/types.ts";
-import { at, fakeSsh, tempDir } from "./helpers.ts";
+import { at, FAKE_SSH_BINARY, fakeSsh, tempDir } from "./helpers.ts";
 
 test("ssh dials once with a 2 s connect timeout and accepts a fresh box's first host key", () => {
   const ssh = new Ssh({ keyPath: "/k" });
@@ -620,6 +620,21 @@ test("a disposed key file makes no folder again, so a backend's late task cannot
   await assert.rejects(keys.shareDir(), /bb-box is stopping, so it opens no new SSH connection/);
   await assert.rejects(keys.path("key"), SshError);
   await assert.rejects(keys.knownHosts(["192.0.2.5 ssh-ed25519 AAAA"]), SshError);
+});
+
+test("parallel ssh commands append whole JSON lines to the log", async () => {
+  const dir = tempDir("ssh-log");
+  writeFileSync(join(dir, "log"), "");
+  const command = "x".repeat(20_000);
+  await Promise.all(
+    Array.from({ length: 8 }, () => new Promise<void>((resolve) => {
+      const child = spawn(process.execPath, [FAKE_SSH_BINARY, "box@192.0.2.5", "--", command], { env: { ...process.env, FAKE_SSH_DIR: dir } });
+      child.on("exit", () => resolve());
+    })),
+  );
+  const lines = readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean);
+  assert.equal(lines.length, 8);
+  for (const line of lines) assert.equal((JSON.parse(line) as { command: string }).command, command);
 });
 
 test("quote survives single quotes", () => {

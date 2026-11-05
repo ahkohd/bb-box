@@ -96,8 +96,8 @@ export interface FakeDesktop {
   pages?: Record<string, string>;
   nextWindow: number;
   nextPid: number;
-  /** Milliseconds a tool waits before it answers. */
   delays: Record<string, number>;
+  armReadDelay?: boolean;
   /** The tools called, with their arguments, in order. */
   calls: { tool: string; args: Record<string, unknown> }[];
   /** How many sessions have started. */
@@ -427,6 +427,12 @@ export class FakeCua {
   async call(tool: string, args: Args): Promise<Result> {
     const delay = this.#change((desktop) => {
       desktop.calls.push({ tool, args });
+      const afterRead = desktop.delays.afterRead ?? 0;
+      if (tool === "get_window_state" && desktop.armReadDelay) {
+        desktop.armReadDelay = false;
+        return afterRead;
+      }
+      if (afterRead && (tool === "type_text" || tool === "press_key" || tool === "click")) desktop.armReadDelay = true;
       return desktop.delays[tool] ?? 0;
     });
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
