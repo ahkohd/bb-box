@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, TRIAL_TEMPLATE_LABEL, buildWaitWords, failedChecks, templateArchive, templateFingerprint, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, templateArchive, templateFingerprint, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
@@ -389,7 +389,7 @@ test("the upkeep keeps the newest stopped template of the current scripts, even 
   assert.equal(fake.sandboxes.get(templates.linux!)?.state, "archived", "the current scripts' template stays, though no record names it");
   assert.equal(fake.sandboxes.get(templates["linux-desktop-cpu"]!)?.state, "archived");
   assert.equal(old.state, "deleted");
-  assert.equal(leftBuild.state, "ready", "a running template build of this install is still going, so a reload can follow it");
+  assert.equal(leftBuild.state, "deleted");
 });
 
 test("the upkeep forks a template of the current scripts that the account already has rather than build one, and builds one template at a time", async () => {
@@ -675,124 +675,4 @@ test("a boat box is resized by starting it again on a machine of the new size, a
   await backend.resize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: null }, { restart: true }, signal());
   assert.equal(made.type, "small");
   assert.equal(made.state, "archived", "a stopped box is stopped again at its new size");
-});
-
-test("a reload follows the template build already going instead of starting another, and stopping does not delete it", async () => {
-  const fake = new FakeBoat();
-  const storage = new MemoryStorage();
-  let templates: BoatTemplates | null = null;
-  let stopped = false;
-  let staged = 0;
-  const guest = { log: null as string | null, customizing: false };
-  const reached = (): Reached => ({
-    run: async (script) => {
-      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-      if (script.includes("rm -rf /var/tmp/bb-box-build")) {
-        staged += 1;
-        guest.log = null;
-      }
-      if (script.includes("template.sh\" customize")) {
-        if (guest.customizing) return { ...ok, exitCode: 1, stderr: "a customize is already running in this sandbox" };
-        guest.customizing = true;
-        guest.log = "12:00:00  customized\n";
-        return ok;
-      }
-      if (script.includes("exit=")) {
-        if (!stopped) {
-          stopped = true;
-          templates?.dispose();
-          return { ...ok, exitCode: -1, stderr: "stopping" };
-        }
-        const lines = [`exit=${guest.log ? "0" : ""}`, guest.log === null ? "log=" : "log=/var/tmp/bb-box-build/log"];
-        if (guest.log) lines.push(guest.log.trimEnd());
-        return { ...ok, exitCode: guest.log === null ? 1 : 0, stdout: `${lines.join("\n")}\n` };
-      }
-      if (script.startsWith("bb-box-check")) return { ...ok, stdout: "Docker                             ok\n" };
-      return ok;
-    },
-  });
-  const deps = {
-    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
-    storage,
-    installId: "inst1",
-    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
-    publicKey: async () => "ssh-ed25519 AAAAkey",
-    reach: async () => reached(),
-    forget: async () => {},
-    answers: async () => {},
-    settled: async () => {},
-    restored: async () => {},
-    now: Date.now,
-    sleep: async () => {},
-    log: () => {},
-    fingerprint: () => "fp1",
-    setupArchive: async () => Buffer.from("tar"),
-  };
-  templates = new BoatTemplates(deps);
-  await assert.rejects(templates.build("linux", "test"), /bb-box is stopping/);
-  const going = [...fake.sandboxes.values()].find((sandbox) => sandbox.labels[LABELS.role] === TEMPLATE_ROLE);
-  assert.ok(going);
-  assert.notEqual(going.state, "deleted");
-  assert.equal(guest.customizing, true);
-  const again = new BoatTemplates(deps);
-  const record = await again.build("linux", "again");
-  assert.equal(record.sandbox, going.id);
-  assert.equal(staged, 1, "the build already going keeps its directory and its customize");
-  assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 1);
-});
-
-test("a running template sandbox with no build log is staged, and a trial is reused only for the template it came from", async () => {
-  const fake = new FakeBoat();
-  let clock = Date.now();
-  const guest = { log: null as string | null, customizing: false };
-  const checked: string[] = [];
-  const decoy = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", [TRIAL_TEMPLATE_LABEL]: "bx_other" }, state: "ready" });
-  const bare = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "ready" });
-  const reached = (id: string): Reached => ({
-    run: async (script) => {
-      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-      if (script.includes("rm -rf /var/tmp/bb-box-build")) guest.log = null;
-      if (script.includes("template.sh\" customize")) {
-        if (guest.customizing) return { ...ok, exitCode: 1, stderr: "a customize is already running in this sandbox" };
-        guest.customizing = true;
-        guest.log = "12:00:00  customized\n";
-        return ok;
-      }
-      if (script.includes("exit=")) {
-        const lines = [`exit=${guest.log ? "0" : ""}`, guest.log === null ? "log=" : "log=/var/tmp/bb-box-build/log"];
-        if (guest.log) lines.push(guest.log.trimEnd());
-        return { ...ok, exitCode: guest.log === null ? 1 : 0, stdout: `${lines.join("\n")}\n` };
-      }
-      if (script.startsWith("bb-box-check")) {
-        checked.push(id);
-        return { ...ok, stdout: "Docker                             ok\n" };
-      }
-      return ok;
-    },
-  });
-  const record = await new BoatTemplates({
-    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, now: () => clock, sleep: async (ms) => void (clock += ms) }),
-    storage: new MemoryStorage(),
-    installId: "inst1",
-    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
-    publicKey: async () => "ssh-ed25519 AAAAkey",
-    reach: async (id) => reached(id),
-    forget: async () => {},
-    answers: async () => {},
-    settled: async () => {},
-    restored: async () => {},
-    now: () => clock,
-    sleep: async (ms) => void (clock += ms),
-    log: () => {},
-    fingerprint: () => "fp1",
-    setupArchive: async () => Buffer.from("tar"),
-  }).build("linux", "test");
-  assert.equal(record.sandbox, bare.id, "the running sandbox with no log is the build, not a second one");
-  assert.equal(guest.customizing, true, "no log, so the scripts are staged and customize starts");
-  assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 0);
-  const fork = fake.calls.find((call) => call.path.endsWith("/fork"));
-  assert.ok(fork);
-  assert.equal((fork.body.labels as Record<string, string>)[TRIAL_TEMPLATE_LABEL], bare.id);
-  assert.equal(checked.includes(decoy.id), false);
-  assert.notEqual(decoy.state, "deleted");
 });

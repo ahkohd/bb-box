@@ -1183,7 +1183,6 @@ test("a refresh's base is pulled when the registry has moved its tag, room allow
   assert.match(pulled.stdout, /base: pulling ghcr\.io\/acme\/macos-xcode:27, sha256:new, in place of sha256:old\nbase: pulled/);
   assert.deepEqual(calls(), ["pull ghcr.io/acme/macos-xcode:27"]);
 
-  // A copy this install did not pull, and one another install still names, stay.
   mkdirSync(join(cache, "sha256:kept"), { recursive: true });
   const bases = join(dir, ".bb-box", "tart", "bases");
   mkdirSync(bases, { recursive: true });
@@ -1194,7 +1193,6 @@ test("a refresh's base is pulled when the registry has moved its tag, room allow
   rmSync(join(bases, "other"));
   mkdirSync(join(cache, "sha256:stray"), { recursive: true });
 
-  // After the replace: the copy this install pulled and no tag names goes. Another install's, and one nobody recorded, stay.
   const pruned = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27", "inst1"), "0");
   assert.match(pruned.stdout, /base: removed the old cached ghcr\.io\/acme\/macos-xcode@sha256:old/);
   assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new")), existsSync(join(cache, "sha256:stray"))], [false, true, true]);

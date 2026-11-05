@@ -5,12 +5,11 @@ import { dirname, join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
-import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
+import { BoatError, isRunning, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 
 export const TEMPLATE_ROLE = "template";
 export const TRIAL_ROLE = "template-trial";
-export const TRIAL_TEMPLATE_LABEL = "bbbox-template";
 export const TEMPLATE_SIZE: SandboxSize = "default";
 export const TEMPLATE_REBUILT_AFTER_MS = 7 * 24 * 3_600_000;
 export const RETIRED_TEMPLATE_KEPT_MS = 60 * 60_000;
@@ -171,13 +170,7 @@ export function templateArchive(setup = setupDir()): Promise<Buffer> {
 }
 
 export function buildEnvFor(buildId: string, kind: BoatKind): string {
-  let prepare = "";
-  try {
-    prepare = createHash("sha256").update(readFileSync(join(setupDir(), "boat/template.sh"))).digest("hex");
-  } catch {
-    prepare = "";
-  }
-  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ...identityBuildSettings(kind), `PREPARE=${prepare}`, ""].join("\n");
+  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ...identityBuildSettings(kind), ""].join("\n");
 }
 
 export function buildWaitWords(kind: BoatKind, lastBuildMs: number | null): string {
@@ -195,11 +188,7 @@ export function customizeScript(kind: BoatKind): string {
 }
 
 export function progressScript(): string {
-  return [`d=${BUILD_DIR}`, 'echo "exit=$(cat "$d/exit" 2>/dev/null || true)"', 'if [ -f "$d/log" ]; then echo "log=$d/log"; else echo "log="; fi', 'tail -n 20 "$d/log" 2>/dev/null'].join("\n");
-}
-
-function progressShowsNoLog(stdout: string): boolean {
-  return stdout.split("\n").some((line) => line.trim() === "log=");
+  return [`d=${BUILD_DIR}`, 'echo "exit=$(cat "$d/exit" 2>/dev/null || true)"', 'tail -n 20 "$d/log" 2>/dev/null'].join("\n");
 }
 
 export const CHECKS_BOAT_ANSWERS_FOR = [/^docker stopped after boot\b/];
@@ -347,24 +336,16 @@ export class BoatTemplates {
     return building;
   }
 
-  async #ongoing(kind: BoatKind, key: string): Promise<Sandbox | null> {
-    const labels = this.#deps.labelKeys;
-    const listed = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key });
-    return listed.find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state)) ?? null;
-  }
-
   async #build(kind: BoatKind, why: string): Promise<TemplateRecord> {
     const { api, now, log } = this.#deps;
     const started = now();
     const key = this.key();
     const labels = this.#deps.labelKeys;
-    const existing = await this.#ongoing(kind, key);
-    if (existing) log(`boat: the ${kind} template build ${existing.id} is already going, so this one follows it.`);
-    else log(`boat: building the ${kind} template, as ${why}.`);
+    log(`boat: building the ${kind} template, as ${why}.`);
     const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
     const licence = TEMPLATE_STEP[kind] === "android" ? (this.#deps.androidLicence?.() ?? null) : null;
     if (TEMPLATE_STEP[kind] === "android" && !licence) throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
-    const made = existing ?? await api
+    const made = await api
       .create({
         size,
         ttlSeconds: BUILD_TTL_SECONDS,
@@ -381,15 +362,13 @@ export class BoatTemplates {
       await this.#running(made.id);
       const asUser = await this.#deps.reach(made.id, "user");
       await this.#deps.answers(made.id, "user", now() + STATE_WITHIN_MS);
-      if (!existing || (await this.#noBuildLog(made.id))) {
-        const archive = await (this.#deps.setupArchive ?? templateArchive)();
-        await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
-        const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
-        await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
-        await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
-        if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
-        await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
-      }
+      const archive = await (this.#deps.setupArchive ?? templateArchive)();
+      await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
+      const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
+      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
+      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
+      if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
+      await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
       await this.#follow(made.id, kind);
       const finalized = await (await this.#deps.reach(made.id, "user")).run(`${OUT_OF_BOATS_HOME} && sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
       if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
@@ -403,10 +382,8 @@ export class BoatTemplates {
       log(`boat: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
       return record;
     } catch (error) {
-      if (!this.#disposed) {
-        await this.#deps.forget(made.id);
-        await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
-      }
+      await this.#deps.forget(made.id);
+      await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       throw error;
     } finally {
       this.#buildSandboxes.delete(made.id);
@@ -428,9 +405,7 @@ export class BoatTemplates {
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [TRIAL_TEMPLATE_LABEL]: template };
-    const going = (await api.list(trialLabels)).find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
-    const trial = going ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
+    const trial = await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` });
     this.#buildSandboxes.add(trial.id);
     try {
       await this.#running(trial.id);
@@ -445,10 +420,9 @@ export class BoatTemplates {
       const failed = failedChecks(check.stdout);
       if (check.exitCode !== 0 || failed.length) throw new Error(`boat's ${kind} template failed its check in a fork of it: ${failed.join("; ") || check.stderr.trim().slice(-400) || `exit ${check.exitCode}`}`);
     } finally {
-      this.#buildSandboxes.delete(trial.id);
-      if (this.#disposed) return;
       await this.#deps.forget(trial.id);
       await api.delete(trial.id).catch((cause) => this.#deps.log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      this.#buildSandboxes.delete(trial.id);
     }
   }
 
@@ -475,11 +449,6 @@ export class BoatTemplates {
     await this.#deps.forget(id);
     await this.#deps.api.stop(id);
     await this.#deps.api.waitArchived(id, this.#deps.now() + ARCHIVE_WITHIN_MS);
-  }
-
-  async #noBuildLog(id: string): Promise<boolean> {
-    const progress = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(progressScript())}`, { timeoutMs: 30_000 }).catch(() => null);
-    return !!progress && progressShowsNoLog(progress.stdout);
   }
 
   async #follow(id: string, kind: BoatKind): Promise<void> {
@@ -547,8 +516,6 @@ export class BoatTemplates {
       if (newest) keep.add(newest.id);
     }
     for (const sandbox of templates) {
-      const role = sandbox.labels[labels.role];
-      if (sandbox.labels[labels.install] === this.#deps.installId && (role === TEMPLATE_ROLE || role === TRIAL_ROLE) && (isRunning(sandbox.state) || isStarting(sandbox.state))) keep.add(sandbox.id);
       if (keep.has(sandbox.id)) continue;
       if (sandbox.createdAt !== null && now() - sandbox.createdAt < LEFT_BUILD_GRACE_MS) continue;
       await api.delete(sandbox.id, signal);
