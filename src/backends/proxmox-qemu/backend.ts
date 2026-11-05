@@ -55,7 +55,7 @@ import {
   templateTag,
 } from "../proxmox/owner.ts";
 import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
-import { proxmoxFetch } from "../proxmox/tls.ts";
+import { proxmoxFetch, proxmoxHttp, type ProxmoxHttp } from "../proxmox/tls.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import type { DeviceOffer } from "../../core/device.ts";
@@ -437,7 +437,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #config: QemuConfig;
   readonly #context: BackendContext;
   readonly #options: QemuBackendOptions;
-  readonly #http: { fetch: FetchLike; close(): Promise<void> };
+  readonly #http: ProxmoxHttp;
   readonly #keyFile = new KeyFile();
   /** VMIDs this process is cloning into. */
   readonly #reserved = new Set<number>();
@@ -495,7 +495,7 @@ export class ProxmoxQemuBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#http = options.fetch
-      ? { fetch: options.fetch, close: async () => {} }
+      ? proxmoxHttp(options.fetch)
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox QEMU on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
     this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
@@ -1748,10 +1748,10 @@ export class ProxmoxQemuBackend implements Backend {
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
+    await this.#http.destroy();
     await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
-    await this.#http.close();
   }
 
   /** The Proxmox client, on the configured node or the API's only node. */
@@ -1760,7 +1760,7 @@ export class ProxmoxQemuBackend implements Backend {
       const pending = (async () => {
         let node = this.#config.proxmox.node;
         if (!node) {
-          const nodes = await this.#bare().nodes();
+          const nodes = await this.#bare().nodes(this.#stopping.signal);
           if (nodes.length !== 1) {
             throw new Error(
               nodes.length
