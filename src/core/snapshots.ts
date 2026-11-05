@@ -512,6 +512,16 @@ function puttingBackOf(operation: Pick<SnapshotOperation, "consent">): PuttingBa
   return { step: back.step, words: back.words };
 }
 
+interface ClaimClearing {
+  readonly bootsWithNode: boolean | null;
+}
+
+function clearingOf(operation: Pick<SnapshotOperation, "consent">): ClaimClearing | null {
+  const clearing = (operation.consent as { clearing?: Partial<ClaimClearing> } | null)?.clearing;
+  if (!clearing || typeof clearing !== "object") return null;
+  return { bootsWithNode: typeof clearing.bootsWithNode === "boolean" ? clearing.bootsWithNode : null };
+}
+
 function holdsACard(held: GpuHandoff | null): held is GpuHandoff {
   return held?.part === "shared" || held?.part === "whole";
 }
@@ -3026,7 +3036,10 @@ export class Snapshots {
       if (context.swap && reach < stepAt("claim-cleared")) {
         const held = await this.#recordedClaim(context, guest, signal);
         try {
-          if (backend.releaseGpuClaim && holdsACard(held)) await backend.releaseGpuClaim(guest, signal);
+          if (backend.releaseGpuClaim && holdsACard(held)) {
+            await this.#recordClearing(context, guest, signal);
+            await backend.releaseGpuClaim(guest, signal);
+          }
         } catch (error) {
           if (signal.aborted) throw error;
           throw this.#restoreUnsure(context, box, "claim-cleared", `bb-box could not take the GPU claim off the box's old guest: ${sentence(message(error))}`);
@@ -3074,7 +3087,8 @@ export class Snapshots {
           const freshGuest = ledger.operation(operation.id)?.guests?.new ?? null;
           const held = gpuHandoffOf(ledger.operation(operation.id) ?? operation);
           try {
-            if (freshGuest && backend.armAdopted) await backend.armAdopted(freshGuest, held, signal);
+            const clearing = clearingOf(ledger.operation(operation.id) ?? operation);
+            if (freshGuest && backend.armAdopted) await backend.armAdopted(freshGuest, held, clearing?.bootsWithNode ?? null, signal);
           } catch (error) {
             if (signal.aborted) throw error;
             throw this.#restoreUnsure(context, box, "claim-given", `bb-box could not give the GPU claim to the box's new guest, so it is not set to start at boot: ${sentence(message(error))}`);
@@ -3243,14 +3257,22 @@ export class Snapshots {
     }
   }
 
+  async #recordClearing(context: Restoring, guest: Guest, signal: AbortSignal): Promise<void> {
+    const ledger = this.#deps.ledger;
+    const current = ledger.operation(context.operation.id) ?? context.operation;
+    if (clearingOf(current)) return;
+    const bootsWithNode = context.backend.bootsWithNode ? await context.backend.bootsWithNode(guest, signal) : null;
+    ledger.updateOperation(context.operation.id, { consent: { ...((current.consent as object | null) ?? {}), clearing: { bootsWithNode } } });
+  }
+
   async #claimBack(context: Restoring, box: BoxRecord, guest: Guest, step: RestoreStep, words: string): Promise<void> {
     const ledger = this.#deps.ledger;
     const current = ledger.operation(context.operation.id) ?? context.operation;
     const held = gpuHandoffOf(current);
-    const cleared = context.swap && stepAt(current.step) >= stepAt("claim-cleared");
-    if (!cleared || !holdsACard(held) || !context.backend.keepGpuClaim) return;
+    const clearing = context.swap ? clearingOf(current) : null;
+    if (!clearing || !holdsACard(held) || !context.backend.armReturned) return;
     try {
-      await context.backend.keepGpuClaim(guest, held, this.#stopping.signal);
+      await context.backend.armReturned(guest, held, clearing.bootsWithNode, this.#stopping.signal);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       ledger.updateOperation(context.operation.id, { step: "claim-back", consent: { ...((current.consent as object | null) ?? {}), putBack: { step, words } } });

@@ -2271,14 +2271,15 @@ same guest.
 | `hold`, `#retag`, `relabel` | a warm guest a box takes, a box's guest | name, memory, description, labels | warm guest of this install, then box |
 | `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
-| `adoptCopy`, `forkSnapshot`, `armAdopted` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
+| `adoptCopy`, `forkSnapshot`, `armAdopted`, `#armWithClaim` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
+| `releaseGpuClaim`, `armReturned`, `#armWithClaim` | a swap's old guest | its `gpu.none` marker with its start at boot off, in one write; its claim and start at boot back, once granted and checked, when the swap fails | box |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
 | `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
-| `change_guest`, in the helper | a container it serves | GPU device lines | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned |
+| `change_guest`, in the helper | a container it serves | GPU device lines; for a copy proven not re-armed (its description names another box than its tags, or a held copy its tags do not label yet), also its start at boot, off | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned, and still such a copy |
 | `decide_power`, in the helper | a container it serves that carries a request | start, stop, shutdown, delete | under the guest's config lock, the install, box or warm token, and marker generation the request names |
 
 Not through the check, and why:

@@ -65,10 +65,10 @@ test("071 unit 6, Astra 1: a swap's new guest, made from a held copy that still 
   assert.equal(made.onboot, "0", "a node boot now would not start it on card 0's lines");
   assert.equal(bridge.cardOf(vmid)?.uuid, A, "it came with the copy's lines");
   bridge.answering = false;
-  await assert.rejects(backend.armAdopted(fresh, held, signal()), /did not grant gpu\.shared\.8c41d7b2-1a9e-4f63-b0c5-7e2d9a3b6c11\.g\d+: The host's GPU helper on pve did not answer within 10 s/);
+  await assert.rejects(backend.armAdopted(fresh, held, true, signal()), /did not grant gpu\.shared\.8c41d7b2-1a9e-4f63-b0c5-7e2d9a3b6c11\.g\d+: The host's GPU helper on pve did not answer within 10 s/);
   assert.equal(made.onboot, "0", "with no answer, it stays disarmed");
   bridge.answering = true;
-  await backend.armAdopted(fresh, held, signal());
+  await backend.armAdopted(fresh, held, true, signal());
   assert.equal(bridge.cardOf(vmid)?.uuid, B, "its lines name the box's card");
   assert.equal(made.onboot, "1", "and only then does it start with its node");
   assert.deepEqual(bridge.lines(7042), [], "the old guest has no card: never two claims");
@@ -88,7 +88,7 @@ test("071 unit 6, Astra 1: a new guest whose lines still name another card after
     }
     return undefined;
   };
-  await assert.rejects(backend.armAdopted(fresh, held, signal()), new RegExp(`CT ${vmid}'s device lines do not match its claim, card 1, after the host's GPU helper granted it: it has /dev/nvidia1,mode=0666\\.`));
+  await assert.rejects(backend.armAdopted(fresh, held, true, signal()), new RegExp(`CT ${vmid}'s device lines do not match its claim, card 1, after the host's GPU helper granted it: it has /dev/nvidia1,mode=0666\\.`));
   assert.ok(tampered);
   assert.equal(bridge.proxmox.guests.get(vmid)!.config.onboot, "0");
 });
@@ -101,7 +101,7 @@ test("071 unit 6, Astra 3: after a restart, the new guest asks with a generation
   assert.equal(bridge.node.ledger().guests["7042"]?.box, `${INSTALL}/${of.boxId}`);
   const fresh = await before.adoptCopy(legacyHeldCopy(bridge, 7045, of, CARD_A), of, { macs: {}, smbios: null }, copyHooks, signal());
   const restarted = bridge.backend({ perGpu: 1 });
-  await restarted.armAdopted(fresh, held, signal());
+  await restarted.armAdopted(fresh, held, true, signal());
   const vmid = Number(fresh.ref);
   assert.ok(generationOf(bridge, vmid) > 101, bridge.gpuTags(vmid).join(" "));
   assert.equal(bridge.node.ledger().guests[String(vmid)]?.claim?.answer, "granted");
@@ -185,4 +185,43 @@ test("071 unit 6, Astra 7: the restore's userspace note reads the host's driver 
   assert.match(notes, /^\s+driver 580\.142 since \d+$/m);
   assert.equal(reportedDriver(notes), "580.142");
   assert.equal((await backend.gpuRestoreFacts(bridge.stoppedGuest(7048, desktop, 9001), signal())).driver, "580.142");
+});
+
+test("071 unit 6 round 2, Astra 2 and Fable 1: clearing a swap's old guest turns its start at boot off in the write that sets its none marker, the boot pass leaves it so, and only its claim given back, granted and checked, turns it on again", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend({ perGpu: 1 });
+  const of = box();
+  bridge.desktop(7042, CARD_B, of, INSTALL, { marker: marker("shared", CARD_B, 3) });
+  const config = bridge.proxmox.guests.get(7042)!.config;
+  config.onboot = "1";
+  bridge.pass();
+  const old = bridge.stoppedGuest(7042, of, 9002);
+  assert.equal(await backend.bootsWithNode(old, signal()), true);
+  const held = (await backend.readGpuClaim(old, signal()))!;
+  const from = bridge.proxmox.calls.length;
+  await backend.releaseGpuClaim(old, signal());
+  const writes = bridge.proxmox.calls.slice(from).filter((call) => call.method === "PUT" && call.path.endsWith("/lxc/7042/config")).map((call) => call.params);
+  const cleared = writes.filter((params) => /(^|;)gpu\.none\.g\d+/.test(params.tags ?? ""));
+  assert.equal(cleared.length, 1, JSON.stringify(writes));
+  assert.equal(cleared[0]!.onboot, "0", "in the same write as its none marker");
+  assert.equal(config.onboot, "0");
+  assert.deepEqual(bridge.lines(7042), []);
+  bridge.push();
+  assert.equal(bridge.node.run(["--boot"]).status, 0);
+  bridge.pull();
+  assert.equal(bridge.node.config(7042).keys.onboot, "0", "a node boot now leaves it stopped");
+  assert.deepEqual(bridge.lines(7042), []);
+  const markedNone = bridge.gpuTags(7042);
+  config.onboot = "1";
+  await backend.releaseGpuClaim(old, signal());
+  assert.deepEqual(bridge.gpuTags(7042), markedNone, "a second clear writes no new marker");
+  assert.equal(config.onboot, "0", "and still turns a start at boot off, as one left on by an older bb-box");
+
+  bridge.answering = false;
+  await assert.rejects(backend.armReturned(old, held, true, signal()), /did not grant gpu\.shared\.8c41d7b2-1a9e-4f63-b0c5-7e2d9a3b6c11\.g\d+/);
+  assert.equal(config.onboot, "0", "not armed while its claim is not back");
+  bridge.answering = true;
+  await backend.armReturned(old, held, true, signal());
+  assert.equal(bridge.cardOf(7042)?.uuid, B);
+  assert.equal(config.onboot, "1");
 });

@@ -817,7 +817,9 @@ export interface Backend {
   readGpuClaim?(guest: Guest, signal?: AbortSignal): Promise<GpuHandoff | null>;
   keepGpuClaim?(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void>;
   releaseGpuClaim?(guest: Guest, signal?: AbortSignal): Promise<void>;
-  armAdopted?(guest: Guest, held: GpuHandoff | null, signal?: AbortSignal): Promise<void>;
+  armAdopted?(guest: Guest, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void>;
+  armReturned?(guest: Guest, held: GpuHandoff, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void>;
+  bootsWithNode?(guest: Guest, signal?: AbortSignal): Promise<boolean>;
   holdGpuCard?(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void>;
   dropGpuCard?(boxId: string): void;
   gpuRestoreFacts?(guest: Guest, signal?: AbortSignal): Promise<GpuRestoreFacts>;

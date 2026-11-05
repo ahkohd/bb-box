@@ -1631,3 +1631,45 @@ test("071 unit 6: an unrearmed fork, a held copy with a card marker, and a newer
   assert.deepEqual(rebuilt.lines(1616), []);
   assert.ok(!claims(rebuilt).some((line) => line.includes("1616") && line.includes("granted")));
 });
+
+test("071 unit 6 round 2, Astra 1: a fork's copy cut short before its re-arm, from a snapshot with no GPU marker, and a held copy's clone cut short before its labels lose their lines and their start at boot on a service pass and on the boot pass; an ordinary unmarked guest keeps both", () => {
+  const source = boxLabels("bxsrc", "source-pine");
+  const fork = boxLabels("bxfork", "fork-pine");
+  const held = heldCopyLabels("bxsrc");
+  const copies = (node: FakeNode) => {
+    node.guest(1620, { description: source.description, tags: source.tags, marker: marker("shared", CARD_B, 5), lines: cardLines(CARD_B, "server"), keys: { onboot: "1" } });
+    node.guest(1621, { description: fork.description, tags: source.tags, lines: [...cardLines(CARD_A, "server"), TUN], keys: { onboot: "1" } });
+    node.guest(1622, { description: held.description, tags: source.tags, lines: cardLines(CARD_A, "server"), keys: { onboot: "1" } });
+    node.guest(1623, { box: "bxplain", lines: cardLines(CARD_A, "server"), keys: { onboot: "1" } });
+    node.guest(1624, { description: fork.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: cardLines(CARD_A, "server"), keys: { onboot: "1" } });
+    node.guest(1625, { description: fork.description, tags: held.tags, lines: cardLines(CARD_A, "server") });
+  };
+  for (const args of [["--once"], ["--boot"]]) {
+    const node = new FakeNode({ writes: "on" });
+    copies(node);
+    const kept = snapshot(node, [1620, 1623]);
+    const said = ran(node, args);
+    assertUnchanged(node, kept);
+    for (const vmid of [1621, 1622, 1624]) {
+      assert.deepEqual(node.lines(vmid), [], `${args[0]}: CT ${vmid}'s lines`);
+      assert.equal(node.config(vmid).keys.onboot, "0", `${args[0]}: CT ${vmid} does not start with the node`);
+    }
+    assert.ok(Object.values(node.config(1621).keys).includes(TUN), "its other devices stay");
+    assert.match(said, /wrote CT 1621 for not re-armed: remove dev0 \/dev\/nvidia1,mode=0666, .*; add nothing; start at boot off/);
+    assert.match(said, /wrote CT 1622 for held copy not labelled: remove .*; add nothing; start at boot off/);
+    assert.match(said, /refused CT 1624 g4: copy unrearmed/);
+    assert.deepEqual(node.lines(1625), [], `${args[0]}: a fork's copy of a legacy held copy loses the copy's lines`);
+    assert.match(said, /wrote CT 1625 for not re-armed: remove .*; add nothing\n/);
+    assert.ok(!lines(node, "holder").some((line) => / 162[124] /.test(line)), lines(node, "holder").join("\n"));
+    const again = snapshot(node, [1620, 1621, 1622, 1623, 1624, 1625]);
+    ran(node, args);
+    assertUnchanged(node, again);
+  }
+
+  const dry = new FakeNode({ writes: "off" });
+  copies(dry);
+  const before = snapshot(dry, [1620, 1621, 1622, 1623, 1624]);
+  const said = ran(dry);
+  assertUnchanged(dry, before);
+  assert.match(said, /would write CT 1621 for not re-armed: remove .*; add nothing; start at boot off/);
+});

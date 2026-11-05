@@ -26,6 +26,8 @@ class FakeCards {
   readonly events: string[] = [];
   readonly failing = new Set<string>();
   readonly hanging = new Set<string>();
+  readonly hangingAfter = new Set<string>();
+  readonly bootAtStart = new Map<string, boolean | undefined>();
   copyLines: string | null = null;
   seenAtArm: { readonly onboot: boolean | undefined; readonly lines: string | null | undefined } | null = null;
   #generation = 10;
@@ -65,15 +67,23 @@ class FakeCards {
       await this.#step("keep", guest, signal);
       this.give(guest.ref, held.part, held.card);
     };
+    backend.bootsWithNode = async (guest: Guest) => this.onboot.get(guest.ref) ?? true;
     backend.releaseGpuClaim = async (guest: Guest, signal?: AbortSignal) => {
       await this.#step("release", guest, signal);
       this.give(guest.ref, "none", null);
+      this.onboot.set(guest.ref, false);
+      if (this.hangingAfter.delete("release")) await never(signal);
     };
-    backend.armAdopted = async (guest: Guest, held: GpuHandoff | null, signal?: AbortSignal) => {
+    backend.armAdopted = async (guest: Guest, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal) => {
       this.seenAtArm = { onboot: this.onboot.get(guest.ref), lines: this.lines.get(guest.ref) };
       await this.#step("arm", guest, signal);
       this.give(guest.ref, held?.part ?? "none", held?.card ?? null);
-      this.onboot.set(guest.ref, true);
+      this.onboot.set(guest.ref, bootsWithNode ?? true);
+    };
+    backend.armReturned = async (guest: Guest, held: GpuHandoff, bootsWithNode: boolean | null, signal?: AbortSignal) => {
+      await this.#step("return", guest, signal);
+      this.give(guest.ref, held.part, held.card);
+      if (bootsWithNode !== null) this.onboot.set(guest.ref, bootsWithNode);
     };
     backend.holdGpuCard = async (guest: Guest, held: GpuHandoff, signal?: AbortSignal) => {
       await this.#step("hold", guest, signal);
@@ -96,6 +106,7 @@ class FakeCards {
         this.events.push(`moved ${guest.ref} to ${other}`);
       }
       this.events.push(`start ${guest.ref} on ${this.lines.get(guest.ref) ?? "none"}`);
+      this.bootAtStart.set(guest.ref, this.onboot.get(guest.ref));
       return start(guest, signal, timing, answered);
     };
     backend.powerOff = async (guest: Guest, signal?: AbortSignal) => {
@@ -243,6 +254,7 @@ test("071 unit 6, Fable 5: a swap cut short at claim-cleared, after its new gues
     await heldAt(state, cards, box, undo, step);
     assert.ok(cards.holdersOf(CARD_B).length <= 1, `at ${step}, at most one guest holds the card: ${cards.holdersOf(CARD_B).join(", ")}`);
     assert.equal(cards.claims.get(old)?.part, "none", `at ${step}, the old guest's claim is cleared`);
+    assert.equal(cards.onboot.get(old), false, `at ${step}, the old guest does not start with the node`);
     cards.events.length = 0;
     assert.equal(await state.snapshots.recover(), 1, step);
     const after = await current(state, box);
@@ -262,17 +274,19 @@ test("071 unit 6, Astra 4 and Fable 2: a swap whose new guest cannot be made giv
     cards.failing.add("adopt");
     const failed = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo));
     assert.match(failed.message, /Every VMID from 3240 to 3244 is in use\. Nothing on its disk changed, and bb-box started box \S+ again as it was\./);
-    assert.deepEqual(cards.events, [`hold ${old}`, `stop ${old}`, `release ${old}`, `keep ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`]);
+    assert.deepEqual(cards.events, [`hold ${old}`, `stop ${old}`, `release ${old}`, `return ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`]);
     assert.deepEqual(cards.holdersOf(CARD_B), [old]);
+    assert.equal(cards.bootAtStart.get(old), true, "it starts with the node again, as before the swap, once its claim is back");
   }
   {
     const { state, cards, box, undo, old } = await swapOnCardB();
     cards.failing.add("adopt");
-    cards.failing.add("keep");
+    cards.failing.add("return");
     const unsure = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo));
     assert.equal(unsure.code, "unreachable");
-    assert.match(unsure.message, /could not give its GPU claim back to its old guest \S+: the host's GPU helper did not answer the keep within 10 s\. It stays stopped, as it would start with no card, and bb-box tries again at its next sweep\./);
+    assert.match(unsure.message, /could not give its GPU claim back to its old guest \S+: the host's GPU helper did not answer the return within 10 s\. It stays stopped, as it would start with no card, and bb-box tries again at its next sweep\./);
     assert.ok(!cards.events.some((event) => event.startsWith("start")), "the old guest, with no card, was not started");
+    assert.equal(cards.onboot.get(old), false, "nor does it start with the node");
     const stopped = await current(state, box);
     assert.equal(stopped.state, "stopped");
     assert.ok(stopped.restoring, "the box stays held by the restore, so nothing else starts it");
@@ -282,7 +296,8 @@ test("071 unit 6, Astra 4 and Fable 2: a swap whose new guest cannot be made giv
     cards.restarted(state);
     cards.events.length = 0;
     assert.equal(await state.snapshots.recover(), 1);
-    assert.deepEqual(cards.events, [`keep ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`]);
+    assert.deepEqual(cards.events, [`return ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`]);
+    assert.equal(cards.bootAtStart.get(old), true);
     assert.equal((await current(state, box)).state, "ready");
     assert.equal(state.store.operation(operation.id)!.state, "failed");
   }
@@ -317,4 +332,29 @@ test("071 unit 6, Fable 4: a fork with gpu shared of a box that is not a linux-d
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's box record was made");
   const none = await state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "none" });
   assert.equal(none.offersGpu, false);
+});
+
+test("071 unit 6 round 2, Astra 2 and Fable 1: a swap cut short after its old guest's claim was cleared, but before the step was recorded, still gives the claim and the start at boot back when it puts the old guest back", async () => {
+  const { state, cards, box, undo, old } = await swapOnCardB();
+  cards.hangingAfter.add("release");
+  const swapping = state.snapshots.restore(COMMAND, box, standing(box), undo).catch((error: unknown) => error);
+  const deadline = Date.now() + 30_000;
+  while (cards.claims.get(old)?.part !== "none") {
+    assert.ok(Date.now() < deadline, "the old guest's claim was never cleared");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const operation = state.store.unsettled().find((each) => each.kind === "restore")!;
+  assert.equal(operation.step, "copy-ready", "the clear is not recorded as a step yet");
+  assert.equal(cards.onboot.get(old), false);
+  await state.restart();
+  await swapping;
+  cards.restarted(state);
+  const copy = state.store.record(operation.undo!)!.livesOn.ref;
+  state.provider.copies.delete(copy);
+  cards.events.length = 0;
+  assert.equal(await state.snapshots.recover(), 1);
+  assert.deepEqual(cards.events, [`return ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`], "its undo went, so it is put back, with its claim");
+  assert.equal(cards.bootAtStart.get(old), true);
+  assert.deepEqual(cards.holdersOf(CARD_B), [old]);
+  assert.equal((await current(state, box)).state, "ready");
 });

@@ -38,7 +38,7 @@ import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../prox
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
@@ -571,6 +571,10 @@ function ledgerBoxOf(install: string, box: string): string {
 
 function grantedAs(claim: LedgerClaim | null, marker: ClaimMarker): boolean {
   return claim?.answer === "granted" && claim.generation === marker.generation && claim.part === marker.part && (claim.card ?? null) === (marker.card ?? null);
+}
+
+function startsAtBoot(config: Readonly<Record<string, unknown>>): boolean {
+  return config.onboot === 1 || config.onboot === "1" || config.onboot === true;
 }
 
 function carriesNoCard(config: Readonly<Record<string, unknown>>): boolean {
@@ -1127,8 +1131,8 @@ export class ProxmoxLxcBackend implements Backend {
     throw new SnapshotFailed(`The host's GPU helper on ${api.node} did not grant ${markerTag(marker)}: ${why}`);
   }
 
-  async #writeClaim(api: Proxmox, vmid: number, owner: GuestOwner, marker: ClaimMarker, signal?: AbortSignal): Promise<void> {
-    await this.#writeMarker(api, vmid, marker, owner, signal);
+  async #writeClaim(api: Proxmox, vmid: number, owner: GuestOwner, marker: ClaimMarker, signal?: AbortSignal, also: GuestSettings = {}): Promise<void> {
+    await this.#writeMarker(api, vmid, marker, owner, signal, also);
     await this.#askMarker(api, vmid, marker, signal);
   }
 
@@ -1152,16 +1156,20 @@ export class ProxmoxLxcBackend implements Backend {
     return { part, card: part === "none" ? null : card, generation };
   }
 
-  async #holdClaim(api: Proxmox, vmid: number, owner: GuestOwner, held: HeldClaim, boxId: string | null, signal?: AbortSignal): Promise<void> {
+  async #holdClaim(api: Proxmox, vmid: number, owner: GuestOwner, held: HeldClaim, boxId: string | null, signal?: AbortSignal, also: GuestSettings = {}): Promise<boolean> {
     const view = await this.#cardsView(api, signal);
-    if (view.is === "none") return;
+    if (view.is === "none") return false;
     const marker = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags));
     const card = held.part === "none" ? null : held.card;
     const entry = (view.is === "on" ? view.lines : await this.#helperOrEmpty(api, signal)).ledger.get(vmid);
     const asHeld = marker !== null && marker.part === held.part && marker.card === card && marker.generation >= held.generation;
-    if (asHeld && grantedAs(entry?.claim ?? null, marker)) return;
-    if (asHeld && marker.generation > (entry?.answered ?? 0)) return this.#askMarker(api, vmid, marker, signal);
-    await this.#writeClaim(api, vmid, owner, await this.#nextClaim(api, vmid, held.part, card, Math.max(marker?.generation ?? 0, held.generation), signal, boxId), signal);
+    if (asHeld && grantedAs(entry?.claim ?? null, marker)) return false;
+    if (asHeld && marker.generation > (entry?.answered ?? 0)) {
+      await this.#askMarker(api, vmid, marker, signal);
+      return false;
+    }
+    await this.#writeClaim(api, vmid, owner, await this.#nextClaim(api, vmid, held.part, card, Math.max(marker?.generation ?? 0, held.generation), signal, boxId), signal, also);
+    return true;
   }
 
   async #linesMatch(api: Proxmox, vmid: number, held: HeldClaim, signal?: AbortSignal): Promise<void> {
@@ -1200,25 +1208,38 @@ export class ProxmoxLxcBackend implements Backend {
     await this.#holdClaim(api, vmid, this.#boxOf(guest), held, this.#boxData(guest), signal);
   }
 
+  async bootsWithNode(guest: Guest, signal?: AbortSignal): Promise<boolean> {
+    const api = await this.client();
+    return startsAtBoot(await api.config(this.#vmid(guest), signal));
+  }
+
   async releaseGpuClaim(guest: Guest, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
     const vmid = this.#vmid(guest);
+    const owner = this.#boxOf(guest);
     const config = await api.config(vmid, signal);
-    if (!markerOf(parseTags(config.tags)) && !gpuDeviceLines(config).length) return;
-    await this.#holdClaim(api, vmid, this.#boxOf(guest), NO_CLAIM, this.#boxData(guest), signal);
+    const gpuGuest = markerOf(parseTags(config.tags)) !== null || gpuDeviceLines(config).length > 0;
+    const written = gpuGuest && (await this.#holdClaim(api, vmid, owner, NO_CLAIM, this.#boxData(guest), signal, { onboot: false }));
+    if (!written && startsAtBoot(await api.config(vmid, signal))) await this.#owned(api).configure(vmid, owner, { onboot: false }, signal);
   }
 
-  async armAdopted(guest: Guest, held: GpuHandoff | null, signal?: AbortSignal): Promise<void> {
+  async armReturned(guest: Guest, held: GpuHandoff, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
+    await this.#armWithClaim(guest, this.#boxOf(guest), held, bootsWithNode, signal);
+  }
+
+  async armAdopted(guest: Guest, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
+    await this.#armWithClaim(guest, madeOwner(this.#context.installId, this.#boxData(guest)), held, bootsWithNode ?? true, signal);
+  }
+
+  async #armWithClaim(guest: Guest, owner: GuestOwner, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
     const vmid = this.#vmid(guest);
-    const box = this.#boxData(guest);
-    const owner = madeOwner(this.#context.installId, box);
     const wanted = held ?? NO_CLAIM;
     if (wanted.part !== "none" || !carriesNoCard(await api.config(vmid, signal))) {
-      await this.#holdClaim(api, vmid, owner, wanted, box, signal);
+      await this.#holdClaim(api, vmid, owner, wanted, this.#boxData(guest), signal);
       await this.#linesMatch(api, vmid, wanted, signal);
     }
-    await this.#owned(api).configure(vmid, owner, { onboot: true }, signal);
+    if (bootsWithNode !== null) await this.#owned(api).configure(vmid, owner, { onboot: bootsWithNode }, signal);
   }
 
   async holdGpuCard(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void> {
@@ -3671,8 +3692,8 @@ export class ProxmoxLxcBackend implements Backend {
     throw new BackendError("no_capacity", answer.is === "refused" ? `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${answer.why}. bb-box released the guest; nothing else changed.` : notAnsweredWords(api.node, answer));
   }
 
-  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.#owned(api).configure(vmid, owner, (config) => ({ tags: withMarker(parseTags(config.tags), marker) }), signal);
+  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal, also: GuestSettings = {}): Promise<void> {
+    await this.#owned(api).configure(vmid, owner, (config) => ({ tags: withMarker(parseTags(config.tags), marker), ...also }), signal);
     this.#written.set(vmid, Math.max(this.#written.get(vmid) ?? 0, marker.generation));
   }
 

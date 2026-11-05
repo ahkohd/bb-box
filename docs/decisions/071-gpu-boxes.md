@@ -490,7 +490,7 @@ refused instead. A yielded box is placed again when it starts (section 3).
 | Resize to none | Stop. Write `gpu.none`. Wait. Start, or leave stopped as it was |
 | Fork | Lock; place the fork's own GPU part, none unless asked; reserve; unlock. Copy. Write the fork's marker in the same config write as 070's re-arm. Wait. Start |
 | Restore | Record the box's claim in the restore's operation. Lock; check the card can take the box; reserve it for the box; unlock: all before the stop. Roll back. Write the box's current marker with a new generation, a recorded step. Wait. Start on that claim and its card, or refuse to start: never another card |
-| Swap (`adoptCopy`) | As a restore, up to the stop. Set the old guest's marker to none and wait. Make the new guest, not set to start at boot. Give it the box's claim with a new generation, wait, and check its lines name the card; only then set it to start at boot. Start on that claim |
+| Swap (`adoptCopy`) | As a restore, up to the stop. Set the old guest's marker to none, with its start at boot off in the same write, and wait. Make the new guest, not set to start at boot. Give it the box's claim with a new generation, wait, and check its lines name the card; only then give it the old guest's start at boot. Start on that claim. If the new guest cannot be made, give the old guest the claim back, wait, check its lines and give its start at boot back before it starts |
 | Release | Delete the guest. The helper drops its claim when the guest is gone |
 
 #### Races, and what each does
@@ -537,6 +537,14 @@ move a box. See [Alternatives](#alternatives-considered).
 - A guest with no marker is never written: today's GPU desktops before
   they are marked, guests of older bb-box versions, guests of other tools.
   It still counts as holding the cards whose devices its lines name.
+- The one exception, from 0.4.2 (unit 6): a copy bb-box was making when it
+  stopped, proven by its own labels. That is a fork's copy whose
+  description names another box than its `box.` tag, or a held copy whose
+  description says so while its tags do not label it yet. Such a copy is
+  not a box. When it has NVIDIA lines or a shared or whole marker, the
+  helper takes its NVIDIA lines out and turns its start at boot off, in
+  one write under its config lock while it is stopped, on each pass and
+  on the boot pass, marker or not (section 9).
 
 #### The marker
 
@@ -576,7 +584,8 @@ pve-container's source; unit 0 checks the installed version:
    else.
 5. Write the config. Then write the ledger, then the answer.
 
-It never writes raw `lxc.*` lines.
+It never writes raw `lxc.*` lines. The only other key it writes is
+`onboot`, set to 0 on such a copy.
 
 The check that the guest is stopped is inside the lock because Proxmox VE
 9 adds a device line to a running container at once: a check followed by a
@@ -1105,10 +1114,14 @@ claim.
   marker, and the description of its new box, which the clone writes. Its
   `box.` tag and its description name different boxes, so the helper (from
   0.4.2) refuses it a claim as a copy not re-armed, and takes its NVIDIA
-  lines out, so a crash in that window leaves the copy with no card. A
-  copy whose description still names its source's box is refused as a
-  copy of the guest that holds that box's claim, and loses its lines the
-  same way.
+  lines out. A snapshot taken before markers gives a copy with the
+  snapshot's lines and no marker; the helper proves it a copy from the same
+  labels, and takes its lines out too. Either way it also turns the copy's
+  start at boot off, which the copy brings from the snapshot, so a node
+  boot neither starts it on the snapshot's card nor with no card. A held
+  copy's clone cut short before its labels is treated the same way. A copy
+  whose description still names its source's box is refused as a copy of
+  the guest that holds that box's claim, and loses its lines the same way.
 - **A held copy has no claim.** Its labels (`heldCopyTags`) carry no
   marker. Its disarm write also sets `gpu.none`, and the helper takes its
   device lines out before it is made a template, so a fork or a swap from
@@ -1116,8 +1129,10 @@ claim.
 - **An earlier guest** (070's ZFS swap) has `gpu.none` set in its disarm,
   and the helper takes its lines out.
 - **A swap, `adoptCopy`, moves the box's claim.** The box's card is
-  reserved before the stop, as for a restore. The old guest's marker is
-  set to none and answered first. The new guest is made not set to start
+  reserved before the stop, as for a restore. The restore records whether
+  the old guest starts at boot; then its marker is set to none, with its
+  start at boot off in the same write, and answered first, so a node boot
+  cannot start it with no card. The new guest is made not set to start
   at boot: a held copy from before this note can still carry the
   snapshot's NVIDIA lines and no marker, and the helper never writes a
   guest with no marker. The new guest then gets the box's claim with a
@@ -1127,19 +1142,20 @@ claim.
   crash in between leaves the box with no card, never two; recovery
   finishes the step. When the new guest cannot be made after the old
   guest's claim was cleared, bb-box gives the old guest the box's claim
-  back and waits for the grant before it starts it again. If the helper
-  does not grant it, the old guest is left stopped, as it would start with
-  no card, the restore stays unconfirmed, and the next sweep tries again.
+  back, waits for the grant, checks its lines, and only then sets its start
+  at boot back as it was, before it starts it again. If the helper does not
+  grant it, the old guest is left stopped and does not start at boot, the
+  restore stays unconfirmed, and the next sweep tries again.
 - Templates, held copies and earlier guests never count as holding a card.
 
 **At most one claim, whatever crashes.**
 
 | Crash, or node boot, between | Then |
 | --- | --- |
-| a fork's copy and its re-arm | The copy's tags name its source's box and its description its new box: the helper refuses it a claim as not re-armed and takes its lines out. 070's recovery deletes and makes the fork again |
+| a fork's copy and its re-arm | The copy's tags name its source's box and its description its new box: the helper refuses it a claim as not re-armed, or with no marker proves it a copy, and takes its lines out and its start at boot off. 070's recovery deletes and makes the fork again |
 | a rollback and the re-tag | The ledger is newer than the marker: the helper puts the claimed card's lines back before any start. 070's recovery writes the marker, reserves the card again and starts on it, or leaves the box stopped when the card has filled |
-| a swap's old guest set to none and its new guest's claim | Neither guest holds the card, and the new guest does not start at boot. Recovery gives the claim to the new guest, checks its lines, then sets it to start at boot |
-| a swap's failed new guest and the old guest's claim given back | The old guest has `gpu.none` and no lines, and stays stopped: the restore is unconfirmed, and recovery gives the claim back before it starts it |
+| a swap's old guest set to none and its new guest's claim | Neither guest holds the card, and neither starts at boot: the old guest's start at boot went off with its none marker, and the new guest is made with it off. Recovery gives the claim to the new guest, checks its lines, then sets it to start at boot as the old guest did |
+| a swap's failed new guest and the old guest's claim given back | The old guest has `gpu.none`, no lines and its start at boot off, and stays stopped: the restore is unconfirmed, and recovery gives the claim back, checks its lines and sets its start at boot back before it starts it |
 | a held copy's disarm and its template step | The copy has `gpu.none`. 070 deletes it and makes it again |
 
 ### 10. The doctor

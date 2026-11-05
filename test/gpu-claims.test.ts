@@ -1353,7 +1353,7 @@ test("071 unit 6: a fork of a GPU desktop writes gpu none or shared in the re-ar
   await backend.releaseGpuClaim(old, signal());
   assert.deepEqual(bridge.lines(7042), []);
   assert.deepEqual(bridge.lines(7043), []);
-  await backend.armAdopted(next, current!, signal());
+  await backend.armAdopted(next, current!, true, signal());
   assert.deepEqual(bridge.lines(7042), []);
   assert.equal(bridge.cardOf(7043)?.uuid, B);
 });
