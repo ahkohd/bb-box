@@ -15,6 +15,8 @@ umask 022
 build=$1
 # shellcheck disable=SC1091
 . "$build/build.env"
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/apt.sh"
 [ "${DESKTOP_SESSION:-x11}" != wayland ] || exec bash "$build/guest/customize-desktop-wayland.sh" "$build"
 art=$build/artifacts
 user=${BOX_USER:-box}
@@ -74,15 +76,12 @@ if [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$(dpkg-deb -f
 fi
 # Downloads are retried through snapshot.ubuntu.com's short outages, as in
 # baseline.sh; files already downloaded stay in apt's cache.
+opts=()
+apt_acquire_options opts
 # shellcheck disable=SC2086
-for try in 1 2 3 4 5; do
-  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"} && break
-  [ "$try" = 5 ] && exit 1
-  echo "customize-desktop: download failed (try $try of 5); retrying in $((try * 30)) s" >&2
-  sleep $((try * 30))
-done
+apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
 # shellcheck disable=SC2086
-apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
 for package in $desktop_packages $gpui_packages tigervncserver virtualgl selkies google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done

@@ -29,6 +29,7 @@ USAGE
 [ $# -eq 1 ] || usage
 build=$1
 here=$(cd "$(dirname "$0")" && pwd)
+. "$build/guest/apt.sh"
 . "$build/build.env"
 pins=$here/pins.json
 sdk=/opt/android-sdk
@@ -59,11 +60,11 @@ if [ -z "$x264" ] && [ -x /usr/local/bin/bb-box-h264 ]; then
 fi
 [ "$x264" != yes ] || packages+=(nasm make)
 log "packages: ${packages[*]}"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${packages[@]}" >/dev/null
+DEBIAN_FRONTEND=noninteractive apt_install -y -q --no-install-recommends "${packages[@]}" >/dev/null
 
 before_java=$(mktemp)
 dpkg-query -W -f='${Package}\n' | sort >"$before_java"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends openjdk-17-jre-headless >/dev/null
+DEBIAN_FRONTEND=noninteractive apt_install -y -q --no-install-recommends openjdk-17-jre-headless >/dev/null
 mapfile -t java_packages < <(comm -13 "$before_java" <(dpkg-query -W -f='${Package}\n' | sort))
 log "Java for avdmanager, for this build only: ${#java_packages[@]} packages"
 

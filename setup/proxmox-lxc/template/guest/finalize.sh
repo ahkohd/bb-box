@@ -51,7 +51,9 @@ rm -f /etc/apt/apt.conf.d/50bb-box-build-snapshot /etc/apt/sources.list.d/zz-bb-
 # means `sudo apt-get update`.
 printf 'Acquire::GzipIndexes "true";\n' >/etc/apt/apt.conf.d/50bb-box-compressed-lists
 rm -rf /var/lib/apt/lists/*
-apt-get update --error-on=any
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/apt.sh"
+apt_update --error-on=any
 apt-get clean
 rm -f /etc/ssh/ssh_host_*
 rm -rf /root/.cache /root/.npm /root/.local /root/.config /home/*/.cache /home/*/.npm /tmp/* /var/tmp/*

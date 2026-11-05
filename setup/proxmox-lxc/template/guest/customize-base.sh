@@ -15,6 +15,8 @@ umask 022
 build=$1
 # shellcheck disable=SC1091
 . "$build/build.env"
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/apt.sh"
 user=${BOX_USER:-box}
 runtime=${BOX_RUNTIME:-lxc}
 export DEBIAN_FRONTEND=noninteractive
@@ -23,7 +25,7 @@ case $runtime in lxc | docker | vm) ;; *) die "BOX_RUNTIME must be lxc, docker o
 installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
 
 # The base image may lack CA certificates, which the https snapshot needs.
-installed ca-certificates || { apt-get update -q && apt-get install -y -q --no-install-recommends ca-certificates; }
+installed ca-certificates || { apt_update -q && apt_install -y -q --no-install-recommends ca-certificates; }
 
 # What a container cannot use or does not need, removed before the upgrade.
 purge=()

@@ -126,7 +126,7 @@ printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\n
 printf '%s\n' "$key" | as_root sh -c "cat >$src/plugin-key.pub"
 
 step "fetching the arm64 tools, BB's host app and any desktop artifacts"
-as_root sh -c 'command -v jq >/dev/null || { apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q jq >/dev/null; }' </dev/null
+as_root bash -c 'command -v jq >/dev/null || { bash "$1" update -q >/dev/null && DEBIAN_FRONTEND=noninteractive bash "$1" install -y -q jq >/dev/null; }' _ "$src/guest/apt.sh" </dev/null
 as_root env BBBOX_ENV=/nonexistent BBBOX_BB_URL="$bb_url" bash "$src/fetch-artifacts.sh" "$src/artifacts" "$artifacts" arm64 </dev/null
 step "customising $build (the Linux template's customize-base.sh)"
 as_root bash "$src/guest/customize-base.sh" "$src" </dev/null

@@ -13,6 +13,8 @@ umask 022
 
 build=$1
 shift
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/apt.sh"
 export DEBIAN_FRONTEND=noninteractive
 snapshot=$(cat "$build/apt-snapshot")
 [[ "$snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "baseline: invalid apt snapshot" >&2; exit 1; }
@@ -22,7 +24,10 @@ snapshot=$(cat "$build/apt-snapshot")
 # snapshots of its main archive only: an arm64 image (ports.ubuntu.com, 040)
 # installs from the live archive instead.
 if [ "$(dpkg --print-architecture)" = amd64 ]; then
-printf 'APT::Snapshot "%s";\nAcquire::Retries "5";\n' "$snapshot" >/etc/apt/apt.conf.d/50bb-box-build-snapshot
+{
+  printf 'APT::Snapshot "%s";\n' "$snapshot"
+  apt_retry_conf
+} >/etc/apt/apt.conf.d/50bb-box-build-snapshot
 # snapshot.ubuntu.com has outages in which it cannot serve .debs. The archive
 # is a second place to download the same files from: pinned to -1, it never
 # supplies a version of its own, and apt checks each .deb
@@ -46,7 +51,7 @@ Pin: origin "gb.archive.ubuntu.com"
 Pin-Priority: -1
 EOF
 else
-  printf 'Acquire::Retries "5";\n' >/etc/apt/apt.conf.d/50bb-box-build-snapshot
+  apt_retry_conf >/etc/apt/apt.conf.d/50bb-box-build-snapshot
 fi
 rm -rf /var/lib/apt/lists/*
 # snapshot.ubuntu.com also has outages of a few minutes in which it refuses
@@ -54,30 +59,22 @@ rm -rf /var/lib/apt/lists/*
 # once the package has been updated there. So the download steps are retried
 # with growing waits; files already downloaded stay in apt's cache, so a
 # retry fetches only what is missing.
-apt_retry() {
-  local try
-  for try in 1 2 3 4 5; do
-    "$@" && return 0
-    [ "$try" = 5 ] && break
-    echo "baseline: '$*' failed (try $try of 5); retrying in $((try * 30)) s" >&2
-    sleep $((try * 30))
-  done
-  return 1
-}
+opts=()
+apt_acquire_options opts
 # A snapshot index that failed to download would leave only the archive's.
-apt_retry apt-get update --error-on=any
-apt-get -s dist-upgrade \
+apt_update --error-on=any
+apt-get "${opts[@]}" -s dist-upgrade \
   | awk '/^Inst / { from = $3; gsub(/[][]/, "", from); if ($3 !~ /^\[/) from = "-"; to = ($3 ~ /^\[/) ? $4 : $3; sub(/^\(/, "", to); print $2 "\t" from "\t" to }' \
   >"$build/apt-upgrades.tsv"
-apt_retry apt-get -y --download-only dist-upgrade
-apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade
+apt_retry apt-get "${opts[@]}" -y --download-only dist-upgrade
+apt-get "${opts[@]}" -y -o Dpkg::Options::=--force-confold dist-upgrade
 
 grep -v -e '^#' -e '^$' "$build/baseline-packages.txt" >"$build/packages.txt"
 printf '%s\n' "$@" >>"$build/packages.txt"
 sort -u -o "$build/packages.txt" "$build/packages.txt"
 sed -i '/^$/d' "$build/packages.txt"
-apt_retry xargs -a "$build/packages.txt" apt-get install -y --no-install-recommends --download-only
-xargs -a "$build/packages.txt" apt-get install -y --no-install-recommends
+apt_retry xargs -a "$build/packages.txt" apt-get "${opts[@]}" install -y --no-install-recommends --download-only
+xargs -a "$build/packages.txt" apt-get "${opts[@]}" install -y --no-install-recommends
 while read -r package; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || {
     echo "baseline: package $package is not installed" >&2

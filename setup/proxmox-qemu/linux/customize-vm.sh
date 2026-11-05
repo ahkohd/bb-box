@@ -13,9 +13,11 @@ build=$1
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$build/build.env"
+# shellcheck disable=SC1091
+. "$build/guest/apt.sh"
 
 # From the build's apt snapshot, as customize-base.sh installs the rest.
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends qemu-guest-agent cloud-guest-utils
+DEBIAN_FRONTEND=noninteractive apt_install -y -q --no-install-recommends qemu-guest-agent cloud-guest-utils
 
 # The box user's groups as in other boxes, and kvm, for /dev/kvm where the
 # host allows nested virtualization. cloud-init gave it adm, cdrom, dip and
