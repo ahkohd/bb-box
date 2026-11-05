@@ -502,6 +502,52 @@ test("wsl dial-stdio returns what it writes after the client half-closes", async
   assert.equal(reply, "after-half-close");
 });
 
+test("a relay open names the machine's Docker host, and the machine dials that instead of its own", async (t) => {
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  const seen: string[] = [];
+  const dial = (wsl: { distro: string; user: string | null }) => {
+    seen.push(wsl.user ? `${wsl.user}@${wsl.distro}` : wsl.distro);
+    const child = spawn(process.execPath, ["-e", "process.stdin.resume(); process.stdin.on('end', () => process.stdout.end('after-half-close'))"], { stdio: ["pipe", "pipe", "pipe"] });
+    if (!child.stdin || !child.stdout || !child.stderr) throw new Error("dial-stdio did not open its pipes");
+    return child;
+  };
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  const worker = experimental_createHostEntryHarness(hostEntry({
+    relay: {
+      connect: connectTo,
+      endpoint: async () => {
+        throw new Error("the machine's DOCKER_HOST");
+      },
+      dial,
+    },
+  }));
+  t.after(() => worker.experimental_dispose());
+  hub = new RelayHub({
+    dir: tempDir("relay-hub"),
+    open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay", dockerHost: "wsl://archlinux" }),
+    keep: async () => false,
+    logError: () => {},
+  });
+  t.after(() => hub.dispose());
+  const socketPath = (await hub.endpoint("host_wsl_field")).slice("unix://".length);
+  const reply = await new Promise<string>((resolve, reject) => {
+    const socket = connect({ path: socketPath, allowHalfOpen: true });
+    let text = "";
+    socket.on("data", (part) => (text += part));
+    socket.on("end", () => resolve(text));
+    socket.on("error", reject);
+    socket.end("request");
+  });
+  assert.equal(reply, "after-half-close");
+  assert.deepEqual(seen, ["archlinux"]);
+  const asked = await worker.experimental_call("docker", { dockerHost: "wsl://box@archlinux" });
+  assert.equal(asked.endpoint, "wsl://box@archlinux");
+  assert.equal(asked.found, true);
+  assert.equal(asked.attached, undefined);
+  assert.deepEqual(seen, ["archlinux", "box@archlinux"]);
+});
+
 test("a wsl host whose dial-stdio cannot start fails the docker check with the reason", async () => {
   const worker = experimental_createHostEntryHarness(hostEntry({
     relay: {

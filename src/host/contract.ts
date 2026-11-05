@@ -31,7 +31,7 @@ export const hostContract = defineRpcContract({
    * there, but needs fixing.
    */
   docker: {
-    input: z.object({}).strict(),
+    input: z.object({ dockerHost: z.string().max(300).optional() }).strict(),
     output: z
       .object({
         endpoint: z.string(),
@@ -63,7 +63,7 @@ export const hostContract = defineRpcContract({
    * where Docker is.
    */
   relay: {
-    input: z.object({ secret: z.string().regex(/^[0-9a-f]{32}$/), path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/) }).strict(),
+    input: z.object({ secret: z.string().regex(/^[0-9a-f]{32}$/), path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/), dockerHost: z.string().max(300).optional() }).strict(),
     output: z.object({ endpoint: z.string() }).strict(),
   },
   /**

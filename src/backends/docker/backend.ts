@@ -73,6 +73,7 @@ import { dockerImageBuilding } from "./building.ts";
 const READY_TIMEOUT_MS = 60_000;
 /** setup/docker/start writes it once the box is up. /run is a tmpfs, so it is new at each start. */
 const READY_FILE = "/run/bb-box/ready";
+const MACHINE_ATTACH_FIX = "Set machine-docker-host to wsl://<distro> on this backend. The host stays bb:<machine ID>. dockerd stays on its unix socket.";
 /** The image's main process. */
 const START = "/usr/local/sbin/bb-box-start";
 const VNC_PORT = 5900;
@@ -1724,10 +1725,33 @@ export class DockerBackend implements Backend {
   }
 
   async #attached(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw signal.reason;
+    if (this.#config.machine) {
+      if (this.hostOs !== "windows") return;
+      const probe = this.#context.machines?.dockerProbe;
+      if (!probe) return;
+      let answer: { endpoint: string; attached: boolean | null };
+      try {
+        answer = await probe(this.#config.machine, signal);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        push("docker.attach", "Attached output", "fail", `An attached command on ${this.#host} failed: ${message(error)}`, MACHINE_ATTACH_FIX);
+        return;
+      }
+      const named = answer.endpoint.includes("://") ? answer.endpoint : `tcp://${answer.endpoint}`;
+      const tcp = endpointOf(named);
+      if (!tcp || !("host" in tcp) || !isLocalhost(tcp.host)) return;
+      const where = `${tcp.host}:${tcp.port}`;
+      if (answer.attached === false) {
+        push("docker.attach", "Attached output", "fail", forwarderReason(where), MACHINE_ATTACH_FIX);
+        return;
+      }
+      push("docker.attach", "Attached output", "ok", `An attached command's output comes back from tcp://${where} on ${this.#host}.`);
+      return;
+    }
     const address = this.#config.host;
     const tcp = address ? endpointOf(address) : null;
     if (!tcp || !("host" in tcp) || !isLocalhost(tcp.host) || this.hostOs !== "windows") return;
-    if (signal?.aborted) throw signal.reason;
     const where = `${tcp.host}:${tcp.port}`;
     let text = "";
     let failed: string | null = null;

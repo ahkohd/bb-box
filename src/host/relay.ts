@@ -250,6 +250,16 @@ function pipeDial(channel: Channel, child: DialStdio, where: string): void {
   });
 }
 
+async function endpointAsked(dockerHost: string | undefined, fallback: RelayOptions["endpoint"]): Promise<DockerEndpoint> {
+  const asked = dockerHost?.trim();
+  if (asked) {
+    const endpoint = endpointOf(asked);
+    if (!endpoint) throw new Error(`The Docker host from bb-box is ${asked}, which the relay cannot reach: it takes unix://, npipe://, tcp:// or wsl://.`);
+    return endpoint;
+  }
+  return (fallback ?? dockerEndpoint)();
+}
+
 export function relayHandlers(options: RelayOptions = {}) {
   const leases = new Set<ExperimentalHostWorkerLease>();
   const muxes = new Set<Mux>();
@@ -296,10 +306,10 @@ export function relayHandlers(options: RelayOptions = {}) {
   };
   return {
     handlers: {
-      docker: async () => {
+      docker: async ({ dockerHost }: { dockerHost?: string } = {}) => {
         let endpoint: DockerEndpoint;
         try {
-          endpoint = await (options.endpoint ?? dockerEndpoint)();
+          endpoint = await endpointAsked(dockerHost, options.endpoint);
         } catch (error) {
           return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error), platform: machinePlatform(), setup: await setupFacts(null) };
         }
@@ -310,8 +320,8 @@ export function relayHandlers(options: RelayOptions = {}) {
         }
         return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}), platform: machinePlatform(), setup: await setupFacts(endpoint) };
       },
-      relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
-        const endpoint = await (options.endpoint ?? dockerEndpoint)();
+      relay: async ({ secret, path, dockerHost }: { secret: string; path: string; dockerHost?: string }, context: ExperimentalHostRpcContext) => {
+        const endpoint = await endpointAsked(dockerHost, options.endpoint);
         if (!process.env.BB_SERVER_URL) throw new Error("BB_SERVER_URL is not set in the worker, so it cannot reach bb-box.");
         const lease = context.experimental_retainWorker();
         leases.add(lease);

@@ -116,7 +116,14 @@ distribution's name. `wsl://box@bbdocker` is the same with the Linux user
 named. bb-box runs `wsl.exe -d bbdocker -u box -e docker`, and dial-stdio
 for the relay, against the unix socket. Do not set `tcp://127.0.0.1:2375`.
 
-When BB runs on another machine, set `host` to `ssh://box@<pc>:2222`. Use
+When BB's server is another machine and this PC is a BB machine, leave
+`host` as `bb:<this machine's ID>`. Set `machine-docker-host` to
+`wsl://bbdocker`. bb-box sends that when the machine's relay opens, and the
+Windows daemon dials `wsl.exe` and `docker system dial-stdio`. It does not
+read the machine's `DOCKER_HOST` or docker context, which stay as they are.
+Do not point those at `wsl://`: `docker.exe` does not understand it.
+
+When this PC is not a BB machine, set `host` to `ssh://box@<pc>:2222`. Use
 the PC's name or a fixed address: a DHCP address can change.
 
 Set Memory kept free (`reserve-memory-mib`) to 1024. WSL's memory limit
@@ -165,9 +172,11 @@ are not tested: use `linux-desktop-cpu`.
 ## When it goes wrong
 
 - **`docker run` or `docker exec` from Windows prints nothing and exits 0**:
-  that is WSL's localhost forwarder. The host is `wsl://bbdocker` when BB
-  runs on this PC, not `tcp://127.0.0.1:2375`. dockerd stays on its unix
-  socket. bb-box's doctor fails a `tcp://127.0.0.1` host on Windows when an
+  that is WSL's localhost forwarder. When BB runs on this PC, the host is
+  `wsl://bbdocker`, not `tcp://127.0.0.1:2375`. When BB's server is another
+  machine, `host` stays `bb:<this machine's ID>` and `machine-docker-host`
+  is `wsl://bbdocker`. dockerd stays on its unix socket. bb-box's doctor
+  fails a Windows machine whose Docker is at `tcp://127.0.0.1` when an
   attached command's output does not come back, and a box command whose
   stream ends without an exit status fails instead of reporting exit 0.
 - **`Connection refused` on port 2222**: check that the distribution runs,

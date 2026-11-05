@@ -161,6 +161,8 @@ if ($restart) {
   "it stops every box, and the scheduled task starts $Name again within a minute."
 }
 "Done. When BB runs on this PC, set the Docker backend host to wsl://$Name"
+"When BB's server is another machine and this PC is a BB machine, leave host as bb:<this machine's ID> and set machine-docker-host to wsl://$Name"
 "dockerd listens on its unix socket. Do not publish 127.0.0.1:2375: WSL's localhost forwarder drops attached output."
-"When BB runs on another machine, set host to ssh://${User}@<this PC>:${Port}"
+"Do not set DOCKER_HOST to wsl://. docker.exe does not understand it."
+"When this PC is not a BB machine, set host to ssh://${User}@<this PC>:${Port}"
 "This PC: $env:COMPUTERNAME, $($addresses -join ', ')"

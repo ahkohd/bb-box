@@ -189,7 +189,9 @@ fields, press Check, then Save and turn on.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `host` | empty | `unix:///path/to/docker.sock`, `ssh://user@host`, `tcp://host:port`, or `wsl://distro` for Docker in WSL. Empty uses the `docker` CLI's own default: `DOCKER_HOST`, its current context, or the local socket. `wsl://` reaches the daemon through `wsl.exe` and `docker system dial-stdio`. Do not use `tcp://127.0.0.1` on Windows: WSL's localhost forwarder drops attached output |
+| `host` | empty | `unix:///path/to/docker.sock`, `ssh://user@host`, `tcp://host:port`, `wsl://distro` for Docker in WSL, or `bb:<machine ID>` for a BB machine. Empty uses the `docker` CLI's own default: `DOCKER_HOST`, its current context, or the local socket. `wsl://` reaches the daemon through `wsl.exe` and `docker system dial-stdio`. Do not use `tcp://127.0.0.1` on Windows: WSL's localhost forwarder drops attached output |
+| `machine-docker-host` | empty | For `bb:<machine ID>`: where Docker is on that machine (`wsl://distro`, a unix socket or `tcp://host:port`). Sent when the relay opens, instead of the machine's `DOCKER_HOST`. On a Windows machine set `wsl://<distro>` |
+| `machine-docker-host` | empty | For `bb:<machine ID>`: where Docker is on that machine (`wsl://distro`, a unix socket or `tcp://host:port`). Sent when the relay opens, instead of the machine's `DOCKER_HOST`. On a Windows machine set `wsl://<distro>` |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
 | `wayland-desktop-image` | `bbbox/linux-desktop-wayland:1` | The image of linux-desktop-wayland-cpu boxes. Empty turns them off |

@@ -111,7 +111,7 @@ export const CHECKS = {
   "docker.attach": {
     name: "Attached output",
     from: ["docker"],
-    what: "On a Windows machine, a Docker host at tcp://127.0.0.1 returns an attached command's output. WSL's localhost forwarder does not: docker run and docker exec print nothing and exit 0.",
+    what: "On a Windows machine, a Docker host at tcp://127.0.0.1, or a BB machine whose Docker there is, returns an attached command's output. WSL's localhost forwarder does not: docker run and docker exec print nothing and exit 0. For a BB machine, set machine-docker-host to wsl://<distro>.",
   },
   "docker.ssh": { name: "SSH connection reuse", from: ["docker"], what: "Over ssh://, whether the docker calls share one SSH connection." },
   "docker.limits": { name: "CPU and memory limits", from: ["docker"], what: "Docker can limit a container's CPU and memory, as each box needs." },

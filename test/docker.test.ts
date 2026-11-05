@@ -81,6 +81,7 @@ test("parses the fields, with the setup guide's defaults", () => {
     boxes: 10,
     desktopsPerGpu: 4,
     reserveMemoryMiB: 4096,
+    machineDockerHost: null,
   });
   const all = dockerConfig({ privileged: false, "gpu-desktops": true, host: "ssh://builder@docker.example:2222", boxes: 3 });
   assert.equal(all.docker, false);
