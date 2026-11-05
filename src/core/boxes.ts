@@ -3017,7 +3017,7 @@ export class Boxes {
       const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
       if (shrinking && current.state === "ready") await this.#roomToShrink(current, to.memoryMiB, options.signal);
       if (options.check) return { box: current, from, to, plan, changed: false };
-      if (!plan.room.ok) throw new BoxError("no_capacity", plan.room.message ?? `${current.backendLabel} has no room for box ${current.name} to grow.`);
+      if (!plan.room.ok) throw new BoxError("no_capacity", plan.room.message ?? `${current.backendLabel} has no room for box ${current.name} to grow.`, plan.room.agentMessage ?? null);
       const restart = plan.parts.some((part) => part.way === "restart");
       if (restart && !options.restart) {
         const parts = partWords(plan.parts.filter((part) => part.way === "restart").map((part) => part.part));

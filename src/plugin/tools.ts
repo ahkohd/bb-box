@@ -49,19 +49,19 @@ const HINTS: Record<BoxErrorCode, string> = {
   unknown_kind: "Call box_list to see the kinds you can acquire.",
   unknown_provider: "Call box_list: each kind's line ends with its providers, in the words \"on\" takes, one or a list. Leave \"on\" out for the first with room.",
   invalid_size: "Pick a preset, or a custom size within the largest. box_list shows each kind's sizes.",
-  limit_reached: "Release a box you no longer need with box_release, then try again.",
-  no_capacity: "Try again later, release a box you no longer need, or pick another kind.",
+  limit_reached: "This thread is at its limit. Ask the user, then try again.",
+  no_capacity: "Try again later, or ask the user.",
   not_ready: "Call box_status to see its state. box_start starts a stopped box.",
   unsupported: "Call box_status to see what the box can do.",
-  backend_off: "Ask the user to fix its backend's settings in bb-box's settings, or release the box.",
+  backend_off: "Ask the user. The box stays as it is until the backend is back.",
   released: "Acquire a new box with box_acquire.",
-  unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
+  unreachable: "Call box_status. If the box still does not answer, ask the user.",
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
   unknown_device: "Pick one of the devices this names, or leave device out for the kind's first.",
   not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
   memory_in_use: "Give the box at least the memory this names, or end what uses memory in it first. box_resize with check says what a size would change.",
   needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
-  in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
+  in_use: "Leave the box while that thread works, and ask the user if it should go anyway.",
   restarting: "Run the command again in a few seconds, once bb-box is back.",
   reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
   locked: "Ask the user to run the command this names on the host: bb-box cannot unlock a guest itself.",
@@ -73,9 +73,24 @@ const HINTS: Record<BoxErrorCode, string> = {
   invalid_value: "Give a value within what this names.",
 };
 
+const REFUSAL_DIRECTS = /\b(?:Ask for|ask the user|ask the person|Fork it|Keep the GPU|Try again later|Start it again later|Leave gpu out)\b/;
+
+function refusalDirects(said: string): boolean {
+  return REFUSAL_DIRECTS.test(said);
+}
+
+export function agentErrorText(error: unknown, action: string, hint: string): string {
+  const said = describeErrorForAgent(error, action);
+  return withHint(said, hint);
+}
+
+export function withHint(said: string, hint: string): string {
+  return `${said}${refusalDirects(said) ? "" : next(hint)}`;
+}
+
 export function failure(error: unknown, action: string): PluginAgentToolResult {
   const hint = error instanceof BoxError ? HINTS[error.code] : "Call box_status to see the box, or try again.";
-  return { content: [{ type: "text", text: `${describeErrorForAgent(error, action)}${next(hint)}` }], isError: true };
+  return { content: [{ type: "text", text: agentErrorText(error, action, hint) }], isError: true };
 }
 
 export function seenByAgent(box: BoxRecord): BoxRecord {
@@ -542,10 +557,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `${startingWords(settled ?? box, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         if (settled.state === "failed") {
-          return {
-            content: [{ type: "text", text: `Box ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}${next("Try box_acquire again, or pick another kind from box_list.")}` }],
-            isError: true,
-          };
+          const said = `Box ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}`;
+          return { content: [{ type: "text", text: withHint(said, "Try box_acquire again, or ask the user.") }], isError: true };
         }
         // box_run would wait for enrolment anyway, so the result can say how it went.
         const enrolled = await boxes.enrolled(settled, signal);
