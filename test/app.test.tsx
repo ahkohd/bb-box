@@ -5272,14 +5272,15 @@ test("a desktop that would show as video on a page that is not secure shows over
 
 test("a desktop's notes are BB's toasts, one at a time, with their reason under them, and the toolbar keeps its height (the owner's note of 18 October 2026)", async () => {
   const undo = withVideo();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
     const slot = desktopTab(server([desktopBox()], { video: true }).handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
     const socket = videoSocket();
     act(() => socket.open());
-    // The video ends before its first frame: the desktop shows over VNC, and says why in a toast, not in its toolbar.
     act(() => socket.end(1011, "Selkies is not running"));
+    act(() => vi.advanceTimersByTime(FIRST_FRAME_MS));
     await waitFor(() => expect(toasts()).toEqual(["Video did not start, so this shows VNC.Selkies is not running."]));
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const toolbar = slot.getByRole("button", { name: "Desktop actions" }).closest("div.border-b")!;
@@ -5294,6 +5295,148 @@ test("a desktop's notes are BB's toasts, one at a time, with their reason under 
   } finally {
     undo();
     window.sessionStorage.clear();
+  }
+});
+
+test("an open video desktop retries refused connections after a restart and shows video when Selkies listens three seconds later", async () => {
+  const undo = withVideo();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+    act(() => {
+      videoSocket().open();
+      videoSocket().onmessage?.({ data: videoFrame(1, true) });
+    });
+    await stopBox(handlers, slot, "box_2");
+    await slot.findByText("bold-heron is stopped.");
+    await startBox(handlers, slot, "box_2");
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+    for (const delay of [1_000, 2_000]) {
+      act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
+      expect(novnc.FakeRfb.made).toHaveLength(0);
+      act(() => vi.advanceTimersByTime(delay));
+    }
+    expect(FakeSocket.made).toHaveLength(4);
+    act(() => {
+      const listening = FakeSocket.made.at(-1)!;
+      listening.open();
+      listening.onmessage?.({ data: videoFrame(2, true) });
+    });
+    expect(slot.getByText("The agent has control.")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(FIRST_FRAME_MS * 2));
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    expect(toasts()).toEqual([]);
+  } finally {
+    random.mockRestore();
+    undo();
+  }
+});
+
+test("an open video desktop falls back once when Selkies never listens after a restart, then tries video after another restart", async () => {
+  const undo = withVideo();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+    act(() => {
+      videoSocket().open();
+      videoSocket().onmessage?.({ data: videoFrame(1, true) });
+    });
+    await stopBox(handlers, slot, "box_2");
+    await slot.findByText("bold-heron is stopped.");
+    await startBox(handlers, slot, "box_2");
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+    for (const delay of [1_000, 2_000, 4_000]) {
+      act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
+      act(() => vi.advanceTimersByTime(delay));
+    }
+    act(() => FakeSocket.made.at(-1)!.end(1011, "connect ECONNREFUSED 127.0.0.1:5980"));
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(3_000));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(toasts()).toEqual(["Video did not start, so this shows VNC.connect ECONNREFUSED 127.0.0.1:5980."]);
+    const attempts = FakeSocket.made.length;
+    act(() => vi.advanceTimersByTime(FIRST_FRAME_MS * 2));
+    expect(FakeSocket.made).toHaveLength(attempts);
+    act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+    await stopBox(handlers, slot, "box_2");
+    await slot.findByText("bold-heron is stopped.");
+    await startBox(handlers, slot, "box_2");
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(attempts + 2));
+    act(() => {
+      const listening = FakeSocket.made.at(-1)!;
+      listening.open();
+      listening.onmessage?.({ data: videoFrame(3, true) });
+    });
+    expect(slot.getByText("The agent has control.")).toBeTruthy();
+    expect(novnc.FakeRfb.made).toHaveLength(1);
+  } finally {
+    random.mockRestore();
+    undo();
+  }
+});
+
+test("video startup has one deadline across refused, silent and unopened sockets, and disposal cancels retries", async () => {
+  const undo = withVideo();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.useFakeTimers();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const fallback = vi.fn();
+    session.onFallback = fallback;
+    FakeSocket.made.at(-1)!.end(1011, "Connection refused");
+    vi.advanceTimersByTime(1_000);
+    FakeSocket.made.at(-1)!.open();
+    vi.advanceTimersByTime(3_000);
+    FakeSocket.made.at(-1)!.end(1011, "No frame");
+    vi.advanceTimersByTime(2_000);
+    vi.advanceTimersByTime(3_999);
+    expect(fallback).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fallback).toHaveBeenCalledExactlyOnceWith("No frame.");
+    expect(FakeSocket.made.at(-1)!.readyState).toBe(3);
+    const attempts = FakeSocket.made.length;
+    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
+    expect(FakeSocket.made).toHaveLength(attempts);
+    session.dispose();
+    const disposed = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    disposed.onFallback = fallback;
+    FakeSocket.made.at(-1)!.end(1011, "Connection refused");
+    disposed.dispose();
+    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
+    expect(FakeSocket.made).toHaveLength(attempts + 1);
+    expect(fallback).toHaveBeenCalledTimes(1);
+  } finally {
+    await decodesMacroblocks();
+    random.mockRestore();
+    undo();
+  }
+});
+
+test("a video startup deadline pauses while hidden and resumes when visible", () => {
+  const undo = withVideo();
+  vi.useFakeTimers();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const fallback = vi.fn();
+    session.onFallback = fallback;
+    vi.advanceTimersByTime(2_000);
+    session.hidden = true;
+    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
+    expect(fallback).not.toHaveBeenCalled();
+    session.hidden = false;
+    vi.advanceTimersByTime(FIRST_FRAME_MS - 1);
+    expect(fallback).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fallback).toHaveBeenCalledExactlyOnceWith("No video came within 10 s.");
+    session.dispose();
+  } finally {
+    undo();
   }
 });
 
@@ -9239,6 +9382,9 @@ test("a connected terminal or desktop stays up when a reach check fails, and Che
   expect(term.getByText("Not answering")).toBeTruthy();
   expect(socket.readyState).toBe(FakeSocket.OPEN);
   expect(FakeSocket.made).toHaveLength(1);
+  expect(term.getByTestId("terminal-screen").className).not.toContain("invisible");
+  expect(term.getByTestId("terminal-screen").className).toContain("opacity-30");
+  expect(term.getByTestId("terminal-screen").hasAttribute("inert")).toBe(true);
   fireEvent.click(term.getByRole("button", { name: "Check now" }));
   await waitFor(() => expect(changes).toEqual(["refresh box_2"]));
   cleanup();
@@ -9254,6 +9400,14 @@ test("a connected terminal or desktop stays up when a reach check fails, and Che
   expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
   expect(client.disconnected).toBe(false);
   expect(novnc.FakeRfb.made).toHaveLength(1);
+  expect(desk.getByTestId("desktop-screen").className).toContain("opacity-30");
+  expect(desk.getByTestId("desktop-screen").hasAttribute("inert")).toBe(true);
+  reach = null;
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(desk.getByTestId("desktop-screen").className).not.toContain("opacity-30"));
+  expect(desk.getByTestId("desktop-screen").hasAttribute("inert")).toBe(false);
+  reach = NOT_ANSWERING;
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
   fireEvent.click(desk.getByRole("button", { name: "Check now" }));
   await waitFor(() => expect(changes).toEqual(["refresh box_2", "refresh box_2"]));
 });

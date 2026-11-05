@@ -8,10 +8,6 @@
 // keyboard handling, sent as Selkies' kd and ku; the pointer and the wheel go
 // as its m and m2. Frames are acknowledged as they come, every 50 ms, as
 // Selkies' own page does, which is how the relay paces this viewer.
-//
-// It cannot show a box without WebCodecs, and gives up, for RFB, when its
-// first connection ends before a frame, or brings none within FIRST_FRAME_MS
-// of asking for video: onFallback says why.
 
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
@@ -48,7 +44,6 @@ export function unicodeKeysym(keysym: number): number {
   return codepoint === undefined ? keysym : 0x1000000 | codepoint;
 }
 
-/** How long a first connection may ask for video and get no frame before the viewer gives up, for RFB. */
 export const FIRST_FRAME_MS = 10_000;
 /** How often the viewer says which frame it has shown, as Selkies' own page does. */
 const ACK_MS = 50;
@@ -299,8 +294,8 @@ export class SelkiesSession implements Kept {
   #everShown = false;
   #failures = 0;
   #retry: ReturnType<typeof setTimeout> | undefined;
-  /** Gives up for RFB when a first connection asked for video and got no frame in time. */
   #firstFrame: ReturnType<typeof setTimeout> | undefined;
+  #startupFailure: string | null = null;
   #mine = false;
   #resizable = false;
   /** Whether the desktop follows this tab's size: only once the tab's size changes while it has control, as the RFB viewer does. */
@@ -538,6 +533,10 @@ export class SelkiesSession implements Kept {
     const stop = this.#hidden || (typeof document !== "undefined" && document.visibilityState === "hidden");
     if (stop === this.#stopped) return;
     this.#stopped = stop;
+    if (stop) {
+      clearTimeout(this.#firstFrame);
+      this.#firstFrame = undefined;
+    } else this.#awaitFirstFrame();
     // Not connected: the next connection starts as this says.
     if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
     if (stop) {
@@ -547,7 +546,6 @@ export class SelkiesSession implements Kept {
       return;
     }
     this.#restart();
-    this.#awaitFirstFrame(this.#socket);
   }
 
   /**
@@ -576,17 +574,13 @@ export class SelkiesSession implements Kept {
     if (now - since >= STALL_MS) this.#restart();
   }
 
-  /**
-   * A stream that connects but sends no frame, as a box whose server cannot reach its screen, would leave the viewer
-   * waiting: before the first frame ever shown, it ends the connection and falls back to RFB after FIRST_FRAME_MS.
-   */
-  #awaitFirstFrame(socket: WebSocket): void {
-    clearTimeout(this.#firstFrame);
-    if (this.#everShown || this.#device) return;
+  #awaitFirstFrame(): void {
+    if (this.#firstFrame !== undefined || this.#everShown || this.#device || this.#stopped) return;
     this.#firstFrame = setTimeout(() => {
-      if (this.#everShown || this.#socket !== socket || this.#stopped || this.#disposed) return;
+      this.#firstFrame = undefined;
+      if (this.#everShown || this.#stopped || this.#disposed) return;
       this.#drop();
-      this.#fallBack(`No video came within ${FIRST_FRAME_MS / 1000} s.`);
+      this.#fallBack(this.#startupFailure ?? `No video came within ${FIRST_FRAME_MS / 1000} s.`);
     }, FIRST_FRAME_MS);
   }
 
@@ -604,6 +598,8 @@ export class SelkiesSession implements Kept {
   connect(): void {
     if (this.#disposed) return;
     clearTimeout(this.#retry);
+    this.#stopped = this.#hidden || document.visibilityState === "hidden";
+    this.#awaitFirstFrame();
     const socket = new WebSocket(this.#url);
     socket.binaryType = "arraybuffer";
     this.#socket = socket;
@@ -611,6 +607,7 @@ export class SelkiesSession implements Kept {
     this.#reset();
     this.#set({ state: "connecting" });
     socket.onopen = () => {
+      if (this.#socket !== socket || this.#disposed) return;
       this.#stopped = this.#hidden || document.visibilityState === "hidden";
       if (this.#device) {
         if (this.#device.stills) socket.send(stillsRequestText(true));
@@ -621,7 +618,7 @@ export class SelkiesSession implements Kept {
       }
       socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
-      if (!this.#stopped) this.#awaitFirstFrame(socket);
+      this.#awaitFirstFrame();
       // Whether this browser decodes 4:4:4: the box streams it while every viewer does (the relay keeps this message).
       void decodesFullColour().then((yes) => {
         if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`BB_FULLCOLOR,${yes ? 1 : 0}`);
@@ -646,6 +643,9 @@ export class SelkiesSession implements Kept {
 
   reconnect(): void {
     this.#failures = 0;
+    this.#startupFailure = null;
+    clearTimeout(this.#firstFrame);
+    this.#firstFrame = undefined;
     this.#drop();
     this.connect();
   }
@@ -669,6 +669,9 @@ export class SelkiesSession implements Kept {
 
   /** Video gives way to VNC, for `reason`: the tab showing it hears now, or the next tab to show it. */
   #fallBack(reason: string): void {
+    clearTimeout(this.#retry);
+    clearTimeout(this.#firstFrame);
+    this.#firstFrame = undefined;
     if (this.#onFallback) this.#onFallback(reason);
     else this.#fallback = reason;
   }
@@ -677,10 +680,7 @@ export class SelkiesSession implements Kept {
     this.#drop();
     this.#answers.ended(this.#device?.state ?? null);
     if (this.#disposed) return;
-    if (!this.#everShown && !this.#device) {
-      this.#fallBack(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
-      return;
-    }
+    if (!this.#everShown && !this.#device) this.#startupFailure = reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.";
     const wait = retryWait(this.#failures);
     this.#failures += 1;
     this.#set({ state: "disconnected", reason: reason || this.#endedWords(), retryMs: wait });
@@ -986,6 +986,8 @@ export class SelkiesSession implements Kept {
     if (this.connection.state !== "connected") {
       this.#everShown = true;
       clearTimeout(this.#firstFrame);
+      this.#firstFrame = undefined;
+      this.#startupFailure = null;
       this.#failures = 0;
       this.#set({ state: "connected" });
       this.#apply();
