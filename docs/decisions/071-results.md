@@ -2264,14 +2264,14 @@ same guest.
 | `acquire` | the guest it cloned, or the one it resumes | cores and memory, labels and marker, start, delete when refused or failed | box (the clone's description names this install and box until its labels do) |
 | `#grow` | the same | its disk | box |
 | `#settle`, `#settleWeight`, `settle` | a box's guest | the start weight and its tag | box |
-| `#gateStart`, `#writeMarker`, `start` | a box's stopped guest | its marker, its start | box |
+| `#gateStart`, `#gateOnPin`, `#writeMarker`, `start` | a box's stopped guest | its marker, its start; `#gateOnPin` reads only, for a restore's start on the card it holds | box |
 | `powerOff`, `stop` | a box's guest | stop | box |
 | `release` | a box's guest | delete | box |
 | `resize` | a box's guest | cores, memory, disk | box |
 | `hold`, `#retag`, `relabel` | a warm guest a box takes, a box's guest | name, memory, description, labels | warm guest of this install, then box |
 | `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
-| `adoptCopy`, `forkSnapshot` | the guest a restore or fork has just made | network, size, labels | its description names this install and the box it is made for |
+| `adoptCopy`, `forkSnapshot`, `armAdopted` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |

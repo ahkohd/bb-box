@@ -388,7 +388,9 @@ test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, di
   assert.match(made.config.net0 ?? "", new RegExp(`hwaddr=${mac}`), "the new guest has the box's MAC");
   assert.doesNotMatch(made.config.net0 ?? "", /link_down/);
   assert.match(made.config.net0 ?? "", new RegExp(`ip=${fresh.address}/`), "and the address of its own VMID");
-  assert.equal(made.config.onboot, "1");
+  assert.equal(made.config.onboot, "0", "it does not start with its node until it is armed");
+  await state.backend.armAdopted(fresh, null);
+  assert.equal(made.config.onboot, "1", "armed once its claim is in place; this box has none");
   assert.match(made.config.tags ?? "", new RegExp(`box\\.${id.boxId}`));
   assert.doesNotMatch(made.config.tags ?? "", /held-copy/);
   await state.backend.retireGuest(guest, id);

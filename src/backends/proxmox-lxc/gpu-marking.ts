@@ -141,7 +141,11 @@ function reportLines(notes: string): string[] {
 }
 
 export function reportedDriver(notes: string): string | null {
-  return /^driver (\S+) since \d+/m.exec(notes)?.[1] ?? null;
+  for (const line of reportLines(notes)) {
+    const driver = /^driver (\S+) since \d+$/.exec(line)?.[1];
+    if (driver) return driver;
+  }
+  return null;
 }
 
 export function parseHelperLines(notes: string): HelperLines {
