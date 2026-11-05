@@ -20,7 +20,7 @@ import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
-import { MONITOR_OFF_WORDS, monitorRpcHandlers, offlineMachineWords, readableState, unreadableWords } from "./monitor.ts";
+import { MONITOR_OFF_WORDS, monitorRpcHandlers, readableState, unreadReason } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
 import { answered, boxSnapshotsView, forkPreview, keepPreview, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
 import { bulkApply, bulkCheck, snapshotsTab } from "./snapshots-tab.ts";
@@ -124,7 +124,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     if (!readableState(box.state)) return { is: "not-running", machineId: null, why: `${box.name} is not running.` };
     const machine = (await app.monitor.machines().catch(() => [])).find((each) => each.boxId === box.id);
     if (machine) return { is: "read", machineId: machine.id, why: null };
-    return { is: "unreadable", machineId: null, why: box.enrol.state === "enrolled" ? offlineMachineWords(box.name) : unreadableWords(box.name) };
+    return { is: "unreadable", machineId: null, why: unreadReason(box.name, box.enrol) };
   };
 
   const deviceFailed = (box: BoxRecord): DeviceBoot | null => {

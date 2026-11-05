@@ -227,7 +227,14 @@ const xterm = vi.hoisted(() => {
 });
 vi.mock("@xterm/xterm", () => ({ Terminal: xterm.FakeTerminal }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: xterm.FakeWebgl }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    calls = 0;
+    fit() {
+      this.calls += 1;
+    }
+  },
+}));
 
 /** A WebSocket a test opens, feeds and closes. */
 class FakeSocket {
@@ -6201,6 +6208,21 @@ test("the Desktop tab opened bare opens the thread's one desktop, lists several,
   expect(none.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "boxes", title: "Box" } }]);
 });
 
+test("a thread card says Thread until its title loads", async () => {
+  let give: (thread: ReturnType<typeof makeThreadResponse>) => void = () => undefined;
+  const pending = new Promise<ReturnType<typeof makeThreadResponse>>((resolve) => {
+    give = resolve;
+  });
+  const { handlers } = server([box()]);
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: () => pending } } });
+  const card = await list.findByRole("region", { name: "Thread" });
+  expect(within(card).getByRole("button", { name: (name) => name === "Thread" }).textContent).toBe("Thread");
+  give(makeThreadResponse({ title: "UI thread" }));
+  expect(await list.findByRole("button", { name: "UI thread" })).toBeTruthy();
+  expect(list.getByRole("region", { name: "UI thread" })).toBeTruthy();
+});
+
 test("the Boxes page lists every box under its thread, servers as well as desktops, and shows one desktop for a browser tab", async () => {
   const { handlers } = server([box(), desktopBox()]);
   const [page] = app.navPanels;
@@ -6376,10 +6398,19 @@ test("a terminal tab for a box the panel lists as ready connects at once, withou
   expect(FakeSocket.made).toHaveLength(1);
 });
 
+function sizeTheTerminal(made: { target: HTMLElement | null } = xterm.FakeTerminal.made.at(-1)!, width = 800, height = 400): void {
+  const element = made.target;
+  if (!element) throw new Error("no terminal element");
+  Object.defineProperty(element, "clientWidth", { configurable: true, value: width });
+  Object.defineProperty(element, "clientHeight", { configurable: true, value: height });
+  observerOf({ target: element }).resize(width, height);
+}
+
 test("a terminal draws with WebGL, and with xterm's DOM renderer where WebGL is missing or its context is lost", async () => {
   const { handlers } = server([box(), box({ id: "box_2", name: "bold-heron" })]);
   terminalTab(handlers);
   await waitFor(() => expect(xterm.FakeTerminal.made).toHaveLength(1));
+  sizeTheTerminal(xterm.FakeTerminal.made[0]!);
   const webgl = xterm.FakeTerminal.made[0]!.addons.find((addon) => addon instanceof xterm.FakeWebgl) as InstanceType<typeof xterm.FakeWebgl>;
   expect(webgl).toBeTruthy();
   webgl.lose!();
@@ -6389,6 +6420,7 @@ test("a terminal draws with WebGL, and with xterm's DOM renderer where WebGL is 
   try {
     terminalTab(handlers, "box_2");
     await waitFor(() => expect(xterm.FakeTerminal.made).toHaveLength(2));
+    sizeTheTerminal(xterm.FakeTerminal.made[1]!);
     expect(xterm.FakeTerminal.made[1]!.addons.some((addon) => addon instanceof xterm.FakeWebgl)).toBe(false);
     await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
   } finally {
@@ -9120,6 +9152,209 @@ test("Ctrl+Shift+Up moves focus from the terminal to the bar's view button and n
   expect(fake.keys!(key({ key: "ArrowUp", ctrlKey: true, shiftKey: true }, "keyup"))).toBe(false);
 });
 
+test("a terminal sized while hidden does not fit, and refits once it has a size or the tab is visible again", async () => {
+  const { handlers } = server([desktopBox()]);
+  boxPageAt(handlers, "box/box_2/terminal/from-list");
+  const fake = await waitFor(() => {
+    const made = xterm.FakeTerminal.made.at(-1);
+    if (!made?.target) throw new Error("no terminal yet");
+    return made;
+  });
+  const fit = fake.addons[0] as { calls: number };
+  expect(fit.calls).toBe(0);
+  expect(fake.addons.some((addon) => addon instanceof xterm.FakeWebgl)).toBe(false);
+  observerOf({ target: fake.target! }).resize(0, 0);
+  expect(fit.calls).toBe(0);
+  sizeTheTerminal(fake);
+  expect(fit.calls).toBe(1);
+  expect(fake.addons.some((addon) => addon instanceof xterm.FakeWebgl)).toBe(true);
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(fit.calls).toBe(1);
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(fit.calls).toBe(2);
+});
+
+test("Ctrl+Shift+Up from a terminal tab with no other view lands on Leave the terminal", async () => {
+  const terminalAction = app.threadPanelActions.find((candidate) => candidate.id === "terminal");
+  renderSlot(terminalAction!, { threadId: THREAD, params: { box: "box_2" } }, { rpc: server([desktopBox()]).handlers, pluginId: "bb-box" });
+  const fake = await waitFor(() => {
+    const made = xterm.FakeTerminal.made.at(-1);
+    if (!made?.keys) throw new Error("no terminal yet");
+    return made;
+  });
+  fake.textarea!.focus();
+  const leave = new KeyboardEvent("keydown", { key: "ArrowUp", ctrlKey: true, shiftKey: true, cancelable: true });
+  expect(fake.keys!(leave)).toBe(false);
+  const leaveButton = screen.getByRole("button", { name: "Leave the terminal" });
+  expect(leaveButton.tabIndex).toBe(-1);
+  expect(document.activeElement).toBe(leaveButton);
+});
+
+const NOT_ANSWERING = { is: "not-answering" as const, since: Date.now() - 12 * 60_000, lastAnswered: null, nextCheckAt: Date.now() + 4 * 60_000, checking: false, attempts: 2, error: "It did not answer a command.", host: "pve-3" };
+
+test("a terminal opens once the loaded box answers, even when the panel still lists it as not answering", async () => {
+  const quiet = desktopBox({ reach: NOT_ANSWERING });
+  const { handlers } = server([quiet]);
+  const loadState = handlers.state;
+  const loadDesktop = handlers.desktop;
+  const answering: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    state: async (input) => ({ ...(await loadState(input)), boxes: [quiet] }),
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== quiet.id) return answer;
+      return { ...answer, box: { ...answer.box, reach: null } };
+    },
+  };
+  const seen = panel(answering);
+  await seen.findByText("bold-heron");
+  cleanup();
+  terminalTab(answering, quiet.id);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+});
+
+test("a connected terminal or desktop stays up when a reach check fails, and Check now asks again", async () => {
+  const hers = desktopBox();
+  const { handlers, changes } = server([hers]);
+  let reach: BoxView["reach"] = null;
+  const loadDesktop = handlers.desktop;
+  const live: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== hers.id) return answer;
+      return { ...answer, box: { ...answer.box, reach } };
+    },
+  };
+  const term = terminalTab(live, hers.id);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  const socket = FakeSocket.made[0]!;
+  act(() => socket.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  reach = NOT_ANSWERING;
+  await term.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await term.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(term.getByText("Not answering")).toBeTruthy();
+  expect(socket.readyState).toBe(FakeSocket.OPEN);
+  expect(FakeSocket.made).toHaveLength(1);
+  fireEvent.click(term.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(changes).toEqual(["refresh box_2"]));
+  cleanup();
+
+  reach = null;
+  const desk = desktopTab(live, hers.id);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]!;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  expect(await desk.findByText("The agent has control.")).toBeTruthy();
+  reach = NOT_ANSWERING;
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(client.disconnected).toBe(false);
+  expect(novnc.FakeRfb.made).toHaveLength(1);
+  fireEvent.click(desk.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(changes).toEqual(["refresh box_2", "refresh box_2"]));
+});
+
+function withAnswering(handlers: PluginRpcTestHandlers<Contract>, boxId: string) {
+  let reach: BoxView["reach"] = null;
+  const loadDesktop = handlers.desktop;
+  const live: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== boxId) return answer;
+      return { ...answer, box: { ...answer.box, reach } };
+    },
+  };
+  return { live, setAnswering: (answering: boolean) => void (reach = answering ? null : NOT_ANSWERING) };
+}
+
+async function stopBox(handlers: PluginRpcTestHandlers<Contract>, tab: ReturnType<typeof terminalTab>, boxId: string) {
+  await handlers.stop!({ threadId: THREAD, box: boxId } as never);
+  await tab.behavior.emitRealtime("changed", { threadId: THREAD });
+}
+
+async function startBox(handlers: PluginRpcTestHandlers<Contract>, tab: ReturnType<typeof terminalTab>, boxId: string) {
+  await handlers.start!({ threadId: THREAD, box: boxId } as never);
+  await tab.behavior.emitRealtime("changed", { threadId: THREAD });
+}
+
+test("a connected terminal whose box stops and starts again opens a new shell in the same tab", async () => {
+  const { handlers } = server([desktopBox()]);
+  const term = terminalTab(handlers, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  act(() => FakeSocket.made[0]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  await stopBox(handlers, term, "box_2");
+  expect(await term.findByText("bold-heron is stopped.")).toBeTruthy();
+  expect(FakeSocket.made[0]!.readyState).toBe(3);
+  expect(term.queryByText("Connected")).toBeNull();
+  await startBox(handlers, term, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+  expect(term.getByText("Connecting…")).toBeTruthy();
+  act(() => FakeSocket.made[1]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  const screenArea = term.getByTestId("terminal-screen");
+  expect(screenArea.contains(xterm.FakeTerminal.made.at(-1)!.target)).toBe(true);
+  expect(screenArea.className).not.toContain("invisible");
+});
+
+test("a connected desktop whose box stops and comes back not answering opens no noVNC client until it answers", async () => {
+  const { handlers } = server([desktopBox()]);
+  const { live, setAnswering } = withAnswering(handlers, "box_2");
+  const desk = desktopTab(live, "box_2");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  expect(await desk.findByText("The agent has control.")).toBeTruthy();
+  await stopBox(live, desk, "box_2");
+  expect(await desk.findByText("bold-heron is stopped.")).toBeTruthy();
+  expect(novnc.FakeRfb.made[0]!.disconnected).toBe(true);
+  setAnswering(false);
+  await startBox(live, desk, "box_2");
+  expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(novnc.FakeRfb.made).toHaveLength(1);
+  setAnswering(true);
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+});
+
+test("a connected terminal whose box stops and comes back not answering opens no shell until it answers", async () => {
+  const { handlers } = server([desktopBox()]);
+  const { live, setAnswering } = withAnswering(handlers, "box_2");
+  const term = terminalTab(live, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  act(() => FakeSocket.made[0]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  await stopBox(live, term, "box_2");
+  expect(await term.findByText("bold-heron is stopped.")).toBeTruthy();
+  setAnswering(false);
+  await startBox(live, term, "box_2");
+  expect(await term.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(term.getByText("Not answering")).toBeTruthy();
+  expect(FakeSocket.made).toHaveLength(1);
+  setAnswering(true);
+  await term.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+});
+
+test("a desktop or terminal of a box that does not answer does not connect, and says why", async () => {
+  const quiet = desktopBox({ reach: NOT_ANSWERING });
+  const { handlers } = server([quiet]);
+  const desk = boxPageAt(handlers, "box/box_2/desktop/from-list");
+  expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(desk.getByText("Not answering")).toBeTruthy();
+  expect(novnc.FakeRfb.made).toHaveLength(0);
+  cleanup();
+  const term = boxPageAt(handlers, "box/box_2/terminal/from-list");
+  expect(await term.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(term.getByText("Not answering")).toBeTruthy();
+  expect(FakeSocket.made).toHaveLength(0);
+  expect(xterm.FakeTerminal.made).toHaveLength(0);
+});
+
 test("after a switch, the way back still goes back in history to where the view was opened from, as the switch replaced its entry (G8, unit 5)", async () => {
   const { handlers } = server([desktopBox()]);
   const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
@@ -9290,6 +9525,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Forget maple-row?")).toBeTruthy();
   expect(within(dialog).getByText(/^bb-box removes its record of maple-row, and nothing else\. Its box is not deleted/)).toBeTruthy();
+  expect(within(dialog).getByText(/If its backend comes back, bb-box takes the box back into its records, because a running box left untracked costs money and cannot be released\./)).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Forget" }));
   await waitFor(() => expect(changes).toEqual(["forget box_7"]));
   expect(await maple.findByText("maple-row was forgotten")).toBeTruthy();
@@ -9377,6 +9613,31 @@ test("a machine of yours has its page too: no line to describe it, Threads on th
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Check now" }));
   await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "refresh")?.input).toEqual({ threadId: "operator", box: "box_m1" }));
   expect(changes).toEqual(["refresh box_m1"]);
+  cleanup();
+
+  const device = machine({ id: "box_ios", name: "brisk-wren", desktop: false, display: null, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true } });
+  const phone = boxPageAt(server([], { machines: [device] }).handlers, "box/box_ios/from-settings");
+  const deviceMenu = await openMenu(await phone.findByRole("button", { name: "brisk-wren actions" }));
+  expect(items(deviceMenu)).toContain("Open simulator");
+  expect(items(deviceMenu)).toContain("Check now");
+  fireEvent.click(within(deviceMenu).getByRole("menuitem", { name: "Open simulator" }));
+  expect(phone.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_ios/device/from-box/from-settings" } });
+});
+
+test("Cmd or Ctrl click on an app link is left to the browser", async () => {
+  const removed = box({ id: "box_7", name: "maple-row", canStopStart: false, reach: { is: "not-in-settings", backend: "Fake host", lastAnswered: null } });
+  const slot = boxPageAt(server([removed]).handlers, "box/box_7");
+  const link = await slot.findByRole("link", { name: "Open BB Box settings" });
+  let bubbled = 0;
+  const hear = () => {
+    bubbled += 1;
+  };
+  document.addEventListener("click", hear);
+  fireEvent.click(link, { metaKey: true });
+  fireEvent.click(link, { ctrlKey: true });
+  document.removeEventListener("click", hear);
+  expect(bubbled).toBe(0);
+  expect(slot.inspection.navigateCalls).toHaveLength(0);
 });
 
 function items(menu: HTMLElement): string[] {

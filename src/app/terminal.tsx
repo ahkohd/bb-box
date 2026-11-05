@@ -47,6 +47,7 @@ import {
 } from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
 import { BoxName, type PageLink } from "./box-nav.tsx";
+import { silentWhy } from "./box-words.ts";
 import { XTERM_CSS } from "./xterm-css.ts";
 import { TerminalGlyph } from "./glyphs.tsx";
 
@@ -200,6 +201,9 @@ type Connection =
   | { readonly state: "connected" }
   | { readonly state: "ended"; readonly reason: string };
 
+const TERMINAL_CLOSED = "The connection to the terminal closed.";
+const SHELL_CLOSED: Connection = { state: "ended", reason: TERMINAL_CLOSED };
+
 /**
  * One shell's terminal: xterm and the socket to the plugin, in an element of
  * its own that a tab puts inside its screen area. It is kept across tab
@@ -220,7 +224,11 @@ export class TerminalClient implements Kept {
   #socket: WebSocket | null = null;
   #started = false;
   #disposed = false;
+  #webgl = false;
   #resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly #whenShown = () => {
+    if (document.visibilityState === "visible") this.fit();
+  };
 
   constructor(url: (size: { cols: number; rows: number }) => string) {
     this.#url = url;
@@ -270,8 +278,13 @@ export class TerminalClient implements Kept {
     this.#observer =
       typeof ResizeObserver === "undefined"
         ? null
-        : new ResizeObserver(() => this.fit());
+        : new ResizeObserver((entries) => {
+            const size = entries[0]?.contentRect;
+            if (size && (size.width < 2 || size.height < 2)) return;
+            this.fit();
+          });
     this.#observer?.observe(this.element);
+    document.addEventListener("visibilitychange", this.#whenShown);
   }
 
   /**
@@ -309,12 +322,18 @@ export class TerminalClient implements Kept {
     for (const listener of this.#listeners) listener();
   }
 
-  fit(): void {
+  fit(): boolean {
+    if (this.#disposed || this.element.clientWidth < 2 || this.element.clientHeight < 2) return false;
     try {
       this.#fit.fit();
     } catch {
-      // Not in the page yet; the observer fits it when it shows.
+      return false;
     }
+    if (!this.#webgl) {
+      this.#webgl = true;
+      this.#drawWithWebgl();
+    }
+    return true;
   }
 
   focus(): void {
@@ -325,7 +344,6 @@ export class TerminalClient implements Kept {
   start(): void {
     if (this.#started || this.#disposed) return;
     this.#started = true;
-    this.#drawWithWebgl();
     this.fit();
     const socket = new WebSocket(
       this.#url({ cols: this.#view.cols || 80, rows: this.#view.rows || 24 }),
@@ -340,7 +358,7 @@ export class TerminalClient implements Kept {
       this.#socket = null;
       this.#set({
         state: "ended",
-        reason: event.reason || "The connection to the terminal closed.",
+        reason: event.reason || TERMINAL_CLOSED,
       });
       if (this.hidden) this.onEnded?.();
     };
@@ -354,6 +372,7 @@ export class TerminalClient implements Kept {
   dispose(): void {
     this.#disposed = true;
     clearTimeout(this.#resizeTimer);
+    document.removeEventListener("visibilitychange", this.#whenShown);
     this.#observer?.disconnect();
     if (this.#socket) {
       this.#socket.onclose = null;
@@ -361,6 +380,7 @@ export class TerminalClient implements Kept {
       this.#socket = null;
     }
     this.#view.dispose();
+    if (this.connection.state !== "ended") this.#set(SHELL_CLOSED);
     this.#listeners.clear();
     this.element.remove();
   }
@@ -461,7 +481,10 @@ function TerminalChooser({ threadId }: { threadId: string }) {
 }
 
 function focusTheBar(bar: HTMLElement | null): void {
-  const target = bar?.querySelector<HTMLElement>("[data-view-switch]") ?? bar?.querySelector<HTMLElement>("a[href], button:not([disabled])");
+  const target =
+    bar?.querySelector<HTMLElement>("[data-view-switch]") ??
+    bar?.querySelector<HTMLElement>("a[href], button:not([disabled]):not([data-leave-terminal])") ??
+    bar?.querySelector<HTMLElement>("[data-leave-terminal]");
   if (target) target.focus();
   else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 }
@@ -498,12 +521,13 @@ export function BoxTerminal({
   const lastName = useRef<string | null>(null);
   if (box) lastName.current = box.name;
   const path = state?.terminalPath ?? terminalPath(pluginId);
-  const can = box !== null && canOpenTerminal(box);
+  const openable = box !== null && canOpenTerminal(box);
+  const can = openable && silentWhy(box) === null;
   const listed = rememberedLive<PanelState>(threadId)?.boxes.find(
     (each) => each.id === boxId,
   );
   const readyAsListed =
-    state === null && !error && listed !== undefined && canOpenTerminal(listed);
+    state === null && !error && listed !== undefined && canOpenTerminal(listed) && silentWhy(listed) === null;
   const [session, renewSession] = useSessionId(boxId);
   const key = `terminal:${boxId}:${session}`;
 
@@ -516,9 +540,12 @@ export function BoxTerminal({
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const ready = can || readyAsListed;
+  const quiet = box ? silentWhy(box) : listed ? silentWhy(listed) : null;
+  const kept = keptFree<TerminalClient>(key);
+  const connected = connection.state === "connected" || kept?.connection.state === "connected";
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = ready || keptFree(key) !== undefined;
+  const wanted = (openable && connected) || (quiet === null && (ready || kept !== undefined));
 
   // The shell's terminal is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept terminal is in the page before it paints.
@@ -544,8 +571,10 @@ export function BoxTerminal({
     setConnection(client.connection);
     client.start();
     client.fit();
+    const frame = requestAnimationFrame(() => client.fit());
     client.focus();
     return () => {
+      cancelAnimationFrame(frame);
       unsubscribe();
       client.onLeave = undefined;
       client.element.remove();
@@ -556,8 +585,10 @@ export function BoxTerminal({
 
   // A box that stops or goes takes its shell with it.
   useEffect(() => {
-    if (state && !can) dropKept(key);
-  }, [state, can, key]);
+    if (!state || openable) return;
+    dropKept(key);
+    setConnection(SHELL_CLOSED);
+  }, [state, openable, key]);
 
   const renew = () => {
     dropKept(key);
@@ -568,6 +599,18 @@ export function BoxTerminal({
     setActing(true);
     try {
       setProblem((await rpc.call("start", { threadId, box: boxId })).error);
+    } catch (caught) {
+      setProblem(message(caught));
+    } finally {
+      setActing(false);
+    }
+    await refresh();
+  };
+
+  const check = async () => {
+    setActing(true);
+    try {
+      setProblem((await rpc.call("refresh", { threadId, box: boxId })).error);
     } catch (caught) {
       setProblem(message(caught));
     } finally {
@@ -604,6 +647,9 @@ export function BoxTerminal({
   } else if (box && !box.terminal) {
     tone = "off";
     words = "No terminal";
+  } else if (box && silentWhy(box)) {
+    tone = "warn";
+    words = box.reach?.is === "not-answering" ? "Not answering" : "Not checked";
   } else if (connection.state === "connected") {
     tone = "ok";
     words = "Connected";
@@ -629,6 +675,9 @@ export function BoxTerminal({
         {otherViews?.("terminal")}
         <span className="ml-auto flex items-center gap-1.5">
           {numbers}
+          <button type="button" data-leave-terminal tabIndex={-1} className="sr-only">
+            Leave the terminal
+          </button>
           {can && connection.state === "ended" ? (
             <Button
               type="button"
@@ -694,6 +743,16 @@ export function BoxTerminal({
         ) : !box.terminal ? (
           <Notice detail="Its backend reaches it without a shell.">
             {box.name} has no terminal.
+          </Notice>
+        ) : silentWhy(box) ? (
+          <Notice
+            action={
+              <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void check()}>
+                Check now
+              </Button>
+            }
+          >
+            {silentWhy(box)}
           </Notice>
         ) : connection.state === "ended" ? (
           <Notice

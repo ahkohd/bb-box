@@ -14,6 +14,8 @@ import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actio
 import { controlWord } from "./status.ts";
 import { myViewers } from "./box-row.tsx";
 import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
+import type { BoxOpens } from "./box-opens.tsx";
+import { leaveModifiedClick } from "./modified-click.ts";
 import { boxPage, viewFromPage, type BoxPageRoute } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
 import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
@@ -99,7 +101,7 @@ export function Trail({ back, here }: { back: WayBackTo; here: string }) {
   return (
     <nav aria-label="Where you are" className="flex min-w-0 items-center gap-x-1.5 text-xs">
       {"href" in back ? (
-        <UrlLink href={back.href} className={look} aria-label={back.label}>
+        <UrlLink href={back.href} className={look} aria-label={back.label} onClick={leaveModifiedClick}>
           <Icon name="ChevronLeft" className="size-3.5" aria-hidden />
           {words}
         </UrlLink>
@@ -414,7 +416,7 @@ function Notices({ page, box, now, actions, announce }: { page: BoxPageState; bo
         actions={
           <>
             <Button asChild variant="outline" size="sm" className="h-7">
-              <UrlLink href={SETTINGS_PATH}>Open BB Box settings</UrlLink>
+              <UrlLink href={SETTINGS_PATH} onClick={leaveModifiedClick}>Open BB Box settings</UrlLink>
             </Button>
             <SmallButton words="Forget…" danger onClick={() => actions.ask("forget")} />
           </>
@@ -738,7 +740,7 @@ export function NotHere({ page, back, now }: { page: BoxPageState | null; back: 
         <p className="mt-1">{words.words}</p>
         {"href" in back ? (
           <Button asChild variant="outline" size="sm" className="mt-3 h-7">
-            <UrlLink href={back.href}>{back.label}</UrlLink>
+            <UrlLink href={back.href} onClick={leaveModifiedClick}>{back.label}</UrlLink>
           </Button>
         ) : (
           <Button type="button" variant="outline" size="sm" className="mt-3 h-7" onClick={back.go}>
@@ -797,7 +799,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
     ask: setAsking,
     resize: () => setResizing(true),
   };
-  const opens = { screen: () => undefined, terminal: () => undefined };
+  const opens: BoxOpens = { screen: (_box, screen) => nav.go(viewFromPage(route, screen)), terminal: () => undefined };
   const snapshots = page.snapshots ?? null;
   const restoring = !!snapshots?.restoring;
   const snapshotsShown = !!snapshots && box.state !== "acquiring" && (box.state !== "starting" || restoring) && box.state !== "failed" && box.state !== "releasing";

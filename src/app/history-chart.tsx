@@ -56,12 +56,12 @@ export function peakRuns(values: readonly (number | null)[], peaks: readonly (nu
     const peak = peaks[index] ?? null;
     const broken = index > 0 && times[index]! - times[index - 1]! > longestStepMs;
     if (value === null || peak === null || broken) {
-      if (run.length > 1) runs.push(run);
+      if (run.length) runs.push(run);
       run = [];
     }
     if (value !== null && peak !== null) run.push([times[index]!, value, Math.max(value, peak)]);
   });
-  if (run.length > 1) runs.push(run);
+  if (run.length) runs.push(run);
   return runs;
 }
 
@@ -215,15 +215,23 @@ export function HistoryChart({
             <g clipPath={`url(#${clipId})`} data-reveal={count ? "" : undefined}>
               {series.map((line) =>
                 line.peaks
-                  ? peakRuns(line.values, line.peaks, times, longestStepMs).map((run) => (
-                      <path key={`${line.key}-peak-${run[0]![0]}`} data-busiest d={`${run.map(([time, , peak], index) => `${index ? "L" : "M"}${x(time)},${y(peak)}`).join(" ")} ${[...run].reverse().map(([time, value]) => `L${x(time)},${y(value)}`).join(" ")} Z`} fill={line.color} opacity={0.18} />
-                    ))
+                  ? peakRuns(line.values, line.peaks, times, longestStepMs).map((run) =>
+                      run.length === 1 ? (
+                        <rect key={`${line.key}-peak-${run[0]![0]}`} data-busiest x={x(run[0]![0]) - 4} y={y(run[0]![2])} width={8} height={Math.max(2, y(run[0]![1]) - y(run[0]![2]))} fill={line.color} opacity={0.18} />
+                      ) : (
+                        <path key={`${line.key}-peak-${run[0]![0]}`} data-busiest d={`${run.map(([time, , peak], index) => `${index ? "L" : "M"}${x(time)},${y(peak)}`).join(" ")} ${[...run].reverse().map(([time, value]) => `L${x(time)},${y(value)}`).join(" ")} Z`} fill={line.color} opacity={0.18} />
+                      ),
+                    )
                   : null,
               )}
               {series.map((line) =>
-                linesOf(line.values, times, longestStepMs).map((run) => (
-                  <path key={`${line.key}-${run[0]![0]}`} d={smooth(run.map(([time, value]) => [x(time), y(value)]))} fill="none" stroke={line.color} strokeWidth="1.75" strokeDasharray={line.dash} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
-                )),
+                linesOf(line.values, times, longestStepMs).map((run) =>
+                  run.length === 1 ? (
+                    <rect key={`${line.key}-${run[0]![0]}`} data-point x={x(run[0]![0]) - 3} y={y(run[0]![1]) - 3} width={6} height={6} fill={line.color} />
+                  ) : (
+                    <path key={`${line.key}-${run[0]![0]}`} d={smooth(run.map(([time, value]) => [x(time), y(value)]))} fill="none" stroke={line.color} strokeWidth="1.75" strokeDasharray={line.dash} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+                  ),
+                ),
               )}
             </g>
             {at !== null ? <line x1={x(times[at]!)} x2={x(times[at]!)} y1="0" y2={height} stroke="var(--input)" strokeWidth="1" vectorEffect="non-scaling-stroke" /> : null}

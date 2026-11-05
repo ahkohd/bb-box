@@ -13,6 +13,7 @@ import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { building, needsSignIn, restartWords, setupTarget, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
+import { leaveModifiedClick } from "./modified-click.ts";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { joinProblem } from "../core/join-tries.ts";
 
@@ -130,7 +131,7 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
   if (!target) return <>{fallback}</>;
   if (building(target)) return <Progress setup={target} />;
   const other = others ? (
-    <UrlLink href={SETTINGS_PATH} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+    <UrlLink href={SETTINGS_PATH} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={leaveModifiedClick}>
       Other backends
     </UrlLink>
   ) : null;
