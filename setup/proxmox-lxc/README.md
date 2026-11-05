@@ -176,7 +176,14 @@ template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
   prints the version it installed. `build.sh` asks for it with `LINUX_GPU=nvidia`
   in the build's `build.env` for a Linux template, `none` by default, and
   fetches the installer with `fetch-artifacts.sh <dir> linux-nvidia`: the
-  Linux artifacts and NVIDIA's installer for the host's driver.
+  Linux artifacts and NVIDIA's installer for the host's driver. A refresh
+  of the Linux template, each night or with `bb box images build`, does the
+  same in a box of it: in a container whose host has an NVIDIA driver it
+  builds with `LINUX_GPU=nvidia`, so the template gets that driver's
+  userspace and its record the version, even if it was built with `--cpu`;
+  in a VM, on arm64 or on a host with no driver it builds as before. A GPU
+  desktop template's refresh installs the userspace as `build.sh desktop`
+  does.
 - `desktop` gives the template no device lines: the GPU helper gives each
   box its card, and a box with none draws on the CPU, with x264 video. List
   it in bb-box's GPU desktop templates by its VMID alone. `--gpu` gives the

@@ -2543,7 +2543,7 @@ export class ProxmoxLxcBackend implements Backend {
               );
               const driver = (await reportDriver) ?? nvidia?.version ?? null;
               const offDriver = server && recorded?.nvidia && driver && recorded.nvidia !== driver;
-              const userspaceWords = `The Linux template has NVIDIA's userspace ${recorded?.nvidia}, and the host's driver is ${driver}. New boxes with a GPU are not made from it until it is rebuilt with build.sh linux. Boxes with no GPU are made as usual.`;
+              const userspaceWords = `The Linux template has NVIDIA's userspace ${recorded?.nvidia}, and the host's driver is ${driver}. New boxes with a GPU are not made from it until it is rebuilt, with bb box images build ${this.id}/${template} or build.sh linux. Boxes with no GPU are made as usual.`;
               checks.push({
                 id: `template.${template}.image`,
                 name: `Image of ${name[1]}`,
@@ -4232,7 +4232,7 @@ export class ProxmoxLxcBackend implements Backend {
       return { why: `${what} has no NVIDIA userspace for its driver ${driver ?? "(not reported)"}: ${others.join(", ")}`, fix: "Build it again from a Linux template with the userspace, or ask for gpu none." };
     }
     if (!fitting.length) {
-      return { why: `no Linux template there has NVIDIA's userspace for its driver ${driver ?? "(not reported)"}: ${others.join(", ")}`, fix: `Rebuild one with build.sh linux <vmid> --replace, as root on ${node}.` };
+      return { why: `no Linux template there has NVIDIA's userspace for its driver ${driver ?? "(not reported)"}: ${others.join(", ")}`, fix: `Rebuild one with bb box images build ${this.id}/<vmid>, or with build.sh linux <vmid> --replace as root on ${node}.` };
     }
     return { templates: fitting };
   }

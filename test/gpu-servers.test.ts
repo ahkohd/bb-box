@@ -123,7 +123,7 @@ test("071 unit 7: a server's shared GPU is refused before any copy, with words f
   const backend = bare.backend();
   const room = await backend.capacity("linux", shared, []);
   assert.equal(room.ok, false);
-  assert.equal(room.message, "pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Rebuild one with build.sh linux <vmid> --replace, as root on pve.");
+  assert.equal(room.message, "pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Rebuild one with bb box images build proxmox-lxc/<vmid>, or with build.sh linux <vmid> --replace as root on pve.");
   assert.equal(room.agentMessage, "Not made: pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Ask for gpu none, or ask the user. bb-box changed nothing.");
   assert.doesNotMatch(room.agentMessage!, /release|raise|settings|setup-gpu|build\.sh/i, "an agent is never told to release a box or change a setting");
   const before = clones(bare);
@@ -134,6 +134,9 @@ test("071 unit 7: a server's shared GPU is refused before any copy, with words f
   const old = new ClaimsBridge();
   withUserspace(old, "570.86");
   assert.match((await old.backend().capacity("linux", shared, [])).message!, /template 9000 has 570\.86/);
+  const oldImage = (await old.backend().doctor()).checks.find((check) => check.id === "template.9000.image");
+  assert.equal(oldImage?.status, "warn", JSON.stringify(oldImage));
+  assert.match(oldImage?.detail ?? "", /The Linux template has NVIDIA's userspace 570\.86, and the host's driver is 580\.142\. New boxes with a GPU are not made from it until it is rebuilt, with bb box images build proxmox-lxc\/9000 or build\.sh linux\./);
 
   const off = new ClaimsBridge({ writes: "off" });
   withUserspace(off);

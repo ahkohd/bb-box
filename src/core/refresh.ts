@@ -22,13 +22,21 @@ import { isSignallablePid } from "../transports/spawns.ts";
 import { TransportError, type CommandTransport } from "../transports/types.ts";
 
 /** How each Linux kind's standard image is built, as template/build.sh builds it. */
-const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly finalize: string; readonly gpu: string; readonly session: string; readonly check: string }>> = {
-  linux: { artifacts: "linux", finalize: "linux", gpu: "", session: "", check: "bb-box-check-headless" },
+const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly finalize: string; readonly gpu: string; readonly session: string; readonly check: string; readonly userspaceOfHostDriver?: true }>> = {
+  linux: { artifacts: "linux", finalize: "linux", gpu: "", session: "", check: "bb-box-check-headless", userspaceOfHostDriver: true },
   "linux-desktop": { artifacts: "desktop", finalize: "desktop", gpu: "nvidia", session: "", check: "bb-box-check-desktop" },
   "linux-desktop-cpu": { artifacts: "desktop-cpu", finalize: "desktop", gpu: "none", session: "", check: "bb-box-check-desktop" },
   "linux-desktop-wayland-cpu": { artifacts: "desktop-wayland-cpu", finalize: "desktop", gpu: "none", session: "wayland", check: "bb-box-check-desktop" },
   android: { artifacts: "linux", finalize: "android", gpu: "", session: "", check: "bb-box-check-android" },
 };
+
+const LINUX_GPU_OF_HOST_DRIVER = [
+  "linux_gpu=none; artifacts=linux",
+  'if [ "$runtime" = lxc ] && [ "$arch" = x86_64 ] && [ -r /sys/module/nvidia/version ]; then',
+  "  linux_gpu=nvidia; artifacts=linux-nvidia",
+  '  echo "building with NVIDIA\'s userspace for the host\'s driver $(cat /sys/module/nvidia/version)"',
+  "fi",
+];
 
 /** Lines of a build's output that its result keeps. */
 const KEPT_LINES = 200;
@@ -114,6 +122,8 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string,
     'dns=$(sed -n "s/^DNS=//p" /etc/systemd/resolved.conf.d/10-bb-box.conf 2>/dev/null || true)',
     // A VM's image, as Proxmox QEMU's Linux template (057), keeps its kernel and network: customize-base.sh's vm runtime.
     "runtime=lxc; [ \"$(systemd-detect-virt --container 2>/dev/null)\" != none ] || runtime=vm",
+    'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',
+    ...(build.userspaceOfHostDriver ? LINUX_GPU_OF_HOST_DRIVER : []),
     `sudo tee ${src}/build.env >/dev/null <<EOF`,
     "BOX_USER=box",
     "BOX_RUNTIME=$runtime",
@@ -121,12 +131,12 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string,
     `BB_URL=${quote(bbUrl ?? "")}`,
     ...(build.gpu ? [`DESKTOP_GPU=${build.gpu}`] : []),
     ...(build.session ? [`DESKTOP_SESSION=${build.session}`] : []),
+    ...(build.userspaceOfHostDriver ? ["LINUX_GPU=$linux_gpu"] : []),
     `BUILD_ID=${buildId}`,
     `BOX_IDENTITY_RESET=${identityResetFor(kind)}`,
     `PREPARE=${prepare}`,
     "EOF",
-    'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',
-    `sudo env BBBOX_ENV=/nonexistent BBBOX_BB_URL=${quote(bbUrl ?? "")} bash ${src}/fetch-artifacts.sh ${src}/artifacts ${build.artifacts} "$arch"`,
+    `sudo env BBBOX_ENV=/nonexistent BBBOX_BB_URL=${quote(bbUrl ?? "")} bash ${src}/fetch-artifacts.sh ${src}/artifacts ${build.userspaceOfHostDriver ? '"$artifacts"' : build.artifacts} "$arch"`,
     `sudo bash ${src}/guest/customize-base.sh ${src}`,
     `[ "$runtime" != vm ] || sudo bash ${BUILD_DIR}/proxmox-qemu/linux/customize-vm.sh ${src}`,
     ...(build.finalize === "desktop" ? [`sudo bash ${src}/guest/customize-desktop.sh ${src}`] : []),
