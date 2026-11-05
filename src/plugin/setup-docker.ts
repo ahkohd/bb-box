@@ -10,6 +10,12 @@ import type { ApplyResult } from "./configuration.ts";
 import type { ImageBuild } from "./docker-images.ts";
 import { building, needsSignIn, restartWords, setupTarget, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
 
+export interface ListenOffer {
+  readonly port: number;
+  /** An address boxes can use, when BB listens on every address. */
+  readonly url: string | null;
+}
+
 export interface SetupDockerDeps {
   setups(): Promise<MachineSetup[]>;
   setDockerHost(hostId: string, enabled: boolean, linuxOnly: boolean): Promise<ApplyResult>;
@@ -18,6 +24,12 @@ export interface SetupDockerDeps {
   now?(): number;
   /** How long --no-wait gives the build before it answers. */
   readonly glanceMs?: number;
+  /** A line as the build goes, for a terminal that shows it before the command ends. */
+  say?(line: string): void;
+  /** BB listening on every address, and a URL boxes could use. */
+  listening?(): Promise<ListenOffer | null>;
+  /** Sets BB's machine access to direct at that URL. The command asks before it calls this. */
+  setDirectAccess?(url: string): Promise<void>;
 }
 
 export interface SetupDockerResult {
@@ -66,7 +78,36 @@ function pick(machines: readonly MachineSetup[], wanted: string | undefined): Ma
   return `No BB machine has Docker that BB Box can use. ${why}. Install Docker Engine on one, or set up another backend in BB Box's settings.`;
 }
 
-export async function setupDocker(deps: SetupDockerDeps, options: { machine?: string; wait: boolean; signal?: AbortSignal }): Promise<SetupDockerResult> {
+/** A listening socket on 0.0.0.0 in `/proc/net/tcp`, or null. `0A` is LISTEN. */
+export function everyAddressPort(tcp: string): number | null {
+  for (const line of tcp.split("\n").slice(1)) {
+    const parts = line.trim().split(/\s+/);
+    const local = parts[1];
+    if (parts[3] !== "0A" || !local?.startsWith("00000000:")) continue;
+    const port = Number.parseInt(local.slice(local.indexOf(":") + 1), 16);
+    if (port > 0) return port;
+  }
+  return null;
+}
+
+export function reachableUrl(port: number, addresses: readonly string[]): string | null {
+  const address = addresses.find((candidate) => candidate && candidate !== "127.0.0.1" && candidate !== "0.0.0.0");
+  return address ? `http://${address}:${port}` : null;
+}
+
+async function accessOffer(deps: SetupDockerDeps, access: MachineAccessProblem | null, setAccess: boolean): Promise<string> {
+  if (!access) return "";
+  const listening = await deps.listening?.().catch(() => null);
+  if (!listening) return `\n${accessWords(access)}`;
+  if (!listening.url) return `\n${accessWords(access)}\nBB listens on every address, port ${listening.port}. It has no other address to give boxes.`;
+  if (setAccess && deps.setDirectAccess) {
+    await deps.setDirectAccess(listening.url);
+    return `\nSet Machine access to direct at ${listening.url}. That changes BB's settings.`;
+  }
+  return `\n${accessWords(access)}\nBB listens on every address, port ${listening.port}. Run again with --set-machine-access to set Machine access to direct at ${listening.url}. That changes BB's settings.`;
+}
+
+export async function setupDocker(deps: SetupDockerDeps, options: { machine?: string; wait: boolean; signal?: AbortSignal; setAccess?: boolean }): Promise<SetupDockerResult> {
   const now = () => deps.now?.() ?? Date.now();
   const picked = pick(await deps.setups(), options.machine);
   if (typeof picked === "string") return { exitCode: 1, stderr: `${picked}\n` };
@@ -89,8 +130,9 @@ export async function setupDocker(deps: SetupDockerDeps, options: { machine?: st
     }
   }
   const access = await deps.machineAccess().catch(() => null);
-  const after = access ? `\n${accessWords(access)}` : "";
+  const after = await accessOffer(deps, access, options.setAccess === true);
   const next = "\nMake a box with box_acquire, or with the plus in a thread's Box panel.";
+  deps.say?.(`Docker on ${setup.name}: waiting for its images.`);
   const build = deps.ensure(setup.hostId);
   // Without waiting, a check that finds nothing to build still ends: it is given a moment before the answer.
   const stop = new Promise<null>((resolve) => {

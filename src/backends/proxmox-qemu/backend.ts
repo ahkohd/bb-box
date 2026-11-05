@@ -1215,6 +1215,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    await this.disarmFork(guest, signal).catch((error: unknown) => this.#context.logError("disarm before release", error));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
     if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
@@ -1621,6 +1622,7 @@ export class ProxmoxQemuBackend implements Backend {
       const android = this.#config.androidTemplates.length > 0;
       const androidPins = android ? (this.#context.images?.pins("android") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       const bbApp = linux || android ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const chromeAmd = linux ? (this.#context.images?.chrome?.("x86_64") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       for (const template of this.#allTemplates()) {
         const name = templateCheck(template);
         const os = this.#osOf(template);
@@ -1644,12 +1646,13 @@ export class ProxmoxQemuBackend implements Backend {
               pass(name, `VM template ${template} on ${storage}, ${freeGiB} GiB free.`);
               if (kind === ANDROID_IMAGE_KIND) this.#androidDisk(template, storage, freeGiB, { pass, warn });
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
+              const recorded = recordInDescription(String(config.description ?? ""));
               const judged = judgeImage(
-                recordInDescription(String(config.description ?? "")),
+                recorded,
                 kind === ANDROID_IMAGE_KIND
                   ? { os: "android", pins: await androidPins, bbApp: await bbApp }
                   : os === "linux"
-                  ? { os, pins: await (kind === LINUX_DESKTOP_KIND ? desktopPins : linuxPins), bbApp: await bbApp }
+                  ? { os, pins: await (kind === LINUX_DESKTOP_KIND ? desktopPins : linuxPins), bbApp: await bbApp, pinChrome: recorded?.arch === "arm64" ? null : await chromeAmd }
                   : { os, pins: await pins, bbApp: null, joins: this.#config.enrol },
                 `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh ${this.#buildWord(template)} ${template} --replace.`,
               );

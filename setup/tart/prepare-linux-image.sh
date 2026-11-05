@@ -121,7 +121,8 @@ dir=/var/tmp/bb-box-build
 tar -C "$here/.." -czf - proxmox-lxc/template proxmox-lxc/host/common.sh |
   as_root sh -c "rm -rf $dir && mkdir -p $dir && tar -xzf - -C $dir"
 src=$dir/proxmox-lxc/template
-printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\nBOX_IDENTITY_RESET=%s\n' "$bb_url" "$build_id" "$identity_reset" | as_root sh -c "cat >$src/build.env"
+prepare=$(sha256sum "$0" | awk 'NR==1{print $1}')
+printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\nBOX_IDENTITY_RESET=%s\nPREPARE=%s\n' "$bb_url" "$build_id" "$identity_reset" "$prepare" | as_root sh -c "cat >$src/build.env"
 printf '%s\n' "$key" | as_root sh -c "cat >$src/plugin-key.pub"
 
 step "fetching the arm64 tools, BB's host app and any desktop artifacts"

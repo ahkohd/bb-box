@@ -263,3 +263,40 @@ test("bb box images versions says what a rebuild takes, a line per tool, its arc
     ].join("\n"),
   );
 });
+
+test("one failed read of an upstream is tried again, and the pin stays when every try fails", async () => {
+  const { fetch } = upstream();
+  let cliTries = 0;
+  const flaky: FetchText = async (url, init) => {
+    if (url.includes("cli/cli")) {
+      cliTries += 1;
+      if (cliTries === 1) return { ok: false, status: 503, text: async () => "", arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    return fetch(url, init);
+  };
+  const versions = await resolveVersions(SETUP, { fetch: flaky, now: NOW, verify: trusting });
+  const gh = versions.tools.find((tool) => tool.name === "gh" && tool.arch === "x86_64")!;
+  assert.equal(gh.version, NEXT);
+  assert.equal(gh.kept, null);
+  assert.equal(cliTries, 2, "the one failed read, then the release both architectures share");
+
+  let tries = 0;
+  const down: FetchText = async (url, init) => {
+    if (url.includes("earendil-works/pi")) {
+      tries += 1;
+      return { ok: false, status: 503, text: async () => "", arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    return fetch(url, init);
+  };
+  const kept = await resolveVersions(SETUP, { fetch: down, now: NOW, verify: trusting });
+  const pi = kept.tools.find((tool) => tool.name === "pi" && tool.arch === "x86_64")!;
+  assert.equal(pi.version, pinOf("pi").version);
+  assert.match(pi.kept ?? "", /upstream could not be read/);
+  assert.equal(tries, 3, "three reads of the one release, shared by both architectures");
+});
+
+test("the arm64 desktop Chrome pin is not older than the amd64 pin", () => {
+  const lines = readFileSync(join(TEMPLATE, "desktop-pins.tsv"), "utf8").split("\n").filter((line) => line.startsWith("chrome\t"));
+  const version = (arch: string) => lines.find((line) => line.endsWith(`\t${arch}`))!.split("\t")[1]!;
+  assert.ok(compareVersions(version("arm64"), version("x86_64")) >= 0, `${version("arm64")} older than ${version("x86_64")}`);
+});

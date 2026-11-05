@@ -1575,7 +1575,11 @@ export class ProxmoxLxcBackend implements Backend {
     this.#cursor.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
-    if (await this.#still(api, guest, signal)) await this.#owned(api).destroy(this.#vmid(guest), this.#boxOf(guest), signal);
+    if (await this.#still(api, guest, signal)) {
+      await this.#owned(api).destroy(this.#vmid(guest), this.#boxOf(guest), signal, () =>
+        this.disarmFork(guest, signal).catch((error: unknown) => this.#context.logError("disarm before release", error)),
+      );
+    }
     reservationsOn(this.#cardKey(api)).dropGuest(this.#vmid(guest));
     reservationsOn(this.#cardKey(api)).deleted(this.#vmid(guest), this.#now());
     hooks.timing("delete", Math.round(performance.now() - started));
@@ -1958,7 +1962,8 @@ export class ProxmoxLxcBackend implements Backend {
         images?.pins("linux-desktop") ?? null,
         images?.bbApp(signal) ?? null,
         this.#hostNvidia(),
-      ]).catch(() => [null, null, null, null] as const);
+        images?.chrome?.("x86_64") ?? null,
+      ]).catch(() => [null, null, null, null, null] as const);
       const pinSet = (flavour: LxcFlavour): PinSet => (flavour === "linux" ? "linux" : "linux-desktop");
       for (const listed of templates) {
         const template = listed.template.vmid;
@@ -1981,10 +1986,11 @@ export class ProxmoxLxcBackend implements Backend {
               this.#templates.set(template, templateInfo(storage, config));
               templateStorages.push({ name: storage, type: (disk as StorageStatus).type, volume: String(config.rootfs) });
               pass(name, `CT template ${template} on ${storage}, ${Math.floor((disk as { available: number }).available / GiB)} GiB free.`);
-              const [linuxPins, desktopPins, bbApp, nvidia] = await facts;
+              const [linuxPins, desktopPins, bbApp, nvidia, chromeAmd] = await facts;
+              const recorded = recordInDescription(String(config.description ?? ""));
               const judged = judgeImage(
-                recordInDescription(String(config.description ?? "")),
-                { os: "linux", pins: pinSet(listed.flavour) === "linux" ? linuxPins : desktopPins, bbApp, hostNvidia: nvidia },
+                recorded,
+                { os: "linux", pins: pinSet(listed.flavour) === "linux" ? linuxPins : desktopPins, bbApp, hostNvidia: nvidia, pinChrome: recorded?.arch === "arm64" ? null : chromeAmd },
                 `Rebuild it with the setup guide's template/build.sh, as root on ${node}: build.sh ${REBUILD[listed.flavour](template)} --replace.`,
               );
               checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });

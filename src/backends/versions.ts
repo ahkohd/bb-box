@@ -156,34 +156,41 @@ class Upstream {
     this.#signal = signal;
   }
 
-  /** A URL's text, each fetched once. */
+  /** A URL's text. One blip is tried again, three times, before the pin stays. */
   text(url: string, headers: Readonly<Record<string, string>> = {}): Promise<string> {
     let got = this.#cache.get(url);
     if (!got) {
-      const timeout = AbortSignal.timeout(30_000);
-      got = this.#fetch(url, { headers: { "User-Agent": "bb-box", ...headers }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout }).then(
-        async (response) => {
-          if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
-          return response.text();
-        },
-      );
+      got = this.#attempt(url, headers, false) as Promise<string>;
       this.#cache.set(url, got);
     }
     return got;
   }
 
-  /** A URL's bytes, as a detached signature is, each fetched once. */
+  /** A URL's bytes, as a detached signature is. One blip is tried again, three times. */
   bytes(url: string): Promise<Uint8Array> {
     let got = this.#bytes.get(url);
     if (!got) {
-      const timeout = AbortSignal.timeout(30_000);
-      got = this.#fetch(url, { headers: { "User-Agent": "bb-box" }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout }).then(async (response) => {
-        if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
-        return new Uint8Array(await response.arrayBuffer());
-      });
+      got = this.#attempt(url, {}, true) as Promise<Uint8Array>;
       this.#bytes.set(url, got);
     }
     return got;
+  }
+
+  /** One URL, up to three times. A later caller shares the first call, including its tries. */
+  async #attempt(url: string, headers: Readonly<Record<string, string>>, bytes: boolean): Promise<string | Uint8Array> {
+    let last: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const timeout = AbortSignal.timeout(30_000);
+        const response = await this.#fetch(url, { headers: { "User-Agent": "bb-box", ...headers }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout });
+        if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
+        return bytes ? new Uint8Array(await response.arrayBuffer()) : response.text();
+      } catch (error) {
+        last = error;
+        if (this.#signal?.aborted) break;
+      }
+    }
+    throw last;
   }
 
   json<T>(url: string, headers?: Readonly<Record<string, string>>): Promise<T> {
@@ -292,6 +299,18 @@ export async function resolveVersions(
   const verify = options.verify ?? gpgvVerify(setup);
   const unread = (error: unknown) =>
     error instanceof SignatureError ? `its signature did not verify: ${error.message}` : `upstream could not be read: ${error instanceof Error ? error.message : String(error)}`;
+  const tried = async <T>(read: () => Promise<T>): Promise<T> => {
+    let last: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await read();
+      } catch (error) {
+        if (error instanceof SignatureError) throw error;
+        last = error;
+      }
+    }
+    throw last;
+  };
   const tools: ToolVersion[] = [];
   const keep = (name: string, arch: string, pinned: string, source: string, kept: string | null) =>
     tools.push({ name, arch, pinned: plain(pinned), version: plain(pinned), source, kept });
@@ -305,7 +324,7 @@ export async function resolveVersions(
     pins.tools.map(async (pin) => {
       if (!(FOLLOWED as readonly string[]).includes(pin.name)) return pin;
       try {
-        const newer = await newerTool(upstream, pin, verify);
+        const newer = await tried(() => newerTool(upstream, pin, verify));
         if ("kept" in newer) {
           keep(pin.name, pin.arch, pin.version, newer.source, newer.kept || null);
           return pin;
@@ -325,7 +344,7 @@ export async function resolveVersions(
       if (name !== "chrome" || !DEB_ARCH[arch]) return line;
       const pinned = chromeVersion(file);
       try {
-        const latest = await latestChrome(upstream, arch, verify);
+        const latest = await tried(() => latestChrome(upstream, arch, verify));
         if (compareVersions(latest.version, pinned) <= 0) {
           keep("chrome", arch, pinned, "Google's stable Packages index", null);
           return line;

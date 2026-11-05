@@ -14,7 +14,7 @@ import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
-import { setupDocker } from "./setup-docker.ts";
+import { everyAddressPort, reachableUrl, setupDocker } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
@@ -313,7 +313,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
-              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}` };
+              const failed = box.state === "failed" || (!options["no-wait"] && box.enrol.state === "failed");
+              const detail = `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}`;
+              return failed ? { exitCode: 1, stderr: detail } : { exitCode: 0, stdout: detail };
             }),
         }),
         "machines resize": cliCommand({
@@ -511,13 +513,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ options }, ctx) =>
             guard("Listing the images", async () => {
               const views = await app.imageJobs.list(ctx.signal);
+              const problems = app.imageJobs.unlistable();
               if (options.json) return json(views);
               if (options.output) {
                 const view = views.find((candidate) => candidate.name === options.output);
                 if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
                 return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
               }
-              if (!views.length) return out("No backend that is on has images bb-box rebuilds.");
+              if (!views.length) return out(problems.length ? problems.join("\n") : "No backend that is on has images bb-box rebuilds.");
               const running = app.imageJobs.running();
               const soon = await app.imageJobs.dueSoon(ctx.signal).catch(() => null);
               return out(
@@ -583,12 +586,32 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           options: {
             machine: { type: "string", description: "The BB machine, by ID or name, from bb machine list. The one that runs BB by default." },
             "no-wait": { type: "boolean", description: "Start the build, and say how far it is, without waiting for it." },
+            "set-machine-access": { type: "boolean", description: "Where BB listens on every address and boxes cannot join, set Machine access to direct at an address they can reach. This changes BB's settings. Without it, the command only says it can." },
           },
           run: ({ options }, ctx) =>
             guard("Setting up Docker", () =>
               setupDocker(
-                { setups: () => app.setups(), setDockerHost: (hostId, enabled, linuxOnly) => app.setDockerHost(hostId, enabled, linuxOnly), ensure: (hostId) => app.dockerImages.ensure(hostId), machineAccess: () => app.machineAccess() },
-                { ...(options.machine ? { machine: String(options.machine) } : {}), wait: !options["no-wait"], ...(ctx.signal ? { signal: ctx.signal } : {}) },
+                {
+                  setups: () => app.setups(),
+                  setDockerHost: (hostId, enabled, linuxOnly) => app.setDockerHost(hostId, enabled, linuxOnly),
+                  ensure: (hostId) => app.dockerImages.ensure(hostId),
+                  machineAccess: () => app.machineAccess(),
+                  say: (line) => process.stderr.write(`${line}\n`),
+                  listening: async () => {
+                    const { readFileSync } = await import("node:fs");
+                    const { networkInterfaces } = await import("node:os");
+                    const tcp = readFileSync("/proc/net/tcp", "utf8");
+                    const port = everyAddressPort(tcp);
+                    if (!port) return null;
+                    const addresses = Object.values(networkInterfaces()).flatMap((entries) => entries?.filter((entry) => entry.family === "IPv4" && !entry.internal).map((entry) => entry.address) ?? []);
+                    return { port, url: reachableUrl(port, addresses) };
+                  },
+                  setDirectAccess: async (url) => {
+                    const config = await bb.sdk.system.config();
+                    await bb.sdk.system.updateGeneralSettings({ ...config.generalSettings, machineServerUrl: url, defaultMachineAccess: "direct" });
+                  },
+                },
+                { ...(options.machine ? { machine: String(options.machine) } : {}), wait: !options["no-wait"], setAccess: options["set-machine-access"] === true, ...(ctx.signal ? { signal: ctx.signal } : {}) },
               ),
             ),
         }),

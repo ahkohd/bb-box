@@ -389,7 +389,7 @@ test("the upkeep keeps the newest stopped template of the current scripts, even 
   assert.equal(fake.sandboxes.get(templates.linux!)?.state, "archived", "the current scripts' template stays, though no record names it");
   assert.equal(fake.sandboxes.get(templates["linux-desktop-cpu"]!)?.state, "archived");
   assert.equal(old.state, "deleted");
-  assert.equal(leftBuild.state, "deleted");
+  assert.equal(leftBuild.state, "ready", "a running template build of this install is still going, so a reload can follow it");
 });
 
 test("the upkeep forks a template of the current scripts that the account already has rather than build one, and builds one template at a time", async () => {
@@ -675,4 +675,50 @@ test("a boat box is resized by starting it again on a machine of the new size, a
   await backend.resize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: null }, { restart: true }, signal());
   assert.equal(made.type, "small");
   assert.equal(made.state, "archived", "a stopped box is stopped again at its new size");
+});
+
+test("a reload follows the template build already going instead of starting another, and stopping does not delete it", async () => {
+  const fake = new FakeBoat();
+  const storage = new MemoryStorage();
+  let templates: BoatTemplates | null = null;
+  let stopped = false;
+  const reached = (): Reached => ({
+    run: async (script) => {
+      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      if (script.includes("exit=") && !stopped) {
+        stopped = true;
+        templates?.dispose();
+        return { ...ok, exitCode: -1, stderr: "stopping" };
+      }
+      if (script.includes("exit=")) return { ...ok, stdout: "exit=0\n12:00:00  customized\n" };
+      if (script.startsWith("bb-box-check")) return { ...ok, stdout: "Docker                             ok\n" };
+      return ok;
+    },
+  });
+  const deps = {
+    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
+    storage,
+    installId: "inst1",
+    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
+    publicKey: async () => "ssh-ed25519 AAAAkey",
+    reach: async () => reached(),
+    forget: async () => {},
+    answers: async () => {},
+    settled: async () => {},
+    restored: async () => {},
+    now: Date.now,
+    sleep: async () => {},
+    log: () => {},
+    fingerprint: () => "fp1",
+    setupArchive: async () => Buffer.from("tar"),
+  };
+  templates = new BoatTemplates(deps);
+  await assert.rejects(templates.build("linux", "test"), /bb-box is stopping/);
+  const going = [...fake.sandboxes.values()].find((sandbox) => sandbox.labels[LABELS.role] === TEMPLATE_ROLE);
+  assert.ok(going);
+  assert.notEqual(going.state, "deleted");
+  const again = new BoatTemplates(deps);
+  const record = await again.build("linux", "again");
+  assert.equal(record.sandbox, going.id);
+  assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 1);
 });

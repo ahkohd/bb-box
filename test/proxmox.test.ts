@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { errors } from "undici";
 import { Proxmox, ProxmoxError, parseSizeGiB, parseTags, type ProxmoxOptions } from "../src/backends/proxmox/api.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 
@@ -264,6 +265,24 @@ test("a wrong token and an unreachable API give clear errors without the secret"
   });
   const unreachable = await down.version().catch((e) => e);
   assert.match(unreachable.message, /cannot reach the Proxmox API/);
+});
+
+test("a request after the HTTP client is destroyed says the backend stopped, not that the API cannot be reached", async () => {
+  for (const cause of [new errors.ClientDestroyedError(), new errors.ClientClosedError()]) {
+    const error = new TypeError("fetch failed", { cause });
+    const proxmox = new Proxmox({
+      apiUrl: "https://pve.example.com:8006",
+      ...FAKE_TOKEN,
+      node: "pve",
+      fetch: async () => {
+        throw error;
+      },
+    });
+    const failed = await proxmox.version().catch((caught: unknown) => caught);
+    assert.ok(failed instanceof ProxmoxError);
+    assert.match(String(failed), /stopped this Proxmox backend, or rebuilt it, as when Settings are saved/);
+    assert.doesNotMatch(String(failed), /cannot reach the Proxmox API/);
+  }
 });
 
 test("parsers", () => {

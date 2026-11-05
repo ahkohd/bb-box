@@ -1168,26 +1168,37 @@ test("a refresh's base is pulled when the registry has moved its tag, room allow
   const calls = () => (existsSync(join(dir, "tart", "calls")) ? readFileSync(join(dir, "tart", "calls"), "utf8").trim().split("\n") : []);
 
   writeFileSync(digest, "sha256:old");
-  assert.match(run(baseScript("ghcr.io/acme/macos-xcode:27", 60), "1000").stdout, /base: ghcr\.io\/acme\/macos-xcode:27 is current/);
+  assert.match(run(baseScript("ghcr.io/acme/macos-xcode:27", 60, "inst1"), "1000").stdout, /base: ghcr\.io\/acme\/macos-xcode:27 is current/);
   assert.deepEqual(calls(), []);
 
   // Moved, but its disk does not fit beyond the reserve.
   writeFileSync(digest, "sha256:new");
-  const full = run(baseScript("ghcr.io/acme/macos-xcode:27", 60), String(1024 ** 5));
+  const full = run(baseScript("ghcr.io/acme/macos-xcode:27", 60, "inst1"), String(1024 ** 5));
   assert.equal(full.status, 3);
   assert.match(full.stderr, /base: no room to pull ghcr\.io\/acme\/macos-xcode:27: its disk is 1048576 GiB, and -?\d+ GiB is free beyond the 60 GiB reserve\./);
   assert.deepEqual(calls(), []);
 
-  const pulled = run(baseScript("ghcr.io/acme/macos-xcode:27", 0), "1000");
+  const pulled = run(baseScript("ghcr.io/acme/macos-xcode:27", 0, "inst1"), "1000");
   assert.equal(pulled.status, 0, pulled.stderr);
   assert.match(pulled.stdout, /base: pulling ghcr\.io\/acme\/macos-xcode:27, sha256:new, in place of sha256:old\nbase: pulled/);
   assert.deepEqual(calls(), ["pull ghcr.io/acme/macos-xcode:27"]);
 
-  // After the replace: the copy no tag names goes, the tag's stays.
-  const pruned = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27"), "0");
+  // A copy this install did not pull, and one another install still names, stay.
+  mkdirSync(join(cache, "sha256:kept"), { recursive: true });
+  const bases = join(dir, ".bb-box", "tart", "bases");
+  mkdirSync(bases, { recursive: true });
+  writeFileSync(join(bases, "other"), "sha256:old\n");
+  const shared = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27", "inst1"), "0");
+  assert.equal(shared.stdout, "", shared.stderr);
+  assert.equal(existsSync(join(cache, "sha256:old")), true, "another install still names it");
+  rmSync(join(bases, "other"));
+  mkdirSync(join(cache, "sha256:stray"), { recursive: true });
+
+  // After the replace: the copy this install pulled and no tag names goes. Another install's, and one nobody recorded, stay.
+  const pruned = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27", "inst1"), "0");
   assert.match(pruned.stdout, /base: removed the old cached ghcr\.io\/acme\/macos-xcode@sha256:old/);
-  assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new"))], [false, true]);
-  assert.match(run(baseScript("bb-box-macos", 60), "0").stdout, /base: bb-box-macos is a local VM/);
+  assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new")), existsSync(join(cache, "sha256:stray"))], [false, true, true]);
+  assert.match(run(baseScript("bb-box-macos", 60, "inst1"), "0").stdout, /base: bb-box-macos is a local VM/);
 });
 
 test("prepare-image.sh's boot waits while macOS's two VM slots are taken, saying so, and boots once one is free; with no slot in time it stops (#650)", async () => {

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
-import { BoatError, isRunning, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
+import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 
 export const TEMPLATE_ROLE = "template";
@@ -170,7 +170,13 @@ export function templateArchive(setup = setupDir()): Promise<Buffer> {
 }
 
 export function buildEnvFor(buildId: string, kind: BoatKind): string {
-  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ...identityBuildSettings(kind), ""].join("\n");
+  let prepare = "";
+  try {
+    prepare = createHash("sha256").update(readFileSync(join(setupDir(), "boat/template.sh"))).digest("hex");
+  } catch {
+    prepare = "";
+  }
+  return ["BOX_USER=box", "BOX_RUNTIME=vm", "DESKTOP_GPU=none", "BB_URL=", `BUILD_ID=${buildId}`, ...identityBuildSettings(kind), `PREPARE=${prepare}`, ""].join("\n");
 }
 
 export function buildWaitWords(kind: BoatKind, lastBuildMs: number | null): string {
@@ -336,16 +342,24 @@ export class BoatTemplates {
     return building;
   }
 
+  async #ongoing(kind: BoatKind, key: string): Promise<Sandbox | null> {
+    const labels = this.#deps.labelKeys;
+    const listed = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key });
+    return listed.find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state)) ?? null;
+  }
+
   async #build(kind: BoatKind, why: string): Promise<TemplateRecord> {
     const { api, now, log } = this.#deps;
     const started = now();
     const key = this.key();
     const labels = this.#deps.labelKeys;
-    log(`boat: building the ${kind} template, as ${why}.`);
+    const existing = await this.#ongoing(kind, key);
+    if (existing) log(`boat: the ${kind} template build ${existing.id} is already going, so this one follows it.`);
+    else log(`boat: building the ${kind} template, as ${why}.`);
     const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
     const licence = TEMPLATE_STEP[kind] === "android" ? (this.#deps.androidLicence?.() ?? null) : null;
     if (TEMPLATE_STEP[kind] === "android" && !licence) throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
-    const made = await api
+    const made = existing ?? await api
       .create({
         size,
         ttlSeconds: BUILD_TTL_SECONDS,
@@ -382,8 +396,10 @@ export class BoatTemplates {
       log(`boat: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
       return record;
     } catch (error) {
-      await this.#deps.forget(made.id);
-      await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      if (!this.#disposed) {
+        await this.#deps.forget(made.id);
+        await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      }
       throw error;
     } finally {
       this.#buildSandboxes.delete(made.id);
@@ -405,7 +421,8 @@ export class BoatTemplates {
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trial = await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` });
+    const going = (await api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind })).find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
+    const trial = going ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` }));
     this.#buildSandboxes.add(trial.id);
     try {
       await this.#running(trial.id);
@@ -420,9 +437,10 @@ export class BoatTemplates {
       const failed = failedChecks(check.stdout);
       if (check.exitCode !== 0 || failed.length) throw new Error(`boat's ${kind} template failed its check in a fork of it: ${failed.join("; ") || check.stderr.trim().slice(-400) || `exit ${check.exitCode}`}`);
     } finally {
+      this.#buildSandboxes.delete(trial.id);
+      if (this.#disposed) return;
       await this.#deps.forget(trial.id);
       await api.delete(trial.id).catch((cause) => this.#deps.log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
-      this.#buildSandboxes.delete(trial.id);
     }
   }
 
@@ -516,6 +534,8 @@ export class BoatTemplates {
       if (newest) keep.add(newest.id);
     }
     for (const sandbox of templates) {
+      const role = sandbox.labels[labels.role];
+      if (sandbox.labels[labels.install] === this.#deps.installId && (role === TEMPLATE_ROLE || role === TRIAL_ROLE) && (isRunning(sandbox.state) || isStarting(sandbox.state))) keep.add(sandbox.id);
       if (keep.has(sandbox.id)) continue;
       if (sandbox.createdAt !== null && now() - sandbox.createdAt < LEFT_BUILD_GRACE_MS) continue;
       await api.delete(sandbox.id, signal);

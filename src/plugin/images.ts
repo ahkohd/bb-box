@@ -9,7 +9,7 @@
  * hour rather than at night (afterBbUpdate).
  */
 import { createHash } from "node:crypto";
-import { judgeImage, type ImageFacts, type PinSet } from "../backends/images.ts";
+import { judgeImage, prepareDigest, type ImageFacts, type PinSet } from "../backends/images.ts";
 import type { Backend, BackendStorage, DoctorCheck, ImageBuild } from "../backends/types.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { refreshImage, type RefreshResult } from "../core/refresh.ts";
@@ -184,16 +184,27 @@ export class ImageJobs {
   }
 
   /** The standard builds bb-box can refresh, on each backend that is on: Linux and macOS, and Windows where the backend refreshes it (054). */
+  #unlistable: string[] = [];
+
+  /** Backends that are on whose image list failed, from the last list. */
+  unlistable(): readonly string[] {
+    return this.#unlistable;
+  }
+
   async #standard(signal?: AbortSignal): Promise<{ backend: Backend; build: ImageBuild }[]> {
     const found: { backend: Backend; build: ImageBuild }[] = [];
+    const problems: string[] = [];
     for (const backend of this.#deps.backends()) {
       if (!backend.images) continue;
       const { builds } = await backend.images.list(signal).catch((error: unknown) => {
-        this.#deps.log?.(`images: ${backend.id} did not list its images: ${error instanceof Error ? error.message : String(error)}`);
+        const why = error instanceof Error ? error.message : String(error);
+        this.#deps.log?.(`images: ${backend.id} did not list its images: ${why}`);
+        problems.push(`${backend.label} did not list its images: ${why}`);
         return { builds: [] as ImageBuild[] };
       });
       for (const build of builds) if (build.current && build.image === "standard" && (osOf(build.kind) !== "windows" || backend.images.windows)) found.push({ backend, build });
     }
+    this.#unlistable = problems;
     return found;
   }
 
@@ -203,23 +214,26 @@ export class ImageJobs {
   }
 
   /** Why an image is due (049), in the decision's order of need, or null: [rank, reason]. */
-  async #why(build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
-    const why = await this.#whyAlone(build, app, macosBuild);
+  async #why(backend: Backend, build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
+    const why = await this.#whyAlone(backend, build, app, macosBuild);
     const afterTheMacosImageItIsBuiltOn = 0.5;
     return why && osOf(build.kind) === "ios" ? [why[0] + afterTheMacosImageItIsBuiltOn, why[1]] : why;
   }
 
-  async #whyAlone(build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
+  async #whyAlone(backend: Backend, build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
     const os = osOf(build.kind);
     const pins = await this.#deps.facts.pins(pinSet(build.kind)).catch(() => null);
     const record = build.record;
-    if (record && judgeImage(record, { os, pins, bbApp: carriesBbApp(build.kind) ? app : null, now: this.#now() }, "").status === "fail") return [1, "it fails the doctor"];
+    const pinChrome = record ? await this.#deps.facts.chrome?.(record.arch).catch(() => null) : null;
+    if (record && judgeImage(record, { os, pins, bbApp: carriesBbApp(build.kind) ? app : null, pinChrome: pinChrome ?? null, now: this.#now() }, "").status === "fail") return [1, "it fails the doctor"];
     if (record && os === "ios" && macosBuild && record.base !== macosBuild) return [3, `it is built on another build of the macOS image than ${macosBuild}`];
     if (!record) return [2, "it has no record, so its age is not known"];
     const days = (this.#now() - Date.parse(record.built)) / DAY_MS;
     if (days > INTERVAL_DAYS[os]) return [2, `it is ${Math.floor(days)} days old, past its ${INTERVAL_DAYS[os]}-day interval`];
     if (carriesBbApp(build.kind) && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
     if (pins && record.pins !== pins) return [5, "it was built with other pins than this bb-box's"];
+    const program = await this.#deps.facts.program?.(build.kind, backend.id).catch(() => null);
+    if (program && record.program !== program) return [6, "its guest program or prepare script changed"];
     return null;
   }
 
@@ -234,7 +248,7 @@ export class ImageJobs {
     const standard = await this.#standard(signal);
     for (const { backend, build } of standard) {
       const name = `${backend.id}/${build.ref}`;
-      const why = await this.#why(build, app, macosBuildBeside(build, backend, standard));
+      const why = await this.#why(backend, build, app, macosBuildBeside(build, backend, standard));
       views.push({ name, backend: backend.id, build, due: why?.[1] ?? null, last: await this.#state(name), rank: why?.[0] ?? 9 });
     }
     return views.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).map(({ rank: _, ...view }) => view);
@@ -506,6 +520,7 @@ export class ImageJobs {
       setup: this.#deps.setup,
       bbUrl: this.#deps.bbUrl(),
       bbApp: await this.#deps.facts.bbApp(options.signal).catch(() => null),
+      prepare: await prepareDigest(this.#deps.setup, backend.id).catch(() => null),
       pinned: options.pinned,
       replace: options.replace,
       signal: options.signal,

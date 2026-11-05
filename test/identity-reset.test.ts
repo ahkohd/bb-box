@@ -533,7 +533,7 @@ test("only the checked builds turn the reset on; every image has the program, an
   const tart = on("tart/prepare-linux-image.sh");
   assert.match(tart, /kind=linux-arm64 artifacts=linux finalize=linux identity_reset=on\n/);
   assert.match(tart, /kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=off\n/);
-  assert.match(tart, /BUILD_ID=%s\\nBOX_IDENTITY_RESET=%s\\n' "\$bb_url" "\$build_id" "\$identity_reset" \| as_root sh -c "cat >\$src\/build\.env"/);
+  assert.match(tart, /BUILD_ID=%s\\nBOX_IDENTITY_RESET=%s\\nPREPARE=%s\\n' "\$bb_url" "\$build_id" "\$identity_reset" "\$prepare" \| as_root sh -c "cat >\$src\/build\.env"/);
   for (const unchecked of ["boat/template.sh", "boat/customize-sandbox.sh"]) assert.doesNotMatch(on(unchecked), /BOX_IDENTITY_RESET/, unchecked);
   assert.match(readFileSync(FINALIZE, "utf8"), /rm -f \/etc\/bb-box\/identity .*\/var\/lib\/bb-box\/identity-armed/);
   const start = readFileSync(DOCKER_START, "utf8");

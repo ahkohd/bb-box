@@ -525,12 +525,13 @@ Set up Docker for boxes, as the Box panel's first run does: on the BB machine th
 
 ```text
 Usage:
-  bb box setup docker [--machine <value>] [--no-wait]
+  bb box setup docker [--machine <value>] [--no-wait] [--set-machine-access]
 
 Options:
-  --machine <value>  The BB machine, by ID or name, from bb machine list. The one that runs BB by default.
-  --no-wait          Start the build, and say how far it is, without waiting for it.
-  --help, -h         Show this help and exit
+  --machine <value>     The BB machine, by ID or name, from bb machine list. The one that runs BB by default.
+  --no-wait             Start the build, and say how far it is, without waiting for it.
+  --set-machine-access  Where BB listens on every address and boxes cannot join, set Machine access to direct at an address they can reach. This changes BB's settings. Without it, the command only says it can.
+  --help, -h            Show this help and exit
 ```
 
 ## bb box docker-check

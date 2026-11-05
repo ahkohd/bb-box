@@ -995,9 +995,11 @@ echo captured
  * need it. Should the build not take the name, the image gets its own back.
  * Prints "replaced".
  */
-export function replaceScript(from: string, to: string): string {
-  return script(String.raw`from=${quote(from)}; to=${quote(to)}; old="$to-replaced-$$"
+export function replaceScript(from: string, to: string, install: string): string {
+  return script(String.raw`from=${quote(from)}; to=${quote(to)}; install=${quote(install)}; old="$to-replaced-$$"
 [ "$(state "$from")" = stopped ] || { echo "$from is not a stopped VM." >&2; exit 1; }
+owner=$(sed -n 's/^install=//p' "$d/owners/$to" 2>/dev/null || true)
+if [ -n "$owner" ] && [ "$owner" != "$install" ]; then echo "$to belongs to another install, so this one left it." >&2; exit 1; fi
 if [ -n "$(state "$to")" ]; then tart rename "$to" "$old" || exit 1; fi
 if ! tart rename "$from" "$to"; then
   [ -z "$(state "$old")" ] || tart rename "$old" "$to"
@@ -1028,8 +1030,8 @@ cache=\${TART_HOME:-$HOME/.tart}/cache/OCIs/$reg/$repo`;
  * \`reserveGiB\`. A local VM, a reference by digest, or a registry that does
  * not answer leaves the base as it is. Prints "base: …" lines; no room exits 3.
  */
-export function baseScript(ref: string, reserveGiB: number): string {
-  return script(sh`ref=${quote(ref)}; reserve=${reserveGiB}
+export function baseScript(ref: string, reserveGiB: number, install: string): string {
+  return script(sh`ref=${quote(ref)}; reserve=${reserveGiB}; install=${quote(install)}
 case $ref in *@*) echo "base: $ref is pinned by digest"; exit 0 ;; */*) ;; *) echo "base: $ref is a local VM"; exit 0 ;; esac
 ${BASE_PARTS}
 link=$(readlink "$cache/$tag" 2>/dev/null || true); old=\${link##*/}
@@ -1056,6 +1058,7 @@ if [ "$free" -lt $(( \${size:-0} / 1024 + reserve * 1048576 )) ]; then
 fi
 echo "base: pulling $ref, $new\${old:+, in place of $old}"
 tart pull "$ref" >"$tmp/pull" 2>&1 || { echo "base: tart pull $ref failed: $(tail -n 1 "$tmp/pull")" >&2; exit 1; }
+if [ -n "$old" ]; then mkdir -p "$d/bases"; printf '%s\n' "$old" >> "$d/bases/$install"; fi
 echo "base: pulled $ref"
 `);
 }
@@ -1065,16 +1068,25 @@ echo "base: pulled $ref"
  * (#475): after a pull moved the tag, the old copy only takes disk, as images
  * cloned from it are copies of their own. Prints "base: …" lines.
  */
-export function pruneBaseScript(ref: string): string {
-  return script(sh`ref=${quote(ref)}
+export function pruneBaseScript(ref: string, install: string): string {
+  return script(sh`ref=${quote(ref)}; install=${quote(install)}
 case $ref in *@*) exit 0 ;; */*) ;; *) exit 0 ;; esac
 ${BASE_PARTS}
 [ -d "$cache" ] || exit 0
 named=$(for l in "$cache"/*; do [ -L "$l" ] && readlink "$l"; done | sed 's|.*/||')
-for d in "$cache"/sha256:*; do
-  [ -d "$d" ] || continue
-  digest=\${d##*/}
+ours=$(cat "$d/bases/$install" 2>/dev/null || true)
+for copy in "$cache"/sha256:*; do
+  [ -d "$copy" ] || continue
+  digest=\${copy##*/}
   ! printf '%s\n' "$named" | grep -qx "$digest" || continue
+  printf '%s\n' "$ours" | grep -qx "$digest" || continue
+  held=
+  for note in "$d/bases"/*; do
+    [ -f "$note" ] || continue
+    [ "$(basename "$note")" = "$install" ] && continue
+    grep -qx "$digest" "$note" && held=1
+  done
+  [ -z "$held" ] || continue
   if tart delete "$reg/$repo@$digest" >/dev/null 2>&1; then echo "base: removed the old cached $reg/$repo@$digest"; else echo "base: could not remove $reg/$repo@$digest" >&2; fi
 done
 `);

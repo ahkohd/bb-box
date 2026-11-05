@@ -65,6 +65,7 @@ import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresen
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
+import { dockerImageBuilding } from "./building.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 const READY_TIMEOUT_MS = 60_000;
@@ -1212,7 +1213,9 @@ export class DockerBackend implements Backend {
         this.#context.images?.pins("linux") ?? null,
         this.#context.images?.pins("linux-desktop") ?? null,
         this.#context.images?.bbApp(signal) ?? null,
-      ]).catch(() => [null, null, null] as const);
+        this.#context.images?.chrome?.("x86_64") ?? null,
+        this.#context.images?.chrome?.("arm64") ?? null,
+      ]).catch(() => [null, null, null, null, null] as const);
       for (const image of images) {
         const serves = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image);
         const kinds = serves.join(", ");
@@ -1238,10 +1241,10 @@ export class DockerBackend implements Backend {
           );
         } else if (record || built === IMAGE_VERSION) {
           // Its record's contract replaces the layout version (049).
-          const [linuxPins, desktopPins, app] = await judging;
+          const [linuxPins, desktopPins, app, chromeAmd, chromeArm] = await judging;
           const judged = judgeImage(
             record,
-            { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app },
+            { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app, pinChrome: record?.arch === "arm64" ? chromeArm : chromeAmd },
             this.#buildFix("Build it again with this bb-box's setup/docker/build.sh --bb-url <BB's server URL>."),
           );
           push(id, name, judged.status, `For ${kinds} boxes. ${judged.detail}`, judged.fix);
@@ -1538,7 +1541,12 @@ export class DockerBackend implements Backend {
       return found.labels[LABELS.gpu] ?? null;
     }
     if (/No such image/i.test(result.stderr)) {
-      throw new Error(`${this.#host} has no image ${image}, and bb-box never pulls one. Build it with setup/docker/build.sh (setup/docker/README.md).`);
+      const building = dockerImageBuilding(this.#config.machine, image);
+      throw new Error(
+        building
+          ? `${this.#host} has no image ${image} yet. bb-box is still building it.`
+          : `${this.#host} has no image ${image}, and bb-box never pulls one. Build it with setup/docker/build.sh (setup/docker/README.md).`,
+      );
     }
     throw this.#cli.error("docker container create", result);
   }
@@ -1546,7 +1554,10 @@ export class DockerBackend implements Backend {
   /** An image's labels, or null when the host has no such image. */
   async #imageLabels(ref: string, signal?: AbortSignal): Promise<(Record<string, unknown> & { readonly [SIZE]?: number | null }) | null> {
     const result = await this.#cli.run(["image", "inspect", "--format", IMAGE_FORMAT, ref], { timeoutMs: 30_000, signal });
-    if (result.exitCode !== 0) return null;
+    if (result.exitCode !== 0) {
+      if (/No such image|not found|No such object/i.test(result.stderr) || !result.stderr.trim()) return null;
+      throw this.#cli.error("docker image inspect", result);
+    }
     const { labels, sizeBytes } = imageFacts(result.stdout.trim());
     return { ...labels, [SIZE]: sizeBytes };
   }
@@ -1565,7 +1576,7 @@ export class DockerBackend implements Backend {
       if (!image) continue;
       const labels = await this.#imageLabels(image, signal);
       const kind = DOCKER_KINDS.find((candidate) => this.#config.images[candidate] === image)!;
-      if (labels) builds.push(this.#imageBuild(image, kind, "standard", labels, true));
+      builds.push(labels ? this.#imageBuild(image, kind, "standard", labels, true) : { ref: image, image: "standard", kind, build: null, record: null, current: true });
     }
     const listed = await this.#cli.ok(
       ["image", "ls", "--filter", `label=${LABELS.install}=${install}`, "--filter", `label=${LABELS.image}`, "--format", "{{.Repository}}:{{.Tag}}"],

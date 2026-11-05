@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { dockerImageBuilding } from "../src/backends/docker/building.ts";
 import { BUILD_FREE_GB, DockerImages, bbAppDigest, imageStep, outdated, type DockerImagesDeps, type ImageBuild } from "../src/plugin/docker-images.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -328,4 +329,15 @@ test("a build of one image alone keeps how long it took on that machine, in stor
   both.release();
   await both.images.ensure("host_c");
   assert.deepEqual(await both.images.took("host_c"), {});
+});
+
+test("a box that needs an image while it is building is told the image is still building", async () => {
+  const { images, release } = world({ staleImages: ["bbbox/linux:1"] });
+  const building = images.ensure("host_a");
+  await new Promise((done) => setTimeout(done, 5));
+  assert.equal(dockerImageBuilding("host_a", "bbbox/linux:1"), true);
+  assert.equal(dockerImageBuilding("host_a", "bbbox/linux-desktop:1"), false);
+  release();
+  await building;
+  assert.equal(dockerImageBuilding("host_a", "bbbox/linux:1"), false);
 });
