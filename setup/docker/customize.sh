@@ -33,10 +33,12 @@ if [ -d "$packages" ]; then
   install -d -o _apt -m 0700 "$packages/partial"
   printf 'Dir::Cache::archives "%s/";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' "$packages" >/etc/apt/apt.conf.d/40bb-box-build-cache
 fi
-apt=(-o Acquire::https::CaInfo=/mnt/ca-certificates.crt -o Acquire::Retries=5)
+# shellcheck disable=SC1091
+. /mnt/template/guest/apt.sh
+apt=(-o Acquire::https::CaInfo=/mnt/ca-certificates.crt)
 [ "$(dpkg --print-architecture)" != amd64 ] || apt+=(-o "APT::Snapshot=$(cat /mnt/template/apt-snapshot)")
-apt-get "${apt[@]}" update -q --error-on=any
-apt-get "${apt[@]}" install -y -q --no-install-recommends ca-certificates
+apt_update "${apt[@]}" -q --error-on=any
+apt_install "${apt[@]}" -y -q --no-install-recommends ca-certificates
 
 install -d -m 0700 "$build"
 cp -r /mnt/template/guest /mnt/template/pins.json /mnt/template/desktop-pins.tsv \

@@ -21,8 +21,10 @@ FROM ${UBUNTU} AS fetch
 # BuildKit's name for the platform's architecture, amd64 or arm64, as the
 # guest scripts' pins name it, x86_64 or arm64.
 ARG TARGETARCH
-RUN apt-get update -q && apt-get install -y -q --no-install-recommends ca-certificates curl jq \
-  && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=proxmox-lxc/template/guest/apt.sh,target=/mnt/apt.sh \
+    bash /mnt/apt.sh update -q \
+ && bash /mnt/apt.sh install -y -q --no-install-recommends ca-certificates curl jq \
+ && rm -rf /var/lib/apt/lists/*
 COPY proxmox-lxc/host/common.sh /src/host/
 COPY proxmox-lxc/template/fetch-artifacts.sh proxmox-lxc/template/pins.json proxmox-lxc/template/desktop-pins.tsv /src/template/
 RUN --mount=type=cache,id=bb-box-artifacts,target=/var/cache/bb-box-artifacts,sharing=locked \

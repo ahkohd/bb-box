@@ -61,7 +61,9 @@ put_boat_sources_back() {
 }
 case "$step" in
   customize)
-    command -v jq >/dev/null || { apt-get update -q >/dev/null && apt-get install -y -q jq >/dev/null; }
+    # shellcheck disable=SC1091
+    . "$src/guest/apt.sh"
+    command -v jq >/dev/null || { apt_update -q >/dev/null && apt_install -y -q jq >/dev/null; }
     say "fetching the tools, BB's host app and the desktop's artifacts"
     BBBOX_ENV=/nonexistent BBBOX_BB_URL="${BB_URL:-}" bash "$src/fetch-artifacts.sh" "$src/artifacts" "$artifacts" x86_64 </dev/null
     set_boat_sources_aside

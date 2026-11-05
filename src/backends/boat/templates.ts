@@ -37,6 +37,7 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/baseline-packages.txt",
   "proxmox-lxc/template/desktop-pins.tsv",
   "proxmox-lxc/template/fetch-artifacts.sh",
+  "proxmox-lxc/template/guest/apt.sh",
   "proxmox-lxc/template/guest/baseline.sh",
   "proxmox-lxc/template/guest/bb-box-feature.sh",
   "proxmox-lxc/template/guest/bb-box-identity.sh",
