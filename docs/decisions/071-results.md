@@ -2598,7 +2598,8 @@ test BB with one install; S's identity marker by hand.
 
 ## Unit 7: servers with a shared GPU on Proxmox LXC
 
-Built on main `98753c5e`, on branch `u71-7`. No helper change: bb-box-gpu
+Built on main `98753c5e`, on branch `u71-7`, then rebased over #1370, #1371
+and #1373 and merged as `3f6d8395`. No helper change: bb-box-gpu
 0.4.2 already gives a guest whose kind is not a desktop the server set of
 device nodes. No GPU server is offered on a node until one of its Linux
 templates has NVIDIA's userspace for the host's driver, so production is
@@ -2781,7 +2782,7 @@ docker`: a provider with no cards.
 
 A server with a card, a desktop with no GPU from the GPU template, its time
 to ready and an agent's `box_acquire` need the node's cards: node steps A
-to G, through the lead.
+to G, through the lead, in [the gate on the node](#the-gate-on-the-node).
 
 ### Deviations from the note
 
@@ -2859,10 +2860,68 @@ fix has a test that failed with the fix reverted, on a box: 14 reverts.
 | `free_on` returned the last row's status, and the watcher's checks passed with no samples or none during the run (Astra 5, 6) | `free_on` exits on its own found or not found. D1 needs five samples for each card. D5 needs three samples before the run and ten during it, the first within 1 s of the run's start and the last within 1 s of its end, and no gap over 2 s |
 | Comments this unit added to `build.sh`, `fetch-artifacts.sh` and `customize-base.sh` (Astra 7) | Removed; `LINUX_GPU` and `linux-nvidia` are in the setup guide |
 
+### The gate on the node
+
+Run by the lead on the node and by the builder on a test BB, on 5 November
+2026 (UTC), on main at `3f6d8395`, after the merge and its deploy. After the
+deploy, production's smoke test made a `linux-desktop` in 1.4 s with "GPU:
+card 0, shared, NVIDIA RTX PRO 6000 …, 96 GiB" (its card check 0.1 s), and
+production's doctor passed the GPU helper (0.4.2, writes on), the cards,
+the migration, the report and both whole checks.
+
+The test BB was a fresh `npx bb-app@0.48.1` on a Proxmox LXC box, with no
+account, bb-box installed from `git archive 3f6d8395`, and live checks off,
+as no step needed them. Its server ran as a systemd unit, bound to every
+address, and iptables let only the box itself and the lent addresses reach
+its two ports, so its boxes could join it. The lead added its Proxmox LXC
+backend: a pool of its own, the test Linux template and the test desktop
+template that steps A and B built on two lent VMIDs, the three other lent
+VMIDs and addresses for boxes, production's CPU desktop template, desktops
+per GPU 1, and no warm boxes. Both cards had about 97 GiB free at step 0,
+and nothing loaded them but D5's two runs. At most two test GPU guests ran
+at once.
+
+| Step | Evidence |
+| --- | --- |
+| 0 (21:36) | Proxmox VE 9.2.0, pve-container 6.1.14, driver 580.142. The helper: 0.4.2, writes on, serving production's pool and the test pool. The lent VMIDs free. Card 0 had 97,171 MiB free, card 1 96,983 |
+| A, the test Linux template | Built on the second try: the first failed one check (see the findings). "linux template … ready (NVIDIA 580.142, no card)": `template: 1`, no NVIDIA or DRM lines and no empty line, the TUN line; its record has `nvidia` 580.142 and kind `linux`; "NVIDIA's userspace ok 580.142, its EGL and Vulkan drivers hidden"; 11.8 GiB trimmed. Its base volume is 16,384 MiB |
+| B, the test desktop template (21:46) | First try: no NVIDIA or DRM lines and no empty line, the TUN line; its record has `nvidia` 580.142 and kind `linux-desktop`; "display mode ok cpu: no NVIDIA device nodes", "NVIDIA's userspace ok 580.142, its EGL and Vulkan drivers hidden", "Selkies video ok x264"; 17.1 GiB trimmed. Its base volume is 24,576 MiB, inactive (`Vri---tz-k`) |
+| C, the test BB | The doctor: both templates' images ok, each with NVIDIA 580.142; the GPU helper ok, for the test pool; "Boxes on their cards" ok; markers ok; 3 of 3 VMIDs free. `bb box kinds --json`: `linux` offers gpu `none` and `shared`, and its `gpuRoom` lists both cards, a limit of 1 and 1,024 MiB needed; `linux-desktop` offers `none` and `shared`. Two warnings: the thin pool's metadata, known from unit 6, and production's CPU desktop template's image (see the findings) |
+| D1 (21:47) | The watcher: one `time index used` line per card, about four a second |
+| D2, S1 (21:49) | The first acquire timed out (see the findings). The second was ready in 6.5 s: place 0.3, clone 1.6, gpu 1.0, start 2.1, network 0.4, ssh 0.2 and card check 0.5 s. `gpuPart` shared, claim card 0 granted at g1; "GPU: card 0, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB. Run nvidia-smi to see it." In it, `nvidia-smi -L` listed card 0 alone; NVIDIA's EGL, Vulkan, Wayland, xcb and xlib files were shown and its GBM platform hidden; no `/dev/dri` |
+| D3, S1 (21:57) | Its lines: TUN, card 0's `/dev/nvidiaN`, `nvidiactl`, `nvidia-uvm` and `nvidia-uvm-tools`, each `mode=0666`; no `nvidia-modeset` and no DRM node. Marker `gpu.shared.<card 0>.g1`. The report: `claim <S1> g1 granted shared <card 0>`, `holder <card 0> <S1> shared running install <test install> managed`, no mismatch |
+| D4, GBM | With NVIDIA's GBM platform hidden, `eglinfo -B` exits 3: GBM, Wayland and X11 fail to initialise with no display, and the surfaceless and device platforms initialise on the card (EGL 1.5, NVIDIA, the card as renderer). With it shown, `eglinfo` crashes (exit 139). `vulkaninfo --summary` exits 0 in 363 ms and lists the card and llvmpipe. The drivers' unit then hid GBM again. So a server, which has no render node, needs NVIDIA's GBM platform hidden, as unit 7 does |
+| D5, S1's load (21:57) | PyTorch 2.11.0+cu128 (see the findings for its install). A 1024 × 1024 matmul on the card, finite; 44 MiB reserved; CUDA's start and the matmul in 0.54 s, the run 5.7 s. Card 0: 20 samples before the run and 25 during it, the longest gap 0.264 s; 77 to 777 MiB used, a delta of 700 MiB (unit 0: about 678) |
+| D6, S2 (22:00) | Ready in 6.0 s, claim card 1 granted at g1, as S1 held card 0 and the limit is 1; `nvidia-smi -L` listed card 1 alone |
+| D3 and D5, S2 (22:01) | The same lines with card 1's node; `claim <S2> g1 granted shared <card 1>`, `holder <card 1> <S2> shared running`, no mismatch. The run 5.7 s, CUDA's start and the matmul 0.75 s. Card 1: 21 samples before and 24 during, the longest gap 0.257 s; 266 to 965 MiB used, a delta of 699 MiB |
+| D7 | Both released |
+| E1, D0 (22:03) | `linux-desktop` with gpu none, ready in 5.1 s: clone 1.7, start 2.7, ssh 0.2 s, no place or gpu step. Gpu part none, no claim; "Display mode: CPU", "The box has no GPU device.", no `GPU:` line. `bb-box-check-desktop`: 20 checks, all ok, among them "display mode ok cpu: no NVIDIA device nodes", "nvidia-smi ok no GPU in this box", "NVIDIA's userspace ok 580.142, its EGL and Vulkan drivers hidden", Selkies x264, vkcube's 1000 frames in 588 ms on llvmpipe, and Chrome on ANGLE and llvmpipe. On the node, by hand (see the findings): tags `template.<test desktop template>` and `kind.linux-desktop`, the TUN line alone, no `gpu.` tag |
+| E1, C0 | `linux-desktop-cpu` from production's CPU desktop template, ready in 4.4 s; 19 checks, all ok. By check name, the same checks as D0, each ok, but NVIDIA's userspace, which a CPU template built before unit 7 does not check and one built since skips |
+| E2 (22:04 to 22:07) | Three cold acquires of each, one test guest at a time. Medians: `linux-desktop` gpu none 4,104 ms; `linux-desktop-cpu` 3,932 ms; `linux-desktop` with gpu left out, shared from the test desktop template, the helper writing card 0's desktop set while the clone was stopped (about 0.5 s), 5,169 ms; today's desktop, from production's per-card templates, 5,383 ms. Each is within 5 s of today's |
+| F, an agent's `box_acquire` (production) | From a fresh production thread, with production's Linux template not yet rebuilt. (1) `linux` with gpu shared: refused before any box, "Not made: <node> cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template <vmid> has none. Ask for gpu none, or ask the user. bb-box changed nothing.", followed by the tool's generic hint (see the findings). (2) `linux` with no gpu: a box as before, no `GPU:` line. (3) `linux-desktop` with no gpu: "GPU: card 1, shared, NVIDIA RTX PRO 6000 …", display mode GPU, card check 0.1 s. (4) `box_list`: `linux` says "No GPU on Proxmox LXC on <node> now: … template <vmid> has none.", and the room per card shows under `linux-desktop`: right until production's Linux template has the userspace |
+| G (22:07) | The watcher stopped; no lent VMID in use or holding a card; no mismatch; both test templates destroyed. Production's guests against the lead's baseline: only the warm desktop the smoke test took and released, and its replacement. The helper wrote and refused nothing outside the lent VMIDs from 21:15 |
+
+### Findings from the gate
+
+| Finding | Severity | What happens | Follow-up |
+| --- | --- | --- | --- |
+| An image refresh builds the Linux template without NVIDIA's userspace | high | After the gate, the lead rebuilt production's Linux template with `bb box images build`, the path the nightly refresh takes. It passed its trial's 30 checks, but its record has `nvidia` null: that path does not install the userspace as `build.sh linux` does on the node. So production still gives no server a GPU, and a `build.sh linux --replace` by hand would be undone at the next refresh | Fixed on its own branch, `u71-7b`: a refresh on a node with an NVIDIA driver installs that driver's userspace and records it |
+| The first clone of a fresh template can miss the ready deadline | medium | S1's first acquire took 13.5 s to clone and 10.9 s to start, against 1.6 and 2.1 s on the next try, minutes later, at the same node load, so 4.5 s of the 30 s deadline were left for its network and SSH. Nothing answered on port 22 in time; bb-box deleted the guest and the acquire failed. Production's first box after `build.sh linux --replace` may fail the same way | Watch the first acquire after production's rebuild; a later unit may give a template's first clone more time |
+| The first docker command's 2,000 ms limit on a busy node | low | Step A's first build failed "first docker command FAIL 4232 ms (limit 2000)" with the node at load 12 to 15; Docker answered in 10 ms after, and the build passed when run again. The limit is 041's, in all three check scripts; D0 and C0 took 1,405 and 1,559 ms | A limit that allows for load, or one retry, in 041's checks |
+| An agent's refusal ends with the tool's generic hint | low | `box_acquire`'s refusal of gpu shared gave the agent's words, then "Next: Try again later, release a box you no longer need, or pick another kind.", which tells the agent to release a box, against section 3 | Fixed separately, as CO-11 |
+| E1's node rule on the root disk | note (steps) | On LVM-thin a linked clone's `rootfs` names its own volume, not its template's base, so `^rootfs: .*base-<template>-disk-0/` cannot match, and the block stopped at its first check. The lead checked the rest by hand | The rule reads the `template.<vmid>` tag |
+| E1's comparison by position | note (steps) | The block paired the two checks line by line, so C0's missing userspace line shifted every line after it | Compared by check name |
+| PyTorch's install filled a 16 GiB box | note (steps) | pip's cache and the CUDA wheels filled the default disk; the install alone takes 6.5 GiB | `pip install --no-cache-dir` |
+| No thin data for a template's base volume | note | `lvs` shows no `data_percent` for an inactive base volume, so A and B give no figure against unit 0's 4,430 MB; the trims ran, 11.8 and 17.1 GiB | None |
+| A CPU template's image warning | low, not unit 7 | The test BB warned that production's CPU desktop template, rebuilt that day with Chrome 157, is newer than the repository's pin, Chrome 156, and its fix still says to rebuild it with `build.sh desktop <vmid> --cpu --replace`, which would go backwards. The warning is #1364's image check | That warning's fix |
+
 ### Still open
 
-- EGL's GBM platform on a server with a card's nvidia nodes and no DRM
-  nodes: node step D4 answers it. Hidden there in any case.
-- The gate, through the lead: node steps A to G.
+- Production's Linux template with NVIDIA's userspace, through `bb box
+  images build` once `u71-7b` is in (above). Until then, an agent's gpu
+  shared on `linux` is refused, as F (1) shows; then F (1) and (4) once
+  more, and the first acquire after it (above).
+- Optionally, a desktop template with no device lines, listed by its VMID
+  alone, in place of the per-card templates.
 - Whether `linux-desktop-cpu` should move to the GPU desktop template now
   (above).
