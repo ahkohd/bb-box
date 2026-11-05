@@ -70,8 +70,10 @@ fi
 # took about 6 GB, the desktop 12, the Wayland desktop 12 and all three 28:
 # the images and Docker's build cache. The rest leaves room for an earlier
 # build's. With less, a build fails part way, so it does not start. A
-# container from the Dockerfile's base image says how much is free where the
-# layers go.
+# container from the Dockerfile's base image writes how much is free where
+# the layers go, and docker cp reads that file. An attached stream (docker
+# run, docker exec) is empty when the Docker host is reached from Windows
+# through WSL's localhost forwarder, so nothing here attaches.
 case "${targets[*]}" in
   linux) need=10 what="the linux image" ;;
   desktop) need=18 what="the desktop image" ;;
@@ -79,15 +81,46 @@ case "${targets[*]}" in
   *) need=36 what="${#targets[@]} images" ;;
 esac
 base=$(sed -n 's/^ARG UBUNTU=//p' "$here/Dockerfile")
-if df=$(docker run --rm --quiet --network none --platform "$platform" --entrypoint df "$base" -Pk / 2>&1) &&
-  free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' <<<"$df") && [ -n "$free" ]; then
+
+copy_from_image() {
+  local platform=$1 image=$2 path=$3 dest=$4
+  local id status=0
+  id=$(docker create --platform "$platform" "$image") || return $?
+  docker cp "$id:$path" "$dest/" || status=$?
+  docker rm "$id" >/dev/null || true
+  return "$status"
+}
+
+host_disk() {
+  local platform=$1 image=$2 dest=$3
+  local id status=0
+  id=$(docker create --platform "$platform" --network none --entrypoint sh "$image" -c 'df -Pk / > /tmp/bb-box-df') || return $?
+  docker start "$id" >/dev/null || status=$?
+  if [ "$status" -eq 0 ]; then
+    docker wait "$id" >/dev/null || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then
+    docker cp "$id:/tmp/bb-box-df" "$dest/" || status=$?
+  fi
+  docker rm "$id" >/dev/null || true
+  return "$status"
+}
+
+disk=$(mktemp -d)
+disk_err=$(mktemp)
+if host_disk "$platform" "$base" "$disk" 2>"$disk_err" &&
+  free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' "$disk/bb-box-df") && [ -n "$free" ]; then
+  rm -rf "$disk"
+  rm -f "$disk_err"
   if [ "$free" -lt $((need * 1000000000 / 1024)) ]; then
     echo "The Docker host has $((free * 1024 / 1000000000)) GB of disk free, and building $what needs about $need GB." \
       "Free some, for example with docker builder prune, then build again." >&2
     exit 1
   fi
 else
-  echo "build.sh could not see how much disk the Docker host has free, so it builds anyway: ${df##*$'\n'}" >&2
+  echo "build.sh could not see how much disk the Docker host has free, so it builds anyway: $(tail -n 1 "$disk_err")" >&2
+  rm -rf "$disk"
+  rm -f "$disk_err"
 fi
 
 for target in "${targets[@]}"; do
@@ -103,9 +136,12 @@ for target in "${targets[@]}"; do
   "${build[@]}" "$here/.."
   # Its record (049) in a label, where the plugin's doctor reads it without
   # starting the image: the image's own, which a second build, all from the
-  # cache, puts on the image.
-  record=$(docker run --rm --quiet --network none --platform "$platform" --entrypoint jq "$image" -c . /usr/share/bb-box/image.json) \
-    && [ "${record:0:1}" = "{" ] || { echo "$image has no image record, /usr/share/bb-box/image.json" >&2; exit 1; }
+  # cache, puts on the image. Copied out, not attached.
+  record_dir=$(mktemp -d)
+  copy_from_image "$platform" "$image" /usr/share/bb-box/image.json "$record_dir" || { rm -rf "$record_dir"; exit 1; }
+  record=$(cat "$record_dir/image.json") || { rm -rf "$record_dir"; exit 1; }
+  rm -rf "$record_dir"
+  [ "${record:0:1}" = "{" ] && [[ $record != *$'\n'* ]] || { echo "$image: /usr/share/bb-box/image.json is not one JSON object" >&2; exit 1; }
   "${build[@]}" --quiet --label "bbbox.image-record=$record" "$here/.." >/dev/null
   echo "built $image"
 done
