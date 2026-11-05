@@ -57,7 +57,7 @@ import {
 import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type SavedAllowance, type SavedSnapshot, type Sandbox, type SandboxSize, type SizeShape, type SshReach } from "./api.ts";
 import { BOAT_STORAGE, SAVED_FACTS_KEY, SAVE_POLL_MS, SAVE_RUNNING_ABOUT_MS, SAVE_STOPPED_ABOUT_MS, SAVE_WAIT_MS, billOf, boatOffer, factsWith, forkStartWords, heldFrom, heldStateOf, parseSavedName, savedName, savedPrice, savedRefusal, startCostWords, type SavedFactsByName } from "./snapshots.ts";
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
-import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, IDENTITY_RESET_KINDS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
+import { BoatTemplates, BuildLeftRunning, CUA_READY, FAILED_BUILD_RETRY_MS, IDENTITY_RESET_KINDS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 
@@ -71,6 +71,7 @@ export const LABELS = {
   role: "bbbox-role",
   key: "bbbox-key",
   guest: "bbbox-guest",
+  template: "bbbox-template",
 } as const;
 
 const SAVE_TASK = "save:";
@@ -382,7 +383,7 @@ export class BoatBackend implements Backend {
       api: this.#api,
       storage: context.storage,
       installId: context.installId,
-      labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
+      labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key, template: LABELS.template },
       publicKey: async () => (await this.#keys()).publicKey,
       reach: async (sandbox, user, signal) => this.#command(sandbox, user, signal),
       forget: (sandbox) => this.#forget(sandbox),
@@ -454,7 +455,7 @@ export class BoatBackend implements Backend {
     const account = (await this.#api.list({}, signal)).filter((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
     const mine = account.filter((sandbox) => sandbox.labels[LABELS.install] === this.#context.installId).length + pending.length;
     const running = account.length + pending.length;
-    const needed = (await this.templates.record(boatKind)) || this.templates.building(boatKind) || (await this.templates.adoptable(boatKind, signal).catch(() => null)) ? 1 : 2;
+    const needed = (await this.templates.record(boatKind)) || this.templates.building(boatKind) || (await this.templates.adoptable(boatKind, signal).catch(() => null)) || (await this.templates.leftBuild(boatKind, signal).catch(() => null)) ? 1 : 2;
     const plan = limits.tier === "trial" ? "boat's free trial" : "boat's plan";
     if (limits.activeSandboxes && running + needed > limits.activeSandboxes) {
       const others = running - mine;
@@ -1029,7 +1030,7 @@ export class BoatBackend implements Backend {
     }
     await this.templates.tidy(all.filter((sandbox) => sandbox.labels[LABELS.role] === TEMPLATE_ROLE || sandbox.labels[LABELS.role] === TRIAL_ROLE), signal).catch((error) => this.#context.logError("tidy boat's templates", error));
     const [next] = await this.templates.due(signal).catch(() => []);
-    if (next && !this.templates.anyBuilding()) void this.templates.build(next.kind, next.why).catch((error) => this.#context.logError(`build boat's ${next.kind} template`, error));
+    if (next && !this.templates.anyBuilding()) void this.templates.build(next.kind, next.why).catch((error) => this.#buildEnded(next.kind, error));
     await this.#keepAndroidTemplate(signal).catch((error) => this.#context.logError("build boat's Android template", error));
     await this.#readAndroidOffer();
     await this.#removeStaleDevices(all, signal).catch((error) => this.#context.logError("remove boat sandboxes' leftover tailnet devices", error));
@@ -1060,7 +1061,12 @@ export class BoatBackend implements Backend {
     void this.templates
       .build("android", "Android boxes need it")
       .then(() => this.#readAndroidOffer())
-      .catch((error) => this.#context.logError("build boat's Android template", error));
+      .catch((error) => this.#buildEnded("android", error));
+  }
+
+  #buildEnded(kind: BoatKind, error: unknown): void {
+    if (error instanceof BuildLeftRunning) this.#context.log?.(`boat: ${kind} template: ${error.message}`);
+    else this.#context.logError(`build boat's ${kind} template`, error);
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {

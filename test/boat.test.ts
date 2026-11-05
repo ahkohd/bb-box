@@ -7,11 +7,12 @@ import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { ARCHIVE_WITHIN_MS, BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, templateArchive, templateFingerprint, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { ARCHIVE_WITHIN_MS, BoatTemplates, BuildLeftRunning, LEFT_BUILD_WHY, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, guestBuildFrom, guestStep, templateArchive, templateFingerprint, templateName, type Reached, type TemplateDeps, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
+import { FakeBoatGuest, GUEST_TOOLS_HERE, guestScriptsArchive } from "./fake-boat-guest.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
@@ -30,7 +31,7 @@ function setup(options: { now?: () => number; config?: Partial<typeof CONFIG>; t
   const templates: Record<string, string> = {};
   if (options.templates !== false) {
     for (const kind of ["linux", "linux-desktop-cpu"] as const) {
-      const made = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: kind, [LABELS.key]: "fp1" }, state: "archived", type: "default" });
+      const made = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: kind, [LABELS.key]: "fp1" }, name: templateName(kind, "ready"), state: "archived", type: "default" });
       templates[kind] = made.id;
       const record: TemplateRecord = { kind, sandbox: made.id, key: "fp1", builtAt: (options.now ?? Date.now)(), buildMs: 600_000, usedAt: null };
       void storage.set(`template/${kind}`, record);
@@ -52,6 +53,7 @@ function hooks() {
 }
 
 const signal = () => new AbortController().signal;
+const LABEL_KEYS = { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key, template: LABELS.template };
 
 test("a box takes boat's smallest size with its cores, memory and disk, among the sizes the plan allows", () => {
   assert.equal(sizeFor({ cores: 2, memoryMiB: 4096, diskGiB: null })?.size, "small");
@@ -239,66 +241,414 @@ test("the upkeep renews the auto-stop of the running boxes bb-box holds, once it
   assert.equal(stray.archiveAfter, Date.parse("2030-01-01T00:01:00Z"));
 });
 
-test("with no template, the first box waits for its build and says so; the build's scripts run in order, and a failed check deletes the build", async () => {
+const GUEST_SKIP = GUEST_TOOLS_HERE ? false : "boat's guest scripts need flock, setsid and base64 here, as boat's Ubuntu has";
+const OK_RUN = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function until(what: string, done: () => boolean, withinMs = 20_000): Promise<void> {
+  const end = Date.now() + withinMs;
+  while (!done()) {
+    if (Date.now() > end) throw new Error(`${what} did not happen within ${withinMs} ms`);
+    await pause(10);
+  }
+}
+
+type TrialRun = (sandbox: string, script: string) => Promise<Awaited<ReturnType<Reached["run"]>> | null>;
+
+function templateWorld(options: { readonly holdSteps?: boolean; readonly guestReady?: (guest: FakeBoatGuest) => void } = {}) {
   const fake = new FakeBoat();
   const storage = new MemoryStorage();
-  const scripts: { sandbox: string; user: string; script: string }[] = [];
-  let checkFails = false;
+  const guests = new Map<string, FakeBoatGuest>();
+  const logs: string[] = [];
+  const trialRuns: { sandbox: string; user: string; script: string }[] = [];
+  let trialRun: TrialRun | null = null;
+  const guestOf = (sandbox: string): FakeBoatGuest => {
+    let guest = guests.get(sandbox);
+    if (!guest) {
+      guest = new FakeBoatGuest(options.holdSteps ? { holdSteps: true } : {});
+      options.guestReady?.(guest);
+      guests.set(sandbox, guest);
+    }
+    return guest;
+  };
   const reached = (sandbox: string, user: "user" | "box"): Reached => ({
-    run: async (script) => {
-      scripts.push({ sandbox, user, script });
-      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-      if (script.includes("exit=")) return { ...ok, stdout: "exit=0\n12:00:00  customized\n" };
-      if (script.startsWith("bb-box-check")) return checkFails ? { ...ok, stdout: "Docker                             FAIL no daemon\n" } : { ...ok, stdout: "Docker                             ok\n" };
-      return ok;
+    run: async (script, runOptions) => {
+      if (fake.sandboxes.get(sandbox)?.labels[LABELS.role] === TEMPLATE_ROLE) return guestOf(sandbox).run(script, runOptions);
+      trialRuns.push({ sandbox, user, script });
+      const answered = await trialRun?.(sandbox, script);
+      if (answered) return answered;
+      if (script.startsWith("bb-box-check")) return { ...OK_RUN, stdout: "Docker                             ok\n" };
+      return OK_RUN;
     },
   });
-  const templates = new BoatTemplates({
+  const deps = (overrides: Partial<TemplateDeps> = {}): TemplateDeps => ({
     api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
     storage,
     installId: "inst1",
-    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
+    labelKeys: LABEL_KEYS,
     publicKey: async () => "ssh-ed25519 AAAAkey",
     reach: async (sandbox, user) => reached(sandbox, user),
     forget: async () => {},
     answers: async () => {},
     settled: async () => {},
-    restored: async (sandbox) => void scripts.push({ sandbox, user: "bb-box", script: "boat restored" }),
+    restored: async () => {},
+    now: Date.now,
+    sleep: () => pause(15),
+    log: (line) => void logs.push(line),
+    fingerprint: () => "fp1",
+    setupArchive: async () => guestScriptsArchive(),
+    ...overrides,
+  });
+  const templateSandboxes = () => [...fake.sandboxes.values()].filter((sandbox) => sandbox.labels[LABELS.role] === TEMPLATE_ROLE);
+  const creates = () => fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length;
+  const forks = () => fake.calls.filter((call) => call.method === "POST" && call.path.endsWith("/fork"));
+  const dispose = () => {
+    for (const guest of guests.values()) guest.dispose();
+  };
+  return { fake, storage, guests, logs, trialRuns, deps, guestOf, templateSandboxes, creates, forks, dispose, answerTrials: (answer: TrialRun | null) => void (trialRun = answer) };
+}
+
+test("with no template, the first box waits for its build and says so; the build's scripts run in order in the guest, and a failed check deletes the build", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  let checkFails = false;
+  let finalizedWhenChecked: number | null = null;
+  world.answerTrials(async (sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    finalizedWhenChecked = [...world.guests.values()].reduce((sum, guest) => sum + guest.runs("finalize").length, 0);
+    return checkFails ? { ...OK_RUN, stdout: "Docker                             FAIL no daemon\n" } : null;
+  });
+  const templates = new BoatTemplates(world.deps({ restored: async (sandbox) => void world.trialRuns.push({ sandbox, user: "bb-box", script: "boat restored" }) }));
+  try {
+    const waiting: (string | null)[] = [];
+    const record = await templates.forBox("linux", signal(), async (words) => void waiting.push(words));
+    assert.deepEqual(waiting, [buildWaitWords("linux", null), null]);
+
+    const built = world.fake.sandboxes.get(record.sandbox)!;
+    assert.equal(built.state, "archived", "a template waits stopped");
+    assert.deepEqual(built.labels, { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" });
+    assert.equal(built.type, "default");
+    assert.equal(built.name, templateName("linux", "ready"), "named a template only once its fork passed the check");
+
+    const guest = world.guests.get(record.sandbox)!;
+    assert.deepEqual(guest.runs().map((line) => line.replace(/ \d+ /, " ")), ["customize linux /", "finalize linux /"], "customize, then finalize, both from /, as the box user cannot enter boat's home, where the emulator then fails to start");
+    assert.equal(finalizedWhenChecked, 1, "the check runs once the template is finalized");
+    assert.match(guest.controlFile("build.env") ?? "", /^BOX_USER=box$/m);
+    assert.equal(guest.controlFile("plugin-key.pub"), "ssh-ed25519 AAAAkey\n");
+    assert.equal(guest.controlFile("android-sdk-license"), null, "only Android's build accepts the SDK licence");
+    assert.equal(guest.stagings().length, 1);
+
+    const check = world.trialRuns.find((each) => each.script.startsWith("bb-box-check-headless"))!;
+    assert.notEqual(check.sandbox, record.sandbox, "the check runs in a fork of the template, as a box is");
+    assert.equal(check.user, "box", "the check runs as the box user");
+    assert.equal(world.fake.sandboxes.get(check.sandbox)?.state, "deleted", "the trial fork goes");
+    assert.equal(world.fake.sandboxes.get(check.sandbox)?.labels[LABELS.template], record.sandbox, "the trial is labelled with its template");
+    assert.deepEqual(await templates.whyBuild("linux"), null);
+    assert.equal((await templates.forBox("linux", signal())).sandbox, record.sandbox, "a second box forks the same template");
+
+    checkFails = true;
+    await world.storage.delete("template/linux-desktop-cpu");
+    await assert.rejects(templates.build("linux-desktop-cpu", "test"), /failed its check in a fork of it: Docker +FAIL no daemon/);
+    const restoredAt = world.trialRuns.findIndex((each) => each.script === "boat restored");
+    const cuaAt = world.trialRuns.findIndex((each) => each.script.includes("cua-probe"));
+    assert.ok(restoredAt >= 0 && restoredAt < cuaAt, "the desktop's trial fork checks Cua Driver once boat has restored it");
+    assert.equal(world.trialRuns.filter((each) => each.script === "boat restored").length, 1, "a Linux template's trial does not wait for it");
+    assert.equal([...world.fake.sandboxes.values()].filter((each) => each.labels[LABELS.kind] === "linux-desktop-cpu" && each.state !== "deleted").length, 0);
+    assert.ok(await templates.failedBuild("linux-desktop-cpu"), "a real failure is recorded");
+    assert.deepEqual(failedChecks("a ok\nb FAIL x\n"), ["b FAIL x"]);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a bb-box that starts while the template's guest scripts run follows that build: no second sandbox and one customize, and the bb-box that stopped leaves it running and records no failure", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ holdSteps: true });
+  try {
+    const first = new BoatTemplates(world.deps());
+    const building = first.build("linux", "a box needs it");
+    await until("customize starts", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).runs("customize").length === 1);
+    const made = world.templateSandboxes()[0]!;
+    const guest = world.guestOf(made.id);
+
+    first.dispose();
+    await assert.rejects(building, BuildLeftRunning);
+    assert.equal(made.state, "ready", "the build's sandbox is left running for the next bb-box");
+    assert.equal(made.name, templateName("linux", "building"));
+    assert.equal(await first.failedBuild("linux"), null, "a stop is not a failed build, so the upkeep does not wait hours");
+
+    const second = new BoatTemplates(world.deps());
+    assert.deepEqual(await second.due(), [{ kind: "linux", why: LEFT_BUILD_WHY }], "the upkeep follows it at once");
+    const following = second.build("linux", LEFT_BUILD_WHY);
+    await until("the follower probes the running build", () => guest.ran.filter((run) => run.stdout.startsWith("running=yes")).length >= 2);
+    guest.finish("customize", 0);
+    guest.finish("finalize", 0);
+    const record = await following;
+
+    assert.equal(record.sandbox, made.id);
+    assert.equal(world.creates(), 1, "no second sandbox");
+    assert.equal(guest.runs("customize").length, 1, "one customize");
+    assert.equal(guest.runs("finalize").length, 1);
+    assert.equal(guest.stagings().length, 1, "the follower staged nothing");
+    assert.equal(made.name, templateName("linux", "ready"));
+    assert.ok(world.logs.some((line) => line.includes(`following the linux template build ${made.id}`)));
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a box that stops waiting for its template, as bb-box stops and aborts its acquires before its backends, leaves the build going, so the stop is not held up for the build's minutes", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ holdSteps: true });
+  try {
+    const templates = new BoatTemplates(world.deps());
+    const acquire = new AbortController();
+    const waiting = templates.forBox("linux", acquire.signal);
+    await until("customize starts", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).runs("customize").length === 1);
+    const made = world.templateSandboxes()[0]!;
+
+    let ended = false;
+    waiting.catch(() => undefined).finally(() => (ended = true));
+    acquire.abort(new Error("bb-box is stopping."));
+    await until("the box stops waiting", () => ended, 2_000);
+    await assert.rejects(waiting, /bb-box is stopping\./);
+    assert.equal(templates.building("linux"), true, "the build goes on");
+    assert.equal(made.state, "ready");
+
+    world.guestOf(made.id).finish("customize", 0);
+    world.guestOf(made.id).finish("finalize", 0);
+    await until("the build ends", () => !templates.building("linux"));
+    assert.equal((await templates.record("linux"))?.sandbox, made.id, "and is the template the next box forks");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a reload during the staging: the follower waits on the build's lock rather than stage again, so the one customize is the first bb-box's", { skip: GUEST_SKIP }, async () => {
+  let releaseUpload: (() => void) | null = null;
+  let uploadsHeld = 0;
+  const world = templateWorld({ holdSteps: true, guestReady: (guest) => guest.holdStdin(async (script, stdin) => {
+    if (!script.includes("tar -xzf -") || uploadsHeld++ > 0) return stdin;
+    await new Promise<void>((resolve) => (releaseUpload = resolve));
+    return stdin;
+  }) });
+  try {
+    const first = new BoatTemplates(world.deps());
+    const building = first.build("linux", "a box needs it");
+    await until("the build's sandbox is made", () => world.templateSandboxes().length === 1);
+    const made = world.templateSandboxes()[0]!;
+    const guest = world.guestOf(made.id);
+    await until("the first bb-box is mid-upload, holding the lock, its log made", () => releaseUpload !== null && existsSync(join(guest.buildDir, "log")));
+
+    first.dispose();
+    const second = new BoatTemplates(world.deps());
+    const following = second.build("linux", LEFT_BUILD_WHY);
+    await until("the follower sees the staging hold the lock", () => guest.ran.filter((run) => run.stdout.startsWith("running=yes")).length >= 3);
+    assert.equal(uploadsHeld, 1, "the follower did not stage beside it");
+
+    releaseUpload!();
+    await assert.rejects(building, BuildLeftRunning);
+    await until("customize starts", () => guest.runs("customize").length === 1);
+    guest.finish("customize", 0);
+    guest.finish("finalize", 0);
+    const record = await following;
+
+    assert.equal(record.sandbox, made.id);
+    assert.equal(guest.runs("customize").length, 1, "one customize in the sandbox");
+    assert.deepEqual(guest.stagings().map((run) => run.exitCode), [0], "one staging, the first bb-box's");
+    assert.equal(world.creates(), 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("an upload cut off by the reload leaves the build to the next bb-box, which stages it again in the same sandbox, and a stopped bb-box starts no staging of its own", { skip: GUEST_SKIP }, async () => {
+  let releaseUpload: (() => void) | null = null;
+  let releaseArchive: (() => void) | null = null;
+  let uploadsHeld = 0;
+  const world = templateWorld({ guestReady: (guest) => guest.holdStdin(async (script, stdin) => {
+    if (!script.includes("tar -xzf -") || !Buffer.isBuffer(stdin) || uploadsHeld++ > 0) return stdin;
+    await new Promise<void>((resolve) => (releaseUpload = resolve));
+    return stdin.subarray(0, 20);
+  }) });
+  try {
+    const first = new BoatTemplates(world.deps({ publicKey: async () => "ssh-ed25519 AAAAfirst" }));
+    const building = first.build("linux", "a box needs it");
+    await until("the build's sandbox is made", () => world.templateSandboxes().length === 1);
+    const made = world.templateSandboxes()[0]!;
+    const guest = world.guestOf(made.id);
+    await until("the first bb-box is mid-upload", () => releaseUpload !== null);
+    first.dispose();
+    releaseUpload!();
+    await assert.rejects(building, (error: unknown) => error instanceof BuildLeftRunning && /could not unpack bb-box's template scripts/.test(error.message));
+    assert.equal(made.state, "ready", "a step that failed as bb-box stopped is not the build failing");
+    assert.equal(await first.failedBuild("linux"), null);
+
+    const late = new BoatTemplates(world.deps({ publicKey: async () => "ssh-ed25519 AAAAlate", setupArchive: async () => {
+      await new Promise<void>((resolve) => (releaseArchive = resolve));
+      return guestScriptsArchive();
+    } }));
+    const lateBuild = late.build("linux", LEFT_BUILD_WHY);
+    await until("a second bb-box reads the archive to stage again", () => releaseArchive !== null);
+    late.dispose();
+    releaseArchive!();
+    await assert.rejects(lateBuild, BuildLeftRunning);
+    assert.equal(guest.stagings().length, 1, "a bb-box stopped while it read the archive did not stage");
+
+    const second = new BoatTemplates(world.deps({ publicKey: async () => "ssh-ed25519 AAAAsecond" }));
+    const record = await second.build("linux", LEFT_BUILD_WHY);
+    assert.equal(record.sandbox, made.id);
+    assert.equal(world.creates(), 1);
+    assert.equal(guest.runs("customize").length, 1);
+    assert.equal(guest.controlFile("plugin-key.pub"), "ssh-ed25519 AAAAsecond\n", "the bb-box that ran on staged it");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a build whose guest scripts died is given up at the next look, not after the build's 110 minutes", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ holdSteps: true });
+  let killed = false;
+  let looksAfterTheKill = 0;
+  try {
+    const templates = new BoatTemplates(world.deps({ sleep: async () => {
+      if (killed && ++looksAfterTheKill > 5) throw new Error("still waiting on a dead build");
+      await pause(15);
+    } }));
+    const building = templates.build("linux", "a box needs it");
+    await until("customize starts", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).runs("customize").length === 1);
+    const made = world.templateSandboxes()[0]!;
+    await until("the job's PID is recorded", () => world.guestOf(made.id).jobPid() !== null);
+
+    world.guestOf(made.id).killJob();
+    killed = true;
+    await assert.rejects(building, /stopped without an exit code: no process holds it, so its guest scripts died/);
+    assert.ok(looksAfterTheKill <= 2, `${looksAfterTheKill} looks after the kill`);
+    assert.equal(made.state, "deleted");
+    assert.match((await templates.failedBuild("linux"))?.why ?? "", /guest scripts died/);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a trial fork left by a reload is checked again by the next bb-box, which reuses only a trial of that template", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  let checking: ((answer: Awaited<ReturnType<Reached["run"]>>) => void) | null = null;
+  try {
+    world.answerTrials(async (_sandbox, script) => (script.startsWith("bb-box-check") && !checking ? new Promise((resolve) => (checking = resolve)) : null));
+    const first = new BoatTemplates(world.deps());
+    const building = first.build("linux", "a box needs it");
+    await until("the check runs in the trial", () => checking !== null);
+    const template = world.templateSandboxes()[0]!;
+    const trial = [...world.fake.sandboxes.values()].find((sandbox) => sandbox.labels[LABELS.role] === TRIAL_ROLE)!;
+    const decoy = world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", [LABELS.template]: "bx_another" }, state: "ready", createdAt: Date.now() + 60_000 });
+    assert.equal(template.name, templateName("linux", "checking"));
+
+    first.dispose();
+    checking!({ ...OK_RUN, exitCode: 255, stderr: "Connection to the trial closed." });
+    await assert.rejects(building, BuildLeftRunning);
+    assert.equal(trial.state, "ready", "the trial is left for the next bb-box");
+    assert.equal(template.state, "archived");
+    assert.equal(await first.adoptable("linux"), null, "a template whose check has not passed is not forked");
+
+    const second = new BoatTemplates(world.deps());
+    const record = await second.build("linux", LEFT_BUILD_WHY);
+    assert.equal(record.sandbox, template.id);
+    assert.equal(world.forks().length, 1, "no second trial fork");
+    assert.deepEqual(world.trialRuns.filter((run) => run.script.startsWith("bb-box-check")).map((run) => run.sandbox), [trial.id, trial.id]);
+    assert.equal(world.trialRuns.some((run) => run.sandbox === decoy.id), false, "a trial of another template is not used");
+    assert.equal(decoy.state, "ready");
+    assert.equal(trial.state, "deleted");
+    assert.equal(template.name, templateName("linux", "ready"));
+    assert.equal(world.guestOf(template.id).runs("customize").length, 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("the Android template's build stages the licence's acceptance with the guest scripts, and keeps the devices its build made", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ guestReady: (guest) => writeFileSync(join(guest.control, "android-devices.json"), JSON.stringify(ANDROID_DEVICES)) });
+  try {
+    await assert.rejects(new BoatTemplates(world.deps({ androidLicence: () => null })).build("android", "test"), /licence accepted/);
+    world.fake.stopsArchiveForReads = 4;
+    const record = await new BoatTemplates(world.deps({ androidLicence: () => "abc123" })).build("android", "test");
+    const guest = world.guests.get(record.sandbox)!;
+    assert.equal(guest.controlFile("android-sdk-license"), "abc123\n", "the acceptance is there when the guest scripts start");
+    assert.deepEqual(record.devices, ANDROID_DEVICES);
+    assert.equal(world.fake.sandboxes.get(record.sandbox)?.state, "archived", "the build waited while boat saved the template's disk");
+    const trial = [...world.fake.sandboxes.values()].find((each) => each.labels[LABELS.role] === TRIAL_ROLE)!;
+    assert.equal(trial.type, "default", "the Android trial runs at the size an Android box will have, not the smallest");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a template build that fails writes the last lines of its log to bb-box's log before its sandbox is deleted, so the cause is not only the last 600 characters", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ guestReady: (guest) => {
+    writeFileSync(join(guest.control, "customize-says"), "the line that says why\nthe end of the log\n");
+    guest.finish("customize", 1);
+  } });
+  try {
+    await assert.rejects(new BoatTemplates(world.deps()).build("linux", "test"), /failed with exit 1: [\s\S]*the line that says why\nthe end of the log/);
+    const written = world.logs.find((line) => line.includes("the last 120 lines of its log"));
+    assert.match(written ?? "", /which bb-box deletes now:\n[\s\S]*the line that says why\nthe end of the log\n\d\d:\d\d:\d\d  customized$/);
+    assert.equal([...world.fake.sandboxes.values()].filter((each) => each.state !== "deleted").length, 0, "the failed build is still deleted");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("the upkeep keeps a build and a trial the next bb-box follows, and deletes a build of other scripts, an unfinished one boat stopped, and trials of other templates", async () => {
+  const fake = new FakeBoat();
+  const long = Date.now() - 11 * 60_000;
+  const template = (name: string, state: string, key = "fp1", createdAt = long) => fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: key }, name, state, createdAt });
+  const trial = (of: string | null) => fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", ...(of ? { [LABELS.template]: of } : {}) }, state: "ready", createdAt: long });
+  const running = template(templateName("linux", "building"), "ready", "fp1", long + 1000);
+  const checking = template(templateName("linux", "checking"), "archived");
+  const unfinished = template(templateName("linux", "building"), "archived");
+  const older = template(templateName("linux", "building"), "ready", "old");
+  const ofChecking = trial(checking.id);
+  const ofAnother = trial("bx_another");
+  const unlabelled = trial(null);
+  const templates = new BoatTemplates({
+    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
+    storage: new MemoryStorage(),
+    installId: "inst1",
+    labelKeys: LABEL_KEYS,
+    publicKey: async () => "ssh-ed25519 AAAAkey",
+    reach: async () => ({ run: async () => OK_RUN }),
+    forget: async () => {},
+    answers: async () => {},
+    settled: async () => {},
+    restored: async () => {},
     now: Date.now,
     sleep: async () => {},
     log: () => {},
     fingerprint: () => "fp1",
-    setupArchive: async () => Buffer.from("tar"),
   });
-  const waiting: (string | null)[] = [];
-  const record = await templates.forBox("linux", signal(), async (words) => void waiting.push(words));
-  assert.deepEqual(waiting, [buildWaitWords("linux", null), null]);
-  const built = fake.sandboxes.get(record.sandbox)!;
-  assert.equal(built.state, "archived", "a template waits stopped");
-  assert.deepEqual(built.labels, { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" });
-  assert.equal(built.type, "default");
-  const customize = scripts.findIndex((each) => each.user === "user" && each.script.includes("template.sh\" customize linux"));
-  const check = scripts.findIndex((each) => each.script.startsWith("bb-box-check-headless"));
-  const finalize = scripts.findIndex((each) => each.user === "user" && each.script.includes("template.sh finalize linux"));
-  assert.ok(customize >= 0 && customize < finalize && finalize < check, "customize, finalize, then the check");
-  assert.match(scripts[customize]!.script, /^sudo -n sh -c 'cd \/\n/, "the guest scripts start from /, as the box user cannot enter boat's home, where the emulator then fails to start");
-  assert.ok(scripts[finalize]!.script.startsWith(`${OUT_OF_BOATS_HOME} && `), "and so does the finalize");
-  assert.notEqual(scripts[check]!.sandbox, record.sandbox, "the check runs in a fork of the template, as a box is");
-  assert.equal(fake.sandboxes.get(scripts[check]!.sandbox)?.state, "deleted", "the trial fork goes");
-  assert.equal(scripts.find((each) => each.script.startsWith("bb-box-check"))?.user, "box", "the check runs as the box user");
-  assert.ok(scripts.some((each) => each.script.includes("template.sh finalize linux")));
-  assert.deepEqual(await templates.whyBuild("linux"), null);
-  assert.equal((await templates.forBox("linux", signal())).sandbox, record.sandbox, "a second box forks the same template");
 
-  checkFails = true;
-  await storage.delete("template/linux-desktop-cpu");
-  await assert.rejects(templates.build("linux-desktop-cpu", "test"), /failed its check in a fork of it: Docker +FAIL no daemon/);
-  const restoredAt = scripts.findIndex((each) => each.script === "boat restored");
-  const cuaAt = scripts.findIndex((each) => each.script.includes("cua-probe"));
-  assert.ok(restoredAt >= 0 && restoredAt < cuaAt, "the desktop's trial fork checks Cua Driver once boat has restored it");
-  assert.equal(scripts.filter((each) => each.script === "boat restored").length, 1, "a Linux template's trial does not wait for it");
-  assert.equal([...fake.sandboxes.values()].filter((each) => each.labels[LABELS.kind] === "linux-desktop-cpu" && each.state !== "deleted").length, 0);
-  assert.deepEqual(failedChecks("a ok\nb FAIL x\n"), ["b FAIL x"]);
+  assert.equal((await templates.leftBuild("linux"))?.id, running.id, "the newest build left behind is followed");
+  await templates.tidy((await new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch }).list({ [LABELS.install]: "inst1" })).filter((sandbox) => [TEMPLATE_ROLE, TRIAL_ROLE].includes(sandbox.labels[LABELS.role] ?? "")));
+  assert.equal(running.state, "ready", "a running build of these scripts is followed, not deleted");
+  assert.equal(checking.state, "archived", "and a finalized one whose check had not passed");
+  assert.equal(ofChecking.state, "ready", "and its trial");
+  for (const gone of [unfinished, older, ofAnother, unlabelled]) assert.equal(gone.state, "deleted", gone.name);
+  assert.equal(await templates.adoptable("linux"), null, "no box forks a template that is not named ready");
+  assert.equal((await templates.due())[0]?.why, LEFT_BUILD_WHY);
+});
+
+test("the guest's answers read as the build's step: a code wins, then a process holding the build, and no process means dead once customize started", () => {
+  const answer = (fields: Record<string, string>, tail = "12:00:00  customize-base.sh") => `${Object.entries({ running: "no", started: "no", staged: "no", state: "no", customized: "", finalized: "", ...fields }).map(([key, value]) => `${key}=${value}`).join("\n")}\n--\n${tail}\n`;
+  const step = (fields: Record<string, string>) => guestStep(guestBuildFrom(answer(fields))!);
+  assert.equal(step({}), "unstaged");
+  assert.equal(step({ running: "yes", staged: "yes", state: "yes" }), "running", "a staging that holds the lock");
+  assert.equal(step({ staged: "yes", state: "yes" }), "unstaged", "a staging that ended before customize started");
+  assert.equal(step({ running: "yes", started: "yes", staged: "yes", state: "yes" }), "running");
+  assert.equal(step({ started: "yes", staged: "yes", state: "yes" }), "died");
+  assert.equal(step({ staged: "yes" }), "died", "a log without the build's state: an older bb-box's build, or a restarted sandbox");
+  assert.equal(step({ started: "yes", state: "yes", customized: "0" }), "died", "it died between customize and finalize");
+  assert.equal(step({ running: "yes", started: "yes", state: "yes", customized: "2" }), "customize-failed");
+  assert.equal(step({ started: "yes", state: "yes", customized: "0", finalized: "1" }), "finalize-failed");
+  assert.equal(step({ started: "yes", state: "yes", customized: "0", finalized: "0" }), "finished");
+  assert.equal(guestBuildFrom("exit=0\n12:00:00  customized\n"), null, "an answer without the fields is no answer");
+  assert.deepEqual(guestBuildFrom(answer({}))?.tail, ["12:00:00  customize-base.sh"]);
 });
 
 test("boat offers linux and the CPU desktop, both VMs with KVM, the desktop with bb-box's own VNC, Selkies and Cua Driver", () => {
@@ -344,7 +694,7 @@ test("BB's URL on a private network, with no tailnet, is said plainly with its f
   assert.equal(check.status, "warn");
   assert.match(check.detail, /cannot reach BB's server: bb.example.com points at 10.0.0.69, on a private network. So boat boxes run commands and copy files, but do not become BB machines/);
   assert.match(check.fix ?? "", /Turn the tailnet on/);
-  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });
   await context.storage.set("template/linux", { kind: "linux", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null });
   const guest = await backend.acquire(box("b1"), null, hooks().hooks, signal());
   assert.match(guest.facts?.find((fact) => fact.label === "BB machine")?.value ?? "", /^No\. boat's sandboxes cannot reach BB's server/);
@@ -357,9 +707,12 @@ test("on the trial's 2 sandboxes at once, a box whose template must be built fir
   assert.equal(refused.ok, false);
   assert.match(refused.message!, /boat's free trial allows 2 sandboxes at once, and 1 is running or starting, 1 of them not bb-box's. This box's template must be built first, in a sandbox of its own: building boat's Linux template first/);
   const adoptable = setup({ templates: false });
-  adoptable.fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  adoptable.fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });
   adoptable.fake.add({ labels: { other: "x" } });
   assert.equal((await adoptable.backend.capacity("linux", SMALL, [])).ok, true, "a template another install built counts as built");
+  const left = setup({ templates: false });
+  left.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "building"), state: "ready" });
+  assert.equal((await left.backend.capacity("linux", SMALL, [])).ok, true, "a build an earlier bb-box left running is the template's sandbox, not one more");
   const built = setup();
   built.fake.add({ labels: { other: "x" } });
   built.fake.add({ labels: { other: "y" } });
@@ -369,7 +722,7 @@ test("on the trial's 2 sandboxes at once, a box whose template must be built fir
 test("with no record of its template, as after lost storage or for another install on the account, bb-box forks the newest stopped template its labels match, and gives the box only its own key", async () => {
   const { fake, backend } = setup({ templates: false });
   fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "old" }, state: "archived" });
-  const matching = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  const matching = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });
   const guest = await backend.acquire(box("b1"), null, hooks().hooks, signal());
   assert.equal(fake.sandboxes.get(String(guest.data?.sandbox))?.forkedFrom, matching.id);
   assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 0, "nothing was built");
@@ -383,7 +736,7 @@ test("the upkeep keeps the newest stopped template of the current scripts, even 
   const { fake, backend, storage, templates } = setup({ now: () => now });
   await storage.delete("template/linux");
   const old = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "old" }, state: "archived" });
-  const leftBuild = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "ready" });
+  const leftBuild = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "old" }, state: "ready" });
   now += 11 * 60_000;
   await backend.maintain(undefined, new Set());
   assert.equal(fake.sandboxes.get(templates.linux!)?.state, "archived", "the current scripts' template stays, though no record names it");
@@ -396,7 +749,7 @@ test("the upkeep forks a template of the current scripts that the account alread
   const { fake, backend, storage, templates } = setup();
   await storage.set("template/linux", { kind: "linux", sandbox: templates.linux, key: "old", builtAt: Date.now(), buildMs: 1, usedAt: null });
   await storage.set("template/linux-desktop-cpu", { kind: "linux-desktop-cpu", sandbox: templates["linux-desktop-cpu"], key: "old", builtAt: Date.now(), buildMs: 1, usedAt: null });
-  const current = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  const current = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });
   fake.sandboxes.get(templates["linux-desktop-cpu"]!)!.labels[LABELS.key] = "old";
   fake.sandboxes.get(templates.linux!)!.labels[LABELS.key] = "old";
   fake.failNext("POST /sandboxes", 503, "out_of_capacity", 5);
@@ -435,7 +788,7 @@ const ALL_ANDROID_DEVICES = [
 
 test("boat offers each Android device only where the plan's largest size meets that device's least size, and the doctor and box_list say which and why", async () => {
   const { fake, backend, storage } = setup({ config: { androidLicence: true } });
-  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived", type: "default" });
+  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, name: templateName("android", "ready"), state: "archived", type: "default" });
   await storage.set("template/android", { kind: "android", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null, devices: ALL_ANDROID_DEVICES });
   await backend.maintain(undefined, new Set());
   const offered = backend.kinds().find((kind) => kind.id === "android")?.capabilities.device;
@@ -454,7 +807,7 @@ test("boat offers each Android device only where the plan's largest size meets t
 
 test("an Android box forks the template, and shows its device, not a desktop", async () => {
   const { fake, backend, storage } = setup({ config: { androidLicence: true } });
-  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived", type: "default" });
+  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, name: templateName("android", "ready"), state: "archived", type: "default" });
   await storage.set("template/android", { kind: "android", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null, devices: ANDROID_DEVICES });
   await backend.maintain(undefined, new Set());
   const android = backend.kinds().find((kind) => kind.id === "android")!;
@@ -473,55 +826,13 @@ test("an Android box forks the template, and shows its device, not a desktop", a
 
 test("another install's Android template is forked once its devices are read from its snapshot", async () => {
   const { fake, backend } = setup({ config: { androidLicence: true } });
-  const theirs = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived" });
+  const theirs = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, name: templateName("android", "ready"), state: "archived" });
   theirs.files["usr/share/bb-box/android-devices.json"] = JSON.stringify(ANDROID_DEVICES);
   await backend.maintain(undefined, new Set());
   assert.deepEqual(backend.kinds().find((kind) => kind.id === "android")?.capabilities.device, { platform: "android", devices: ANDROID_DEVICES });
   assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 0, "nothing was built");
 });
 
-
-test("the Android template's build writes the licence's acceptance before the guest scripts, and keeps the devices its build made", async () => {
-  const fake = new FakeBoat();
-  const scripts: { script: string; stdin: string }[] = [];
-  const reached = (): Reached => ({
-    run: async (script, options) => {
-      scripts.push({ script, stdin: String(options.stdin ?? "") });
-      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-      if (script.includes("exit=")) return { ...ok, stdout: "exit=0\n" };
-      if (script.startsWith("cat /usr/share/bb-box/android-devices.json")) return { ...ok, stdout: JSON.stringify(ANDROID_DEVICES) };
-      return ok;
-    },
-  });
-  const deps = {
-    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
-    storage: new MemoryStorage(),
-    installId: "inst1",
-    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
-    publicKey: async () => "ssh-ed25519 AAAAkey",
-    reach: async () => reached(),
-    forget: async () => {},
-    answers: async () => {},
-    settled: async () => {},
-    restored: async () => {},
-    now: Date.now,
-    sleep: async () => {},
-    log: () => {},
-    fingerprint: () => "fp1",
-    setupArchive: async () => Buffer.from("tar"),
-  };
-  await assert.rejects(new BoatTemplates({ ...deps, androidLicence: () => null }).build("android", "test"), /licence accepted/);
-  fake.stopsArchiveForReads = 4;
-  const record = await new BoatTemplates({ ...deps, androidLicence: () => "abc123" }).build("android", "test");
-  const licence = scripts.findIndex((each) => each.script.includes("android-sdk-license"));
-  const customize = scripts.findIndex((each) => each.script.includes("customize android"));
-  assert.ok(licence >= 0 && licence < customize, "the acceptance is written before the guest scripts run");
-  assert.equal(scripts[licence]!.stdin, "abc123\n");
-  assert.deepEqual(record.devices, ANDROID_DEVICES);
-  assert.equal(fake.sandboxes.get(record.sandbox)?.state, "archived", "the build waited while boat saved the template's disk");
-  const trial = [...fake.sandboxes.values()].find((each) => each.labels[LABELS.role] === TRIAL_ROLE)!;
-  assert.equal(trial.type, "default", "the Android trial runs at the size an Android box will have, not the smallest");
-});
 
 test("a stop waits while boat saves the sandbox's disk, up to an hour for a template, and says how boat's stop stands when it is still saving", async () => {
   const fake = new FakeBoat();
@@ -601,40 +912,6 @@ test("boat's template fingerprint and archive are the files its build reads: wha
   } finally {
     rmSync(copy, { recursive: true, force: true });
   }
-});
-
-test("a template build that fails writes the last lines of its log to bb-box's log before its sandbox is deleted, so the cause is not only the last 600 characters", async () => {
-  const fake = new FakeBoat();
-  const logs: string[] = [];
-  const reached = (): Reached => ({
-    run: async (script) => {
-      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-      if (script.includes("exit=")) return { ...ok, stdout: "exit=1\n12:00:00  customize-android.sh\nthe end of the log\n" };
-      if (script.includes("tail -n 120")) return { ...ok, stdout: "the line that says why\nthe end of the log\n" };
-      return ok;
-    },
-  });
-  const templates = new BoatTemplates({
-    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
-    storage: new MemoryStorage(),
-    installId: "inst1",
-    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
-    publicKey: async () => "ssh-ed25519 AAAAkey",
-    reach: async () => reached(),
-    forget: async () => {},
-    answers: async () => {},
-    settled: async () => {},
-    restored: async () => {},
-    now: Date.now,
-    sleep: async () => {},
-    log: (line) => void logs.push(line),
-    fingerprint: () => "fp1",
-    setupArchive: async () => Buffer.from("tar"),
-  });
-  await assert.rejects(templates.build("linux", "test"), /failed with exit 1: 12:00:00  customize-android\.sh\nthe end of the log/);
-  const written = logs.find((line) => line.includes("the last 120 lines of its log"));
-  assert.match(written ?? "", /which bb-box deletes now:\nthe line that says why\nthe end of the log$/);
-  assert.equal([...fake.sandboxes.values()].filter((each) => each.state !== "deleted").length, 0, "the failed build is still deleted");
 });
 
 test("a boat box is resized by starting it again on a machine of the new size, as boat.dev resumes a stopped sandbox at another size, and planResize says so first", async () => {
