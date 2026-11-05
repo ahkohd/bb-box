@@ -243,10 +243,12 @@ function pipeDial(channel: Channel, child: DialStdio, where: string): void {
   child.once("error", (error) => channel.destroy(new Error(`wsl.exe for ${where}: ${error.message}`)));
   channel.on("error", () => child.kill());
   channel.on("close", () => child.kill());
-  child.stdout.pipe(channel);
+  child.stdout.pipe(channel, { end: false });
   channel.pipe(child.stdin);
   child.once("close", (code) => {
-    if (code && !channel.destroyed) channel.destroy(new Error(stderr.trim() || `docker system dial-stdio in ${where} exited ${code}`));
+    if (channel.destroyed || channel.writableEnded) return;
+    if (code === 0) channel.end();
+    else channel.destroy(new Error(stderr.trim() || `docker system dial-stdio in ${where} exited ${code ?? "with a signal"}`));
   });
 }
 
@@ -264,15 +266,18 @@ export function relayHandlers(options: RelayOptions = {}) {
   const leases = new Set<ExperimentalHostWorkerLease>();
   const muxes = new Set<Mux>();
   const dialStdio = options.dial ?? wslDial;
-  let localhostForwarder: Promise<string | null> | null = null;
+  const forwarders = new Map<string, { readonly at: number; readonly result: Promise<string | null> }>();
   const forwarderAt = (endpoint: DockerEndpoint): Promise<string | null> => {
     if (!("host" in endpoint) || !isLocalhost(endpoint.host) || machinePlatform() !== "windows") return Promise.resolve(null);
     const address = `${endpoint.host}:${endpoint.port}`;
-    localhostForwarder ??= readAfterHalfClose(endpoint.port, endpoint.host, ATTACH_PING).then(
+    const cached = forwarders.get(address);
+    if (cached && Date.now() - cached.at < 5_000) return cached.result;
+    const result = readAfterHalfClose(endpoint.port, endpoint.host, ATTACH_PING).then(
       (text) => (text.trim() ? null : forwarderReason(address)),
       () => null,
     );
-    return localhostForwarder;
+    forwarders.set(address, { at: Date.now(), result });
+    return result;
   };
   const joinSocket = (channel: Channel, endpoint: DockerEndpoint) => {
     const socket = connect({ ...endpoint, allowHalfOpen: true } as NetConnectOpts);

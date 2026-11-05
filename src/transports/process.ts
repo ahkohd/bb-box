@@ -175,7 +175,6 @@ export interface CommandLineOptions {
   readonly posix?: boolean;
   readonly statusFromMark?: boolean;
   readonly missingStatus?: string;
-  readonly recoverStatus?: () => Promise<number | null>;
 }
 
 export class CommandLine {
@@ -323,23 +322,17 @@ export class CommandLine {
       const ended = (code: number | null) => {
         if (closing || settled) return;
         closing = true;
-        void (async () => {
-          if (marks) {
-            const [out, err] = [marks.stdout.rest(), marks.stderr.rest()];
-            if (out.length) onStdout(out);
-            if (err.length) onStderr(err);
-          }
-          let status = marks?.stdout.status ?? marks?.stderr.status ?? null;
-          if (status === null && this.#options.statusFromMark && code === 0) {
-            const recovered = this.#options.recoverStatus ? await this.#options.recoverStatus().catch(() => null) : null;
-            status = recovered ?? null;
-            if (status === null) {
-              finish(this.#error(this.#options.missingStatus ?? "the command ended without an exit status"), null);
-              return;
-            }
-          }
-          finish(null, status ?? code);
-        })().catch((error: unknown) => finish(error instanceof Error ? error : this.#error(String(error)), null));
+        if (marks) {
+          const [out, err] = [marks.stdout.rest(), marks.stderr.rest()];
+          if (out.length) onStdout(out);
+          if (err.length) onStderr(err);
+        }
+        const status = marks?.stdout.status ?? marks?.stderr.status ?? null;
+        if (status === null && this.#options.statusFromMark && code === 0) {
+          finish(this.#error(this.#options.missingStatus ?? "the command ended without an exit status"), null);
+          return;
+        }
+        finish(null, status ?? code);
       };
       child.stdout.on("data", pass(marks?.stdout, onStdout));
       child.stderr.on("data", pass(marks?.stderr, onStderr));

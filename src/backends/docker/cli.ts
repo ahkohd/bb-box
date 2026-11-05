@@ -3,12 +3,11 @@
 // ssh:// host alike, and its `docker exec` is a plain command line, which
 // the command transport and the desktop's route use (031).
 
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
 import { wslArgs, wslFrom } from "../../host/relay.ts";
-import { exitCodeFromInspect } from "./attach.ts";
 import { parseCpuList } from "./cpus.ts";
 import { mountsLxcfs } from "./lxcfs.ts";
 
@@ -96,7 +95,6 @@ export interface ContainerInfo {
   /** created, running, paused, restarting, removing, exited or dead. */
   readonly status: string;
   readonly exitCode: number | null;
-  readonly execIds: readonly string[];
   /** From the container's limits; null without one. */
   readonly cores: number | null;
   readonly memoryMiB: number | null;
@@ -176,7 +174,6 @@ export function parseContainers(text: string): ContainerInfo[] {
       labels: strings(record(container.Config).Labels),
       status: typeof state.Status === "string" ? state.Status : "",
       exitCode: typeof state.ExitCode === "number" ? state.ExitCode : null,
-      execIds: Array.isArray(container.ExecIDs) ? container.ExecIDs.filter((id): id is string => typeof id === "string") : [],
       cores: nanoCpus ? Math.round((nanoCpus / 1e9) * 100) / 100 : null,
       memoryMiB: memory ? Math.round(memory / MiB) : null,
       cpus: parseCpuList(typeof host.CpusetCpus === "string" ? host.CpusetCpus : null),
@@ -266,12 +263,6 @@ export class DockerCli {
     return [this.#binary, ...(this.host ? ["-H", this.host] : []), ...args];
   }
 
-  async execExit(id: string, signal?: AbortSignal): Promise<number | null> {
-    if (!/^[A-Za-z0-9]+$/.test(id)) return null;
-    const text = await dialText(this.#binary, this.host, `GET /exec/${id}/json HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n`, signal).catch(() => "");
-    return exitCodeFromInspect(text);
-  }
-
   async run(args: readonly string[], options: RunOptions = {}): Promise<DockerResult> {
     // The CLI's own version needs no daemon.
     if (args[0] !== "--version") await this.prepare(options.signal);
@@ -354,36 +345,3 @@ export class DockerCli {
   }
 }
 
-function dialCommand(binary: string, host: string | null): [string, string[]] {
-  const wsl = host ? wslFrom(host) : null;
-  if (wsl) return ["wsl.exe", wslArgs(wsl, ["docker", "system", "dial-stdio"])];
-  return [binary, [...(host ? ["-H", host] : []), "system", "dial-stdio"]];
-}
-
-function dialText(binary: string, host: string | null, request: string, signal?: AbortSignal): Promise<string> {
-  const [command, args] = dialCommand(binary, host);
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-    let text = "";
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      child.kill();
-      if (error && !text) reject(error);
-      else resolve(text);
-    };
-    const abort = () => finish(signal?.reason instanceof Error ? signal.reason : new Error("aborted"));
-    const timer = setTimeout(() => finish(), 3_000);
-    signal?.addEventListener("abort", abort, { once: true });
-    child.stdout?.on("data", (chunk: Buffer) => {
-      text += chunk.toString("utf8");
-    });
-    child.once("error", (error) => finish(error));
-    child.once("close", () => finish());
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(request);
-  });
-}

@@ -23,7 +23,7 @@ import {
 } from "../../transports/types.ts";
 import type { DockerCli } from "./cli.ts";
 
-export const MISSING_STATUS = "docker exec ended without an exit status. The stream closed before the command's exit status, and docker exec inspect had none, so exit 0 would not be the command's.";
+export const MISSING_STATUS = "docker exec ended without an exit status. The stream closed before the command's exit status, so exit 0 would not be the command's.";
 
 export const BOX_USER = "box";
 export const BOX_HOME = `/home/${BOX_USER}`;
@@ -49,7 +49,6 @@ export class DockerTransport implements CommandTransport {
       argv: (script) => this.#exec(["/bin/sh", "-c", PRELUDE + script]),
       statusFromMark: true,
       missingStatus: MISSING_STATUS,
-      recoverStatus: () => this.#execExit(),
     });
   }
 
@@ -66,16 +65,6 @@ export class DockerTransport implements CommandTransport {
       this.#container,
       ...command,
     ]);
-  }
-
-  async #execExit(): Promise<number | null> {
-    const [container] = await this.#cli.inspect([this.#container]).catch(() => []);
-    if (!container) return null;
-    for (const id of container.execIds) {
-      const code = await this.#cli.execExit(id).catch(() => null);
-      if (code !== null) return code;
-    }
-    return null;
   }
 
   #unreachable(): TransportError {

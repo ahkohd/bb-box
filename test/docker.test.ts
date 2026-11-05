@@ -269,7 +269,6 @@ test("reads the daemon's facts and its containers", () => {
     lxcfs: true,
     addresses: { bbbox: "172.30.0.2" },
     imageId: "sha256:1111",
-    execIds: [],
   });
   assert.deepEqual(parseContainers(""), []);
 });

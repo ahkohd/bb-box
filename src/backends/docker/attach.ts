@@ -32,16 +32,3 @@ export function readAfterHalfClose(port: number, host: string, payload: string, 
     socket.end(payload);
   });
 }
-
-export function exitCodeFromInspect(text: string): number | null {
-  const split = text.indexOf("\r\n\r\n");
-  const body = (split >= 0 ? text.slice(split + 4) : text).trim();
-  if (!body) return null;
-  try {
-    const parsed = JSON.parse(body) as { Running?: boolean; ExitCode?: number | null };
-    if (parsed.Running !== false || typeof parsed.ExitCode !== "number") return null;
-    return parsed.ExitCode;
-  } catch {
-    return null;
-  }
-}

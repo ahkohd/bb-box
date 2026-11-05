@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Socket } from "node:net";
 import { test } from "node:test";
-import { ATTACH_PING, exitCodeFromInspect, readAfterHalfClose } from "../src/backends/docker/attach.ts";
+import { ATTACH_PING, readAfterHalfClose } from "../src/backends/docker/attach.ts";
 import { MISSING_STATUS } from "../src/backends/docker/transport.ts";
 import { CommandLine } from "../src/transports/process.ts";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
@@ -41,13 +41,9 @@ function listen(answer: string | null): Promise<{ port: number; close: () => Pro
 test("a forwarder that drops output after a half-close fails the doctor and is not an exit status", async () => {
   const dropped = await listen(null);
   const honest = await listen("OK");
-  const inspected = await listen(`HTTP/1.1 200 OK\r\n\r\n${JSON.stringify({ Running: false, ExitCode: 3 })}`);
   try {
     assert.equal(await readAfterHalfClose(honest.port, "127.0.0.1", ATTACH_PING, 1_000), "OK");
     assert.equal(await readAfterHalfClose(dropped.port, "127.0.0.1", ATTACH_PING, 1_000), "");
-    assert.equal(exitCodeFromInspect(await readAfterHalfClose(dropped.port, "127.0.0.1", "GET /exec/abc/json HTTP/1.1\r\nHost: docker\r\n\r\n", 1_000)), null);
-    assert.equal(exitCodeFromInspect(await readAfterHalfClose(inspected.port, "127.0.0.1", "GET /exec/abc/json HTTP/1.1\r\nHost: docker\r\n\r\n", 1_000)), 3);
-    assert.equal(exitCodeFromInspect(JSON.stringify({ Running: true, ExitCode: 0 })), null);
 
     const fake = fakeDockerHost({ kernelVersion: "6.6.87.2-microsoft-standard-WSL2" });
     const backend = new DockerBackend(dockerConfig({ host: `tcp://127.0.0.1:${dropped.port}` }), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000 });
@@ -69,21 +65,11 @@ test("a forwarder that drops output after a half-close fails the doctor and is n
       argv: () => ["/bin/sh", "-c", "exit 0"],
       statusFromMark: true,
       missingStatus: MISSING_STATUS,
-      recoverStatus: async () => exitCodeFromInspect(await readAfterHalfClose(dropped.port, "127.0.0.1", "GET /exec/abc/json HTTP/1.1\r\nHost: docker\r\n\r\n", 1_000)),
     });
     await assert.rejects(missing.run("hostname; echo x; exit 3"), /without an exit status/);
-
-    const seen = new CommandLine({
-      argv: () => ["/bin/sh", "-c", "exit 0"],
-      statusFromMark: true,
-      missingStatus: MISSING_STATUS,
-      recoverStatus: async () => exitCodeFromInspect(await readAfterHalfClose(inspected.port, "127.0.0.1", "GET /exec/abc/json HTTP/1.1\r\nHost: docker\r\n\r\n", 1_000)),
-    });
-    assert.equal((await seen.run("exit 3")).exitCode, 3);
   } finally {
     await dropped.close();
     await honest.close();
-    await inspected.close();
   }
 });
 
