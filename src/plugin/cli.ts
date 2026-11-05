@@ -20,6 +20,7 @@ import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
 import { gpuCommands } from "./gpu-cli.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
+import { importChangeText } from "../app/settings-import.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -653,13 +654,15 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Checking the configuration", async () => {
               const draft = await readConfigFile(positionals.file, ctx);
               const { configuration } = app;
-              const result = await configuration.check(draft, undefined, ctx.signal);
+              const result = await configuration.check(draft, undefined, ctx.signal, { read: true });
+              const changes = result.read ? importChangeText(await configuration.state(), result.read, draft) : null;
               const tested: { id: string; report: DoctorReport | null }[] = [];
               for (const id of options.test ? configuration.enabledIn(draft) : []) {
                 tested.push({ id, report: (await configuration.check(draft, id, ctx.signal)).doctor });
               }
-              if (options.json) return json({ problems: result.problems, doctors: tested });
+              if (options.json) return json({ problems: result.problems, changes, doctors: tested });
               const lines = [result.problems.length ? `Problems:\n${problemsText(result.problems)}` : "No problems."];
+              if (changes) lines.push(changes);
               for (const { id, report } of tested) {
                 lines.push(report ? doctorText({ ok: report.ok, sections: [{ title: id, report }] }) : `${id}: not checked, since its settings have problems.`);
               }

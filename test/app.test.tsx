@@ -38,7 +38,7 @@ import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWor
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
-import { sparesWords } from "../src/app/settings-kinds.tsx";
+import { runsOn, sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf, timingWords } from "../src/app/status.ts";
 import { choices, firstSort, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
 import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
@@ -54,6 +54,8 @@ import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } fr
 import { problemPath } from "../src/app/settings-paths.ts";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
 import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
+import { SavedTick } from "../src/app/settings-parts.tsx";
+import { CheckRow } from "../src/app/settings-backend-page.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
@@ -2103,7 +2105,7 @@ test("the settings overview shows an honest status, each backend with its state 
   const slot = settings(server([]).handlers);
   expect(await slot.findByText("Fake host is not working")).toBeTruthy();
   const things = within(slot.getByRole("region", { name: "Things that need you" }));
-  expect(things.getByText("3 things need you")).toBeTruthy();
+  expect(things.getByText("3 things need you").className).toContain("font-normal");
   expect(things.getByText("Fake host")).toBeTruthy();
   expect(things.getByText("Not offered now: Linux")).toBeTruthy();
   expect(things.getByRole("button", { name: "Open Fake host" })).toBeTruthy();
@@ -2177,6 +2179,71 @@ test("a switch saves at once and says Saved; a refusal, three refusals in a row 
   fireEvent.click(await silent.findByRole("switch", { name: "Fake host: takes new boxes" }));
   expect(await silent.findByText("Not confirmed: BB Box did not reply (The connection closed), and has no receipt for this change. Fake host is on now, at revision 3.")).toBeTruthy();
   expect(silent.queryByText("Saved")).toBeNull();
+});
+
+test("opening a backend by its address focuses the heading, as BB's back button does when it returns to the page", async () => {
+  const slot = settings(server([]).handlers, "#backend/fake");
+  const heading = await slot.findByRole("heading", { name: "Fake host" });
+  await waitFor(() => expect(document.activeElement).toBe(heading));
+  expect(heading.className).toContain("font-normal");
+  expect(slot.getByRole("heading", { name: "Boxes" }).className).toContain("font-normal");
+  const templates = slot.getByRole("textbox", { name: "Templates" });
+  expect(templates.className).toContain("placeholder:text-muted-foreground/60");
+  expect(templates.getAttribute("placeholder")).toBe("9100");
+});
+
+test("Saved fades out, and a check's name is at the same weight as other settings text", async () => {
+  const shown = render(<SavedTick show />);
+  const saved = shown.getByText("Saved");
+  expect(saved.className).toContain("transition-opacity");
+  expect(saved.className).toContain("motion-reduce:transition-none");
+  expect(saved.className).toContain("opacity-100");
+  shown.rerender(<SavedTick show={false} />);
+  expect(shown.getByText("Saved").className).toContain("opacity-0");
+  await waitFor(() => expect(shown.queryByText("Saved")).toBeNull());
+  cleanup();
+
+  const row = render(
+    <ul>
+      <CheckRow check={{ id: "doctor", name: "API", status: "ok", detail: "Ready", fix: null }} />
+    </ul>,
+  );
+  expect(row.getByText("API").className).toContain("font-normal");
+});
+
+test("iOS Simulator lists Namespace with Tart and the SSH host pool, and says warm boxes are the shared hosts", () => {
+  const base = configState({});
+  const types = [
+    ["tart", "Tart"],
+    ["ssh-pool", "SSH host pool"],
+    ["namespace", "Namespace"],
+  ] as const;
+  const driver = (type: string, label: string) => ({
+    ...base.drivers[0]!,
+    type,
+    label,
+    kinds: [] as string[],
+    warmKinds: [] as string[],
+    fields: [{ ...base.drivers[0]!.fields[0]!, key: "ios-hosts-ahead", label: "Ready slots kept on a shared iOS host", group: "ios-hosts" as const }],
+  });
+  const document = { ...base.document, backends: types.map(([type]) => ({ id: type, type, enabled: true, fields: {} })) };
+  const backends = types.map(([type, label]) => ({
+    id: type,
+    type,
+    label,
+    form: null,
+    state: "active" as const,
+    problems: [],
+    boxes: 0,
+    kinds: ["ios"],
+    doctor: null,
+    warmShort: [],
+    changed: 1,
+  }));
+  const info = { ...base.kinds[0]!, id: "ios", label: "iOS Simulator", device: "ios" as const, drivers: ["tart", "ssh-pool", "namespace"] };
+  const rows = runsOn({ ...base, document, drivers: types.map(([type, label]) => driver(type, label)), backends }, info);
+  expect(rows.map((row) => row.config.type)).toEqual(["tart", "ssh-pool", "namespace"]);
+  expect(rows.map((row) => row.noWarm)).toEqual(["shared-ios-hosts", "shared-ios-hosts", "shared-ios-hosts"]);
 });
 
 test("each row opens its part's page by the hash with focus on its heading, back returns focus to the row, and a link to a part that is not here says so", async () => {

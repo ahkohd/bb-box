@@ -131,7 +131,7 @@ function Step({ number, title, description, children }: { number: number; title:
       </span>
       <div className="min-w-0 space-y-4">
         <div>
-          <h3 className="text-sm text-foreground">{title}</h3>
+          <h3 className="text-sm font-normal text-foreground">{title}</h3>
           {description ? <div className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</div> : null}
         </div>
         {children}

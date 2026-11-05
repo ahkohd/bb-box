@@ -472,7 +472,7 @@ function HostDetails({ form, host, noun }: { form: BackendForm; host: HostRow; n
         ))}
         {sizes.length ? (
           <div className="px-4 pb-1 pt-3">
-            <p className="text-xs text-foreground">Its own shared iOS host size</p>
+            <p className="text-xs font-normal text-foreground">Its own shared iOS host size</p>
             <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">
               Empty takes {form.driver.label}'s setting, or bb-box's estimate for this {noun}. A change reaches the next shared host made on it; one running now keeps its size.
             </p>

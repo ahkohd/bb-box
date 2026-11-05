@@ -533,7 +533,7 @@ function ProjectImages() {
   return (
     <section className="space-y-2.5" aria-labelledby="settings-project-images">
       <div>
-        <h3 id="settings-project-images" tabIndex={-1} data-project-images-heading className="text-xs text-foreground outline-none">
+        <h3 id="settings-project-images" tabIndex={-1} data-project-images-heading className="text-xs font-normal text-foreground outline-none">
           Projects' images
         </h3>
         <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">A script run as root on a kind's standard image, for the boxes of a project's threads. Agents set them with bb box image set, from the project's files.</p>

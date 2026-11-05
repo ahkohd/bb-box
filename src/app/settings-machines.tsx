@@ -58,7 +58,7 @@ export function MachineRow({
       <div className="min-w-0">
         <RowNameLink box={box} page={page} describedBy={rowDescribedBy(line, lineId)} focus={nameFocus}>
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="min-w-0 truncate text-sm text-foreground">{box.name}</span>
+            <span className="min-w-0 truncate text-sm font-normal text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs text-muted-foreground">{systemName(box)}</span>
             {deviceModelOf(box) ? <span className="min-w-0 truncate text-xs text-foreground">{deviceModelOf(box)}</span> : null}
             <BoxBadges box={box} />

@@ -128,7 +128,7 @@ function Status({ machines }: { machines: Machines }) {
       <RowNote note={checkNote} className="px-1" />
       {items.length ? (
         <div className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3" role="region" aria-label="Things that need you">
-          <p className="text-sm text-foreground">{items.length === 1 ? "1 thing needs you" : `${items.length} things need you`}</p>
+          <p className="text-sm font-normal text-foreground">{items.length === 1 ? "1 thing needs you" : `${items.length} things need you`}</p>
           <ul className="mt-2 space-y-2.5">
             {items.map((item) => (
               <li key={item.key} className="flex flex-wrap items-start gap-x-3 gap-y-1.5">

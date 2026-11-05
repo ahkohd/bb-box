@@ -2304,6 +2304,27 @@ function recordingWarm<T extends { warm(kind: string): number }>(context: T): { 
   return { context: { ...context, warm: (kind: string) => (asked.add(kind), 0) }, asked };
 }
 
+test("stopping a Proxmox backend ends an API call that has not answered", async () => {
+  let resolveSeen: (signal: AbortSignal | undefined) => void = () => {};
+  const seen = new Promise<AbortSignal | undefined>((resolve) => {
+    resolveSeen = resolve;
+  });
+  const fetch = (_url: string, init?: { signal?: AbortSignal }) =>
+    new Promise<never>((_resolve, reject) => {
+      resolveSeen(init?.signal);
+      const abort = () => reject(new Error("aborted"));
+      if (init?.signal?.aborted) abort();
+      else init?.signal?.addEventListener("abort", abort, { once: true });
+    });
+  const { backend } = setup({ "proxmox-lxc-node": "" }, new MemoryStorage(), { fetch });
+  const running = backend.maintain();
+  await seen;
+  const started = Date.now();
+  await backend.dispose();
+  await running.catch(() => undefined);
+  assert.ok(Date.now() - started < 1000, `dispose took ${Date.now() - started}ms`);
+});
+
 test("maintain reads the warm counts of the kinds the driver says it keeps warm, and no others", async () => {
   const { context, make } = setup({ "proxmox-lxc-linux-templates": "9000", "proxmox-lxc-desktop-cpu-templates": "9002", "proxmox-lxc-desktop-wayland-cpu-templates": "9003" });
   const recorded = recordingWarm(context);

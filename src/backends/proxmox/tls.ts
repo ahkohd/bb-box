@@ -5,12 +5,30 @@ import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import type { FetchLike } from "./api.ts";
 
+export interface ProxmoxHttp {
+  fetch: FetchLike;
+  close(): Promise<void>;
+  destroy(): Promise<void>;
+}
+
+export function proxmoxHttp(fetch: FetchLike): ProxmoxHttp {
+  return { fetch, close: async () => {}, destroy: async () => {} };
+}
+
+function httpOf(agent: Agent): ProxmoxHttp {
+  return {
+    fetch: (url, init) => undiciFetch(url, { ...init, dispatcher: agent }),
+    close: () => agent.close(),
+    destroy: () => agent.destroy(),
+  };
+}
+
 /**
  * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
  * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
  * the system roots when that is null.
  */
-export function proxmoxFetch(tls: { ca: string | null; fingerprint: string | null }): { fetch: FetchLike; close(): Promise<void> } {
+export function proxmoxFetch(tls: { ca: string | null; fingerprint: string | null }): ProxmoxHttp {
   let agent: Agent;
   if (tls.fingerprint) {
     const expected = tls.fingerprint;
@@ -36,7 +54,7 @@ export function proxmoxFetch(tls: { ca: string | null; fingerprint: string | nul
   } else if (tls.ca) {
     agent = new Agent({ connect: { ca: tls.ca } });
   } else {
-    return { fetch: (url, init) => fetch(url, init), close: async () => {} };
+    agent = new Agent();
   }
-  return { fetch: (url, init) => undiciFetch(url, { ...init, dispatcher: agent }), close: () => agent.close() };
+  return httpOf(agent);
 }

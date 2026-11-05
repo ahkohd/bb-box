@@ -942,7 +942,14 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.match(wrong.stdout ?? "", /backends\.fake\.address: Fill in the fake host's address\./);
   const tested = await harness.behavior.runCli(["config", "check", "right.json", "--test"], { cwd: dir });
   assert.equal(tested.exitCode, 0, tested.stdout);
-  assert.match(tested.stdout ?? "", /^No problems\.\nfake: Fake host 1\.0|^No problems\.\nfake: /);
+  assert.match(tested.stdout ?? "", /^No problems\.\nIt would change:\n/);
+  assert.match(tested.stdout ?? "", /Boxes per thread: .*→ 4/);
+  assert.match(tested.stdout ?? "", /\nfake: /);
+  assert.ok(!(tested.stdout ?? "").includes("sekret-value"));
+  writeFileSync(join(dir, "secret.json"), JSON.stringify({ ...document, backends: [{ ...document.backends[0], fields: { token: "sekret-value" } }] }));
+  const secret = await harness.behavior.runCli(["config", "check", "secret.json"], { cwd: dir });
+  assert.match(secret.stdout ?? "", /A new value \(not shown\)/);
+  assert.ok(!(secret.stdout ?? "").includes("sekret-value"));
   const refused = await harness.behavior.runCli(["config", "apply", "wrong.json"], { cwd: dir });
   assert.equal(refused.exitCode, 1);
   assert.match(refused.stderr ?? "", /^Nothing was saved\. Fix these first:\n {2}backends\.fake\.address/);

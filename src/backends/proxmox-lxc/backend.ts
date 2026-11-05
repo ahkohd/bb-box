@@ -63,7 +63,7 @@ import {
   templateTag,
 } from "../proxmox/owner.ts";
 import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
-import { proxmoxFetch } from "../proxmox/tls.ts";
+import { proxmoxFetch, proxmoxHttp, type ProxmoxHttp } from "../proxmox/tls.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -709,7 +709,7 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #config: LxcConfig;
   readonly #context: BackendContext;
   readonly #options: LxcBackendOptions;
-  readonly #http: { fetch: FetchLike; close(): Promise<void> };
+  readonly #http: ProxmoxHttp;
   readonly #keyFile = new KeyFile();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
@@ -785,7 +785,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
     this.#cursor = new ImageFile(this.#cursorHelper);
     this.#http = options.fetch
-      ? { fetch: options.fetch, close: async () => {} }
+      ? proxmoxHttp(options.fetch)
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox LXC on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
     this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
@@ -2178,10 +2178,10 @@ export class ProxmoxLxcBackend implements Backend {
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
+    await this.#http.destroy();
     await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
-    await this.#http.close();
   }
 
   /** The Proxmox client, on the configured node or the API's only node. */
@@ -2190,7 +2190,7 @@ export class ProxmoxLxcBackend implements Backend {
       const pending = (async () => {
         let node = this.#config.proxmox.node;
         if (!node) {
-          const nodes = await this.#bare().nodes();
+          const nodes = await this.#bare().nodes(this.#stopping.signal);
           if (nodes.length !== 1) {
             throw new Error(
               nodes.length

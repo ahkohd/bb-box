@@ -1,7 +1,7 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CloudIcon } from "@hugeicons/core-free-icons";
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BackendConfig } from "../core/document.ts";
@@ -76,7 +76,7 @@ export function Chevron({ outward = false }: { outward?: boolean }) {
 
 export function PageHeading({ children, chips }: { children: ReactNode; chips?: ReactNode }) {
   return (
-    <h2 tabIndex={-1} data-page-heading className="flex min-w-0 flex-wrap items-center gap-1.5 text-base leading-tight text-foreground outline-none">
+    <h2 tabIndex={-1} data-page-heading className="flex min-w-0 flex-wrap items-center gap-1.5 text-base font-normal leading-tight text-foreground outline-none">
       <span className="min-w-0 break-words">{children}</span>
       {chips}
     </h2>
@@ -99,11 +99,31 @@ export function PageHeader({ glyph, title, chips, description, aside, children }
   );
 }
 
+const SAVED_FADE_MS = 180;
+
 export function SavedTick({ show }: { show: boolean }) {
+  const [present, setPresent] = useState(show);
+  const [visible, setVisible] = useState(show);
+  useEffect(() => {
+    if (show) {
+      setPresent(true);
+      const frame = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    const shown = present;
+    setVisible(false);
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    if (reduce || !shown) {
+      setPresent(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setPresent(false), SAVED_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [show, present]);
   return (
     <span role="status" aria-live="polite" className="inline-flex shrink-0 items-center empty:hidden">
-      {show ? (
-        <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
+      {present ? (
+        <span className={cn("inline-flex items-center gap-1 text-2xs text-muted-foreground transition-opacity duration-150 motion-reduce:transition-none", visible ? "opacity-100" : "opacity-0")}>
           <Icon name="Check" className="size-3" aria-hidden />
           Saved
         </span>

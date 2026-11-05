@@ -20,7 +20,7 @@ function SetupCard({ title, children, action, tone }: { title: string; children:
       <div className="flex flex-wrap items-start gap-3">
         <ProviderGlyph type="docker" className="mt-0.5 size-5" />
         <div className="min-w-0 flex-1 basis-64">
-          <p className="text-sm text-foreground">{title}</p>
+          <p className="text-sm font-normal text-foreground">{title}</p>
           <div className="mt-1 text-xs leading-snug text-muted-foreground">{children}</div>
         </div>
         {action}
@@ -169,7 +169,7 @@ function WayRow({ rowKey, glyph, title, detail, onClick, tone }: { rowKey: strin
     <button type="button" data-row-key={rowKey} onClick={onClick} className={cn("flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors duration-150 hover:bg-state-hover", tone === "warn" ? "border-surface-warning-border" : "border-border", FOCUS_RING)}>
       {glyph}
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-foreground">{title}</span>
+        <span className="block text-sm font-normal text-foreground">{title}</span>
         <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{detail}</span>
       </span>
       <Chevron />
@@ -187,7 +187,7 @@ export function FirstRunSection({ machines }: { machines: Machines }) {
   return (
     <section className="space-y-3" aria-labelledby="settings-first-run">
       <div>
-        <h3 id="settings-first-run" className="text-sm text-foreground">
+        <h3 id="settings-first-run" className="text-sm font-normal text-foreground">
           Set up BB Box
         </h3>
         <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">Boxes are computers for your threads. Choose where they run; you can add more places later.</p>

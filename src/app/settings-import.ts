@@ -434,6 +434,19 @@ function changeOf(state: ConfigState, path: Path, edit: Edit, edits: ReadonlyMap
   }
 }
 
+export function importChangeText(state: ConfigState, read: DraftRead, file: unknown): string {
+  const plan = importPlan(state, read, file);
+  const edits = new Map<Path, Edit>(plan.values.map(([path, value]) => [path, { value, base: { kind: "gone" } }]));
+  const groups = importChanges(state, edits);
+  if (!groups.length) return "It would change nothing.";
+  const lines = ["It would change:"];
+  for (const group of groups) {
+    lines.push(`  ${group.place}`);
+    for (const change of group.changes) lines.push(`    ${change.label}: ${change.before} → ${change.after}`);
+  }
+  return lines.join("\n");
+}
+
 export function importChanges(state: ConfigState, edits: ReadonlyMap<Path, Edit>): ImportGroup[] {
   const groups = new Map<string, ImportChange[]>();
   for (const [path, edit] of edits) {
