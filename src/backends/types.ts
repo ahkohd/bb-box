@@ -225,6 +225,18 @@ export interface CardClaim {
   readonly answer: CardAnswer;
 }
 
+export interface GpuHandoff {
+  readonly part: GpuPart;
+  readonly card: string | null;
+  readonly generation: number;
+  readonly index: number | null;
+}
+
+export interface GpuRestoreFacts {
+  readonly held: GpuHandoff | null;
+  readonly driver: string | null;
+}
+
 export interface CardPlacement {
   readonly card: string;
   readonly index: number;
@@ -800,6 +812,13 @@ export interface Backend {
   retireGuest?(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest>;
   identitySource?(kind: string): IdentitySource | null;
   forkSnapshot?(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
+  placeForkGpu?(box: BoxIdentity, gpu: GpuPart, signal?: AbortSignal): Promise<void>;
+  clearForkGpu?(boxId: string): void;
+  readGpuClaim?(guest: Guest, signal?: AbortSignal): Promise<GpuHandoff | null>;
+  keepGpuClaim?(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void>;
+  releaseGpuClaim?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  giveGpuClaim?(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void>;
+  gpuRestoreFacts?(guest: Guest, signal?: AbortSignal): Promise<GpuRestoreFacts>;
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
   readonly addressIsAnEndpoint?: boolean;
   leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;

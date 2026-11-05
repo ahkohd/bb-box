@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.1';
+use constant VERSION => '0.4.2';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -449,6 +449,8 @@ sub labels_from {
     my ($kind_tag) = grep { /^kind\./ } @$tags;
     $labels{kind} = substr($kind_tag, 5) if defined $kind_tag;
     $labels{box} = undef if $labels{held} || $labels{earlier} || !defined $labels{install};
+    my ($box_tag) = grep { /^box\./ } @$tags;
+    $labels{tagged_box} = defined $box_tag ? substr($box_tag, 4) : undef;
     my $kind = $labels{kind} // '';
     $labels{set} = ($kind =~ /^linux-desktop/ || $kind =~ /^warm-desktop/) ? 'desktop' : 'server';
     return \%labels;
@@ -494,6 +496,7 @@ sub describe_guest {
         set => $labels->{set},
         held => $labels->{held},
         earlier => $labels->{earlier},
+        unrearmed => (defined $labels->{tagged_box} && defined $labels->{box} && $labels->{tagged_box} ne $labels->{box}) ? 1 : 0,
         template => is_true($conf->{template}),
         unprivileged => is_true($conf->{unprivileged}),
         lock => $conf->{lock},
@@ -971,6 +974,9 @@ sub evaluate_request {
     my $generation = $marker->{generation};
     my $source = copy_source($ctx, $guest);
     return refuse($ctx, $guest, 'copy', detail => $source, strip => "copy of $source") if defined $source;
+    return refuse($ctx, $guest, 'copy', detail => 'unrearmed', strip => 'not re-armed') if $guest->{unrearmed} && $marker->{part} ne 'none';
+    return refuse($ctx, $guest, $guest->{held} ? 'held' : 'earlier', strip => $guest->{held} ? 'held copy' : 'earlier guest')
+        if ($guest->{held} || $guest->{earlier}) && $marker->{part} ne 'none';
     return refuse($ctx, $guest, 'locked', detail => $guest->{lock}) if $guest->{lock};
     return refuse($ctx, $guest, 'pending') if $guest->{pending_devices};
     my $desired = [];
@@ -1319,6 +1325,12 @@ sub rebuild_ledger {
         my $guest = $guests->{$vmid};
         next if $guest->{ineligible} || !$guest->{marker} || $guest->{marker}{part} eq 'release';
         my $marker = $guest->{marker};
+        if ($guest->{unrearmed} || (($guest->{held} || $guest->{earlier}) && $marker->{part} ne 'none')) {
+            my $entry = entry_for($ctx, $guest);
+            $entry->{strip} = { why => 'not a claim', generation => $marker->{generation} } if $ctx->{writes};
+            refuse_quietly($ctx, $guest, 'copy', $guest->{unrearmed} ? 'unrearmed' : ($guest->{held} ? 'held' : 'earlier'));
+            next;
+        }
         if ($marker->{part} ne 'none' && card_blocked($ctx, $guests, $marker->{card}, $vmid)) {
             unsettle($ctx, $guest);
             next;
@@ -1820,6 +1832,16 @@ sub pass {
     return $ok ? 0 : 1;
 }
 
+sub boot_safety {
+    my ($ctx, $guests, $guest) = @_;
+    my $marker = $guest->{marker} or return;
+    return if $guest->{ineligible};
+    my $entry = $ctx->{ledger}{guests}{ $guest->{vmid} };
+    return if $marker->{generation} <= (($entry && $entry->{answered}) // 0);
+    return unless $marker->{part} eq 'none' || $guest->{unrearmed} || $guest->{held} || $guest->{earlier};
+    evaluate_request($ctx, $guests, $guest);
+}
+
 sub decide {
     my ($ctx, $guests, $mode) = @_;
     my $tested = pve_container_tested($ctx->{pve_container});
@@ -1852,7 +1874,12 @@ sub decide {
     }
     $ctx->{ledger_known} = 1;
     settle_identities($ctx, $guests);
-    if ($mode ne 'boot') {
+    if ($mode eq 'boot') {
+        for my $vmid (sort { $a <=> $b } keys %$guests) {
+            last if $stopping;
+            boot_safety($ctx, $guests, $guests->{$vmid});
+        }
+    } else {
         for my $vmid (request_order($guests)) {
             last if $stopping;
             decide_request($ctx, $guests, $guests->{$vmid});

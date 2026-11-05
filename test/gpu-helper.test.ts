@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.4\.1, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.4\.2, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.1 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.2 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -475,7 +475,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.4.1 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.4.2 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +930,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.1 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.2 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1579,4 +1579,55 @@ test("071 unit 5, go review 4 N6: a warm guest's request names its own warm toke
   await exited(hold);
   assert.deepEqual(node.powerLog(), ["start 2770"], "the other warm guest is not stopped");
   assert.ok(powered(node).includes(`power 2770 ncccc0003 stop refused not-the-box ${INSTALL}/warm-fedcba987654`), powered(node).join(" | "));
+});
+
+test("071 unit 6: an unrearmed fork, a held copy with a card marker, and a newer gpu.none lose their lines, on a service pass and on boot, and a rebuild grants none of them", () => {
+  const source = boxLabels("bxsrc", "source-pine");
+  const fork = boxLabels("bxfork", "fork-pine");
+  const node = new FakeNode({ writes: "on" });
+  node.guest(1610, { description: source.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: cardLines(CARD_A, "server") });
+  ran(node);
+  const kept = node.text(1610);
+  node.guest(1611, { description: fork.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: [...cardLines(CARD_A, "server"), TUN] });
+  ran(node);
+  assert.equal(node.text(1610), kept);
+  assert.deepEqual(node.lines(1611), []);
+  assert.ok(Object.values(node.config(1611).keys).includes(TUN));
+  assert.ok(claims(node).includes(`claim 1611 g4 refused copy ${A} unrearmed`), claims(node).join("\n"));
+
+  const boot = new FakeNode({ writes: "on" });
+  boot.guest(1612, { description: fork.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: cardLines(CARD_A, "server") });
+  const bootErr = ran(boot, ["--boot"]);
+  assert.deepEqual(boot.lines(1612), []);
+  assert.match(bootErr, /refused CT 1612 g4: copy unrearmed/);
+  assert.ok(boot.ledger().answers.some((answer) => answer.vmid === 1612 && answer.answer === "refused" && answer.reason === "copy"));
+
+  node.guest(1613, { ...heldCopyLabels("bxsrc"), marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "server") });
+  ran(node);
+  assert.deepEqual(node.lines(1613), []);
+  assert.ok(!lines(node, "holder").some((line) => line.includes(" 1613 ")));
+  assert.ok(claims(node).some((line) => line.startsWith("claim 1613 g3 refused held")));
+
+  node.guest(1614, { box: "bx1614", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "server") });
+  ran(node);
+  node.mark(1614, marker("none", null, 2));
+  const noneBoot = ran(node, ["--boot"]);
+  assert.deepEqual(node.lines(1614), []);
+  assert.match(noneBoot, /granted CT 1614 g2: none/);
+  assert.equal(node.ledger().guests["1614"]?.claim?.part, "none");
+
+  node.guest(1615, { box: "bx1615", marker: marker("shared", CARD_A, 2), lines: [TUN] });
+  ran(node);
+  const rolled = node.text(1615);
+  node.mark(1615, marker("shared", CARD_B, 3));
+  ran(node);
+  writeFileSync(node.configPath(1615), rolled);
+  ran(node, ["--boot"]);
+  assert.deepEqual(node.lines(1615), cardLines(CARD_B, "server"), "boot puts the ledger's card back when the marker is older");
+
+  const rebuilt = new FakeNode({ writes: "on", ledger: false });
+  rebuilt.guest(1616, { description: fork.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: cardLines(CARD_A, "server") });
+  ran(rebuilt);
+  assert.deepEqual(rebuilt.lines(1616), []);
+  assert.ok(!claims(rebuilt).some((line) => line.includes("1616") && line.includes("granted")));
 });

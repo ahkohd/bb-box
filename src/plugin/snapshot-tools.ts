@@ -176,13 +176,14 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
       box: boxParam.describe("The box to fork, by its name or ID: one of this thread's boxes, not one it runs on."),
       snapshot: z.string().min(1).optional().describe('The snapshot\'s name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that.'),
       name: z.string().min(1).max(32).refine(isMachineName, FORK_NAME_RULE).optional().describe(`The new box's name: ${FORK_NAME_RULE} One is made up when left out.`),
+      gpu: z.enum(["none", "shared"]).optional().describe("The fork's GPU. none, the default, starts it with no card. shared places a shared card before anything is copied, and only a desktop can take it."),
     }),
-    async execute({ box: ref, snapshot, name }, { threadId, projectId, signal }) {
+    async execute({ box: ref, snapshot, name, gpu }, { threadId, projectId, signal }) {
       try {
         const id = thread(threadId);
         const { box, standing } = await snapshotTarget(app, id, ref, signal);
         const caller = agent(id);
-        const input = { ...(name !== undefined ? { name } : {}), projectId: projectId ?? null };
+        const input = { ...(name !== undefined ? { name } : {}), ...(gpu ? { gpu } : {}), projectId: projectId ?? null };
         let taken: { readonly id: string; readonly words: string } | null = null;
         if (snapshot === undefined) {
           await app.snapshots.checkForkOfBox(caller, box, standing, input);

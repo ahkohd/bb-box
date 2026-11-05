@@ -92,3 +92,31 @@ export function userspaceOf(box: { readonly kind: string; readonly nvidiaUserspa
 export function claimOf(box: { readonly guest: { readonly claim?: CardClaim | null } | null }): CardClaim | null {
   return box.guest?.claim ?? null;
 }
+
+export interface SnapshotGpu {
+  readonly part: GpuPart;
+  readonly card: string | null;
+  readonly index: number | null;
+  readonly userspace: NvidiaUserspace;
+}
+
+export function snapshotGpuOf(box: GpuOfRecord & { readonly nvidiaUserspace?: NvidiaUserspace | null; readonly size?: RecordedSize | null; readonly guest: { readonly claim?: CardClaim | null } | null }): SnapshotGpu {
+  const claim = box.guest?.claim ?? null;
+  const part = claim?.part ?? recordedGpu(box);
+  return { part, card: claim && part !== "none" ? claim.card : null, index: null, userspace: userspaceOf(box) };
+}
+
+export function gpuStayWords(part: GpuPart, index: number | null): string {
+  if (part === "none") return "Its GPU stays as it is now: none.";
+  return `Its GPU stays as it is now: ${part}, ${index === null ? "its card" : `card ${index}`}.`;
+}
+
+export function userspaceRestoreWords(recorded: SnapshotGpu | null, hostDriver: string | null): string | null {
+  if (!recorded) return "GPU not recorded.";
+  const userspace = recorded.userspace;
+  if (recorded.part === "none" && (userspace === "none" || userspace === "unknown")) return null;
+  const host = hostDriver && hostDriver !== "unknown" && hostDriver !== "none" ? hostDriver : null;
+  if (userspace === "unknown" || userspace === "none" || !host) return "Whether this snapshot's NVIDIA userspace matches the host's driver is not known.";
+  if (userspace !== host) return `This snapshot has NVIDIA's userspace ${userspace}, and the host's driver is now ${host}: nvidia-smi will fail in the box until its userspace is updated.`;
+  return null;
+}

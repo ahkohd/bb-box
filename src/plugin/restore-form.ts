@@ -15,6 +15,8 @@ export interface RestoreFormPayload {
   readonly runsOnIt: boolean;
   readonly changed: boolean;
   readonly plan: string;
+  readonly gpuStay: string | null;
+  readonly userspaceNote: string | null;
 }
 
 export interface RestoreFormAnswer {
@@ -35,6 +37,8 @@ export function restoreFormPayload(check: RestoreCheck, asks: "machine" | "setti
     runsOnIt,
     changed,
     plan: check.plan,
+    gpuStay: check.gpuStay,
+    userspaceNote: check.userspaceNote,
   };
 }
 

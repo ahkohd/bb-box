@@ -738,7 +738,7 @@ test("the restore's words follow the backend: Tart suspends and its undo holds m
   const { restoreCheckText } = await import("../src/plugin/snapshot-words.ts");
   const { backend, guest } = await suspendedWithSnapshot();
   const record = { id: SNAP, name: "before", takenAt: Date.UTC(2026, 10, 1), holds: "disk-and-memory", excludes: null } as never;
-  const check = { snapshot: record, box: { name: "gate", guest } as never, onAMachine: false, plan: "", swap: false, fromSnapshot: false, costWords: null, undo: { kind: "snapshot", name: "before the restore at 00:35", aboutMs: 200, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "/", undoRefused: null, capture: "suspend" } as const;
+  const check = { snapshot: record, box: { name: "gate", guest } as never, onAMachine: false, plan: "", swap: false, fromSnapshot: false, costWords: null, undo: { kind: "snapshot", name: "before the restore at 00:35", aboutMs: 200, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "/", undoRefused: null, capture: "suspend", gpuStay: null, userspaceNote: null } as const;
   const text = restoreCheckText(check as never);
   assert.match(text, /- suspend it, which saves its memory: it is never stopped hard;/);
   assert.match(text, /a snapshot of it suspended, with its memory, so undoing brings it back running as it is now/);

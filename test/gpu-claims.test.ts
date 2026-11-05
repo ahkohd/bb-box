@@ -3,10 +3,10 @@ import { rmSync } from "node:fs";
 import { test } from "node:test";
 import { CardReservations, cardsView, loadOf, nextGeneration, outstandingRequests, placeShared, settleOutstanding, underCardLock, waitForAnswer, type PlaceInput, type Placed } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type CopyHooks, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
 import { MemoryStorage } from "./helpers.ts";
-import { marker, pciOf } from "./gpu-helper/node.ts";
+import { REPORT_VMID, cardLines, marker, pciOf } from "./gpu-helper/node.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { boxTags } from "../src/backends/proxmox/owner.ts";
 import type { FakeCall } from "./fake-proxmox.ts";
@@ -552,7 +552,7 @@ test("071 unit 5, Opus 3, go review 4 N4 and go review 5 F1: a helper on a pve-c
   const doctor = (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-helper");
   assert.equal(doctor?.status, "fail");
   assert.match(doctor?.detail ?? "", /was not tested on pve-container 6\.1\.15, so it changes no guest's lines, and only stops a GPU desktop or a guest with a GPU marker/);
-  assert.match(doctor?.fix ?? "", /^Install a bb-box-gpu release newer than 0\.4\.1 that was tested on pve-container 6\.1\.15: run host\/setup-gpu\.sh from that BB Box release, as root on pve\.$/);
+  assert.match(doctor?.fix ?? "", /^Install a bb-box-gpu release newer than 0\.4\.2 that was tested on pve-container 6\.1\.15: run host\/setup-gpu\.sh from that BB Box release, as root on pve\.$/);
 });
 
 test("071 unit 5, Astra 5: stopping a box bb-box has just made gives up its card's reservation at once, so a stopped shared box holds no place", async () => {
@@ -1277,4 +1277,104 @@ test("071 unit 5, go review 5 F2: the doctor refreshes what bb-box keeps of the 
   await bridge.backend({ storage }).stop(plainGuest(7003, plainOwl), signal());
   assert.equal(bridge.proxmox.guests.get(7003)!.status, "stopped");
   assert.ok(bridge.proxmox.calls.some((call) => call.method === "POST" && call.path.endsWith("/lxc/7003/status/stop")), "through the API, as the doctor read bb-box-gpu 0.2.0");
+});
+
+const copyHooks: CopyHooks = { claimed: async () => {}, submitting: async () => {}, task: async () => {} };
+
+function desktopBox(gpu: "none" | "shared"): BoxIdentity {
+  const made = box();
+  return { ...made, size: { ...made.size, gpu } };
+}
+
+test("071 unit 6: a fork of a GPU desktop writes gpu none or shared in the re-arm, a shared fork is refused before any copy when no card can take it, a held copy loses its lines before it is a template, and a swap moves the claim with a gap where neither guest holds it", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend({ perGpu: 1 });
+  const source = desktopBox("shared");
+  bridge.desktop(7040, CARD_A, source, INSTALL, { marker: marker("shared", CARD_A, 1) });
+  bridge.pass();
+  assert.equal(bridge.cardOf(7040)?.uuid, A);
+  const guest = bridge.stoppedGuest(7040, source, 9001);
+
+  const forkNone = desktopBox("none");
+  await backend.placeForkGpu(forkNone, "none", signal());
+  const noneFork = await backend.forkSnapshot({ id: "snone", ref: "snap", guest, from: "held-copy" }, forkNone, null, hooks(), signal());
+  const noneVmid = Number(noneFork.ref);
+  const armed = puts(bridge, noneVmid).find((params) => (params.tags ?? "").includes(`box.${forkNone.boxId}`));
+  assert.ok(armed, "the re-arm wrote the fork's labels");
+  assert.match(armed!.tags ?? "", /gpu\.none\.g\d+/);
+  assert.deepEqual(bridge.lines(noneVmid), []);
+
+  const forkShared = desktopBox("shared");
+  await backend.placeForkGpu(forkShared, "shared", signal());
+  const sharedFork = await backend.forkSnapshot({ id: "sshared", ref: "snap", guest, from: "held-copy" }, forkShared, null, hooks(), signal());
+  const sharedVmid = Number(sharedFork.ref);
+  const sharedArm = puts(bridge, sharedVmid).find((params) => (params.tags ?? "").includes(`box.${forkShared.boxId}`));
+  const sharedCard = /gpu\.shared\.([0-9a-f-]+)\.g\d+/.exec(sharedArm?.tags ?? "")?.[1] ?? null;
+  assert.ok(sharedCard, sharedArm?.tags);
+  assert.equal(bridge.cardOf(sharedVmid)?.uuid, sharedCard);
+
+  const full = new ClaimsBridge();
+  const fullBackend = full.backend({ perGpu: 1 });
+  full.desktop(7040, CARD_A, desktopBox("shared"), INSTALL, { marker: marker("shared", CARD_A, 1), running: true });
+  full.desktop(7041, CARD_B, desktopBox("shared"), INSTALL, { marker: marker("shared", CARD_B, 1), running: true });
+  full.pass();
+  const calls = full.proxmox.calls.length;
+  await assert.rejects(fullBackend.placeForkGpu(desktopBox("shared"), "shared", signal()), /bb-box copied nothing/);
+  assert.equal(full.proxmox.calls.slice(calls).some((call) => call.path.endsWith("/clone")), false);
+
+  const held = await backend.copyGuest(guest, { box: source.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, copyHooks, signal());
+  assert.deepEqual(bridge.lines(Number(held.ref)), []);
+  assert.notEqual(bridge.proxmox.guests.get(Number(held.ref))!.config.template, "1");
+  await backend.templateCopy(held, signal());
+  assert.equal(bridge.proxmox.guests.get(Number(held.ref))!.config.template, "1");
+
+  const moved = desktopBox("shared");
+  bridge.desktop(7042, CARD_A, moved, INSTALL, { marker: marker("shared", CARD_A, 2) });
+  bridge.pass();
+  const old = bridge.stoppedGuest(7042, moved, 9001);
+  bridge.desktop(7042, CARD_B, moved, INSTALL, { marker: marker("shared", CARD_B, 3) });
+  bridge.pass();
+  const current = await backend.readGpuClaim(old, signal());
+  assert.equal(current?.card, B);
+  const rolled = bridge.proxmox.guests.get(7042)!;
+  rolled.config.tags = [...bridge.tags(7042).filter((tag) => !tag.startsWith("gpu.")), marker("shared", CARD_A, 2)].join(";");
+  for (const key of Object.keys(rolled.config)) if (/^dev\d+$/.test(key)) delete rolled.config[key];
+  Object.assign(rolled.config, Object.fromEntries(cardLines(CARD_A, "desktop").map((line, index) => [`dev${index}`, line])));
+  await backend.keepGpuClaim(old, current!, signal());
+  assert.equal(bridge.cardOf(7042)?.uuid, B);
+
+  const fresh = desktopBox("shared");
+  bridge.desktop(7043, CARD_A, fresh, INSTALL, { marker: marker("none", null, 1) });
+  bridge.pass();
+  const next = bridge.stoppedGuest(7043, moved, 9001);
+  const adopted = bridge.proxmox.guests.get(7043)!;
+  adopted.config.description = bridge.proxmox.guests.get(7042)!.config.description;
+  adopted.config.tags = [...bridge.tags(7042).filter((tag) => !tag.startsWith("gpu.")), marker("none", null, 1)].join(";");
+  await backend.releaseGpuClaim(old, signal());
+  assert.deepEqual(bridge.lines(7042), []);
+  assert.deepEqual(bridge.lines(7043), []);
+  await backend.giveGpuClaim(next, current!, signal());
+  assert.deepEqual(bridge.lines(7042), []);
+  assert.equal(bridge.cardOf(7043)?.uuid, B);
+});
+
+test("071 unit 6: gpu.<card>.whole passes when one guest holds the card whole, and fails when another guest has its lines", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend();
+  bridge.desktop(7060, CARD_A, box("linux-desktop", "whole-one"), INSTALL, { marker: marker("whole", CARD_A, 1), running: true });
+  bridge.pass();
+  const id = `gpu.${A}.whole`;
+  const quiet = (await backend.doctor()).checks.find((check) => check.id === id);
+  assert.equal(quiet?.status, "ok");
+  assert.match(quiet?.detail ?? "", /CT 7060 holds card 0 whole, and no other guest has its lines/);
+  const other = (await backend.doctor()).checks.find((check) => check.id === `gpu.${B}.whole`);
+  assert.equal(other?.status, "ok");
+  assert.match(other?.detail ?? "", /No box holds card 1 whole/);
+
+  const report = bridge.proxmox.guests.get(REPORT_VMID)!;
+  report.config.description = `${report.config.description}\n    holder ${A} 7061 shared running install ${INSTALL} managed`;
+  const failed = (await backend.doctor()).checks.find((check) => check.id === id);
+  assert.equal(failed?.status, "fail");
+  assert.match(failed?.detail ?? "", /Card 0 is held whole and also by another guest: CT 7060, CT 7061/);
+  assert.match(failed?.fix ?? "", /Stop the guests that should not hold it/);
 });

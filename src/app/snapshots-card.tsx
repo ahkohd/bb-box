@@ -479,26 +479,28 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
   const nav = useBoxesNav();
   const [name, setName] = useState("");
   const [asMachine, setAsMachine] = useState(false);
-  const [preview, setPreview] = useState<(ForkPreview & { readonly asMachine: boolean }) | null>(null);
+  const [gpu, setGpu] = useState<"none" | "shared">("none");
+  const [preview, setPreview] = useState<(ForkPreview & { readonly asMachine: boolean; readonly gpu: "none" | "shared" }) | null>(null);
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const request = useRef(requestId());
   const describedBy = useId();
   const whereName = useId();
+  const gpuName = useId();
   useEffect(() => {
     let cancelled = false;
-    void call<ForkPreview>("snapshot.forkCheck", { box: box.id, snapshot: row.id, asMachine })
+    void call<ForkPreview>("snapshot.forkCheck", { box: box.id, snapshot: row.id, asMachine, gpu })
       .then((answer) => {
-        if (!cancelled) setPreview({ ...answer, asMachine });
+        if (!cancelled) setPreview({ ...answer, asMachine, gpu });
       })
       .catch((error: unknown) => {
-        if (!cancelled) setPreview({ refusal: message(error), check: null, asMachine });
+        if (!cancelled) setPreview({ refusal: message(error), check: null, asMachine, gpu });
       });
     return () => {
       cancelled = true;
     };
-  }, [call, box.id, row.id, asMachine]);
-  const current = preview?.asMachine === asMachine ? preview : null;
+  }, [call, box.id, row.id, asMachine, gpu]);
+  const current = preview?.asMachine === asMachine && preview.gpu === gpu ? preview : null;
   const check = current?.check ?? null;
   const threadTitles = useThreadTitles(check && !check.asMachine ? [check.threadId] : []);
   const fork = async () => {
@@ -506,7 +508,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
     setRefused(null);
     let answer: ForkStarted;
     try {
-      answer = await call<ForkStarted>("snapshot.fork", { box: box.id, snapshot: row.id, ...(name.trim() ? { name: name.trim() } : {}), asMachine, request: request.current });
+      answer = await call<ForkStarted>("snapshot.fork", { box: box.id, snapshot: row.id, ...(name.trim() ? { name: name.trim() } : {}), asMachine, ...(check?.offersGpu ? { gpu } : {}), request: request.current });
     } catch (error) {
       answer = { error: message(error), box: null };
     }
@@ -541,6 +543,22 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
         <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className="h-8" data-first-focus aria-invalid={!!nameWhy} aria-describedby={describedBy} />
         {nameWhy ? <span className="block text-xs text-destructive-text">{nameWhy}</span> : null}
       </label>
+      {check?.offersGpu ? (
+        <fieldset className="space-y-1">
+          <legend className="text-xs text-foreground">GPU</legend>
+          {(
+            [
+              { value: "none" as const, label: "None" },
+              { value: "shared" as const, label: "Shared" },
+            ]
+          ).map((option) => (
+            <label key={option.value} className="flex items-center gap-2 text-sm text-foreground">
+              <input type="radio" name={gpuName} checked={gpu === option.value} disabled={sending} onChange={() => setGpu(option.value)} className="size-3.5 cursor-pointer accent-[var(--primary)]" />
+              {option.label}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       {check?.canBeMachine ? (
         <fieldset className="space-y-1">
           <legend className="text-xs text-foreground">Where it goes</legend>
@@ -700,6 +718,8 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
             </WarnPanel>
           ) : null}
           {sizeBack ? <p>{sizeBack}</p> : null}
+          {check.gpuStay ? <p>{check.gpuStay}</p> : null}
+          {check.userspaceNote ? <p>{check.userspaceNote}</p> : null}
           {preview.undoUnflushed ? <p className="text-warning-text">This undo may miss what was written in the last seconds before its restore: bb-box could not flush the box's writes to its disk then ({preview.undoUnflushed.replace(/\.$/, "")}).</p> : null}
           {check.fromSnapshot ? <p>{box.name} comes back on a new guest made from the snapshot, with the box's own identity, and its old guest is deleted. {check.costWords ?? ""}</p> : null}
           {check.swap && check.leavesOnEarlierGuest ? <p>{check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its earlier guest: fork only.</p> : null}

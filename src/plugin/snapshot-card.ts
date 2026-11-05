@@ -256,6 +256,8 @@ function tokenOf(box: BoxRecord, preview: Omit<RestorePreview, "token" | "undoUn
     swap: check?.swap ?? null,
     fromSnapshot: check?.fromSnapshot ?? null,
     leaves: check?.leavesOnEarlierGuest ?? null,
+    gpuStay: check?.gpuStay ?? null,
+    userspaceNote: check?.userspaceNote ?? null,
   };
   return createHash("sha256").update(JSON.stringify(shown)).digest("hex").slice(0, 32);
 }
@@ -291,6 +293,8 @@ export interface ForkPreview {
     readonly host: string | null;
     readonly storage: string;
     readonly unflushed: string | null;
+    readonly gpu: "none" | "shared";
+    readonly offersGpu: boolean;
   } | null;
 }
 
@@ -299,9 +303,9 @@ export interface ForkStarted {
   readonly box: { readonly id: string; readonly name: string } | null;
 }
 
-export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, standing: Standing, ref: string, asMachine: boolean): Promise<ForkPreview> {
+export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, standing: Standing, ref: string, asMachine: boolean, gpu?: "none" | "shared"): Promise<ForkPreview> {
   try {
-    const check: ForkCheck = await snapshots.checkFork(PERSON, { id: standing.box!.id }, standing, ref, { asMachine });
+    const check: ForkCheck = await snapshots.checkFork(PERSON, { id: standing.box!.id }, standing, ref, { asMachine, ...(gpu ? { gpu } : {}) });
     return {
       refusal: null,
       check: {
@@ -316,6 +320,8 @@ export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, s
         host: check.host,
         storage: check.storage,
         unflushed: check.snapshot.unflushed ?? null,
+        gpu: check.gpu === "shared" ? "shared" : "none",
+        offersGpu: check.offersGpu,
       },
     };
   } catch (error) {

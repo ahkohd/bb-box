@@ -739,6 +739,7 @@ export interface ForkRequest {
   readonly backendLabel: string;
   readonly kind: string;
   readonly size: MachineSize;
+  readonly gpu?: GpuPart;
   readonly origin: ForkOrigin;
   readonly who: Actor;
 }
@@ -1433,7 +1434,7 @@ export class Boxes {
           backendLabel: backend.label,
           nature: backend.nature,
           role: "box",
-          size: withGpu(request.size, gpuBeforeGpuParts({ kind: kind.id, capabilities: kind.capabilities })),
+          size: withGpu(request.size, request.gpu ?? "none"),
           guest: null,
           state: "acquiring",
           error: null,
@@ -2276,6 +2277,7 @@ export class Boxes {
     const fork = box.fork!;
     if (!backend.forkSnapshot || !backend.armFork || !backend.start || !backend.guestIdentity) throw new BoxError("unsupported", `${box.backendLabel} forks no snapshots.`);
     const forkSnapshot = backend.forkSnapshot.bind(backend);
+    if (backend.placeForkGpu) await backend.placeForkGpu(identity(box, await this.#size(box)), recordedGpu(box), signal);
     const size = await this.#size(box);
     const made = await this.#chain(fork.source.id, () => forkSnapshot({ id: fork.snapshot.id, ref: fork.snapshot.ref, guest: fork.snapshot.livesOn, ...(fork.snapshot.from ? { from: fork.snapshot.from } : {}) }, identity(box, size), box.guest, hooks, signal));
     await hooks.claim(made);
@@ -2296,6 +2298,7 @@ export class Boxes {
   }
 
   async #forkFailed(box: BoxRecord, backend: Backend, error: unknown, timings: Record<string, number>): Promise<void> {
+    backend.clearForkGpu?.(box.id);
     const left = (await this.#read(box.threadId, box.id))?.guest ?? null;
     let cleanup: string | null = null;
     let stopped = false;

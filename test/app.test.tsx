@@ -9692,6 +9692,8 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
     runsOnIt: true,
     changed: false,
     plan: "abc123",
+    gpuStay: "Its GPU stays as it is now: shared, card 1.",
+    userspaceNote: null,
   };
   const words = restoreFormWords(payload, Date.now());
   expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken .*, 2 hours ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
@@ -9778,7 +9780,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
     threadsUnread: null,
     control: false,
     terminals: 0,
-    check: { swap: false, fromSnapshot: false, costWords: null, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null, capture: "stop" },
+    check: { swap: false, fromSnapshot: false, costWords: null, onAMachine: false, plan: "plan", undo: { kind: "snapshot", name: "before the restore at 11:02", aboutMs: 700, bytes: null, price: null }, from: null, to: null, anyway: [], leavesOnEarlierGuest: 0, replaces: null, storage: "fast", undoRefused: null, capture: "stop", gpuStay: null, userspaceNote: null },
     snapshot: snapshotRow(),
     token: "tokenone",
     undoUnflushed: null,
@@ -9811,7 +9813,7 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
   clockAtLocalNoon();
   const preview = (asMachine: boolean): ForkPreview => ({
     refusal: null,
-    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null },
+    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: asMachine ? "operator" : THREAD, asMachine, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null, gpu: "none", offersGpu: true },
   });
   const { handlers, changes } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", keeps: true, excludes: null, price: null } }), forkPreview: preview });
   const slot = boxPageAt(handlers, "box/box_1");
@@ -9824,14 +9826,17 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
   expect(document.activeElement).toBe(name);
   expect(await within(dialog).findByText(/^A new box with calm-otter's files as they were today at \d\d:\d\d\. It gets its own BB machine, address and keys, and never acts as calm-otter\. Everything else on its disk comes with it: project secrets, signed-in browsers and keychains\. It starts fresh: no apps are running\.$/)).toBeTruthy();
   expect(within(dialog).getByText("2 cores, 4 GiB memory, 16 GiB disk, as the snapshot holds. The copy takes up to about 38 s and 17 GB on pve-1's local-lvm, then it starts, and bb-box checks that it reset its identity before handing it over.")).toBeTruthy();
-  const machine = within(dialog).getByRole("radio", { name: "As one of your machines" });
   expect((within(dialog).getByRole("radio", { name: /^In / }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(machine);
+  expect((within(dialog).getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(true);
+  expect(within(dialog).queryByRole("radio", { name: "Whole" })).toBeNull();
+  fireEvent.click(within(dialog).getByRole("radio", { name: "As one of your machines" }));
   fireEvent.change(name, { target: { value: "calm-otter" } });
+  fireEvent.click(await within(dialog).findByRole("radio", { name: "Shared" }));
   const send = within(dialog).getByRole("button", { name: "Fork calm-otter" }) as HTMLButtonElement;
   await waitFor(() => expect(send.disabled, "the plan for one of your machines is read first").toBe(false));
+  expect((within(dialog).getByRole("radio", { name: "Shared" }) as HTMLInputElement).checked).toBe(true);
   fireEvent.click(send);
-  await waitFor(() => expect(changes).toContain(`snapshot.fork ${JSON.stringify({ box: "box_1", snapshot: "snaaaaaaaaaaaa", name: "calm-otter", asMachine: true })}`));
+  await waitFor(() => expect(changes).toContain(`snapshot.fork ${JSON.stringify({ box: "box_1", snapshot: "snaaaaaaaaaaaa", name: "calm-otter", asMachine: true, gpu: "shared" })}`));
   await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
 });
 
