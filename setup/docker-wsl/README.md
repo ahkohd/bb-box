@@ -25,6 +25,13 @@ How it works:
   distribution listens on the PC's addresses, and turns off WSL's idle
   timeout, so it keeps running with nobody using it. It also turns off WSLg,
   WSL's Linux GUI support, whose compositor crashes with nobody signed in.
+  Mirrored networking is also how attached output arrives. WSL's localhost
+  forwarding, which a program on Windows uses to reach Docker in the
+  distribution at `tcp://127.0.0.1:2375`, drops an attached stream: `docker
+  run` that prints output, and `docker exec`, exit 0 and print nothing.
+  This host uses SSH on port 2222, which does not go through that
+  forwarder. bb-box itself no longer needs attached output: it reads a file
+  out of an image with `docker create`, `docker cp` and `docker rm`.
 - A rule in the Hyper-V firewall, which filters WSL's traffic, lets port 2222
   in. The Windows firewall can stay on.
 - A scheduled task, "bb-box WSL Docker host", starts the distribution when
@@ -137,6 +144,11 @@ are not tested: use `linux-desktop-cpu`.
 
 ## When it goes wrong
 
+- **`docker run` or `docker exec` from Windows prints nothing and exits 0**:
+  that is WSL's localhost forwarding, as above. Point Docker at
+  `ssh://box@<pc>:2222` with mirrored networking, not at
+  `tcp://127.0.0.1:2375`. bb-box's own image build does not need the attached
+  stream.
 - **`Connection refused` on port 2222**: check that the distribution runs,
   with `wsl --list --verbose` as the user who set it up, and that the
   scheduled task runs: `Get-ScheduledTask "bb-box WSL Docker host"`.

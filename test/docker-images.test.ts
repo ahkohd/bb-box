@@ -200,11 +200,46 @@ function buildWith(freeGB: number, args: readonly string[] = [], error?: string,
     join(bin, "docker"),
     `#!/bin/sh
 printf '%s\\n' "$*" >>'${log}'
-[ "$1" = run ] || exit 0
-case "$*" in *image.json*) printf '%s\\n' "$FAKE_RECORD"; exit 0 ;; esac
-if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
-echo 'Filesystem     1024-blocks    Used Available Capacity Mounted on'
-echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
+cmd=$1
+shift
+case "$cmd" in
+  run|exec|attach|logs)
+    exit 0
+    ;;
+  create)
+    case "$*" in
+      *bb-box-df*)
+        if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
+        ;;
+    esac
+    echo c0
+    ;;
+  cp)
+    src=$1
+    dest=$2
+    base=\${src##*/}
+    case "$src" in
+      *bb-box-df*)
+        if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
+        {
+          echo 'Filesystem     1024-blocks    Used Available Capacity Mounted on'
+          echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
+        } >"$dest/$base"
+        ;;
+      *image.json*)
+        if [ -z "$FAKE_RECORD" ]; then
+          echo "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0" >&2
+          exit 1
+        fi
+        printf '%s\\n' "$FAKE_RECORD" >"$dest/$base"
+        ;;
+      *)
+        echo "Error response from daemon: Could not find the file $src" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 `,
   );
   chmodSync(join(bin, "docker"), 0o755);
@@ -227,10 +262,11 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
   return {
     status: result.status,
     stderr: result.stderr,
-    checks: calls.filter((call) => call.startsWith("run ") && call.includes("--entrypoint df")),
+    checks: calls.filter((call) => call.startsWith("create ") && call.includes("bb-box-df")),
     builds,
     labelled: calls.filter((call) => call.includes("bbbox.image-record=")),
-    reads: calls.filter((call) => call.startsWith("run ") && call.includes("image.json")),
+    reads: calls.filter((call) => call.startsWith("create ") && call.includes("bbbox/")),
+    attached: calls.filter((call) => /^(run|exec|attach|logs) /.test(call)),
     built: builds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]),
     curls: existsSync(`${log}.curl`) ? readFileSync(`${log}.curl`, "utf8").split("\n").filter(Boolean) : [],
   };
@@ -242,7 +278,8 @@ test("build.sh does not start with less disk free than the build needs, and says
   assert.equal(short.stderr, "The Docker host has 35 GB of disk free, and building 3 images needs about 36 GB. Free some, for example with docker builder prune, then build again.\n");
   assert.deepEqual(short.built, []);
   assert.equal(short.checks.length, 1);
-  assert.match(short.checks[0]!, /^run --rm --quiet --network none --platform linux\/amd64 --entrypoint df ubuntu:24\.04@sha256:[0-9a-f]{64} -Pk \/$/, "from the Dockerfile's base image");
+  assert.match(short.checks[0]!, /^create --platform linux\/amd64 --network none --entrypoint sh ubuntu:24\.04@sha256:[0-9a-f]{64} -c df -Pk \/ > \/tmp\/bb-box-df$/, "from the Dockerfile's base image, copied out, not attached");
+  assert.deepEqual(short.attached, []);
 
   const enough = buildWith(BUILD_FREE_GB);
   assert.deepEqual([enough.status, enough.built], [0, ["linux", "desktop", "desktop-wayland"]], enough.stderr);
@@ -266,9 +303,10 @@ test("build.sh labels each image with its own record, and stops at an image with
   assert.equal(built.status, 0, built.stderr);
   assert.deepEqual(built.built, ["linux", "desktop"]);
   assert.deepEqual(built.reads, [
-    "run --rm --quiet --network none --platform linux/amd64 --entrypoint jq bbbox/linux:1 -c . /usr/share/bb-box/image.json",
-    "run --rm --quiet --network none --platform linux/amd64 --entrypoint jq bbbox/linux-desktop:1 -c . /usr/share/bb-box/image.json",
+    "create --platform linux/amd64 bbbox/linux:1",
+    "create --platform linux/amd64 bbbox/linux-desktop:1",
   ]);
+  assert.deepEqual(built.attached, [], "an attached stream is empty, so the record is copied out");
   assert.equal(built.labelled.length, 2);
   for (const [i, target] of ["linux", "desktop"].entries()) {
     // The same build, so all from the cache, with the label.
@@ -276,7 +314,10 @@ test("build.sh labels each image with its own record, and stops at an image with
   }
 
   const none = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", "");
-  assert.deepEqual([none.status, none.stderr, none.built, none.labelled], [1, "bbbox/linux:1 has no image record, /usr/share/bb-box/image.json\n", ["linux"], []]);
+  assert.deepEqual(
+    [none.status, none.stderr, none.built, none.labelled],
+    [1, "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0\n", ["linux"], []],
+  );
 });
 
 test("build.sh with BB's URL passes on the digest of BB's app that the server gives, and stops when it gives none (#95)", () => {
@@ -304,7 +345,8 @@ test("build.sh --arch arm64 builds the arm64 linux and desktop images for linux/
   assert.deepEqual(arm.built, ["linux", "desktop"], "both, by default");
   assert.ok(arm.builds.every((call) => call.includes("--platform linux/arm64")));
   assert.deepEqual(arm.builds.map((call) => / -t (\S+) /.exec(call)?.[1]), ["bbbox/linux:1-arm64", "bbbox/linux-desktop:1-arm64"]);
-  assert.match(arm.checks[0]!, /--platform linux\/arm64 --entrypoint df /);
+  assert.match(arm.checks[0]!, /--platform linux\/arm64 --network none --entrypoint sh /);
+  assert.deepEqual(arm.attached, []);
   const wayland = buildWith(BUILD_FREE_GB, ["--arch", "arm64", "desktop-wayland"]);
   assert.deepEqual([wayland.status, wayland.stderr, wayland.built], [2, "There is no Wayland desktop for arm64 yet: build linux or desktop.\n", []]);
   assert.equal(buildWith(BUILD_FREE_GB, ["--arch", "riscv64"]).status, 2);
