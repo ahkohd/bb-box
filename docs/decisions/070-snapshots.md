@@ -1929,6 +1929,10 @@ decided:
   has not 10 s on; BB's daemon waits for it by its own unit.
 - **Only boat.dev's `linux` template turns the reset on**, as on Proxmox.
   Desktop and Android boxes there neither fork nor keep.
+
+  Amendment, 2026-11-05: Linux desktops are included on boat.dev and
+  Proxmox, from images built with identity reset version 9 or later.
+  Older images refuse forks and Keep, saying why. Android stays excluded.
 - **A copy made outside bb-box keeps its source's identity**, a known
   limit: boat.dev gives a fork made in its dashboard or API its source's
   value. The guides say so in plain words.
@@ -1979,6 +1983,10 @@ On 2 November 2026, closing 070, with the lead's answers:
   the identity reset**, the plain `linux-arm64` kind only; Linux desktops
   on Tart neither fork nor keep, with why, as on Proxmox and boat.dev. Unit
   9 left them off as their reset was not checked live; now it is.
+
+  Amendment, 2026-11-05: Linux desktops are included on Tart from images
+  built with identity reset version 9 or later. Older images refuse forks
+  and Keep, saying why. Plain Linux boxes still fork from version 8.
 - **The reset is on in Tart's Linux image** (the lead's decision):
   `prepare-linux-image.sh` sets `BOX_IDENTITY_RESET=on` for the plain image,
   as Proxmox's, Docker's and boat.dev's Linux builds do. Before, the image

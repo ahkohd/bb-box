@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import Database from "better-sqlite3";
 import type { Backend } from "../src/backends/types.ts";
-import { snapshotGpuWords } from "../src/core/gpu.ts";
+import { snapshotGpuWords, snapshotGpuWordsFor } from "../src/core/gpu.ts";
 import { snapshotLine } from "../src/core/snapshot.ts";
 import { openBoxFiles } from "../src/plugin/attached-files.ts";
 import { rowOf } from "../src/plugin/snapshot-card.ts";
@@ -34,6 +34,21 @@ test("the GPU migration preserves older snapshots as unrecorded, and stores all 
   reopened.updateRecord(taken.id, { gpu: { part: "none", card: null, index: null, userspace: "none" } });
   assert.equal(store.record(taken.id)?.gpu?.part, "none");
   db.close();
+});
+
+test("GPU words stay off non-Linux snapshots without a card, in the CLI and the page", () => {
+  const state = armedWorld();
+  const base = record();
+  for (const system of ["macos", "windows"]) {
+    for (const gpu of [null, { part: "none", card: null, index: null, userspace: "none" }] as const) {
+      const snapshot = record({ box: { ...base.box, system }, gpu });
+      assert.doesNotMatch(snapshotLine(snapshot), /GPU|NVIDIA/);
+      assert.equal(rowOf(state.snapshots, snapshot, state.now).gpu, null);
+    }
+    assert.match(snapshotGpuWordsFor(system, GPU) ?? "", /GPU: shared/);
+  }
+  assert.match(snapshotGpuWordsFor("linux", { part: "none", card: null, index: null, userspace: "none" }) ?? "", /GPU: none/);
+  assert.equal(snapshotGpuWordsFor("linux", null), "GPU not recorded");
 });
 
 test("a take through the real store keeps the GPU claim and userspace, shows them, and a restore warns about a changed driver", async () => {

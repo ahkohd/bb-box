@@ -8,7 +8,7 @@ import { keepCostWords } from "./snapshot-words.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { Snapshotting } from "../backends/types.ts";
 import { withinWait } from "../core/snapshot-picture.ts";
-import { snapshotGpuWords } from "../core/gpu.ts";
+import { snapshotGpuWordsFor } from "../core/gpu.ts";
 
 export const PERSON: Caller = { is: "person" };
 
@@ -45,7 +45,7 @@ export interface SnapshotRowView {
   readonly boxGone: { readonly at: number; readonly how: string } | null;
   readonly unflushed: string | null;
   readonly after: readonly string[];
-  readonly gpu?: string;
+  readonly gpu?: string | null;
 }
 
 export interface RestoredView {
@@ -174,7 +174,7 @@ export function rowOf(snapshots: Snapshots, record: SnapshotRecord, now: number)
     keepWhy: keepWhyOf(record, snapshots.offerFor(snapshots.backendOf(record.backend.id), record.box.kind), pin ? (eligible(record, "keep", { pin, now }) as { why?: string }).why ?? null : null),
     boxGone: record.boxGone,
     unflushed: record.unflushed ?? null,
-    gpu: snapshotGpuWords(record.gpu),
+    gpu: snapshotGpuWordsFor(record.box.system, record.gpu),
     after: record.dependsOn.flatMap((id) => {
       const parent = ledger.record(id);
       return parent ? [parent.name] : [];
