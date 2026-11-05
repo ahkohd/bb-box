@@ -2645,7 +2645,9 @@ unchanged until the lead rebuilds its Linux template, after the gate.
   from a GPU desktop template with no GPU ID, gets no marker and no lines,
   takes no warm guest, and its display takes the CPU path, as it does in a
   box with no NVIDIA nodes. Proxmox LXC offers `linux-desktop` with `gpu`
-  none only where such a template is listed.
+  none only where such a template is listed. A fork with `gpu` none copies
+  its snapshot, not a template, so the room for it needs no such template
+  and no card.
 - **Placement for servers.** A `linux` box with `gpu` shared takes no warm
   guest. Under the card lock it goes to a card that no guest holds whole,
   with fewer of this install's boxes than the desktops per GPU (unit 5's
