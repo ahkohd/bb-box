@@ -31,22 +31,49 @@ function appendLog(root, line) {
   const lock = join(root, "log.lock");
   for (let attempt = 0; attempt < 400; attempt++) {
     try {
-      mkdirSync(lock);
+      writeFileSync(lock, String(process.pid), { flag: "wx" });
     } catch (error) {
-      if (error && error.code === "EEXIST") {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-        continue;
-      }
-      throw error;
+      if (!error || error.code !== "EEXIST") throw error;
+      if (!releaseStaleLock(lock)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
     }
     try {
       appendFileSync(join(root, "log"), line);
     } finally {
-      rmSync(lock, { recursive: true });
+      rmSync(lock, { force: true });
     }
     return;
   }
   throw new Error("timed out writing the ssh log");
+}
+
+function releaseStaleLock(lock) {
+  let text;
+  try {
+    text = readFileSync(lock, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return true;
+    throw error;
+  }
+  if (lockOwnerAlive(text)) return false;
+  try {
+    if (readFileSync(lock, "utf8") !== text) return false;
+    rmSync(lock);
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  return true;
+}
+
+function lockOwnerAlive(text) {
+  const pid = Number(text.trim());
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && error.code === "EPERM");
+  }
 }
 
 const args = process.argv.slice(2);
