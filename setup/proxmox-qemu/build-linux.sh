@@ -158,7 +158,7 @@ BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=none
 BUILD_ID=$build
 ANDROID_X264=$x264
-BOX_IDENTITY_RESET=$([ "$kind" = linux ] && echo on || echo off)
+BOX_IDENTITY_RESET=$([ "$kind" != android ] && echo on || echo off)
 PREPARE=$(sha256sum "$0" | awk 'NR==1{print $1}')
 EOF
 for f in "$cache"/*; do

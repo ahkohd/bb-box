@@ -40,6 +40,8 @@ import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
+import { withDesktopForkSafety } from "../../core/identity.ts";
+import { forkCapacityWords } from "../../core/snapshot-refusals.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
 import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
@@ -850,11 +852,11 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   identitySource(kind: string): IdentitySource | null {
-    return kind === "linux" && this.#offers().some((offer) => offer.kind.id === kind) ? "eth" : null;
+    return this.#offers().some((offer) => offer.kind.id === kind) ? "eth" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return this.#offers().some((offer) => offer.kind.id === kind) ? this.#snapshots.offer() : null;
+    return this.#offers().some((offer) => offer.kind.id === kind) ? withDesktopForkSafety(kind, this.#snapshots.offer()) : null;
   }
 
   async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
@@ -930,7 +932,7 @@ export class ProxmoxLxcBackend implements Backend {
     return { macs, smbios: null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Release a box, or widen the VMID range in bb-box's settings.`)): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
@@ -991,7 +993,7 @@ export class ProxmoxLxcBackend implements Backend {
     const from = this.#vmid(ref.guest);
     const config = await this.#ownOrCopyConfig(api, ref.guest, signal);
     const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
-    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Release a box, or widen the VMID range in bb-box's settings.`));
+    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Try again later, or ask the user to make room for the copy.`));
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
@@ -1349,7 +1351,7 @@ export class ProxmoxLxcBackend implements Backend {
       this.#forkGpu.set(box.boxId, { part: "shared", card: placed.card.uuid, reservation: placed.reservation, node: this.#cardKey(api) });
     } catch (error) {
       const words = error instanceof Error ? error.message : String(error);
-      throw new BackendError("no_capacity", `Not forked: ${words} Fork it with gpu none, or ask the user. bb-box copied nothing.`);
+      throw new BackendError("no_capacity", forkCapacityWords(words, gpu));
     }
   }
 
@@ -1370,10 +1372,10 @@ export class ProxmoxLxcBackend implements Backend {
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
         sourceConfig: (api, guest, signal) => this.#ownOrCopyConfig(api, guest, signal),
         rootDisk: () => "rootfs",
-        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Every VMID ${range} is in use, so bb-box has none for the fork. Release a box, or widen the VMID range in bb-box's settings.`)),
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so bb-box has none for the fork. Try again later, or ask the user. bb-box copied nothing.`)),
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
-        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build),
+        guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build, null),
         addressed: async (api, vmid, made, forked, template, signal) => {
           const nets: Record<string, string> = { net0: `${net0For(this.#config, vmid)},hwaddr=${randomMac()},link_down=1` };
           for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: false });
@@ -1462,8 +1464,9 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#offers().map((offer) => offer.kind);
   }
 
-  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
-    const offer = this.#offer(kind);
+  async capacity(kind: string, size: MachineSize & { readonly gpu?: GpuPart }, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+    const offered = this.#offer(kind);
+    const offer = size.gpu === "none" ? { ...offered, kind: { ...offered.kind, capabilities: { ...offered.kind.capabilities, gpu: false } } } : offered;
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
     const builds = await this.templateBuilds(api, guests, signal);
@@ -1825,7 +1828,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
           // A spare keeps its low weight until a box takes it: relabel() puts it back then.
           if (box.threadId !== SPARES) await this.#settle(api, id, ours, signal);
-          const made = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build, heldGpu);
+          const made = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build, cardClaim ? heldGpu : undefined);
           const guest = cardClaim ? { ...made, claim: cardClaim } : made;
           reservationsOn(this.#cardKey(api)).settle(placed?.reservation ?? null, this.#now());
           reservationsOn(this.#cardKey(api)).settle(gated, this.#now());
@@ -1941,7 +1944,7 @@ export class ProxmoxLxcBackend implements Backend {
       this.#context.logError("display mode", error);
       return null;
     });
-    return { facts: this.#facts(template, display, gate.gpu), ...claimed };
+    return { facts: this.#facts(template, display, marked ? gate.gpu : undefined), ...claimed };
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -2105,7 +2108,9 @@ export class ProxmoxLxcBackend implements Backend {
       config ??= await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}));
       const size = guest.size && { ...guest.size, diskGiB: rootDiskGiB(config) ?? guest.size.diskGiB };
       const template = templateFromTags(guest.tags);
-      const found = this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null, null, size);
+      const marker = claimMarkerOf(parseTags(config.tags)) ?? claimMarkerOf(guest.tags);
+      const gpu = marker ? await this.#heldGpu(marker.card) : undefined;
+      const found = this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null, null, size, null, gpu);
       held.push({ ...found, owner, power: powerOf(guest.status), ...(guest.tags.includes(START_TAG) ? { settling: true } : {}) });
     }
     return held;
@@ -2889,7 +2894,7 @@ export class ProxmoxLxcBackend implements Backend {
     display: DisplayMode | null = null,
     size: MachineSize | null = null,
     build: string | null = null,
-    gpu: string | null = null,
+    gpu: string | null | undefined = undefined,
   ): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
     const data = { ...(template !== null ? { template } : {}), ...(build !== null ? { build } : {}), ...(box !== null ? { box } : {}) };
@@ -2899,8 +2904,8 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /** A GPU desktop's GPU, and a desktop's display mode and why, once it has started; with no display mode known, none. */
-  #facts(template: number | null, display: DisplayMode | null, held: string | null = null): GuestFact[] {
-    const gpu = held ?? this.#gpuOf(template);
+  #facts(template: number | null, display: DisplayMode | null, held?: string | null): GuestFact[] {
+    const gpu = held === undefined ? this.#gpuOf(template) : held;
     return [
       ...(gpu ? [{ label: "GPU", value: gpu }] : []),
       ...(display ? [{ label: "Display mode", value: DISPLAY_MODE_WORDS[display.mode] ?? display.mode }] : []),

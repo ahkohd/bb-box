@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, type ImageRecord } from "../src/backends/images.ts";
+import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, identityResetFor, imageProgram, type ImageRecord } from "../src/backends/images.ts";
 import { tempDir } from "./helpers.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -125,6 +125,16 @@ test("image-record.sh writes a record bb-box reads, with the pins' digest bb-box
   assert.equal(recorded.status, 0, recorded.stderr);
   const wrote = parseImageRecord(JSON.parse(readFileSync(join(out, "image.json"), "utf8")));
   assert.equal(wrote?.program, await programDigest(join(build, "guest"), "on", "abc"));
+});
+
+test("every Linux desktop's program digest includes its enabled reset and changes with guest scripts on each image backend", async () => {
+  for (const kind of ["linux", "linux-desktop", "linux-desktop-cpu", "linux-desktop-wayland-cpu", "linux-arm64", "linux-arm64-desktop-cpu"]) {
+    assert.equal(identityResetFor(kind), "on", kind);
+    for (const backend of ["docker", "proxmox-lxc", "proxmox-qemu", "microsandbox", "tart", "boat"]) {
+      assert.match(await imageProgram(SETUP, kind, backend) ?? "", /^[a-f0-9]{64}$/, `${kind}: ${backend}`);
+    }
+  }
+  assert.equal(identityResetFor("android"), "off");
 });
 
 test("an image says what it is and how old", () => {

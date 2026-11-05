@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { identityInstallScript, macosIdentityTool } from "../src/backends/tart/identity.ts";
-import { LINUX_DESKTOP_NO_FORKS, LINUX_FORK_SAFE_FROM, MACOS_FORK_SAFE_FROM, NO_IMAGE_ATTACH, SNAPSHOTS_FOLDER, labelText, parseListing, parseTaskRef, savedUnder, taskOutcome, taskRef, tartOffer, type SnapshotLabel } from "../src/backends/tart/snapshots.ts";
+import { LINUX_NO_FORKS, LINUX_FORK_SAFE_FROM, MACOS_FORK_SAFE_FROM, NO_IMAGE_ATTACH, SNAPSHOTS_FOLDER, labelText, parseListing, parseTaskRef, savedUnder, taskOutcome, taskRef, tartOffer, type SnapshotLabel } from "../src/backends/tart/snapshots.ts";
 import { SnapshotFailed, type AcquireHooks, type BoxIdentity, type Guest, type MachineSize, type ReleaseHooks, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { IDENTITY_TOOL, forkCheckScript, forkSafetyScript, forkVerdict, parseForkSeen } from "../src/core/identity.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
@@ -79,21 +79,23 @@ function label(snaps: string, id: string): Record<string, string> {
   return Object.fromEntries(readFileSync(join(snaps, id, "label"), "utf8").trim().split("\n").map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
 }
 
-test("a macOS box's snapshots hold its disk and memory, suspend it, restore in place, fork, and are kept as they are, beside the VMs; a Linux VM's hold its disk, only while stopped, and fork and are kept too, but a Linux desktop's do neither", () => {
+test("a macOS box's snapshots hold its disk and memory, suspend it, restore in place, fork, and are kept as they are, beside the VMs; a Linux VM's hold its disk, only while stopped, and fork and are kept too, including a Linux desktop", () => {
   const macos = tartOffer("macos");
   assert.deepEqual([macos.holds, macos.whileRunning, macos.restore, macos.fork, macos.keepsPastRelease, macos.lives, macos.outlivesGuest, macos.forkSafeFrom], [["disk-and-memory"], "suspends", "in-place", "copy", "as-is", "host", true, MACOS_FORK_SAFE_FROM]);
   const linux = tartOffer("linux");
   assert.deepEqual([linux.holds, linux.whileRunning, linux.restore, linux.fork, linux.keepsPastRelease, linux.lives, linux.outlivesGuest, linux.forkSafeFrom], [["disk"], "stopped-only", "in-place", "copy", "as-is", "host", true, LINUX_FORK_SAFE_FROM]);
   const desktop = tartOffer("linux", false);
-  assert.deepEqual([desktop.holds, desktop.fork, desktop.keepsPastRelease, desktop.forkWhy], [["disk"], "none", "no", LINUX_DESKTOP_NO_FORKS]);
+  assert.deepEqual([desktop.holds, desktop.fork, desktop.keepsPastRelease, desktop.forkWhy], [["disk"], "none", "no", LINUX_NO_FORKS]);
   const { backend } = setup({ "tart-linux-image": "bb-box-linux", "tart-linux-desktop-image": "bb-box-linux-desktop" });
   assert.equal(backend.snapshotting("macos")?.whileRunning, "suspends");
   assert.equal(backend.snapshotting("linux-arm64")?.fork, "copy");
-  assert.equal(backend.snapshotting("linux-arm64-desktop-cpu")?.fork, "none");
+  assert.equal(backend.snapshotting("linux-arm64-desktop-cpu")?.fork, "copy");
+  assert.equal(backend.snapshotting("linux-arm64-desktop-cpu")?.forkSafeFrom, 9);
+  assert.equal(backend.snapshotting("linux-arm64-desktop-cpu")?.keepsPastRelease, "as-is");
   assert.equal(backend.snapshotting("windows-arm64-desktop"), null);
   assert.equal(backend.identitySource("macos"), "device");
   assert.equal(backend.identitySource("linux-arm64"), "device");
-  assert.equal(backend.identitySource("linux-arm64-desktop-cpu"), null);
+  assert.equal(backend.identitySource("linux-arm64-desktop-cpu"), "device");
 });
 
 test("a take of a running macOS box suspends it, copies its folder with its saved memory beside the VMs, labels the copy, and resumes the box", async () => {
@@ -400,7 +402,7 @@ test("a Linux VM's snapshot forks into a VM of its own with a new MAC address, f
   await backend.release(guest, releasing);
 });
 
-test("a Linux VM's snapshot taken before its box had the identity reset does not fork, and says a box from a refreshed image does; a Linux desktop forks none, with why", async () => {
+test("a Linux VM's snapshot taken before its box had the identity reset does not fork, and says a box from a refreshed image does", async () => {
   const { backend } = setup({ "tart-linux-image": "bb-box-linux", "tart-linux-desktop-image": "bb-box-linux-desktop" });
   const box = identity("linux-arm64", { cores: 2, memoryMiB: 4096, diskGiB: null });
   const guest = await backend.acquire(box, null, acquiring, signal());
@@ -411,7 +413,6 @@ test("a Linux VM's snapshot taken before its box had the identity reset does not
     const plan = await backend.planSnapshots(guest, "linux-arm64", { id, ref: id, guest }, signal());
     assert.deepEqual([plan.fork.ok, plan.fork.why], [false, "it was taken before its box had the identity reset, which boxes from a Linux image refreshed since have."], id);
   }
-  await assert.rejects(backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, identity("linux-arm64-desktop-cpu"), null, acquiring, signal()), (error: unknown) => error instanceof Error && error.message.includes(`forks no linux-arm64-desktop-cpu boxes: ${LINUX_DESKTOP_NO_FORKS}.`));
   await backend.release(guest, releasing);
 });
 
@@ -811,9 +812,9 @@ test("070 close-out: through bb-box's own boxes and snapshots, a Tart Linux box 
   assert.ok(box.identityMarkedAt, "core wrote the marker, of the VM's card");
   await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
   const stopped = (await state.boxes.find(box.id))!;
-  assert.equal(stopped.stopForkSafety?.version, LINUX_FORK_SAFE_FROM);
+  assert.equal(stopped.stopForkSafety?.version, 9);
   const taken = (await state.snapshots.take(COMMAND, stopped, standing(stopped), { name: "stopped" })).snapshot!;
-  assert.equal(state.store.record(taken.id)?.forkSafe, LINUX_FORK_SAFE_FROM, "read through the box's own reset, not given by hand");
+  assert.equal(state.store.record(taken.id)?.forkSafe, 9, "read through the box's own reset, not given by hand");
   const plan = await tart!.planSnapshots(stopped.guest!, "linux-arm64", { id: taken.id, ref: state.store.record(taken.id)!.ref!, guest: stopped.guest! }, signal());
   assert.deepEqual([plan.fork.ok, plan.keep.way], [true, "as-is"]);
   await state.snapshots.keep(COMMAND, standing(stopped), taken.id, { days: 30 });

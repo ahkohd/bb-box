@@ -124,7 +124,7 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   const box = await readyBox(state);
   writeIn(state, box, "work/state.txt", "set up");
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" })).snapshot!;
-  assert.equal(taken.forkSafe, 8);
+  assert.equal(taken.forkSafe, 9);
   assert.deepEqual(taken.identity, { machineId: createHash("sha256").update(`${SOURCE_MACHINE_ID}\n`).digest("hex"), hostKeys: [createHash("sha256").update("AAAAC3NzaC1lZDI1NTE5AAAAIsourcekey\n").digest("hex")] });
   assert.deepEqual(state.store.record(taken.id)?.identity, taken.identity, "kept on the record");
   writeIn(state, box, "work/state.txt", "changed after the take");
@@ -441,7 +441,7 @@ test("070 unit 7: a fork starts with up to 180 s for its first boot, and a fork 
   const box = await readyBox(state);
   flushing(state, async () => ({ exitCode: 1, stdout: "", stderr: "sync: Input/output error" }));
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "unflushed" })).snapshot!;
-  assert.equal(taken.forkSafe, 8);
+  assert.equal(taken.forkSafe, 9);
   assert.equal(taken.unflushed, "sync: Input/output error");
   const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "unflushed");
   assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: bb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
@@ -501,14 +501,14 @@ test("070 unit 7 reviews: a snapshot from an identity reset older than its backe
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "older" })).snapshot!;
   const backend = state.backend as Backend;
   const offered = backend.snapshotting!(box.kind)!;
-  (state.backend as unknown as Record<string, unknown>).snapshotting = () => ({ ...offered, forkSafeFrom: 9 });
+  (state.backend as unknown as Record<string, unknown>).snapshotting = () => ({ ...offered, forkSafeFrom: 10 });
   const refused = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "older"));
   assert.equal(refused.code, "unsupported");
-  assert.match(refused.message, new RegExp(`^${box.name} had version 8 of the identity reset when "older" was taken, and bb-box forks .+ only from version 9`));
+  assert.match(refused.message, new RegExp(`^${box.name} had version 9 of the identity reset when "older" was taken, and bb-box forks .+ only from version 10`));
   assert.equal(state.provider.order.some((step) => step.startsWith("fork")), false);
-  assert.match(forkWhyOf(state.store.record(taken.id)!, backend.snapshotting!(box.kind)) ?? "", /had an identity reset older than version 9 when it was taken/);
+  assert.match(forkWhyOf(state.store.record(taken.id)!, backend.snapshotting!(box.kind)) ?? "", /had an identity reset older than version 10 when it was taken/);
   const ofBox = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box)));
-  assert.match(ofBox.message, /has version 8 of the identity reset, and bb-box forks .+ only from version 9/);
+  assert.match(ofBox.message, /has version 9 of the identity reset, and bb-box forks .+ only from version 10/);
 });
 
 test("070 unit 7 reviews: a fork whose guest cannot be deleted keeps its guest and its operation unsettled, says so, and the sweep deletes it later", async () => {
@@ -680,6 +680,12 @@ test("070 unit 7 re-review: box_fork's check before its take refuses a fork with
   const refused = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box)));
   assert.equal(refused.code, "no_capacity");
   assert.match(refused.message, /has no room for the fork: No room for any new guest/);
+  for (const caller of [agent, COMMAND]) {
+    state.backend.capacity = async () => ({ ok: false, message: "Every GPU is full. Release a desktop box, or raise the desktops per GPU.", warm: null, hosts: [] });
+    const full = await rejection(state.snapshots.checkForkOfBox(caller, box, standing(box), { gpu: "shared" }));
+    assert.match(full.message, /^Not forked: .*Every GPU is full\. Fork it with gpu none, or ask the user\. bb-box copied nothing\.$/);
+    assert.doesNotMatch(full.message, /Release|raise|settings/);
+  }
   state.backend.capacity = capacity;
   assert.equal((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { name: box.name }))).code, "invalid_name", "a name its thread already has");
   assert.ok(state.store.record(oldest.id), "nothing was taken or deleted");
@@ -717,7 +723,7 @@ test("070 unit 8, G15: Keep, release, restart bb-box, then fork the kept snapsho
   await state.snapshots.sweep();
   const kept = state.snapshots.findGone(box.name, "release candidate");
   assert.equal(kept.guest, "held-copy");
-  assert.equal(kept.forkSafe, 8, "a held copy keeps its snapshot's identity reset version");
+  assert.equal(kept.forkSafe, 9, "a held copy keeps its snapshot's identity reset version");
   const agent: Caller = { is: "agent", threadId: THREAD };
   assert.match((await rejection(state.snapshots.fork(agent, { id: box.id }, standing(box), taken.id))).message, /has no snapshot/, "an agent cannot see a released box's kept snapshot");
   const answer = await state.snapshots.forkGone(kept, { is: "command" }, { name: "from-kept" });

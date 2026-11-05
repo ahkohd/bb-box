@@ -46,7 +46,7 @@ done
 [ -n "$key" ] || die "give bb-box's public key with --key, as bb box doctor shows it"
 if [ "$desktop" = 1 ]; then
   : "${name:=bb-box-linux-desktop}"
-  kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=off
+  kind=linux-arm64-desktop-cpu artifacts=desktop-cpu finalize=desktop identity_reset=on
 else
   : "${name:=bb-box-linux}"
   kind=linux-arm64 artifacts=linux finalize=linux identity_reset=on

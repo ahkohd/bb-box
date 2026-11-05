@@ -315,6 +315,7 @@ export function SnapshotRow({
           </span>
         </p>
         {row.undoOf ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">The undo of the restore{row.undoOf.to ? ` to "${row.undoOf.to}"` : ""} at {snapshotClock(row.undoOf.at)}.</p> : null}
+        {row.gpu ? <p className="mt-0.5 break-words text-xs leading-snug text-subtle-foreground">{row.gpu}</p> : null}
         {row.note ? <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-xs leading-snug text-subtle-foreground">{row.note}</p> : null}
         {unkeepRefused ? <Refused words={unkeepRefused} /> : null}
       </div>

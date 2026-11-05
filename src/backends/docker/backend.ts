@@ -568,7 +568,7 @@ export class DockerBackend implements Backend {
 
   /** The kinds, with Docker until the daemon has said it is rootless, and a GPU desktop's until its image has said it is too old. */
   identitySource(kind: string): IdentitySource | null {
-    return kind === "linux" && this.kinds().some((offered) => offered.id === kind) ? "value" : null;
+    return this.kinds().some((offered) => offered.id === kind) ? "value" : null;
   }
 
   kinds(): BoxKind[] {

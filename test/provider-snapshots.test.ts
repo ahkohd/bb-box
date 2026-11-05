@@ -388,7 +388,7 @@ test("070 unit 11b: on a provider that keeps a snapshot as it is, Keep holds it 
   const box = await readyBox(state);
   const kept = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" })).snapshot!;
   const older = (await state.snapshots.take(COMMAND, box, standing(box), { name: "older" })).snapshot!;
-  assert.equal(kept.forkSafe, 8);
+  assert.equal(kept.forkSafe, 9);
   state.store.updateRecord(older.id, { forkSafe: 7 });
   const refused = await rejection(state.snapshots.keep(COMMAND, standing(box), older.id));
   assert.equal(refused.message, `${box.name} had version 7 of the identity reset when "older" was taken, and bb-box forks ${state.backend.label}'s boxes only from version 8: it could not be forked after a release, so bb-box does not keep it.`);

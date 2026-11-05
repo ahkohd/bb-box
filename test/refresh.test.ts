@@ -290,6 +290,7 @@ test("the build script runs the guest scripts as build.sh does for each kind", (
   for (const line of ["DESKTOP_GPU=none", "DESKTOP_SESSION=wayland", "BUILD_ID=build.20261003-021500-3f9c", "BB_URL='https://bb.example.com'", 'BOX_DNS="$dns"']) assert.ok(wayland.split("\n").includes(line), line);
   assert.match(wayland, /fetch-artifacts\.sh \S+ desktop-wayland-cpu "\$arch"/);
   assert.match(wayland, /customize-desktop\.sh/);
+  assert.match(wayland, /^BOX_IDENTITY_RESET=on$/m);
   assert.match(wayland, /finalize\.sh \S+ desktop$/m);
   const gpu = buildScript("linux-desktop", null, "build.x");
   assert.ok(gpu.split("\n").includes("DESKTOP_GPU=nvidia"));

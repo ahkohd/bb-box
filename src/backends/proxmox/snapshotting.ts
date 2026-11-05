@@ -430,7 +430,7 @@ export class ProxmoxSnapshotting {
       if (signal?.aborted) throw error;
       return null;
     });
-    const why = room && room.free < 1 ? `Every VMID ${room.range} is in use now, so a release would have none for the held copy. Release a box, or widen the VMID range in bb-box's settings.` : null;
+    const why = room && room.free < 1 ? `Every VMID ${room.range} is in use now, so a release would have none for the held copy. Try again later, or ask the user to make room for the copy.` : null;
     return { way: "held-copy", why, aboutMs: fork.aboutMs, bytes: fork.bytes, usedBytes: usedBytes !== null && fork.bytes !== null ? Math.min(usedBytes, fork.bytes) : usedBytes, price: null };
   }
 

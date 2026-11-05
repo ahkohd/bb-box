@@ -90,7 +90,7 @@ import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } fro
 import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
 import { MSB_VERSION, scriptValues } from "./release.ts";
 import { BOX_USER, MsbTransport } from "./transport.ts";
-import { IDENTITY_VARIABLE } from "../../core/identity.ts";
+import { IDENTITY_VARIABLE, withDesktopForkSafety } from "../../core/identity.ts";
 import {
   DELETE_TASK,
   DISK_TAKE_ABOUT_MS,
@@ -1476,7 +1476,7 @@ export class MsbBackend implements Backend {
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return this.kinds().some((offer) => offer.id === kind) ? msbOffer() : null;
+    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, msbOffer()) : null;
   }
 
   identitySource(kind: string): IdentitySource | null {

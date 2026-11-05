@@ -4498,7 +4498,7 @@ test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_s
 
   const listed = await harness.behavior.runCli(["snapshot", "list", "--thread", THREAD]);
   assert.equal(listed.exitCode, 0, listed.stderr);
-  assert.match(listed.stdout ?? "", new RegExp(`^${box.name} \\(${box.id}\\) · Fake host · thread ${THREAD}\\n  "before the migration" \\(${record!.id}\\) · ready · taken .* · by a bb box command · disk · size unknown · not fork-safe: ${box.name} had no working identity reset when it was taken\\n  1 of 5 for this box\\.\\n$`));
+  assert.match(listed.stdout ?? "", new RegExp(`^${box.name} \\(${box.id}\\) · Fake host · thread ${THREAD}\\n  "before the migration" \\(${record!.id}\\) · ready · taken .* · by a bb box command · disk · size unknown · not fork-safe: ${box.name} had no working identity reset when it was taken · GPU: none; NVIDIA userspace: unknown\\n  1 of 5 for this box\\.\\n$`));
   const json = JSON.parse((await harness.behavior.runCli(["snapshot", "list", box.name, "--thread", THREAD, "--json"])).stdout ?? "[]") as { id: string; note: string }[];
   assert.deepEqual(json.map((each) => [each.id, each.note]), [[record!.id, "schema v41"]]);
   assert.equal((await harness.behavior.runCli(["snapshot", "list", "--all", "--kept"])).stdout, "There are no kept snapshots.\n");
@@ -7110,6 +7110,21 @@ test("box_fork and bb box snapshot fork: with no snapshot named, box_fork checks
   const OTHER = "thr_other";
   world.threads.set(OTHER, makeThreadResponse({ id: OTHER, projectId: PROJECT, environmentId: "env_two", providerId: "claude-code" }));
   assert.match(text(await tool("box_fork", { box: box.name, snapshot: "plain" }, OTHER)), /no box|No box|not found|has no box/i);
+});
+
+test("snapshot tools never add release or settings advice to fork and restore capacity refusals", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  new FakeSnapshots().attach(world.backend!, Date.now);
+  await tool("box_acquire", {});
+  const box = await only(app);
+  app.snapshots.fork = async () => { throw new BoxError("no_capacity", "Not forked: no card has room. Fork it with gpu none, or ask the user. bb-box copied nothing."); };
+  app.snapshots.restore = async () => { throw new BoxError("no_capacity", "Every VMID is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy."); };
+  for (const [name, input] of [["box_fork", { box: box.name, snapshot: "one", gpu: "shared" }], ["box_restore", { box: box.name, snapshot: "one", replace: true }]] as const) {
+    const answer = text(await tool(name, input));
+    assert.match(answer, /Next: Try again later, or ask the person to make room/);
+    assert.doesNotMatch(answer, /[Rr]elease|settings|widen|raise/);
+  }
 });
 
 test("box_restore restores the agent's own box at once with an undo; with agents' restores off it asks for a yes through a form, and a cancel, a wrong answer and a changed plan restore nothing (070 unit 5, G11)", async (t) => {

@@ -147,6 +147,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   ].join(";\n"),
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN attempts TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN fork_safe_why TEXT CHECK(fork_safe_why IS NULL OR fork_safe_why IN ('reset-off', 'unread'))`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN gpu TEXT`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -216,6 +217,7 @@ interface SnapshotRow {
   fork_safe: number | null;
   fork_safe_why: NotForkSafe | null;
   identity: string | null;
+  gpu: string | null;
   unflushed: string | null;
   depends_on: string;
   picture: SnapshotRecord["picture"];
@@ -314,6 +316,7 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     forkSafe: row.fork_safe,
     forkSafeWhy: row.fork_safe_why,
     identity: parsed<HeldIdentity | null>(row.identity, null),
+    gpu: parsed<SnapshotRecord["gpu"]>(row.gpu, null),
     unflushed: row.unflushed,
     dependsOn: parsed<string[]>(row.depends_on, []),
     picture: row.picture,
@@ -362,6 +365,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     fork_safe: record.forkSafe,
     fork_safe_why: record.forkSafeWhy ?? null,
     identity: json(record.identity ?? null),
+    gpu: json(record.gpu ?? null),
     unflushed: record.unflushed ? utf8Prefix(record.unflushed, UNFLUSHED_BYTES) : null,
     depends_on: JSON.stringify(record.dependsOn),
     picture: record.picture,

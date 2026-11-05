@@ -492,9 +492,9 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   before the network, SSH and the box user's services. A Linux fork gets a
   new MAC address from Tart, and its reset gives up the source's BB machine,
   tailnet node, access file, SSH host keys and machine ID. Its disk is not
-  cleaned on the Mac. An older image has the reset off, so its boxes'
-  snapshots neither fork nor keep: refresh the image. Linux desktops do not
-  fork.
+  cleaned on the Mac. Linux desktops fork and Keep from an image built with
+  reset version 9 or later. Older images refuse both and say why: refresh
+  the image and make the box again.
 - **A stopped box's snapshot forks only when bb-box stopped it** and it has
   not run since: bb-box reads the reset from inside the box just before its
   own stop, and keeps the reading with each VM file's modification time
