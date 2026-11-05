@@ -7,7 +7,7 @@ import { toolsForPurposes } from "./purposes.ts";
 import { RESTORE_FORM, RESTORE_FORM_TIMEOUT_MS, isRestoreYes, restoreFormPayload, restoreFormTitle, type RestoreFormPayload } from "./restore-form.ts";
 import type { BbBox } from "./setup.ts";
 import { deletedText, forkMayMissWords, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
-import { boxParam, failure, ready, runsOnBox, thread, using } from "./tools.ts";
+import { agentErrorText, boxParam, failure, ready, runsOnBox, thread, using, withHint } from "./tools.ts";
 import { boxDetail, startingWords } from "./views.ts";
 import { forkedFromWords, isAcquiring, isMachineName } from "../core/boxes.ts";
 
@@ -20,19 +20,19 @@ const ASKS_AGAIN_AT_MOST = 3;
 
 const SNAPSHOT_HINTS: Partial<Record<BoxErrorCode, string>> = {
   not_found: "Call box_snapshots to see the boxes and snapshots this thread may see.",
-  limit_reached: "Delete a snapshot you took and no longer need with box_snapshot_delete, or ask the person to raise the limit or the ceiling in Settings, Snapshots.",
+  limit_reached: "Delete a snapshot you took and no longer need with box_snapshot_delete, or ask the user.",
   try_again: "This holds only for now, not for good: it can work once what it names changes, such as snapshots deleted or a task ended. Do what it says you can, or try again later, not in a loop.",
   in_use: "Tell the person, in the thread, what the refusal names: it says what would have to change first.",
   not_owner: "Ask the person, in the thread, if it should be done.",
   needs_yes: "Call box_restore again: it asks for a yes in the thread with a form. Then end your turn.",
-  no_capacity: "Try again later, or ask the person to make room.",
+  no_capacity: "Try again later, or ask the user.",
   unsupported: "Call box_status to see what the box can do: its Snapshots line says what its backend offers.",
 };
 
 function snapshotFailure(error: unknown, action: string): PluginAgentToolResult {
   const hint = error instanceof BoxError ? SNAPSHOT_HINTS[error.code] : undefined;
   if (!hint) return failure(error, action);
-  return { content: [{ type: "text", text: `${describeError(error, action)}${next(hint)}` }], isError: true };
+  return { content: [{ type: "text", text: agentErrorText(error, action, hint) }], isError: true };
 }
 
 function agent(threadId: string): Caller {
@@ -209,7 +209,8 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         const before = taken?.words ?? "";
         if (!settled || isAcquiring(settled)) return `${before}${startingWords(settled ?? made, !!settled && app.boxes.stopping)}${origin}${next(`Call box_status with box "${made.name}" to see when it is ready.`)}`;
         if (settled.state === "failed") {
-          return { content: [{ type: "text", text: `${before}Fork ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}${next("Tell the person what it says, or fork again from another snapshot.")}` }], isError: true };
+          const said = `${before}Fork ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}`;
+          return { content: [{ type: "text", text: withHint(said, "Tell the person what it says, or ask the user.") }], isError: true };
         }
         const enrolled = await app.boxes.enrolled(settled, signal);
         const mayMiss = answer.snapshot ? forkMayMissWords(answer.snapshot) : null;
@@ -283,7 +284,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
                 continue;
               }
               const hint = again instanceof BoxError ? (SNAPSHOT_HINTS[again.code] ?? "Call box_status to see the box.") : "Call box_status to see the box.";
-              return `${describeError(again, "Restoring the box on the yes given in this thread")}${next(hint)}`;
+              return agentErrorText(again, "Restoring the box on the yes given in this thread", hint);
             } finally {
               release();
             }

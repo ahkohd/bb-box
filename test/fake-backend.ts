@@ -249,6 +249,7 @@ export class FakeBackend implements Backend {
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
   /** The facts a start finds, as a GPU desktop's display mode after it fell back to the CPU (#597); null for none. */
   startFacts: readonly GuestFact[] | null = null;
+  startFault: Error | null = null;
   startAddress: string | null = null;
   readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
@@ -324,6 +325,11 @@ export class FakeBackend implements Backend {
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {
       this.start = async (guest, _signal, timing, answered) => {
+        const fault = this.startFault;
+        if (fault) {
+          this.startFault = null;
+          throw fault;
+        }
         await this.#placeSharedAgain(guest.ref);
         await this.#power(guest, "running");
         await answered?.();

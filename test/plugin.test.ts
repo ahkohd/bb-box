@@ -15,7 +15,7 @@ import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
-import { BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
+import { AudienceError, BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
 import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, stillsRequestText, testDeviceOffer, type OfferedDevices } from "../src/core/device.ts";
 import { DeviceLink } from "../src/core/device-link.ts";
 import { inSlot } from "../src/core/device-host.ts";
@@ -7122,9 +7122,80 @@ test("snapshot tools never add release or settings advice to fork and restore ca
   app.snapshots.restore = async () => { throw new BoxError("no_capacity", "Every VMID is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy."); };
   for (const [name, input] of [["box_fork", { box: box.name, snapshot: "one", gpu: "shared" }], ["box_restore", { box: box.name, snapshot: "one", replace: true }]] as const) {
     const answer = text(await tool(name, input));
-    assert.match(answer, /Next: Try again later, or ask the person to make room/);
-    assert.doesNotMatch(answer, /[Rr]elease|settings|widen|raise/);
+    assert.doesNotMatch(answer, /\n\nNext:/, answer);
+    assert.doesNotMatch(answer, /[Rr]elease|settings|widen|raise/, answer);
   }
+});
+
+test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own words and never tell an agent to release a box or change a setting", async (t) => {
+  const linux: BoxKind = { ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] };
+  const { harness, app, world, tool } = await start(undefined, { kinds: [linux, FAKE_KINDS[1]!] });
+  t.after(() => harness.lifecycle.dispose());
+  new FakeSnapshots().attach(world.backend!, Date.now);
+  const backend = world.backend!;
+  const capacity = backend.capacity.bind(backend);
+  const gpuRefusal = "Not made: no card on the fake host can take a shared GPU now. Ask for gpu none, or ask the user. bb-box changed nothing.";
+  backend.capacity = async (kind, size, pending) => {
+    if ((size as { gpu?: string }).gpu === "shared") {
+      return { ok: false, message: "No card has room. Release a box on a card, or raise the boxes per card in BB Box's settings.", agentMessage: gpuRefusal, warm: null, hosts: [] };
+    }
+    return capacity(kind, size, pending);
+  };
+  const shared = text(await tool("box_acquire", { kind: "linux", gpu: "shared" }));
+  assert.equal(shared, gpuRefusal);
+  assert.equal((await app.boxes.list(THREAD)).length, 0, "a refused acquire makes no box");
+
+  backend.capacity = async () => ({ ok: false, message: "The host has no room for another guest.", warm: null, hosts: [] });
+  const full = text(await tool("box_acquire", { kind: "linux" }));
+  assert.equal(full, "The host has no room for another guest.\n\nNext: Try again later, or ask the user.");
+  assert.doesNotMatch(full, /[Rr]elease|settings|widen|raise|another kind/);
+
+  backend.capacity = capacity;
+  backend.offer([FAKE_KINDS[0]!, FAKE_KINDS[1]!]);
+  const unsupported = text(await tool("box_acquire", { kind: "linux", gpu: "shared" }));
+  assert.match(unsupported, /Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+  assert.doesNotMatch(unsupported, /\n\nNext:/);
+  assert.doesNotMatch(unsupported, /[Rr]elease|settings|Call box_status/);
+
+  backend.offer([linux, FAKE_KINDS[1]!]);
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const box = await only(app);
+  backend.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  const resizeRefusal = "Not resized: no card is free for this box. Keep the GPU shared, or ask the user. bb-box changed nothing.";
+  backend.resizeRoom = { ok: false, message: "No card is free. Release a desktop box, or raise the boxes per card.", agentMessage: resizeRefusal, warm: null, hosts: [] };
+  const resized = text(await tool("box_resize", { box: box.name, memory_gib: 8 }));
+  assert.equal(resized, resizeRefusal);
+  backend.resizeRoom = { ok: false, message: "The host has 1 GiB of memory free, less than the 4 GiB more the box needs.", warm: null, hosts: [] };
+  const grown = text(await tool("box_resize", { box: box.name, memory_gib: 8 }));
+  assert.equal(grown, "The host has 1 GiB of memory free, less than the 4 GiB more the box needs.\n\nNext: Try again later, or ask the user.");
+  assert.doesNotMatch(grown, /[Rr]elease|settings|widen|raise/);
+
+  assert.ok(!isError(await tool("box_stop", { box: box.name })));
+  backend.startFault = new AudienceError("Container 100 was not started: Release another desktop box, or raise the desktops per GPU.", "Container 100 was not started: Start it again later, or ask the user.");
+  const started = text(await tool("box_start", { box: box.name }));
+  assert.equal(started, "Starting the box failed: Container 100 was not started: Start it again later, or ask the user.");
+  assert.doesNotMatch(started, /[Rr]elease|settings|raise|widen/);
+
+  app.snapshots.take = async () => {
+    throw new BoxError("limit_reached", "Box holds 5 snapshots, the most allowed.");
+  };
+  const capped = text(await tool("box_snapshot", { box: box.name }));
+  assert.equal(capped, "Box holds 5 snapshots, the most allowed.\n\nNext: Delete a snapshot you took and no longer need with box_snapshot_delete, or ask the user.");
+  assert.doesNotMatch(capped, /[Ss]ettings|[Rr]elease|raise|widen/);
+  app.snapshots.take = async () => {
+    throw new BoxError("no_capacity", "Not taken: the pool is full. Try again later, or ask the user. bb-box changed nothing.");
+  };
+  const pooled = text(await tool("box_snapshot", { box: box.name }));
+  assert.equal(pooled, "Not taken: the pool is full. Try again later, or ask the user. bb-box changed nothing.");
+
+  const acquire = backend.acquire.bind(backend);
+  backend.acquire = async () => {
+    throw new BackendError("no_capacity", "No card has room. Release a box on a card.", gpuRefusal);
+  };
+  const late = text(await tool("box_acquire", { kind: "linux" }));
+  assert.match(late, new RegExp(`^Box \\S+ failed: ${gpuRefusal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  assert.doesNotMatch(late, /\n\nNext:|Release a box|settings|another kind/);
+  backend.acquire = acquire;
 });
 
 test("box_restore restores the agent's own box at once with an undo; with agents' restores off it asks for a yes through a form, and a cancel, a wrong answer and a changed plan restore nothing (070 unit 5, G11)", async (t) => {
