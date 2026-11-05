@@ -15,7 +15,7 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with version 8 of the identity reset, of Linux boxes, not desktops | as it is: the copy stays beside the VMs |
-| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows and iOS boxes, and Android devices | no snapshots yet | | | | |
+| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows and iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 A microsandbox box takes snapshots only when its Docker disk is `msb`'s own, as on every box BB Box makes now. A box an earlier BB Box made keeps its Docker data on a file of the host's, which `msb` leaves out of a snapshot and cannot give a restored box, so its Snapshots say why it takes none; it works as before otherwise. BB Box takes them only with `msb` 0.7.7, the release whose snapshots it measured on Linux hosts and on a Mac. `bb box doctor` says so in its microsandbox Snapshots check. Each snapshot of a microsandbox box lists the one it was taken after ("after ..."), as `msb` keeps a box's snapshots in a chain; each holds its own data, so any of them can be deleted first.
 
@@ -27,7 +27,19 @@ A macOS snapshot holds the VM's saved memory, and Virtualization restores a save
 
 A restore copies the snapshot beside the VM, then swaps it into the VM's place in two renames. It records each phase on the Mac first, with its shell's process and start time, and each restore has its own record. If BB Box or the Mac stops in the middle, the next look at the box, its start, or its release puts the right folder back: the snapshot's whole copy once it was in place, the VM's own folder otherwise, never neither. While a restore still runs, the box is neither started nor deleted. A release also deletes what a restore or a fork cut short left beside the VMs.
 
+### Proxmox
+
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
+
+### What is not built yet
+
+- **Restores of a box threads run on stay off.** BB cannot yet hold every turn on a box: its "Send now" can start a turn while BB Box stops the box to restore it. Until BB can, move the threads off the box, or archive them, before you restore it. You and agents can restore every other box. See [restores of a box threads run on stay off](#restores-of-a-box-threads-run-on-stay-off).
+- **A copy made outside BB Box can keep its source's identity.** BB Box's own forks always give it up. On Docker, microsandbox and boat.dev, a box's identity is a value BB Box sets, and a copy made with the provider's own tools, such as a fork in boat.dev's dashboard, gets its source's value. So it does not reset, and comes up as its source: the same BB machine, tailnet node and thread's access. Copy a box only through BB Box.
+- **The identity reset across a Proxmox node's restart is unproved.** Held copies and earlier guests were checked not to start by themselves, and an earlier guest started by hand reset before its network. But no node was restarted in the checks, so it is not known what they do when one is. Restart a node with a held copy on it, and check that the copy stays stopped, before you rely on Keep there.
+- **ZFS restores stay off** until they are checked on a ZFS node. Snapshots on ZFS are taken and deleted as elsewhere.
+- **Docker, Hetzner and Namespace boxes take no snapshots yet.** They are planned for later, as a copy of the paused container with the box's Docker data, restored as a new container.
+- **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, an Android box on boat.dev takes snapshots of its whole VM, and one on Proxmox QEMU takes none.
+- **Windows and iOS boxes, and the SSH host pool's machines, take no snapshots**, and none are planned yet.
 
 ## On a box's page
 
@@ -94,7 +106,7 @@ A Linux box can tell when it is a copy of another box, such as a Proxmox clone. 
 
 ### How it works
 
-When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/identity`. It holds the box's ID and the MAC addresses of the network cards its backend gives it. On Docker and boat.dev it holds a value BB Box sets on the box instead, the box's ID in `BBBOX_IDENTITY`, as Docker gives a container new MAC addresses at each start, and boat.dev a sandbox new ones on each machine it starts on. BB Box sets the box's own ID on every sandbox of the box, and a fork's own ID on the fork's, and boat.dev keeps it through a stop and start and a resize.
+When a box is first ready, BB Box writes an identity marker in it, `/etc/bb-box/identity`. It holds the box's ID and the MAC addresses of the network cards its backend gives it. On Docker, microsandbox and boat.dev it holds a value BB Box sets on the box instead, the box's ID in `BBBOX_IDENTITY`, as Docker gives a container new MAC addresses at each start, and boat.dev a sandbox new ones on each machine it starts on. BB Box sets the box's own ID on every sandbox of the box, and a fork's own ID on the fork's, and boat.dev keeps it through a stop and start and a resize.
 
 At each start, before its network, SSH, Tailscale, Docker, its desktop and BB's daemon start, the box compares the marker with what it has:
 
@@ -123,7 +135,7 @@ A box that is a thread's own machine, made by New box, is the exception: BB Box 
 
 If BB removes a machine while its box does not answer, BB Box keeps the box until it answers, then reads whether it reset, and decides.
 
-A copy made outside BB Box is not one of its boxes, so it stays out of BB.
+A copy made outside BB Box that resets is not one of its boxes, so it stays out of BB. One whose identity is a value BB Box sets may not reset at all: see [what is not built yet](#what-is-not-built-yet).
 
 ### On boat.dev
 
@@ -139,7 +151,7 @@ macOS boxes also have a reset of their own, as Linux boxes do. BB Box installs i
 
 ### Turning it on
 
-Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU, Docker, boat.dev and Tart. Others have the program, with it off. A Tart Linux image prepared before this BB Box has it off too: refresh it, and boxes made from it after have it. macOS boxes on Tart get it when they are first ready.
+Only these images have it on: Linux on Proxmox LXC, Proxmox QEMU, Docker and microsandbox, which share Docker's images, boat.dev and Tart. Others have the program, with it off. A Tart Linux image prepared before this BB Box has it off too: refresh it, and boxes made from it after have it. macOS boxes on Tart get it when they are first ready.
 
 BB Box writes markers only on the backends you name:
 
@@ -151,7 +163,7 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, 5 on Proxmox QEMU, 8 on boat.dev, 3 on Tart's macOS. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC and microsandbox, 5 on Proxmox QEMU, 8 on boat.dev and Tart's Linux, 3 on Tart's macOS. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
 
 ## Forking a snapshot
 
@@ -172,7 +184,7 @@ Who forks:
 - **You**, from a box's page or the command line, into the box's thread, or as one of your machines. A fork of one of your machines is one of your machines.
 - **A thread's agent**, with `box_fork`, from its thread's own box into its own thread. Left without a snapshot, `box_fork` checks first that the box could be forked now, then takes one of the box now, named "for a fork", and forks that. If the fork is still refused, BB Box deletes that snapshot and says so; if the take deleted an older snapshot of the agent's to make room, it says that too. An agent does not fork a box threads run on, nor makes a fork one of your machines.
 
-Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows boxes, and Linux desktops on Tart, have no reset checked yet, so they do not fork.
+Only a snapshot that was taken with a working identity reset, of the version its backend needs, forks; others are refused with why, before anything is copied. Windows boxes, Linux desktops on Tart and boat.dev, and Android boxes on boat.dev have no reset checked yet, so they do not fork.
 
 BB Box reads a box's identity reset from inside it as it takes a snapshot, so on Tart, where a Linux box is taken stopped and a macOS box can be, it reads it just before it stops the box itself, and keeps that reading, with a mark of the stopped VM's files, until the box next starts. A take uses the reading only while the VM's files are as BB Box left them: if the VM ran since, even started and stopped outside BB Box, they have changed. A snapshot of a box stopped another way, shut down from inside or by the Mac, or that ran since, neither forks nor keeps: start the box, stop it with BB Box, and take it again. A box whose reset was off when BB Box stopped it, as in one from an image prepared before the reset was turned on, is told to refresh the Linux image and make the box again.
 
@@ -257,9 +269,8 @@ On boat.dev, step 5 is boat.dev's own stop, which saves the box's disk, and step
 
 A restore takes a few seconds. Measured on Proxmox LXC on LVM-thin, a box of 16 GiB: about 4 s, of which the stop takes about a second, the undo and the rollback under a second each, and the start about 2 s. When the snapshot was taken while the container ran, Proxmox's own start takes about 45 s instead, and BB Box waits for it.
 
-#On microsandbox, as on boat.dev, step 5 stops the box and step 6 takes the undo of its disk, so the undo holds exactly what the restore replaces. Step 7 makes the box a new microVM from the snapshot, with the box's own identity value, so it stays the same BB machine. A snapshot with memory comes back running, at the size it was taken at, as `msb` requires; a disk snapshot boots at the box's size. BB Box deletes the old microVM once the new one has started; the box's snapshots live on the host, not in the microVM, so none is lost.
+On microsandbox, as on boat.dev, step 5 stops the box and step 6 takes the undo of its disk, so the undo holds exactly what the restore replaces. Step 7 makes the box a new microVM from the snapshot, with the box's own identity value, so it stays the same BB machine. A snapshot with memory comes back running, at the size it was taken at, as `msb` requires; a disk snapshot boots at the box's size. BB Box deletes the old microVM once the new one has started; the box's snapshots live on the host, not in the microVM, so none is lost.
 
-## ZFS
 On Tart, a macOS box of 16 GiB took 13 to 15 s: its suspend, which saves its memory, 4 to 6 s; the undo, a clone of the suspended VM, under half a second; putting the snapshot's copy in the VM's place under half a second; and the resume 8 to 9 s. It is never stopped hard. The box comes back running as it was at the take, its processes too, and so does an undo, which holds the box's memory from just before the restore. A Linux VM on Tart is shut down instead, and boots again.
 
 ### ZFS

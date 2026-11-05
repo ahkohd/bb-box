@@ -14,6 +14,30 @@ mockups
 xtigervnc
 windowserver
 re:(?=[a-z]*[0-9])[a-z0-9]{10}
+re:bx[a-z0-9]{12}
+microvm
+microsandbox
+resize
+pids
+undos
+zesty
+enp6s18
+ffmpeg
+
+# process names on a box's page
+init
+krun
+mainthread
+sshd
+dockerd
+webkit
+systemd
+kthreadd
+sched
+ext4
+percpu
+kvfree
+workqueue
 
 # getbb.app, as the desktop's browser shows it
 agentic
@@ -30,3 +54,4 @@ applypramots
 applmage
 allgteen
 alsoformacos
+ninhtlv

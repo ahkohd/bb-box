@@ -103,10 +103,11 @@ When a box stops answering, BB Box checks it again by itself after 1 minute, aft
 
 ## The Boxes page
 
-Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
+Select **Boxes** in BB's sidebar. The page has 3 tabs, each with a count:
 
 - **Machines** lists your machines.
 - **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread. While the thread works, a spinner shows beside the arrow; point at it to read 'Working'.
+- **Snapshots** lists every box's snapshots, in a card for each box, the boxes that are gone included: see [the Snapshots tab](snapshots.md#the-snapshots-tab).
 
 The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
 
@@ -171,6 +172,7 @@ The page shows, from the top:
 - notices, when there are any: a stop, start, resize or release that failed, with what BB Box saw of the box after it, a backend that is no longer in BB Box's settings, a box that does not answer, a box that did not start, a stop BB Box did not ask for, a device that did not boot, and a box that could not join BB
 - while the box starts, its steps so far and what it waits on
 - [Activity](#activity): its CPU, memory, disk and network now and over the last few minutes, then its top processes
+- where its backend takes snapshots, its [Snapshots card](snapshots.md#on-a-boxs-page): take, restore, fork and keep them. **Take snapshot…** is also in the menu beside **Resize…**
 - its kind, size, where it runs, address, system, whether it is a BB machine, when it was made, and who has control of its desktop or device
 - the other threads on its BB machine, with **New thread on this box…**
 - how it started: how long each step took, and when it last started, and who started it
