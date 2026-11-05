@@ -2274,7 +2274,7 @@ same guest.
 | `adoptCopy`, `forkSnapshot`, `armAdopted`, `#armWithClaim` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
 | `releaseGpuClaim`, `armReturned`, `#armWithClaim` | a swap's old guest | its `gpu.none` marker with its start at boot off, in one write; its claim and start at boot back, once granted and checked, when the swap fails | box |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
-| `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
+| `#fill`, `#topUp`, `#retireForWhole` | warm guests | cores and memory, labels and marker, start, retirement, delete; `#retireForWhole` retires and deletes this install's warm desktops on a card it keeps whole for a box (unit 8) | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
 | `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
@@ -3020,3 +3020,175 @@ Upgrade the node's helper to 0.4.3 with this release's `setup-gpu.sh`, after
 its preview, with writes on as before, and check that no guest changed: in
 the report to the lead. Whole cards stay off (`general.wholeCards`) until 0.4.3
 is on the node and the owner turns them on.
+
+## Unit 8: whole cards on Proxmox LXC
+
+Built on main `4f5b5d18`, on branch `u71-8`. No helper change: bb-box-gpu
+0.4.2 already answers whole requests one at a time, refuses a whole claim on a
+card whose devices another guest has, and yields stopped shared boxes it
+manages (units 2 and 5). Whole cards are offered to the person, to agents and
+to forks of desktops from this unit, wherever the node's helper writes. The
+gate runs on a test BB from this branch before the merge, as section "Gated in
+unit N" says: no whole card is offered on production until two whole acquires
+at once leave one claim.
+
+### What it does
+
+- **Placement for a whole card** (section 3, "Whole"). Under the card lock, a
+  whole box goes to a card that no other guest holds, running or stopped,
+  other than stopped shared boxes the helper manages, which yield, and this
+  install's warm desktops, which are retired; that is not held whole; on
+  which this install has no reservation, for a box being made, moved, forked
+  or started; on which no request of this install is unanswered and no guest
+  a lost ledger left unresolved may hold the card; and that has the memory a
+  new box needs free when last read (1,024 MiB for a server, 384 MiB for a
+  desktop), less what is reserved. A card whose free memory the report does
+  not give takes no whole box. Of those, the card with the least memory in
+  use, then the most free, then the lowest index; a box's last card first,
+  where it is free. Cards a box lately failed to see, or that a mismatch
+  closes, are left out as for shared boxes.
+- **A card kept whole takes no shared box.** A whole reservation closes its
+  card to every shared placement, servers, desktops, warm fills and the start
+  gate's, until the helper reports the whole box on it, from when the report's
+  `whole` holder line closes it.
+- **Acquire.** `linux` and `linux-desktop` with gpu whole take no warm guest
+  and no spare. They are cloned as a shared box is, the marker
+  `gpu.whole.<UUID>.g<N>` goes in the write that labels the guest, and the box
+  starts only on the helper's grant, with the check after start as unit 7
+  has it. A refusal from the helper, as when another install took the card
+  meanwhile, releases the guest and places the box once more, on another
+  card, then refuses with words.
+- **Warm desktops are retired, not counted.** A card held only by this
+  install's warm desktops and stopped shared boxes is free for a whole box.
+  Once the card is reserved, bb-box retires those warm desktops, under the
+  warm pool's lock so no claim takes one meanwhile, and deletes them before
+  anything is copied. A warm desktop a claim took meanwhile is a box, and the
+  helper's refusal of the whole claim follows. Another install's warm guests
+  block the card.
+- **Yielding.** The helper takes a yielding box's lines out, while it is
+  stopped, and answers it `yielded`. bb-box reads a yielded claim as no grant,
+  so the box's next start places it again: on another card with room, as
+  section 3 says, or not at all, with words.
+- **A stopped whole box keeps its card** (question 1's default). Its
+  `whole stopped` holder line closes the card to every other placement, and
+  its start asks for nothing new. A stopped whole box whose claim the helper
+  does not hold is placed again as a whole box, on its last card first, and is
+  never turned into a shared one.
+- **Refusals for each audience.** Each reason is kept per card and worded
+  twice. To the person, boxes are named with their threads' titles, from BB
+  ("card 0 has lone-pine (in thread "Train the model") running"), and the
+  words may say to release a box or ask for another part. To an agent, boxes
+  are named by box name only; the words offer another GPU part or asking the
+  user, and, where the agent's own thread has boxes on those cards, "Release
+  one of your own boxes on card 0 (lone-pine)". Guests of another install, and
+  guests that are not bb-box's, are named by VMID. Shared refusals, the start
+  gate's and a restore's now name boxes the same way, where they named VMIDs.
+  For a whole card:
+
+  > No card on pve is free for a whole card now: card 0 has lone-pine (in
+  > thread "Train the model") running and card 1 is quiet-elm's whole card
+  > (in thread "Long job"). Release a box on one of the cards, ask for gpu
+  > shared, or ask for gpu none.
+
+  > Not made: no card on pve is free for a whole card now: card 0 has
+  > lone-pine running and card 1 is quiet-elm's whole card. Ask for gpu
+  > shared, or ask the user. bb-box changed nothing.
+
+  Where the helper is missing, has writes off or was not tested on the
+  node's pve-container: "pve cannot give a box a whole card now: its GPU
+  helper has writes off, so it gives no box a card." with the fix for the
+  person, and "Ask for gpu shared, or ask the user." for an agent.
+- **The provider hears who asks.** `Backend.capacity` takes the asking
+  thread, which the registry passes for an acquire and a fork's admission, so
+  the room's agent words can name the thread's own boxes. The fork's
+  admission gives an agent the provider's agent words, where before it gave
+  the person's.
+- **Forks.** `box_fork`, `bb box snapshot fork` and the RPC take gpu whole
+  for a `linux-desktop`: the fork is placed and its card kept whole before
+  anything is copied, and refused before the copy otherwise: "Not forked: No
+  card on pve is free for a whole card now: ... Fork it with gpu shared or
+  none, or ask the user. bb-box copied nothing."
+- **The tools.** `box_acquire` and `bb box acquire --gpu` take none, shared or
+  whole. A provider that gives a kind a shared GPU and no whole card is passed
+  over for whole, and where none gives one: "No provider gives linux boxes a
+  whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask
+  for gpu shared." `box_list` says "none, shared or whole; ask with gpu shared
+  or gpu whole", with each card's whole holder by box name ("card 0 whole,
+  quiet-elm's") and "free for a whole card" on each card a whole box would
+  take now. `box_status` says "GPU: card 0, whole, <model>, 96 GiB".
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root, as CI runs them:
+
+- `tsc` clean. The node suite, on the commit: 3,765 tests, 3,470 passed, 0
+  failed, 295 skipped. vitest: 469 passed. In the run before it, on the tree
+  without the thread titles' wiring, `test/gpu-setup.test.ts`'s "a failed
+  upgrade across a protocol change ..." failed once, taking 17 s at a load of
+  about 18 on 8 cores; it passed alone, 45 of 45 in its file. This unit
+  changes neither the helper nor `setup-gpu.sh`.
+- `test/gpu-whole.test.ts`, 15 tests, against the real helper 0.4.2 on unit
+  2's fake node through unit 5's bridge: the rules alone; a card kept whole
+  closed to shared boxes; a whole server placed, marked in the write that
+  labels it, granted and started on its card; the gate's two whole acquires
+  at once, one made and one refused with one clone in all and one whole claim
+  on the node; refusals naming boxes for the person with threads and for an
+  agent by name, with and without its own boxes; a stopped shared box that
+  yields and then starts on the other card; a stopped whole box that keeps its
+  card; a whole desktop that takes no warm guest, though one fits, and retires
+  this install's warm desktop on its card; whole refused with writes off and
+  with no helper; a fork's whole card kept before the copy, and its refusal;
+  `box_list`'s room and words; a yielded claim read as no grant; a whole box
+  with no claim placed again whole; each backend's context giving threads'
+  titles from BB.
+- `test/boxes.test.ts`, `test/forks.test.ts`, `test/plugin.test.ts` and
+  `test/gpu-restore.test.ts`: gpu whole goes only to a provider that gives it,
+  and the room hears the asking thread; the words where a provider gives only
+  a shared GPU; a fork's admission gives an agent the provider's agent words;
+  `box_acquire` and `box_fork` take gpu whole; a server's whole fork is
+  refused for its kind. The earlier GPU tests now expect boxes' names in
+  their refusals.
+- Each rule was reverted on its own on the box, and its tests failed: 19
+  reverts. One more, a stopped whole box holding its place in a shared count,
+  is unit 5's rule and its revert failed nothing here, as a whole holder blocks
+  a card by its part; it is left out of the 19.
+- Each block of the node steps passes `bash -n`, and the report helpers they
+  use were run on a report in the helper's format.
+
+### The node steps
+
+The gate runs on a test BB from this branch, before the merge, on the lent
+VMIDs and the test pool, through the lead: steps 0 and A to H in the report to
+the lead. It needs one card that no guest outside the lent VMIDs holds,
+running or stopped: a whole claim there must not yield a production guest.
+
+### Deviations from the note
+
+- There is no "Whole cards" setting yet (section 12, unit 15): whole cards are
+  offered wherever the node's helper writes, and refused where it does not.
+- Boxes per card is still the desktops per GPU setting, counting this
+  install's boxes; a whole box counts as one box on its card.
+- A fork with a GPU, shared or whole, is offered only for `linux-desktop`, as
+  in unit 6; a server's fork takes gpu none. The fork form keeps None and
+  Shared; whole is in `box_fork`, `bb box snapshot fork` and the RPC. The
+  forms are unit 13's.
+- The person's words name a box's thread by its title in brackets, as text,
+  not as a link: links come with the pages (units 13 and 14). A thread's
+  title is looked up for at most 2 s; a refusal of a restore, worded under the
+  card lock, names boxes without their threads.
+- "The least memory in use outside bb-box's boxes" is the card's memory in
+  use, total less free, as the report does not say whose it is. A card free
+  for a whole box runs no box of bb-box's but warm desktops, which are
+  retired.
+- A stopped whole box whose claim the helper does not hold is placed again as
+  a whole box, on its last card first. Section 3 has a stopped whole box keep
+  its card and does not say what happens once its claim is gone.
+- Resize to and from whole is unit 9's.
+
+### Still open
+
+- Whether a server's fork may have a GPU, shared or whole: the lead's call.
+- When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
+  warm guest of that kind must still be shared (section 3): today spares and
+  warm guests take the kind's default, which is never whole.
+- The live gate, below.

@@ -437,6 +437,10 @@ export interface Capacity {
   readonly hosts: readonly HostCapacity[];
 }
 
+export interface CapacityAsking {
+  readonly threadId: string;
+}
+
 /** A box needs all its resources on one host, so limits are per host. */
 export interface HostCapacity {
   readonly host: string;
@@ -470,6 +474,8 @@ export interface CardRoom {
   readonly whole: boolean;
   readonly freeMiB: number | null;
   readonly totalMiB: number | null;
+  readonly wholeBy?: string | null;
+  readonly freeForWhole?: boolean;
 }
 
 /** The room on the GPUs a GPU desktop kind's boxes use (#603). */
@@ -643,6 +649,7 @@ export interface Backend {
     size: MachineSize & { readonly gpu?: GpuPart },
     pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
+    asking?: CapacityAsking,
   ): Promise<Capacity>;
 
   /**
@@ -1288,6 +1295,7 @@ export interface BackendContext {
    */
   warmShortfalls(short: readonly WarmShortfall[]): void;
   logError(operation: string, error: unknown): void;
+  threadTitle?(threadId: string): Promise<string | null>;
   /** Says what the backend did by itself, as removing what a run left, for bb-box's log. */
   log?(message: string): void;
   /**

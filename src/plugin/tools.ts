@@ -348,16 +348,18 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
       const on = kind.offers.length > 1 || room?.parts ? ` on ${offer.name}` : "";
       const words: string[] = [];
       if (room?.parts?.includes("shared") && room.cards) {
+        const whole = room.parts.includes("whole");
         const cards = room.cards.map((card) => {
           const name = card.index === null ? "a card" : `card ${card.index}`;
-          if (card.whole) return `${name} held whole`;
+          if (card.whole) return !card.wholeBy ? `${name} held whole` : /^CT \d+\b/.test(card.wholeBy) ? `${name} held whole by ${card.wholeBy}` : `${name} whole, ${card.wholeBy}'s`;
           const boxes = `${card.boxes}${room.limit ? ` of ${room.limit}` : ""} ${card.boxes === 1 && !room.limit ? "box" : "boxes"}`;
           const free = card.freeMiB === null ? "free memory unknown" : `${gibWords(card.freeMiB)} free`;
-          return `${name}, shared, ${boxes}, ${free}`;
+          return `${name}, shared, ${boxes}, ${free}${whole && card.freeForWhole ? ", free for a whole card" : ""}`;
         });
         const read = room.at ? `, when read ${ago(now - room.at)}` : "";
         const needs = room.neededMiB ? `; a new box needs ${room.neededMiB} MiB free on its card` : "";
-        words.push(` GPU${on}: none or shared; ask with gpu shared (${room.host ?? offer.name}: ${room.cards.length} ${room.cards.length === 1 ? "card" : "cards"}; ${cards.join("; ")}${read}${needs}).`);
+        const parts = whole ? "none, shared or whole; ask with gpu shared or gpu whole" : "none or shared; ask with gpu shared";
+        words.push(` GPU${on}: ${parts} (${room.host ?? offer.name}: ${room.cards.length} ${room.cards.length === 1 ? "card" : "cards"}; ${cards.join("; ")}${read}${needs}).`);
       } else if (room?.parts && !room.parts.includes("shared") && room.withheld && offer.gpuParts?.includes("shared")) {
         words.push(` No GPU${on} now: ${room.withheld}.`);
       }
@@ -513,10 +515,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
         ),
       gpu: z
-        .enum(["none", "shared"])
+        .enum(["none", "shared", "whole"])
         .optional()
         .describe(
-          "The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
+          "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
         ),
       dedicated: z
         .boolean()

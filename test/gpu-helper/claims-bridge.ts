@@ -46,6 +46,7 @@ export interface BackendOptions {
   readonly kindsOff?: readonly string[];
   readonly storage?: MemoryStorage;
   readonly readyTimeoutMs?: number;
+  readonly titles?: Readonly<Record<string, string>>;
 }
 
 let bridges = 0;
@@ -140,7 +141,7 @@ export class ClaimsBridge {
     if (this.answering) this.pass();
   }
 
-  backend(options: BackendOptions = {}): ProxmoxLxcBackend & { readonly errors: string[]; readonly short: (readonly WarmShortfall[])[] } {
+  backend(options: BackendOptions = {}): ProxmoxLxcBackend & { readonly errors: string[]; readonly logs: string[]; readonly short: (readonly WarmShortfall[])[] } {
     const first = options.first ?? (options.install === SECOND_INSTALL ? 7050 : 7000);
     const config = lxcConfig({
       "proxmox-lxc-url": this.url,
@@ -156,7 +157,12 @@ export class ClaimsBridge {
     });
     this.#configs.push(config);
     const shipped = testContext(options.storage ?? new MemoryStorage(), options.install ?? INSTALL, { id: "proxmox-lxc", warm: { "linux-desktop": options.warm ?? 0 } });
-    const context = { ...shipped, kind: (id: string) => (options.kindsOff?.includes(id) ? { ...shipped.kind(id), enabled: false } : shipped.kind(id)) };
+    const titles = options.titles;
+    const context = {
+      ...shipped,
+      kind: (id: string) => (options.kindsOff?.includes(id) ? { ...shipped.kind(id), enabled: false } : shipped.kind(id)),
+      ...(titles ? { threadTitle: async (threadId: string) => titles[threadId] ?? null } : {}),
+    };
     const backend = new ProxmoxLxcBackend(config, context, {
       fetch: this.proxmox.fetch,
       sleep: async () => {
@@ -168,7 +174,7 @@ export class ClaimsBridge {
       readyTimeoutMs: options.readyTimeoutMs ?? 0,
     });
     made.push(backend);
-    return Object.assign(backend, { errors: context.errors, short: shipped.short });
+    return Object.assign(backend, { errors: context.errors, logs: shipped.logs, short: shipped.short });
   }
 
   timerReport(): void {

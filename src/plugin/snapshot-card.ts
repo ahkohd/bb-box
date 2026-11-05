@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
+import type { GpuPart, MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, eligible, forksOn, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
@@ -296,7 +296,7 @@ export interface ForkPreview {
     readonly host: string | null;
     readonly storage: string;
     readonly unflushed: string | null;
-    readonly gpu: "none" | "shared";
+    readonly gpu: GpuPart;
     readonly offersGpu: boolean;
   } | null;
 }
@@ -306,7 +306,7 @@ export interface ForkStarted {
   readonly box: { readonly id: string; readonly name: string } | null;
 }
 
-export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, standing: Standing, ref: string, asMachine: boolean, gpu?: "none" | "shared"): Promise<ForkPreview> {
+export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, standing: Standing, ref: string, asMachine: boolean, gpu?: GpuPart): Promise<ForkPreview> {
   try {
     const check: ForkCheck = await snapshots.checkFork(PERSON, { id: standing.box!.id }, standing, ref, { asMachine, ...(gpu ? { gpu } : {}) });
     return {
@@ -323,7 +323,7 @@ export async function forkPreview(snapshots: Snapshots, box: BoxRecord | null, s
         host: check.host,
         storage: check.storage,
         unflushed: check.snapshot.unflushed ?? null,
-        gpu: check.gpu === "shared" ? "shared" : "none",
+        gpu: check.gpu,
         offersGpu: check.offersGpu,
       },
     };

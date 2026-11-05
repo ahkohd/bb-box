@@ -485,7 +485,7 @@ export function unflushedOf(operation: Pick<SnapshotOperation, "consent">): stri
 }
 
 function forkGpuRefused(backend: Backend, kind: string): string | null {
-  if (currentKindId(kind) !== "linux-desktop") return `Not forked: a fork of a ${kind} box takes gpu none, as only a linux-desktop fork may share a card now. Fork it with gpu none. bb-box copied nothing.`;
+  if (currentKindId(kind) !== "linux-desktop") return `Not forked: a fork of a ${kind} box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. bb-box copied nothing.`;
   if (!backend.placeForkGpu) return `Not forked: ${backend.label} gives a fork no GPU. Fork it with gpu none. bb-box copied nothing.`;
   return null;
 }
@@ -2581,6 +2581,7 @@ export class Snapshots {
       kind: box.kind,
       size: box.guest.size ?? box.size ?? null,
       gpu: input.gpu ?? "none",
+      who: caller,
     });
   }
 
@@ -2596,7 +2597,6 @@ export class Snapshots {
     const allowed = mayAct(caller, "fork", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
-    if (input.gpu === "whole") throw new BoxError("unsupported", "Not forked: a whole card is not offered for a fork yet. Fork it with gpu shared or none. bb-box copied nothing.");
     this.#requireStore("forks");
     const source = await this.#deps.boxes.find(target.box.id);
     const heldCopy = target.guest === "held-copy";
@@ -2616,8 +2616,8 @@ export class Snapshots {
     const kind = source?.kind ?? target.box.kind;
     const offer = this.offerFor(backend, kind);
     if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity || (heldCopy && !backend.copyPlan)) throw new BoxError("unsupported", `${backend.label} does not fork ${kind} boxes.`);
-    const sharedRefused = input.gpu === "shared" ? forkGpuRefused(backend, kind) : null;
-    if (sharedRefused) throw new BoxError("unsupported", sharedRefused);
+    const gpuRefused = input.gpu === "shared" || input.gpu === "whole" ? forkGpuRefused(backend, kind) : null;
+    if (gpuRefused) throw new BoxError("unsupported", gpuRefused);
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (target.forkSafe < safeFrom) {
       throw new BoxError(

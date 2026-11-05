@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BackendError, type Backend, type Guest, type GuestIdentity, type LeasedAddressNow } from "../src/backends/types.ts";
-import { OPERATOR, errorForAgent, type BoxRecord } from "../src/core/boxes.ts";
+import { BoxError, OPERATOR, errorForAgent, type BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, Standing } from "../src/core/snapshot.ts";
 import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
@@ -690,6 +690,31 @@ test("070 unit 7 re-review: box_fork's check before its take refuses a fork with
   assert.equal((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { name: box.name }))).code, "invalid_name", "a name its thread already has");
   assert.ok(state.store.record(oldest.id), "nothing was taken or deleted");
   assert.equal(state.store.records({ box: box.id }).filter((record) => record.state === "ready").length, 2);
+});
+
+test("071 unit 8: a fork's room refused by its provider reaches an agent in the provider's words for an agent, never the person's with their threads", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const asked: (string | undefined)[] = [];
+  (state.backend as unknown as { capacity: Backend["capacity"] }).capacity = async (_kind, _size, _pending, _signal, asking) => {
+    asked.push(asking?.threadId);
+    return {
+      ok: false,
+      message: 'No card on pve is free for a whole card now: card 0 has lone-pine (in thread "Train the model") running. Release a box on one of the cards, ask for gpu shared, or ask for gpu none.',
+      agentMessage: "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+      warm: null,
+      hosts: [],
+    };
+  };
+  const refused = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { gpu: "whole" }));
+  assert.equal(refused.code, "no_capacity");
+  assert.match(refused.message, /lone-pine \(in thread "Train the model"\) running\. Fork it with gpu shared or none, or ask the user\. bb-box copied nothing\.$/);
+  assert.equal((refused as BoxError).agentMessage, "Not forked: Fake host has no room for the fork: no card on pve is free for a whole card now: card 0 has lone-pine running. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+  assert.deepEqual(asked, [THREAD]);
+  const person = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box), { gpu: "whole" }));
+  assert.equal((person as BoxError).agentMessage, null, "the person's refusal carries no agent's words");
 });
 
 test("070 unit 7 re-review: a fork's guest is disarmed before each attempt to delete it, when the fork fails and at each sweep after", async () => {

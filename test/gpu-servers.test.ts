@@ -12,9 +12,9 @@ const A = CARD_A.uuid;
 const B = CARD_B.uuid;
 let counter = 0;
 
-function box(kind: string, gpu: GpuPart): BoxIdentity {
+function box(kind: string, gpu: GpuPart, threadId = "thr_servers"): BoxIdentity {
   counter++;
-  return { boxId: `bxsrv${counter}`, threadId: "thr_servers", name: `gpu-box-${counter}`, kind, createdAt: Date.UTC(2026, 10, 5), size: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu } };
+  return { boxId: `bxsrv${counter}`, threadId, name: `gpu-box-${counter}`, kind, createdAt: Date.UTC(2026, 10, 5), size: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu } };
 }
 
 function hooks(): AcquireHooks {
@@ -156,10 +156,10 @@ test("071 unit 7: a server needs 1024 MiB free on its card, and a card at its li
   assert.notEqual(made.claim!.card, used, "the server goes to the card the desktop left");
   const room = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, []);
   assert.equal(room.ok, false);
-  assert.match(room.message!, /^No card on pve can take a shared GPU now: card 0 has 1 of this install's boxes, the most a card may have and card 1 has 1 of this install's boxes, the most a card may have\. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
+  assert.match(room.message!, /^No card on pve can take a shared GPU now: card 0 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\) and card 1 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\)\. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
   assert.match(room.agentMessage!, /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
   const room2 = await bridge.backend().gpuRoom("linux");
-  assert.deepEqual(room2.parts, ["none", "shared"]);
+  assert.deepEqual(room2.parts, ["none", "shared", "whole"]);
   assert.deepEqual(room2.cards?.map((card) => [card.index, card.boxes, card.whole]), [[0, 1, false], [1, 1, false]]);
   assert.equal(room2.neededMiB, 1024);
 });
@@ -193,7 +193,7 @@ test("071 unit 7: a desktop with no GPU is cloned from the desktop template with
   const bridge = new ClaimsBridge();
   bridge.proxmox.addTemplate(9003, { cores: "4", memory: "8192", unprivileged: "1" });
   const backend = bridge.backend({ templates: `9003\n9001 GPU-${A}` });
-  assert.deepEqual(backend.kinds().find((kind) => kind.id === "linux-desktop")?.gpuParts, ["none", "shared"]);
+  assert.deepEqual(backend.kinds().find((kind) => kind.id === "linux-desktop")?.gpuParts, ["none", "shared", "whole"]);
   const made = await backend.acquire(box("linux-desktop", "none"), null, hooks(), signal());
   const vmid = Number(made.ref);
   assert.equal(made.data?.template, 9003);
@@ -201,7 +201,7 @@ test("071 unit 7: a desktop with no GPU is cloned from the desktop template with
   assert.deepEqual(bridge.gpuTags(vmid), []);
   assert.deepEqual(bridge.lines(vmid), []);
   const only = bridge.backend({ templates: `9001 GPU-${A}\n9002 GPU-${B}` });
-  assert.deepEqual(only.kinds().find((kind) => kind.id === "linux-desktop")?.gpuParts, ["shared"], "with every template on a card, a desktop with no GPU is not offered");
+  assert.deepEqual(only.kinds().find((kind) => kind.id === "linux-desktop")?.gpuParts, ["shared", "whole"], "with every template on a card, a desktop with no GPU is not offered");
   const forkRoom = await only.capacity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: "none" }, []);
   assert.equal(forkRoom.ok, true, "a fork with gpu none copies its snapshot, so it needs no template with no card");
   await assert.rejects(only.acquire(box("linux-desktop", "none"), null, hooks(), signal()), (error: unknown) => {
@@ -455,8 +455,8 @@ test("071 unit 7, Astra 8 and Fable 4: a refusal inside an acquire and a start c
   const bridge = new ClaimsBridge();
   withUserspace(bridge);
   const backend = bridge.backend({ perGpu: 1 });
-  const server = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
-  await backend.acquire(box("linux-desktop", "shared"), null, hooks(), signal());
+  const server = await backend.acquire(box("linux", "shared", "thr_other"), null, hooks(), signal());
+  await backend.acquire(box("linux-desktop", "shared", "thr_other"), null, hooks(), signal());
   await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);

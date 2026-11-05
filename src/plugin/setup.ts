@@ -645,6 +645,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machines,
     images,
     bbUrl: () => bb.server.experimental_appUrl,
+    threadTitle: async (threadId) => {
+      const found = await bb.sdk.threads.get({ threadId }).catch(() => null);
+      return found?.title ?? found?.titleFallback ?? null;
+    },
     encoder: { load: (key) => ledger.load(key), vmStarting: (key, place) => ledger.vmStarting(key, place) },
   });
   // The files for every box (#455), once the boxes are there.

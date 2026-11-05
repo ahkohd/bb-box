@@ -324,9 +324,11 @@ test("071 unit 6, Fable 4: a fork with gpu shared of a box that is not a linux-d
   const records = state.store.records().length;
   const checked = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.equal(checked.code, "unsupported");
-  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may share a card now\. Fork it with gpu none\. bb-box copied nothing\.$/);
+  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now\. Fork it with gpu none\. bb-box copied nothing\.$/);
   const forked = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.match(forked.message, /a fork of a linux box takes gpu none/);
+  const whole = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "whole" }));
+  assert.equal(whole.message, "Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. bb-box copied nothing.", "a whole card is refused as a shared one is, for the kind, not as not offered");
   assert.equal(state.store.records().length, records);
   assert.equal(state.store.operations({ box: box.id, kind: "fork" }).length, 0);
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's box record was made");

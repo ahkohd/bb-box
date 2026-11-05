@@ -553,7 +553,12 @@ export type MarkAnswer =
   | { readonly is: "would"; readonly why: string }
   | { readonly is: "unanswered" };
 
+const YIELDED_WORDS = "the GPU helper took its card's lines out while it was stopped, as another box claimed the card whole";
+
 export function answerTo(lines: HelperLines, vmid: number, marker: GpuMarker, fromLedger: boolean): MarkAnswer {
+  const yielded = lines.answers.some((each) => each.vmid === vmid && each.generation === marker.generation && each.is === "yielded");
+  const ledgerClaim = lines.ledger.get(vmid)?.claim ?? null;
+  if (yielded || (fromLedger && ledgerClaim?.answer === "yielded" && ledgerClaim.generation === marker.generation)) return { is: "refused", why: YIELDED_WORDS };
   const answer = lines.answers.find((each) => each.vmid === vmid && each.generation === marker.generation);
   if (answer?.is === "refused") return { is: "refused", why: refusalWords(answer.reason, answer.detail) };
   if (answer?.is === "granted" && answer.part === marker.part && answer.card === marker.card) return { is: "granted" };

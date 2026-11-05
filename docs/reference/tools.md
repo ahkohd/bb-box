@@ -53,7 +53,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 | `image` | string | no | The image the box starts from, from box_list: a project's image by name, or "standard" for bb-box's own. Leave it out for this project's image for the kind, or the standard one. |
 | `device` | string | no | For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first. |
 | `slim` | boolean | no | For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them. |
-| `gpu` | `none`, `shared` | no | The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card. |
+| `gpu` | `none`, `shared`, `whole` | no | The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card. |
 | `dedicated` | boolean | no | For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Without it, an ios box is shared where a shared iOS host has room, and a VM of its own otherwise. Give it with a size, cores, memory_gib or disk_gib: where a shared iOS host is set up, a size without it is refused. |
 | `shared` | boolean | no | For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows; an ios box is one already where a shared iOS host has room, and shared: true refuses rather than give it a VM of its own. For a macos box: a macOS user on a Mac or VM shared with ios boxes, ready in seconds, for commands, builds and the iOS Simulator, with its own files and keychain, but no sudo, Homebrew installs, desktop or app windows, and cores, ports and processes shared. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs. |
 
@@ -102,7 +102,7 @@ Make a new box of this thread from a snapshot of one of its boxes, or from the b
 | `box` | string | yes | The box to fork, by its name or ID: one of this thread's boxes, not one it runs on. |
 | `snapshot` | string | no | The snapshot's name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that. |
 | `name` | string | no | The new box's name: a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". One is made up when left out. |
-| `gpu` | `none`, `shared` | no | The fork's GPU. none, the default, starts it with no card. shared places a shared card before anything is copied, and only a desktop can take it. |
+| `gpu` | `none`, `shared`, `whole` | no | The fork's GPU. none, the default, starts it with no card. shared places a shared card, and whole a card to itself, before anything is copied; only a desktop can take either. |
 
 ## box_grant
 

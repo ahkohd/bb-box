@@ -258,6 +258,7 @@ export class Backends {
   readonly #images: ImageFacts | undefined;
   readonly #tailnetFetch: TailnetFetch | undefined;
   readonly #bbUrl: (() => string | null) | undefined;
+  readonly #threadTitle: ((threadId: string) => Promise<string | null>) | undefined;
   readonly #encoder: KeyedEncoderAccess | undefined;
   #tailnetClient: { readonly made: string; readonly tailnet: Tailnet } | null = null;
 
@@ -279,10 +280,12 @@ export class Backends {
     images?: ImageFacts;
     tailnetFetch?: TailnetFetch;
     bbUrl?: () => string | null;
+    threadTitle?: (threadId: string) => Promise<string | null>;
     encoder?: KeyedEncoderAccess;
   }) {
     this.#encoder = options.encoder;
     this.#bbUrl = options.bbUrl;
+    this.#threadTitle = options.threadTitle;
     this.#tailnetFetch = options.tailnetFetch;
     this.#machines = options.machines;
     this.#images = options.images;
@@ -341,6 +344,7 @@ export class Backends {
       enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
       tailnet: () => this.tailnet(),
       ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
+      ...(this.#threadTitle ? { threadTitle: this.#threadTitle } : {}),
       kindsChanged: () => this.#kindsChanged(),
       factsChanged: () => this.#changed(),
       ...(this.#encoder ? { encoder: this.#encoderFor(id, this.#encoder) } : {}),

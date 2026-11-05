@@ -176,7 +176,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
       box: boxParam.describe("The box to fork, by its name or ID: one of this thread's boxes, not one it runs on."),
       snapshot: z.string().min(1).optional().describe('The snapshot\'s name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that.'),
       name: z.string().min(1).max(32).refine(isMachineName, FORK_NAME_RULE).optional().describe(`The new box's name: ${FORK_NAME_RULE} One is made up when left out.`),
-      gpu: z.enum(["none", "shared"]).optional().describe("The fork's GPU. none, the default, starts it with no card. shared places a shared card before anything is copied, and only a desktop can take it."),
+      gpu: z.enum(["none", "shared", "whole"]).optional().describe("The fork's GPU. none, the default, starts it with no card. shared places a shared card, and whole a card to itself, before anything is copied; only a desktop can take either."),
     }),
     async execute({ box: ref, snapshot, name, gpu }, { threadId, projectId, signal }) {
       try {

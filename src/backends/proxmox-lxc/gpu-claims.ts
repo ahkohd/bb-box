@@ -1,6 +1,7 @@
 import type { CardClaim, GpuPart } from "../types.ts";
 import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { answerTo, cardName, markerOf, markerTag, parseHelperLines, type ClaimMarker, type HelperCard, type HelperHolder, type HelperLines, type MarkAnswer } from "./gpu-marking.ts";
+import type { BoxMaking, CardBlock } from "./gpu-refusals.ts";
 
 export const ANSWER_WAIT_MS = 10_000;
 export const ANSWER_POLL_MS = 500;
@@ -90,6 +91,7 @@ export interface Reservation {
   readonly part: GpuPart;
   readonly memoryMiB: number;
   readonly boxId: string | null;
+  readonly making: BoxMaking | null;
   vmid: number | null;
   settledAt: number | null;
 }
@@ -114,8 +116,8 @@ export class CardReservations {
     return new Set(this.#deleted.keys());
   }
 
-  add(card: string, part: GpuPart, memoryMiB: number, boxId: string | null, vmid: number | null): Reservation {
-    const reservation: Reservation = { id: this.#next++, card, part, memoryMiB, boxId, vmid, settledAt: null };
+  add(card: string, part: GpuPart, memoryMiB: number, boxId: string | null, vmid: number | null, making: BoxMaking | null = null): Reservation {
+    const reservation: Reservation = { id: this.#next++, card, part, memoryMiB, boxId, making, vmid, settledAt: null };
     this.#held.set(reservation.id, reservation);
     return reservation;
   }
@@ -193,51 +195,85 @@ export interface CardLoad {
   readonly freeMiB: number | null;
 }
 
-export type Placed = { readonly is: "placed"; readonly card: HelperCard; readonly loads: readonly CardLoad[] } | { readonly is: "refused"; readonly reasons: readonly string[]; readonly loads: readonly CardLoad[] };
+export type Placed = { readonly is: "placed"; readonly card: HelperCard; readonly loads: readonly CardLoad[] } | { readonly is: "refused"; readonly reasons: readonly CardBlock[]; readonly loads: readonly CardLoad[] };
 
-function holdsPlace(holder: HelperHolder): boolean {
-  return holder.running || holder.part === "whole" || !holder.managed;
-}
+export type PlacedWhole =
+  | { readonly is: "placed"; readonly card: HelperCard; readonly loads: readonly CardLoad[]; readonly retire: readonly number[]; readonly yielding: readonly number[] }
+  | { readonly is: "refused"; readonly reasons: readonly CardBlock[]; readonly loads: readonly CardLoad[] };
 
 function inWords(items: readonly string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
-export function loadOf(card: HelperCard, input: Pick<PlaceInput, "lines" | "memory" | "installId" | "reserved" | "vmid" | "gone">): CardLoad & { readonly whole: HelperHolder | null } {
+function holdsPlace(holder: HelperHolder): boolean {
+  return holder.running || holder.part === "whole" || !holder.managed;
+}
+
+export function yieldsToWhole(holder: HelperHolder): boolean {
+  return !holder.running && holder.part === "shared" && holder.managed;
+}
+
+interface CardLoadInFull extends CardLoad {
+  readonly whole: HelperHolder | null;
+  readonly holders: readonly HelperHolder[];
+  readonly ownVmids: readonly number[];
+  readonly ownReserved: readonly Reservation[];
+  readonly reservedHere: readonly Reservation[];
+  readonly wholeReserved: Reservation | null;
+}
+
+export function loadOf(card: HelperCard, input: Pick<PlaceInput, "lines" | "memory" | "installId" | "reserved" | "vmid" | "gone">): CardLoadInFull {
   const holders = input.lines.holders.filter((holder) => holder.card === card.uuid && holder.vmid !== input.vmid && !input.gone?.has(holder.vmid));
   const counted = holders.filter(holdsPlace);
   const seen = new Set(counted.map((holder) => holder.vmid));
   const others = input.reserved.filter((reservation) => reservation.card === card.uuid && (input.vmid === null || reservation.vmid !== input.vmid));
   const reserved = others.filter((reservation) => reservation.vmid === null || !seen.has(reservation.vmid));
-  const own = new Set(counted.filter((holder) => holder.install === input.installId).map((holder) => holder.vmid)).size + reserved.length;
+  const ownVmids = [...new Set(counted.filter((holder) => holder.install === input.installId).map((holder) => holder.vmid))];
   const memory = input.memory.get(card.uuid);
   const reservedMiB = others.reduce((sum, reservation) => sum + reservation.memoryMiB, 0);
   return {
     card,
     boxes: seen.size + reserved.length,
-    own,
+    own: ownVmids.length + reserved.length,
     freeMiB: memory ? memory.freeMiB - reservedMiB : null,
     whole: holders.find((holder) => holder.part === "whole") ?? null,
+    holders,
+    ownVmids,
+    ownReserved: reserved,
+    reservedHere: others,
+    wholeReserved: others.find((reservation) => reservation.part === "whole") ?? null,
   };
 }
 
+function unsettledOn(input: Pick<PlaceInput, "lines" | "vmid">, card: HelperCard): number[] {
+  return [...new Set(input.lines.unsettled.filter((line) => line.card === card.uuid && line.vmid !== input.vmid).map((line) => line.vmid))];
+}
+
+function sortedCards(input: Pick<PlaceInput, "lines">): HelperCard[] {
+  return [...input.lines.cards].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+}
+
+function publicLoad(load: CardLoadInFull): CardLoad {
+  return { card: load.card, boxes: load.boxes, own: load.own, freeMiB: load.freeMiB };
+}
+
 export function placeShared(input: PlaceInput): Placed {
-  const cards = [...input.lines.cards].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-  const reasons: string[] = [];
+  const reasons: CardBlock[] = [];
   const loads: CardLoad[] = [];
   const open: CardLoad[] = [];
-  for (const card of cards) {
+  for (const card of sortedCards(input)) {
     if (!input.candidates.has(card.uuid)) continue;
     const load = loadOf(card, input);
-    loads.push(load);
+    loads.push(publicLoad(load));
     const waiting = input.outstanding.find((request) => request.marker.card === card.uuid);
-    const unsettled = [...new Set(input.lines.unsettled.filter((line) => line.card === card.uuid && line.vmid !== input.vmid).map((line) => line.vmid))];
-    if (load.whole) reasons.push(`${cardName(card)} is CT ${load.whole.vmid}'s whole card`);
-    else if (unsettled.length) reasons.push(`${cardName(card)} waits for ${inWords(unsettled.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${unsettled.length === 1 ? "it" : "each"} may hold the card`);
-    else if (input.limit !== null && load.own >= input.limit) reasons.push(`${cardName(card)} has ${load.own} of this install's boxes, the most a card may have`);
-    else if (waiting) reasons.push(`the GPU helper has not answered CT ${waiting.vmid}'s request g${waiting.marker.generation} on ${cardName(card)}`);
-    else open.push(load);
+    const unsettled = unsettledOn(input, card);
+    if (load.whole) reasons.push({ is: "whole", card, vmid: load.whole.vmid });
+    else if (load.wholeReserved) reasons.push({ is: "reserved-whole", card, making: load.wholeReserved.making });
+    else if (unsettled.length) reasons.push({ is: "unsettled", card, vmids: unsettled });
+    else if (input.limit !== null && load.own >= input.limit) reasons.push({ is: "limit", card, own: load.own, vmids: load.ownVmids, making: load.ownReserved.map((reservation) => reservation.making) });
+    else if (waiting) reasons.push({ is: "unanswered", card, vmid: waiting.vmid, generation: waiting.marker.generation });
+    else open.push(publicLoad(load));
   }
   if (!open.length) return { is: "refused", reasons, loads };
   const roomy = open.filter((load) => load.freeMiB === null || load.freeMiB >= input.needMiB);
@@ -248,8 +284,42 @@ export function placeShared(input: PlaceInput): Placed {
   return { is: "placed", card: best.card, loads };
 }
 
-export function refusalWords(node: string, reasons: readonly string[]): string {
-  return reasons.length ? `No card on ${node} can take another box now: ${inWords(reasons)}.` : `No card on ${node} can take another box now.`;
+export interface WholeInput extends PlaceInput {
+  readonly retirable: ReadonlySet<number>;
+}
+
+export function placeWhole(input: WholeInput): PlacedWhole {
+  const reasons: CardBlock[] = [];
+  const loads: CardLoad[] = [];
+  const open: { readonly load: CardLoad; readonly usedMiB: number; readonly retire: number[]; readonly yielding: number[] }[] = [];
+  for (const card of sortedCards(input)) {
+    if (!input.candidates.has(card.uuid)) continue;
+    const load = loadOf(card, input);
+    loads.push(publicLoad(load));
+    const blocking = load.holders.filter((holder) => !yieldsToWhole(holder) && !input.retirable.has(holder.vmid));
+    const waiting = input.outstanding.find((request) => request.marker.card === card.uuid);
+    const unsettled = unsettledOn(input, card);
+    const memory = input.memory.get(card.uuid);
+    if (load.whole) reasons.push({ is: "whole", card, vmid: load.whole.vmid });
+    else if (blocking.length) reasons.push({ is: "held", card, holders: blocking });
+    else if (load.wholeReserved) reasons.push({ is: "reserved-whole", card, making: load.wholeReserved.making });
+    else if (load.reservedHere.length) reasons.push({ is: "placing", card, making: load.reservedHere.map((reservation) => reservation.making) });
+    else if (unsettled.length) reasons.push({ is: "unsettled", card, vmids: unsettled });
+    else if (waiting) reasons.push({ is: "unanswered", card, vmid: waiting.vmid, generation: waiting.marker.generation });
+    else if (!memory || load.freeMiB === null) reasons.push({ is: "memory-unknown", card });
+    else if (load.freeMiB < input.needMiB) reasons.push({ is: "memory", card, freeMiB: load.freeMiB, needMiB: input.needMiB, what: input.needMiB >= 1024 ? "server" : "desktop" });
+    else {
+      open.push({
+        load: publicLoad(load),
+        usedMiB: memory.totalMiB - memory.freeMiB,
+        retire: [...new Set(load.holders.filter((holder) => input.retirable.has(holder.vmid)).map((holder) => holder.vmid))],
+        yielding: [...new Set(load.holders.filter(yieldsToWhole).map((holder) => holder.vmid))],
+      });
+    }
+  }
+  if (!open.length) return { is: "refused", reasons, loads };
+  const best = open.find((choice) => choice.load.card.uuid === input.prefer) ?? [...open].sort((a, b) => a.usedMiB - b.usedMiB || (b.load.freeMiB ?? 0) - (a.load.freeMiB ?? 0) || (a.load.card.index ?? 0) - (b.load.card.index ?? 0))[0]!;
+  return { is: "placed", card: best.load.card, loads, retire: best.retire, yielding: best.yielding };
 }
 
 export function nextGeneration(lines: HelperLines, vmid: number, onGuest: number, written: number): number {
