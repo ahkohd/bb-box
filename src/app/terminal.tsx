@@ -660,7 +660,7 @@ export function BoxTerminal({
     words = "Connecting…";
   }
   // Before the box's state has loaded, a kept terminal still shows.
-  const showing = connection.state !== "ended" && (state === null || can);
+  const showing = connection.state !== "ended" && (state === null || openable);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -702,7 +702,8 @@ export function BoxTerminal({
       <div className="relative min-h-0 flex-1 bg-background">
         <div
           ref={holder}
-          className={cn("absolute inset-0 p-2", !showing && "invisible")}
+          className={cn("absolute inset-0 p-2", !showing && "invisible", quiet !== null && "opacity-30")}
+          inert={quiet !== null}
           data-testid="terminal-screen"
         />
         {error ? (

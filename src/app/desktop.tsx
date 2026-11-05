@@ -1144,14 +1144,15 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   // person chose VNC in the viewer's menu. Video that cannot start falls back to VNC. Through BB's server, video
   // drags and answers keys as quickly as VNC, in whole frames (056's comparison, corrected).
   const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
-  // Video that gave way to VNC stays given way for this tab when it comes back, so its return is instant rather than a new try that
-  // fails again (the owner's note of 19 October 2026), until the person chooses video again.
   const [videoFailed, setVideoFailedNow] = useState(() => failedVideo.has(shown));
   const setVideoFailed = (failed: boolean) => {
     if (failed) failedVideo.add(shown);
     else failedVideo.delete(shown);
     setVideoFailedNow(failed);
   };
+  useEffect(() => {
+    if (box?.state === "stopped" || box?.state === "starting") setVideoFailed(false);
+  }, [box?.state]);
   const decide = (next: Stream) => {
     lastStream.set(shown, next);
     setStream(next);
@@ -1885,7 +1886,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-muted">
-        <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
+        <div ref={target} className={cn("absolute inset-0", quiet && "opacity-30")} inert={quiet} data-testid="desktop-screen" />
         {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}
         {deviceShown && showing && deviceLayout && deviceModelNow && connection.state !== "disconnected" ? (
           <DeviceToolbar
