@@ -2367,19 +2367,21 @@ export class Computer {
   ): Promise<Changes> {
     const id = before.window.id;
     let read: Read;
+    let reading = use;
     try {
       read = await this.#read(use, id, false);
     } catch (error) {
       if (error instanceof ComputerError && error.code === "stale") return this.#gone(use, before.window);
-      if (readCancelled(error)) {
+      if (use.signal?.aborted) {
+        reading = { ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) };
         try {
-          read = await this.#read({ ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) }, id, false);
+          read = await this.#read(reading, id, false);
         } catch (again) {
-          if (again instanceof ComputerError && again.code === "stale") return this.#gone(use, before.window);
+          if (again instanceof ComputerError && again.code === "stale") return this.#gone(reading, before.window);
           return unread(again, `Call computer_observe with window ${id}.`);
         }
       } else {
-        if (options.late && !use.signal?.aborted) {
+        if (options.late) {
           await sleep(LATE_CLOSE_MS, use.signal);
           const now = await this.#listWindows(use).catch(() => null);
           if (now && !now.has(id)) {
@@ -2396,14 +2398,14 @@ export class Computer {
     let news = false;
     if (options.popups) {
       const open = (popups: readonly WindowInfo[]) =>
-        new Map(popups.map((popup) => [popup.id, { window: popup, over: use.state.popups.get(popup.id)?.over ?? id }] as const));
+        new Map(popups.map((popup) => [popup.id, { window: popup, over: reading.state.popups.get(popup.id)?.over ?? id }] as const));
       try {
-        const told = await this.#popupNews(use, open(before.popups), open([...after.popups, ...popupsIn(options.popups.result, after.window.pid)]), options.popups, { before, after });
+        const told = await this.#popupNews(reading, open(before.popups), open([...after.popups, ...popupsIn(options.popups.result, after.window.pid)]), options.popups, { before, after });
         parts.push(...told.parts);
         hints.push(...told.hints);
         news = told.parts.length > 0;
       } catch (error) {
-        if (use.signal?.aborted) throw error;
+        if (reading.signal?.aborted) throw error;
         const failed = unread(error, `Call computer_observe with window ${id}.`);
         parts.push(...failed.parts);
         hints.push(...failed.hints);
@@ -2423,12 +2425,12 @@ export class Computer {
     const changed = news || listed.length > 0 || retitled || dialogs(after) !== dialogs(before) || read.dropped;
     // An action whose window closes a moment later, as a dialog's button does, read it before it went.
     if (!changed && options.late) {
-      await sleep(LATE_CLOSE_MS, use.signal);
+      await sleep(LATE_CLOSE_MS, reading.signal);
       // A list that fails leaves the answer as it was: nothing changed.
-      const now = await this.#listWindows(use).catch(() => null);
+      const now = await this.#listWindows(reading).catch(() => null);
       if (now && !now.has(id)) {
-        this.#lost(use.state, id);
-        return this.#gone(use, before.window);
+        this.#lost(reading.state, id);
+        return this.#gone(reading, before.window);
       }
     }
     if (!changed) parts.push(`Nothing changed in window ${id}'s tree.`);
@@ -2667,12 +2669,6 @@ export class Computer {
     }
     return { parts, hints };
   }
-}
-
-function readCancelled(error: unknown): boolean {
-  if (error instanceof ComputerError) return false;
-  const message = error instanceof Error ? error.message : String(error);
-  return message === "The call was cancelled." || message === "The call was cancelled" || /was aborted/i.test(message);
 }
 
 /** What bb-box says when it cannot read what an action it did changed. */

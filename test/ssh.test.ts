@@ -637,6 +637,44 @@ test("parallel ssh commands append whole JSON lines to the log", async () => {
   for (const line of lines) assert.equal((JSON.parse(line) as { command: string }).command, command);
 });
 
+test("a fake ssh writes the log when the lock's owner is dead, and waits while that owner lives", async (t) => {
+  const dir = tempDir("ssh-log-lock");
+  writeFileSync(join(dir, "log"), "");
+  const lock = join(dir, "log.lock");
+  const gone = spawn("sleep", ["0"], { stdio: "ignore" });
+  await new Promise((resolve) => gone.on("exit", resolve));
+  writeFileSync(lock, String(gone.pid));
+  const env = { ...process.env, FAKE_SSH_DIR: dir };
+  const dial = (host: string) =>
+    new Promise<number | null>((resolve) => {
+      const child = spawn(process.execPath, [FAKE_SSH_BINARY, `box@${host}`, "--", "true"], { env });
+      child.on("exit", (code) => resolve(code));
+    });
+  assert.equal(await dial("192.0.2.40"), 0);
+  assert.equal(existsSync(lock), false, "a dead owner's lock is taken and released");
+  const lines = readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean);
+  assert.equal(lines.length, 1);
+  assert.equal((JSON.parse(lines[0]!) as { target: string }).target, "box@192.0.2.40");
+
+  const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+  t.after(() => holder.kill("SIGKILL"));
+  writeFileSync(lock, String(holder.pid));
+  let finished = false;
+  const waiting = dial("192.0.2.41").then((code) => {
+    finished = true;
+    return code;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(finished, false, "a live owner keeps the lock");
+  assert.equal(readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean).length, 1);
+  holder.kill("SIGKILL");
+  assert.equal(await waiting, 0);
+  assert.equal(existsSync(lock), false);
+  const after = readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean);
+  assert.equal(after.length, 2);
+  assert.equal((JSON.parse(after[1]!) as { target: string }).target, "box@192.0.2.41");
+});
+
 test("quote survives single quotes", () => {
   assert.equal(execFileSync("sh", ["-c", `printf %s ${quote("it's a \"test\" $HOME")}`], { encoding: "utf8" }), `it's a "test" $HOME`);
 });

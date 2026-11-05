@@ -5179,6 +5179,45 @@ test("computer_type still reads the window when the call is cancelled after the 
   assert.ok(readsAfterType.length >= 2, "the cancelled read was asked again");
 });
 
+test("computer_act that opens a popup still returns the window and the popup when the call is cancelled during the after-read", async (t) => {
+  const { harness, box, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const call = (name: string, input: unknown, signal?: AbortSignal) => harness.behavior.callAgentTool(name, input, { threadId: THREAD, projectId: PROJECT, ...(signal ? { signal } : {}) });
+  const tree = text(await call("computer_observe", { box: box.name, window: 100 }));
+  const task = refOf(tree, 'list item "Task 2"');
+  editDesktop(file, (desktop) => {
+    desktop.delays.afterRead = 5_000;
+  });
+  const callsBefore = readDesktop(file).calls.length;
+  const controller = new AbortController();
+  const pending = call("computer_act", { box: box.name, action: "right_click", ref: task }, controller.signal);
+  const sawRead = (async () => {
+    for (;;) {
+      const calls = readDesktop(file).calls;
+      const clickedAt = calls.findIndex((entry, index) => index >= callsBefore && entry.tool === "click");
+      if (clickedAt >= 0 && calls.slice(clickedAt + 1).some((entry) => entry.tool === "get_window_state")) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })();
+  await Promise.race([
+    sawRead,
+    pending.then(() => {
+      throw new Error("the click finished before its after-read could be cancelled");
+    }),
+  ]);
+  controller.abort("cancelled");
+  const result = await pending;
+  assert.equal(isError(result), false, text(result));
+  const said = text(result);
+  assert.match(said, new RegExp(`^Right-clicked ${task} \\(list item 'Task 2'\\)\\.`));
+  assert.match(said, /Opened a context menu on list item 'Task 2' \(window \d+\):\n- \[e\d+\] menu ""\n {2}- \[e\d+\] menu item "Rename"/);
+  assert.match(said, /Call computer_observe with window 100/);
+  assert.doesNotMatch(said, /could not read what changed|The call was cancelled/);
+  const reads = readDesktop(file).calls.filter((entry, index) => index >= callsBefore && entry.tool === "get_window_state");
+  assert.ok(reads.length >= 2, "the cancelled read was asked again");
+  assert.ok(reads.some((entry) => entry.args.window_id !== 100), "the popup was read");
+});
+
 test("on Sway, text an element refuses in the background is pasted with Cua's paste key, and the clipboard's text put back (#707)", async (t) => {
   // wtype's own keys lose characters in Chrome: bb-box puts the text on the clipboard, Cua presses the paste key.
   const bin = tempDir("sway");
