@@ -50,6 +50,13 @@ if [ -c /dev/nvidiactl ]; then
 else
   t "nvidia-smi" echo "no GPU in this box"
 fi
+if [ -x /usr/local/sbin/bb-box-nvidia-drivers ]; then
+  t "NVIDIA's userspace" sh -c 'states=$(/usr/local/sbin/bb-box-nvidia-drivers --check) || exit 1; if [ -e /dev/nvidiactl ]; then want=shown; else want=hidden; fi
+    wrong=$(echo "$states" | grep -v "15_nvidia_gbm" | grep -v " $want$" || true); [ -z "$wrong" ] || { echo "$wrong"; exit 1; }
+    echo "$(cat /usr/share/bb-box/nvidia-version), its EGL and Vulkan drivers $want"'
+else
+  s "NVIDIA's userspace" "none in this box"
+fi
 t "GL renderer" sh -c 'glxinfo -B | grep -E "OpenGL renderer|available dedicated" | tr -s " "'
 t "Vulkan present (vkcube)" sh -c 's=$(date +%s%N); timeout 20 vkcube --c 1000 >/dev/null 2>&1 && echo "1000 frames in $(( ($(date +%s%N) - s) / 1000000 )) ms"'
 

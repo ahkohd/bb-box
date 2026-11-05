@@ -42,6 +42,7 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/guest/baseline.sh",
   "proxmox-lxc/template/guest/bb-box-feature.sh",
   "proxmox-lxc/template/guest/bb-box-identity.sh",
+  "proxmox-lxc/template/guest/bb-box-nvidia-drivers.sh",
   "proxmox-lxc/template/guest/check-desktop.sh",
   "proxmox-lxc/template/guest/check-headless.sh",
   "proxmox-lxc/template/guest/customize-base.sh",
@@ -57,6 +58,7 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/guest/image-record.sh",
   "proxmox-lxc/template/guest/install-bb-app.sh",
   "proxmox-lxc/template/guest/install-tools.sh",
+  "proxmox-lxc/template/guest/nvidia-userspace.sh",
   "proxmox-lxc/template/pins.json",
 ] as const;
 const BUILD_DIR = "/var/tmp/bb-box-build";

@@ -86,27 +86,14 @@ for package in $desktop_packages $gpui_packages tigervncserver virtualgl selkies
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done
 
-# NVIDIA userspace: exactly the host's version, no kernel modules. The display
-# unit compares this record with the host's driver at every start. A CPU-only
-# template (DESKTOP_GPU=none) has none, and its display always takes the CPU.
 install -d -m 0755 /usr/share/bb-box
 if [ "${DESKTOP_GPU:-nvidia}" = none ]; then
   nvidia=none
 elif [ "$arch" != x86_64 ]; then
   die "a desktop on $arch is CPU-only: set DESKTOP_GPU=none"
 else
-  nvidia=$(cat /sys/module/nvidia/version 2>/dev/null) || die "the host has no NVIDIA driver loaded"
-  run=$art/NVIDIA-Linux-x86_64-$nvidia.run
-  [ -f "$run" ] || die "$run is missing (fetch-artifacts.sh downloads the host's version)"
-  (cd "$art" && sha256sum -c --quiet "NVIDIA-Linux-x86_64-$nvidia.run.sha256sum") || die "NVIDIA installer checksum mismatch"
-  sh "$run" --silent --no-kernel-modules --no-kernel-module-source --no-nouveau-check --no-nvidia-modprobe \
-    --no-systemd --no-rpms --no-backup --no-check-for-alternate-installs --no-x-check --no-distro-scripts \
-    --no-dkms --no-install-libglvnd --glvnd-egl-config-path=/usr/share/glvnd/egl_vendor.d --tmpdir /var/tmp
-  for f in /usr/lib/xorg/modules/drivers/nvidia_drv.so /usr/lib/xorg/modules/extensions/libglxserver_nvidia.so \
-    /etc/vulkan/icd.d/nvidia_icd.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/bin/nvidia-smi; do
-    [ -e "$f" ] || die "the NVIDIA installer did not install $f"
-  done
-  echo "$nvidia" >/usr/share/bb-box/nvidia-version
+  nvidia=$(bash "$build/guest/nvidia-userspace.sh" "$build")
+  [ -e /usr/lib/xorg/modules/extensions/libglxserver_nvidia.so ] || die "the NVIDIA installer did not install libglxserver_nvidia.so"
 fi
 {
   echo "nvidia=$nvidia"

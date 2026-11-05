@@ -148,12 +148,20 @@ test("template lists with mistakes are refused", () => {
     assert.ok(result.enabled && !result.ok, JSON.stringify(values));
     return result.problems.join(" ");
   };
-  assert.match(problems({ "proxmox-lxc-desktop-templates": "9001" }), /Give GPU desktop template 9001 the ID of its GPU/);
   assert.match(problems({ "proxmox-lxc-desktop-templates": "9001 GPU-a extra" }), /one line per GPU desktop template/);
+  assert.match(problems({ "proxmox-lxc-desktop-templates": "9001 GPU/a" }), /Give GPU desktop template 9001 the ID of its GPU, like "9001 GPU-0a1b2c3d", or no ID for a template with no device lines\./);
   assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9001 9001" }), /Template 9001 is listed more than once/);
   assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9000" }), /Template 9000 is listed more than once/);
   assert.match(problems({ "proxmox-lxc-linux-templates": "ninety" }), /VMIDs from 100 for the Linux templates/);
   assert.match(problems({ "proxmox-lxc-linux-templates": "" }), /at least one CT template/);
+});
+
+test("071 unit 7: a GPU desktop template with no GPU ID has no device lines and serves every card the host's GPU helper gives", () => {
+  const config = lxcConfig({ "proxmox-lxc-desktop-templates": "9001\n9002 GPU-b" });
+  assert.deepEqual(config.flavours.desktop.templates, [
+    { vmid: 9001, gpu: null },
+    { vmid: 9002, gpu: "GPU-b" },
+  ]);
 });
 
 test("the backend can be switched off", () => {

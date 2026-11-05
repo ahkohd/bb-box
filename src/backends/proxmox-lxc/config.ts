@@ -170,7 +170,7 @@ const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readon
   desktop: {
     name: "GPU desktop",
     templates:
-      "The CT templates Linux desktops on a GPU are linked clones of, each with the GPU it carries. One line per template: its VMID, a space and the GPU's ID, such as the UUID nvidia-smi -L shows. Empty turns these desktops off.",
+      "The CT templates Linux desktops on a GPU are linked clones of. One line per template: its VMID, and, for a template with a card's device lines, a space and that GPU's ID, such as the UUID nvidia-smi -L shows. A template with no GPU ID serves every card the host's GPU helper gives, and desktops with no GPU. Empty turns these desktops off.",
   },
   "desktop-cpu": {
     name: "CPU desktop",
@@ -475,8 +475,9 @@ export function earlierLxcSizes(input: Readonly<Record<string, unknown>>): Recor
 
 /**
  * A flavour's template list. Entries are separated by commas or new lines,
- * or by spaces when there are no GPU IDs. A GPU desktop entry is a VMID and a
- * GPU ID, separated by a space or "=".
+ * or by spaces when there are no GPU IDs. A GPU desktop entry is a VMID, and
+ * the ID of the GPU its device lines name, if it has them, separated by a
+ * space or "=".
  */
 function templateList(values: Readonly<Record<string, unknown>>, flavour: LxcFlavour, problem: Problem): LxcTemplate[] {
   const key = flavourKey(flavour, "templates");
@@ -495,16 +496,16 @@ function templateList(values: Readonly<Record<string, unknown>>, flavour: LxcFla
       problem(
         key,
         gpu
-          ? `Use one line per GPU desktop template, with its VMID and its GPU's ID, like "9101 GPU-0a1b2c3d". "${entry}" is not.`
+          ? `Use one line per GPU desktop template, with its VMID and, for a template with a card's device lines, its GPU's ID, like "9101" or "9101 GPU-0a1b2c3d". "${entry}" is not.`
           : `Use VMIDs from 100 for the ${name} templates. "${entry}" is not one.`,
       );
       continue;
     }
-    if (gpu && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(id)) {
-      problem(key, `Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d".`);
+    if (gpu && id && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(id)) {
+      problem(key, `Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d", or no ID for a template with no device lines.`);
       continue;
     }
-    templates.push({ vmid, gpu: gpu ? id : null });
+    templates.push({ vmid, gpu: gpu && id ? id : null });
   }
   return templates;
 }

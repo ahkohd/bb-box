@@ -1,5 +1,5 @@
 import { currentKindId } from "../backends/kinds.ts";
-import { GPU_PARTS, type BoxSize, type CardClaim, type GpuPart, type KindCapabilities, type MachineSize } from "../backends/types.ts";
+import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type GpuPart, type KindCapabilities, type MachineSize } from "../backends/types.ts";
 
 export type NvidiaUserspace = "none" | "unknown" | `${number}.${string}`;
 
@@ -66,6 +66,23 @@ export function gpuBeforeGpuParts(box: Pick<GpuOfRecord, "kind" | "capabilities"
 export function recordedGpu(box: GpuOfRecord): GpuPart {
   const gpu = box.size?.gpu;
   return isGpuPart(gpu) ? gpu : gpuBeforeGpuParts(box);
+}
+
+export function gpuPartsOffered(kind: Pick<BoxKind, "capabilities" | "gpuParts">): readonly GpuPart[] {
+  return kind.gpuParts ?? (kind.capabilities.gpu ? ["shared"] : ["none"]);
+}
+
+export function offersGpuPart(kind: Pick<BoxKind, "capabilities" | "gpuParts">, gpu: GpuPart): boolean {
+  return gpuPartsOffered(kind).includes(gpu);
+}
+
+export function gpuOnOffer(kind: Pick<BoxKind, "capabilities" | "gpuParts">, gpu: GpuPart, asked: boolean): GpuPart {
+  if (asked || offersGpuPart(kind, gpu)) return gpu;
+  return gpuPartsOffered(kind).some(holdsCard) ? gpu : "none";
+}
+
+export function gpuPartWords(gpu: GpuPart): string {
+  return gpu === "none" ? "no GPU" : gpu === "shared" ? "a shared GPU" : "a whole card";
 }
 
 export function withGpu(size: MachineSize, gpu: GpuPart): BoxSize {

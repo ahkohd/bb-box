@@ -11,7 +11,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { z } from "zod";
-import { BoxError, OPERATOR, SPARES, describeError, isAcquiring, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, SPARES, describeErrorForAgent, errorForAgent, isAcquiring, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../core/copy.ts";
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
@@ -75,7 +75,11 @@ const HINTS: Record<BoxErrorCode, string> = {
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {
   const hint = error instanceof BoxError ? HINTS[error.code] : "Call box_status to see the box, or try again.";
-  return { content: [{ type: "text", text: `${describeError(error, action)}${next(hint)}` }], isError: true };
+  return { content: [{ type: "text", text: `${describeErrorForAgent(error, action)}${next(hint)}` }], isError: true };
+}
+
+export function seenByAgent(box: BoxRecord): BoxRecord {
+  return { ...box, error: errorForAgent(box) };
 }
 
 /** box_run's answer when bb-box restarted while its command ran: `sure` when bb-box stopped it itself (#405). */
@@ -318,6 +322,36 @@ export function gpuRoomText(kind: KindView, kinds: readonly KindView[], now = Da
     .join("");
 }
 
+function gibWords(mib: number): string {
+  return `${(mib / 1024).toFixed(1)} GiB`;
+}
+
+export function gpuPartsText(kind: KindView, now = Date.now()): string {
+  return kind.offers
+    .flatMap((offer) => {
+      const room = offer.gpuRoom;
+      const on = kind.offers.length > 1 || room?.parts ? ` on ${offer.name}` : "";
+      const words: string[] = [];
+      if (room?.parts?.includes("shared") && room.cards) {
+        const cards = room.cards.map((card) => {
+          const name = card.index === null ? "a card" : `card ${card.index}`;
+          if (card.whole) return `${name} held whole`;
+          const boxes = `${card.boxes}${room.limit ? ` of ${room.limit}` : ""} ${card.boxes === 1 && !room.limit ? "box" : "boxes"}`;
+          const free = card.freeMiB === null ? "free memory unknown" : `${gibWords(card.freeMiB)} free`;
+          return `${name}, shared, ${boxes}, ${free}`;
+        });
+        const read = room.at ? `, when read ${ago(now - room.at)}` : "";
+        const needs = room.neededMiB ? `; a new box needs ${room.neededMiB} MiB free on its card` : "";
+        words.push(` GPU${on}: none or shared; ask with gpu shared (${room.host ?? offer.name}: ${room.cards.length} ${room.cards.length === 1 ? "card" : "cards"}; ${cards.join("; ")}${read}${needs}).`);
+      } else if (room?.parts && !room.parts.includes("shared") && room.withheld && offer.gpuParts?.includes("shared")) {
+        words.push(` No GPU${on} now: ${room.withheld}.`);
+      }
+      if (kind.desktop && offer.gpuParts?.includes("none") && offer.gpuParts.includes("shared")) words.push(` gpu none${on} gives a desktop drawn by the CPU, from the same image.`);
+      return words;
+    })
+    .join("");
+}
+
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
 function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
   // A spare a thread started on becomes your machine at the next spare upkeep (036).
@@ -463,6 +497,12 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .describe(
           "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
         ),
+      gpu: z
+        .enum(["none", "shared"])
+        .optional()
+        .describe(
+          "The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
+        ),
       dedicated: z
         .boolean()
         .optional()
@@ -476,7 +516,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows; an ios box is one already where a shared iOS host has room, and shared: true refuses rather than give it a VM of its own. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
         ),
     }),
-    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, dedicated, shared }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, gpu, dedicated, shared }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({
           threadId: thread(threadId),
@@ -487,6 +527,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ...(image !== undefined ? { image } : {}),
           ...(device !== undefined ? { device } : {}),
           ...(slim !== undefined ? { slim } : {}),
+          ...(gpu !== undefined ? { gpu } : {}),
           ...(dedicated !== undefined ? { dedicated } : {}),
           ...(shared !== undefined ? { shared } : {}),
           who: byAgent(thread(threadId)),
@@ -502,7 +543,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         }
         if (settled.state === "failed") {
           return {
-            content: [{ type: "text", text: `Box ${settled.name} failed: ${settled.error ?? "no reason given"}${next("Try box_acquire again, or pick another kind from box_list.")}` }],
+            content: [{ type: "text", text: `Box ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}${next("Try box_acquire again, or pick another kind from box_list.")}` }],
             isError: true,
           };
         }
@@ -529,12 +570,12 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const lines: string[] = [];
         // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
         if (machine && !list.some((box) => box.id === machine.id)) {
-          lines.push(`The machine this thread runs on:\n${boxLine(machine)}; ${ownerWords(machine)}`);
+          lines.push(`The machine this thread runs on:\n${boxLine(seenByAgent(machine))}; ${ownerWords(machine)}`);
         }
-        lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
+        lines.push(list.length ? `This thread's boxes:\n${list.map((box) => boxLine(seenByAgent(box))).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);
@@ -577,7 +618,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         };
         const grants = await boxes.grants(box, signal);
         if (box.state === "ready") await app.devices.freshSettings(box);
-        return `${boxDetail(box, app.control(box))}${snapshotLine ? `\n${snapshotLine}` : ""}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
+        return `${boxDetail(seenByAgent(box), app.control(box))}${snapshotLine ? `\n${snapshotLine}` : ""}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");
       }

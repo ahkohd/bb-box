@@ -250,6 +250,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             image: { type: "string", description: 'The image to start from: a project\'s image, from bb box image list, or "standard". The thread\'s project\'s image for the kind by default.' },
             device: { type: "string", description: "For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default." },
             "no-slim": { type: "boolean", description: "For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default." },
+            gpu: { type: "string", description: "The box's GPU: none, or shared, one card other boxes may share. Shared for linux-desktop and none for linux by default." },
             dedicated: { type: "boolean", description: "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Without it, an ios box is shared where a shared iOS host has room. Give it with a size: where a shared iOS host is set up, a size without it is refused." },
             shared: { type: "boolean", description: `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says.` },
             "no-wait": { type: "boolean", description: "Return once the box is recorded." },
@@ -259,7 +260,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}), ...(options.dedicated ? { dedicated: true } : {}), ...(options.shared ? { shared: true } : {}), who: BY_COMMAND });
+              const gpu = options.gpu === undefined ? undefined : String(options.gpu);
+              if (gpu !== undefined && gpu !== "none" && gpu !== "shared") throw new BoxError("unsupported", `--gpu takes none or shared, not ${gpu}.`);
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}), ...(gpu !== undefined ? { gpu } : {}), ...(options.dedicated ? { dedicated: true } : {}), ...(options.shared ? { shared: true } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               const follow = `bb box status ${box.name}${options.thread ? ` --thread ${threadId}` : ""}`;

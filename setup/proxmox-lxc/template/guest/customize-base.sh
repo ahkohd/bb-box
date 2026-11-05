@@ -295,6 +295,15 @@ if [ "${BOX_IDENTITY_RESET:-off}" = on ]; then
   /usr/local/sbin/bb-box-identity enable "${identity_options[@]}"
 fi
 
+case "${LINUX_GPU:-none}" in
+  none) ;;
+  nvidia)
+    nvidia=$(bash "$build/guest/nvidia-userspace.sh" "$build")
+    echo "nvidia=$nvidia" >>"$build/extra-release"
+    ;;
+  *) die "LINUX_GPU must be none or nvidia" ;;
+esac
+
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
 # does in a login shell. Once: a refresh (049) runs this on a built image,
 # where a later step may have put another directory first.

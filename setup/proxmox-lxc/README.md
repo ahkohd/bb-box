@@ -144,23 +144,54 @@ Build the Linux template, then the desktops you want. Each build takes 5 to
 
 ```sh
 template/build.sh linux 9100
-template/build.sh desktop 9101 --gpu 0000:01:00.0
-template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
+template/build.sh desktop 9101                                # every card, through the GPU helper
 template/build.sh desktop 9103 --cpu                          # no GPU
 template/build.sh desktop 9105 --cpu --wayland                # Wayland, no GPU
+```
+
+On a host without the GPU helper, give each desktop template one card's
+device lines instead:
+
+```sh
+template/build.sh desktop 9101 --gpu 0000:01:00.0
+template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
 ```
 
 - `build.sh` makes a CT from Proxmox's Ubuntu 24.04 template, or for
   `--wayland` its 26.04 template (`BBBOX_OS_TEMPLATE_WAYLAND`), customises it,
   boots it once and runs its checks as the box user. It then cleans it,
   makes it a template in `BBBOX_POOL` and protects it.
+- On a host with an NVIDIA driver, `linux` and `desktop` install NVIDIA's
+  userspace for exactly that driver, with no kernel modules, so the host's
+  GPU helper can give their boxes a card (071). It adds about 1.4 GB to the
+  template, which linked clones share. `--cpu` leaves it out. In a box with no
+  card, `bb-box-nvidia-drivers.service` hides NVIDIA's EGL and Vulkan
+  drivers from their loaders at each boot, as they would otherwise crash
+  EGL's GBM platform and slow every Vulkan program, and shows them again
+  once the box has a card. NVIDIA's GBM platform is shown only with a DRM
+  render node, which a server's card does not have. In a box,
+  `bb-box-nvidia-drivers --check` prints each of those files' state and
+  changes nothing. Both templates install the userspace with
+  `guest/nvidia-userspace.sh <build-dir>`, as root in the build CT, which
+  prints the version it installed. `build.sh` asks for it with `LINUX_GPU=nvidia`
+  in the build's `build.env` for a Linux template, `none` by default, and
+  fetches the installer with `fetch-artifacts.sh <dir> linux-nvidia`: the
+  Linux artifacts and NVIDIA's installer for the host's driver.
+- `desktop` gives the template no device lines: the GPU helper gives each
+  box its card, and a box with none draws on the CPU, with x264 video. List
+  it in bb-box's GPU desktop templates by its VMID alone. `--gpu` gives the
+  template one card's device lines, for a host without the helper; list it
+  with that GPU's ID.
 - Only root can give a container device nodes or features, and a clone copies
   them, so bb-box's token never needs those rights.
-- `copy-desktop` makes a full copy of a desktop template for another GPU,
-  to spread desktops across GPUs.
+- `copy-desktop` makes a full copy of a desktop template with another GPU's
+  device lines, to spread desktops across GPUs on a host without the helper.
 - `desktop --cpu` makes a desktop with no GPU device nodes and no NVIDIA
   userspace. A host without an NVIDIA driver gets it without `--cpu`. A GPU
   host can offer CPU desktops with it, without using GPU memory.
+- Each build trims its CT's file system (`pct fstrim`) before it becomes a
+  template, so the template does not keep the blocks of files the build
+  deleted, such as NVIDIA's 400 MB installer.
 - `desktop --cpu --wayland` makes the Wayland desktop (048).
 
 Every template gets `/dev/net/tun`, so its boxes can run Tailscale and other

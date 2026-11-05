@@ -32,6 +32,13 @@ t "https reach" curl -sS -o /dev/null -m 10 -w '%{http_code}' https://example.co
 # Docker box has its host's, where the host has one.
 if [ "$runtime" = docker ] && [ ! -e /dev/net/tun ]; then s "TUN device" "none from this Docker host, so Tailscale runs in userspace (050)"
 else t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'; fi
+if [ -x /usr/local/sbin/bb-box-nvidia-drivers ]; then
+  t "NVIDIA's userspace" sh -c 'states=$(/usr/local/sbin/bb-box-nvidia-drivers --check) || exit 1; if [ -e /dev/nvidiactl ]; then want=shown; else want=hidden; fi
+    wrong=$(echo "$states" | grep -v "15_nvidia_gbm" | grep -v " $want$" || true); [ -z "$wrong" ] || { echo "$wrong"; exit 1; }
+    echo "$(cat /usr/share/bb-box/nvidia-version), its EGL and Vulkan drivers $want"'
+else
+  s "NVIDIA's userspace" "none in this box"
+fi
 t "PATH" sh -c 'echo $PATH'
 # BB's updater runs `npm install -g` as the box user for an agent CLI.
 t "npm -g as the box user" sh -c 'p=$(npm config get prefix); [ "$p" = "$HOME/.local" ] && [ -w "$p/lib" ] && case ":$PATH:" in *":$p/bin:"*) echo "$p" ;; *) echo "$p/bin is not on PATH"; exit 1 ;; esac'
