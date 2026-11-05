@@ -5,11 +5,6 @@ import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import type { FetchLike } from "./api.ts";
 
-/**
- * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
- * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
- * the system roots when that is null.
- */
 export interface ProxmoxHttp {
   fetch: FetchLike;
   close(): Promise<void>;
@@ -28,6 +23,11 @@ function httpOf(agent: Agent): ProxmoxHttp {
   };
 }
 
+/**
+ * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
+ * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
+ * the system roots when that is null.
+ */
 export function proxmoxFetch(tls: { ca: string | null; fingerprint: string | null }): ProxmoxHttp {
   let agent: Agent;
   if (tls.fingerprint) {
