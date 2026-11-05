@@ -102,6 +102,7 @@ export const CHECKS = {
   },
   "proxmox.gpu-report": { name: "Host's GPU report", from: ["proxmox-lxc"], what: "The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU." },
   "gpu.<gpu>": { name: "GPU <gpu>", from: ["proxmox-lxc"], what: "A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs." },
+  "gpu.<gpu>.whole": { name: "GPU <gpu> whole", from: ["proxmox-lxc"], what: "A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071)." },
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: "bb-box's SSH key reads, and, where bb-box made it, its public key to install." },
 
   // Docker.

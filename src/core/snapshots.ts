@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  BackendError,
   RestoreChanged,
   SnapshotFailed,
   SnapshotIncomplete,
@@ -19,6 +20,8 @@ import {
   type SnapshotPlan,
   type Snapshotting,
   type SnapshotStorage,
+  type GpuHandoff,
+  type GpuPart,
   type Started,
   type TaskKind,
   type TaskOutcome,
@@ -27,7 +30,8 @@ import {
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
-import { withRecordedGpu } from "./gpu.ts";
+import { gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu } from "./gpu.ts";
+import { currentKindId } from "../backends/kinds.ts";
 import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
 import { UNKNOWN_ACTOR, BY_OUTSIDE, byBbBox, type Actor, type BoxEventKind, type BoxLog } from "./box-log.ts";
@@ -87,7 +91,7 @@ const ROOM_DELETES_PER_SWEEP = 5;
 const OUTSIDE_LOOK_BACK_MS = 24 * 60 * 60_000;
 const OUTSIDE_SLACK_MS = 60_000;
 
-export type HoldStep = "planned" | "task" | "checked" | "stopped" | "copied" | "undo" | "rolled-back" | "adopted" | "answered" | "started";
+export type HoldStep = "planned" | "task" | "checked" | "stopped" | "copied" | "undo" | "rolled-back" | "claim-kept" | "claim-cleared" | "adopted" | "claim-given" | "answered" | "started";
 
 export interface SnapshotBoxes {
   find(boxId: string): Promise<BoxRecord | null>;
@@ -206,6 +210,7 @@ export interface ForkInput {
   readonly asMachine?: boolean;
   readonly request?: string;
   readonly projectId?: string | null;
+  readonly gpu?: GpuPart;
 }
 
 export interface ForkCheck {
@@ -218,6 +223,8 @@ export interface ForkCheck {
   readonly bytes: number | null;
   readonly host: string | null;
   readonly storage: string;
+  readonly gpu: GpuPart;
+  readonly offersGpu: boolean;
 }
 
 export interface ForkAnswer {
@@ -349,10 +356,13 @@ const RESTORE_STEPS = [
   "rollback-submitting",
   "rollback-task",
   "rolled-back",
+  "claim-kept",
+  "claim-cleared",
   "adopt-claimed",
   "adopt-submitting",
   "adopt-task",
   "adopted",
+  "claim-given",
   "swapped",
   "retired",
   "starting",
@@ -361,6 +371,7 @@ const RESTORE_STEPS = [
   "labels",
   "machine",
   "swap-back",
+  "claim-back",
   "done",
 ] as const;
 type RestoreStep = (typeof RESTORE_STEPS)[number];
@@ -394,6 +405,9 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
   "adopt-submitting": "the new guest",
   "adopt-task": "the new guest",
   adopted: "the new guest",
+  "claim-kept": "the GPU claim",
+  "claim-cleared": "the GPU claim",
+  "claim-given": "the GPU claim",
   swapped: "the swap of guests",
   retired: "the earlier guest",
   starting: "the start",
@@ -402,6 +416,7 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
   labels: "writing its labels",
   machine: "its BB machine",
   "swap-back": "putting its old guest back",
+  "claim-back": "giving its GPU claim back to its old guest",
   done: "the end",
 };
 
@@ -467,6 +482,48 @@ function consentOf(operation: Pick<SnapshotOperation, "consent">): Consent {
 
 export function unflushedOf(operation: Pick<SnapshotOperation, "consent">): string | null {
   return consentOf(operation).unflushedWhy;
+}
+
+function forkGpuRefused(backend: Backend, kind: string): string | null {
+  if (currentKindId(kind) !== "linux-desktop") return `Not forked: a fork of a ${kind} box takes gpu none, as only a linux-desktop fork may share a card now. Fork it with gpu none. bb-box copied nothing.`;
+  if (!backend.placeForkGpu) return `Not forked: ${backend.label} gives a fork no GPU. Fork it with gpu none. bb-box copied nothing.`;
+  return null;
+}
+
+function gpuHandoffOf(operation: Pick<SnapshotOperation, "consent">): GpuHandoff | null {
+  const held = (operation.consent as { gpuClaim?: Partial<GpuHandoff> } | null)?.gpuClaim;
+  if (!held || !isGpuPart(held.part) || typeof held.generation !== "number") return null;
+  return { part: held.part, card: held.part === "none" ? null : typeof held.card === "string" ? held.card : null, generation: held.generation, index: typeof held.index === "number" ? held.index : null };
+}
+
+function withGpuClaim(operation: Pick<SnapshotOperation, "consent">, held: GpuHandoff | null): object {
+  const consent = (operation.consent as object | null) ?? {};
+  return held ? { ...consent, gpuClaim: held } : consent;
+}
+
+interface PuttingBack {
+  readonly step: RestoreStep;
+  readonly words: string;
+}
+
+function puttingBackOf(operation: Pick<SnapshotOperation, "consent">): PuttingBack | null {
+  const back = (operation.consent as { putBack?: Partial<PuttingBack> } | null)?.putBack;
+  if (!back || typeof back.words !== "string" || typeof back.step !== "string" || !RESTORE_STEPS.includes(back.step)) return null;
+  return { step: back.step, words: back.words };
+}
+
+interface ClaimClearing {
+  readonly bootsWithNode: boolean | null;
+}
+
+function clearingOf(operation: Pick<SnapshotOperation, "consent">): ClaimClearing | null {
+  const clearing = (operation.consent as { clearing?: Partial<ClaimClearing> } | null)?.clearing;
+  if (!clearing || typeof clearing !== "object") return null;
+  return { bootsWithNode: typeof clearing.bootsWithNode === "boolean" ? clearing.bootsWithNode : null };
+}
+
+function holdsACard(held: GpuHandoff | null): held is GpuHandoff {
+  return held?.part === "shared" || held?.part === "whole";
 }
 
 interface Loss {
@@ -583,6 +640,8 @@ export interface RestoreCheck {
   readonly storage: string;
   readonly undoRefused: string | null;
   readonly capture: "suspend" | "shutdown" | "stop";
+  readonly gpuStay: string | null;
+  readonly userspaceNote: string | null;
 }
 
 interface Restoring {
@@ -837,6 +896,7 @@ export class Snapshots {
         forkSafe: safety.version,
         forkSafeWhy: safety.version === null ? (safety.why ?? null) : null,
         identity: safety.identity,
+        gpu: snapshotGpuOf(box),
         dependsOn: [],
         picture: null,
         ref: null,
@@ -2227,7 +2287,7 @@ export class Snapshots {
     const prepared = await this.#prepare(caller, standing, boxId, targetId, input);
     const { box, target, backend, offer, plan, byCopy, swap, fromSnapshot, anyway, forkSafe } = prepared;
     if (prepared.through === "form" || input.yes) {
-      const check = this.#checkOf(caller, prepared, input);
+      const check = this.#checkOf(caller, prepared, input, await this.#gpuFacts(prepared));
       const stale = input.yes !== undefined && input.yes.plan !== check.plan;
       if (prepared.through === "form" && (!input.yes || stale)) throw new YesNeeded(check, prepared.onAMachine ? "machine" : "settings", input.yes !== undefined);
       if (stale) throw new BoxError("in_use", `What restoring box ${box.name} would do changed after the yes was asked for, so bb-box restored nothing. Ask again with box_restore if it is still wanted.`);
@@ -2274,6 +2334,7 @@ export class Snapshots {
           forkSafe: forkSafe.version,
           forkSafeWhy: forkSafe.version === null ? (forkSafe.why ?? null) : null,
           identity: forkSafe.identity,
+          gpu: snapshotGpuOf(box),
           dependsOn: [],
           picture: null,
           ref: null,
@@ -2370,16 +2431,19 @@ export class Snapshots {
 
   async checkFork(caller: Caller, box: Pick<BoxRecord, "id">, standing: Standing, ref: string, input: ForkInput = {}): Promise<ForkCheck> {
     const prepared = await this.#prepareFork(caller, standing, box, ref, input);
+    const gpu = input.gpu ?? "none";
     return {
       snapshot: prepared.target,
       box: prepared.box,
       threadId: prepared.threadId,
       asMachine: prepared.threadId === OPERATOR,
-      size: prepared.size,
+      size: withGpu(prepared.size, gpu),
       aboutMs: prepared.plan.fork.aboutMs,
       bytes: prepared.plan.fork.bytes,
       host: prepared.target.livesOn.host,
       storage: prepared.plan.storage.name,
+      gpu,
+      offersGpu: forkGpuRefused(prepared.backend, prepared.box?.kind ?? prepared.target.box.kind) === null,
     };
   }
 
@@ -2387,7 +2451,7 @@ export class Snapshots {
     const by: Actor = caller.is === "agent" ? { is: "agent", threadId: caller.threadId } : caller;
     if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
     this.#requireStore("forks");
-    const digest = input.request ? requestDigest("fork", box.id, { snapshot: ref, name: input.name ?? null, asMachine: input.asMachine === true }) : null;
+    const digest = input.request ? requestDigest("fork", box.id, { snapshot: ref, name: input.name ?? null, asMachine: input.asMachine === true, gpu: input.gpu ?? "none" }) : null;
     if (input.request) {
       const earlier = this.#earlier(by, input.request, digest);
       if (earlier) return this.#forkedBefore(earlier);
@@ -2438,6 +2502,7 @@ export class Snapshots {
           backendLabel: backend.label,
           kind: source.kind,
           size: prepared.size,
+          gpu: input.gpu ?? "none",
           origin: {
             operation: operation.id,
             snapshot: { id: target.id, name: target.name, takenAt: target.takenAt, ref: target.ref ?? "", livesOn: target.livesOn, identity: target.identity ?? null, ...(target.guest === "held-copy" ? { from: "held-copy" as const } : {}) },
@@ -2503,6 +2568,7 @@ export class Snapshots {
     const allowed = mayAct(caller, "fork", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
+    if (input.gpu === "whole") throw new BoxError("unsupported", "Not forked: a whole card is not offered for a fork yet. Fork it with gpu shared or none. bb-box copied nothing.");
     this.#requireStore("forks");
     const source = await this.#deps.boxes.find(target.box.id);
     const heldCopy = target.guest === "held-copy";
@@ -2522,6 +2588,8 @@ export class Snapshots {
     const kind = source?.kind ?? target.box.kind;
     const offer = this.offerFor(backend, kind);
     if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity || (heldCopy && !backend.copyPlan)) throw new BoxError("unsupported", `${backend.label} does not fork ${kind} boxes.`);
+    const sharedRefused = input.gpu === "shared" ? forkGpuRefused(backend, kind) : null;
+    if (sharedRefused) throw new BoxError("unsupported", sharedRefused);
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (target.forkSafe < safeFrom) {
       throw new BoxError(
@@ -2629,14 +2697,26 @@ export class Snapshots {
     return paid.ok ? null : new BoxError("limit_reached", `bb-box would take an undo of box ${box.name} before restoring it. ${paid.why}${instead}`);
   }
 
+  async #gpuFacts(prepared: Prepared): Promise<{ readonly held: GpuHandoff | null; readonly driver: string | null } | null> {
+    const guest = prepared.box.guest;
+    if (!guest || !prepared.backend.gpuRestoreFacts) return null;
+    try {
+      return await prepared.backend.gpuRestoreFacts(guest, this.#stopping.signal);
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      return null;
+    }
+  }
+
   async checkRestore(caller: Caller, box: BoxRecord, standing: Standing, ref: string, input: RestoreInput = {}, answer: { readonly undoRefusal?: boolean } = {}): Promise<RestoreCheck> {
     const target = this.find(caller, standing, ref);
     const allowed = mayAct(caller, "restore", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
-    return this.#checkOf(caller, await this.#prepare(caller, standing, box.id, target.id, input), input, answer);
+    const prepared = await this.#prepare(caller, standing, box.id, target.id, input);
+    return this.#checkOf(caller, prepared, input, await this.#gpuFacts(prepared), answer);
   }
 
-  #checkOf(caller: Caller, prepared: Prepared, input: RestoreInput, answer: { readonly undoRefusal?: boolean } = {}): RestoreCheck {
+  #checkOf(caller: Caller, prepared: Prepared, input: RestoreInput, facts: { readonly held: GpuHandoff | null; readonly driver: string | null } | null = null, answer: { readonly undoRefusal?: boolean } = {}): RestoreCheck {
     const undoBytes = this.#undoBytes(prepared.box, prepared.plan, prepared.byCopy);
     const refused = input.undo === false ? null : this.#undoRefused(caller, prepared.box, prepared.backend, prepared.offer, prepared.plan, undoBytes);
     if (refused && !answer.undoRefusal) throw refused;
@@ -2668,6 +2748,8 @@ export class Snapshots {
       replaces,
       storage: prepared.plan.storage.name,
       capture: prepared.offer.whileRunning === "suspends" ? "suspend" : prepared.offer.whileRunning === "stopped-only" ? "shutdown" : "stop",
+      gpuStay: facts?.held ? gpuStayWords(facts.held.part, facts.held.index) : null,
+      userspaceNote: userspaceRestoreWords(prepared.target.gpu ?? null, facts?.driver ?? null),
     };
   }
 
@@ -2843,6 +2925,7 @@ export class Snapshots {
           undo = ledger.updateRecord(undo!.id, { note: unflushedNote(unflushed), unflushed }) ?? undo;
         }
         await admitted(box, "planned");
+        await this.#holdCardOrRefuse(context, box, guest, signal);
         await this.#deps.hold?.(operation, "checked", signal);
         at("stopping");
         box = await this.#moved(box, box.state === "ready" ? { state: "stopping", error: null } : { error: null });
@@ -2925,6 +3008,7 @@ export class Snapshots {
         if (context.after && undo) await this.#undoStillThere(context, box, undo);
       }
       if (!context.swap && reach < stepAt("rolled-back")) {
+        await this.#recordedClaim(context, guest, signal);
         at("rollback-submitting");
         try {
           await backend.rollbackSnapshot!(guest, { id: target.id, ref: target.ref ?? "", guest }, this.#stepHooks(operation, "rollback"), signal);
@@ -2937,6 +3021,31 @@ export class Snapshots {
         }
         at("rolled-back");
         await this.#deps.hold?.(operation, "rolled-back", signal);
+      }
+      if (!context.swap && reach < stepAt("claim-kept")) {
+        const held = await this.#recordedClaim(context, guest, signal);
+        try {
+          if (held && backend.keepGpuClaim) await backend.keepGpuClaim(guest, held, signal);
+        } catch (error) {
+          if (signal.aborted) throw error;
+          throw this.#restoreUnsure(context, box, "claim-kept", `bb-box could not write the box's current GPU claim back after the rollback: ${sentence(message(error))}`);
+        }
+        at("claim-kept");
+        await this.#deps.hold?.(operation, "claim-kept", signal);
+      }
+      if (context.swap && reach < stepAt("claim-cleared")) {
+        const held = await this.#recordedClaim(context, guest, signal);
+        try {
+          if (backend.releaseGpuClaim && holdsACard(held)) {
+            await this.#recordClearing(context, guest, signal);
+            await backend.releaseGpuClaim(guest, signal);
+          }
+        } catch (error) {
+          if (signal.aborted) throw error;
+          throw this.#restoreUnsure(context, box, "claim-cleared", `bb-box could not take the GPU claim off the box's old guest: ${sentence(message(error))}`);
+        }
+        at("claim-cleared");
+        await this.#deps.hold?.(operation, "claim-cleared", signal);
       }
       if (context.swap) {
         if (reach < stepAt("adopted")) {
@@ -2973,6 +3082,19 @@ export class Snapshots {
           ledger.updateOperation(operation.id, { step: "adopted", guests: { old: guest, new: fresh } });
           at("adopted");
           await this.#deps.hold?.(operation, "adopted", signal);
+        }
+        if (reach < stepAt("claim-given")) {
+          const freshGuest = ledger.operation(operation.id)?.guests?.new ?? null;
+          const held = gpuHandoffOf(ledger.operation(operation.id) ?? operation);
+          try {
+            const clearing = clearingOf(ledger.operation(operation.id) ?? operation);
+            if (freshGuest && backend.armAdopted) await backend.armAdopted(freshGuest, held, clearing?.bootsWithNode ?? null, signal);
+          } catch (error) {
+            if (signal.aborted) throw error;
+            throw this.#restoreUnsure(context, box, "claim-given", `bb-box could not give the GPU claim to the box's new guest, so it is not set to start at boot: ${sentence(message(error))}`);
+          }
+          at("claim-given");
+          await this.#deps.hold?.(operation, "claim-given", signal);
         }
         const guests = ledger.operation(operation.id)?.guests;
         const old = guests?.old ?? guest;
@@ -3029,6 +3151,7 @@ export class Snapshots {
             await writeAccess();
             await this.#deps.hold?.(operation, "answered", signal);
           };
+          await this.#holdCard(context, guest, signal);
           started = await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered);
         } catch (error) {
           if (signal.aborted) throw error;
@@ -3102,7 +3225,64 @@ export class Snapshots {
       this.#notify(box.threadId);
       return { snapshot: ledger.record(target.id), undo, operation: done ?? operation, box, from: context.from, to, anyway: context.anyway, replaced, earlier: context.swap && !context.fromSnapshot ? left : null, newGuest: context.fromSnapshot === true, unflushed: undo ? unflushed : null, repeated: false };
     } finally {
+      backend.dropGpuCard?.(operation.box);
       this.#running.delete(operation.id);
+    }
+  }
+
+  async #recordedClaim(context: Restoring, guest: Guest, signal: AbortSignal): Promise<GpuHandoff | null> {
+    const ledger = this.#deps.ledger;
+    const current = ledger.operation(context.operation.id) ?? context.operation;
+    const recorded = gpuHandoffOf(current);
+    if (recorded || !context.backend.readGpuClaim) return recorded;
+    const held = await context.backend.readGpuClaim(guest, signal);
+    if (held) ledger.updateOperation(context.operation.id, { consent: withGpuClaim(current, held) });
+    return held;
+  }
+
+  async #holdCard(context: Restoring, guest: Guest, signal: AbortSignal): Promise<void> {
+    const held = gpuHandoffOf(this.#deps.ledger.operation(context.operation.id) ?? context.operation);
+    if (holdsACard(held) && context.backend.holdGpuCard) await context.backend.holdGpuCard(guest, held, signal);
+  }
+
+  async #holdCardOrRefuse(context: Restoring, box: BoxRecord, guest: Guest, signal: AbortSignal): Promise<void> {
+    try {
+      await this.#recordedClaim(context, guest, signal);
+      await this.#holdCard(context, guest, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      const words = sentence(message(error));
+      await this.#neverBegan(context, box, `bb-box did not restore box ${box.name}: ${words}`);
+      throw new BoxError(error instanceof BackendError && error.code === "no_capacity" ? "no_capacity" : "unreachable", `bb-box did not restore box ${box.name}: ${words} bb-box changed nothing.`);
+    }
+  }
+
+  async #recordClearing(context: Restoring, guest: Guest, signal: AbortSignal): Promise<void> {
+    const ledger = this.#deps.ledger;
+    const current = ledger.operation(context.operation.id) ?? context.operation;
+    if (clearingOf(current)) return;
+    const bootsWithNode = context.backend.bootsWithNode ? await context.backend.bootsWithNode(guest, signal) : null;
+    ledger.updateOperation(context.operation.id, { consent: { ...((current.consent as object | null) ?? {}), clearing: { bootsWithNode } } });
+  }
+
+  async #claimBack(context: Restoring, box: BoxRecord, guest: Guest, step: RestoreStep, words: string): Promise<void> {
+    const ledger = this.#deps.ledger;
+    const current = ledger.operation(context.operation.id) ?? context.operation;
+    const held = gpuHandoffOf(current);
+    const clearing = context.swap ? clearingOf(current) : null;
+    if (!clearing || !holdsACard(held) || !context.backend.armReturned) return;
+    try {
+      await context.backend.armReturned(guest, held, clearing.bootsWithNode, this.#stopping.signal);
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      ledger.updateOperation(context.operation.id, { step: "claim-back", consent: { ...((current.consent as object | null) ?? {}), putBack: { step, words } } });
+      if (box.state !== "stopped") await this.#moved(box, { state: "stopped" });
+      throw this.#restoreUnsure(
+        context,
+        box,
+        "claim-back",
+        `${words} bb-box could not give its GPU claim back to its old guest ${guest.ref}: ${sentence(message(error)).replace(/\.$/, "")}. It stays stopped, as it would start with no card, and bb-box tries again at its next sweep.`,
+      );
     }
   }
 
@@ -3225,13 +3405,23 @@ export class Snapshots {
   }
 
   async #putBack(context: Restoring, box: BoxRecord, step: RestoreStep, words: string): Promise<never> {
+    try {
+      return await this.#putBackHolding(context, box, step, words);
+    } finally {
+      context.backend.dropGpuCard?.(context.operation.box);
+    }
+  }
+
+  async #putBackHolding(context: Restoring, box: BoxRecord, step: RestoreStep, words: string): Promise<never> {
     const ledger = this.#deps.ledger;
     const { operation, backend, target } = context;
     const guest = box.guest!;
     const ran = box.restoring?.ran ?? true;
+    await this.#claimBack(context, box, guest, step, words);
     let back: string;
     if (ran) {
       try {
+        await this.#holdCard(context, guest, this.#stopping.signal);
         const started = await backend.start!(guest, this.#stopping.signal);
         box = await this.#moved(box, { state: "ready", error: null, restoring: null, ...(started ? { guest: startedGuest(guest, started) } : {}) });
         back = `bb-box started box ${box.name} again as it was`;
@@ -3322,6 +3512,10 @@ export class Snapshots {
     const step = operation.step as RestoreStep;
     if (!RESTORE_STEPS.includes(step)) return unsure(`bb-box does not know the step "${operation.step}" it had reached.`);
     if (step === "swap-back") return settle(() => this.#swapBack(context, box, "bb-box restarted while it put the box's old guest back."));
+    if (step === "claim-back") {
+      const back = puttingBackOf(operation);
+      return settle(() => this.#putBack(context, box, back?.step ?? "claim-back", back?.words ?? "bb-box restarted while it gave the box's GPU claim back to its old guest."));
+    }
     if (step === "planned") return this.#neverBegan(context, box, "bb-box restarted before the restore began.");
     if (step === "stopping") {
       const power = await backend.power(box.guest, signal).catch(() => "unknown" as const);

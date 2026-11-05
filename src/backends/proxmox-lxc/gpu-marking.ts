@@ -140,6 +140,14 @@ function reportLines(notes: string): string[] {
   return notes.split("\n").map((line) => line.trim());
 }
 
+export function reportedDriver(notes: string): string | null {
+  for (const line of reportLines(notes)) {
+    const driver = /^driver (\S+) since \d+$/.exec(line)?.[1];
+    if (driver) return driver;
+  }
+  return null;
+}
+
 export function parseHelperLines(notes: string): HelperLines {
   const indexes = new Map<string, number>();
   const cards: HelperCard[] = [];

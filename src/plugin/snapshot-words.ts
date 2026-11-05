@@ -101,6 +101,7 @@ export function forkCheckText(check: ForkCheck): string {
   return [
     `Forking "${snapshot.name}" (${snapshot.id}) of box ${check.box?.name ?? snapshot.box.name}${snapshot.boxGone ? `, ${goneWords(snapshot.boxGone)},` : ""} taken ${dayWords(snapshot.takenAt)}, would make ${where}, with ${describeSize(check.size)}, as the snapshot holds.`,
     `bb-box copies the snapshot in full, which takes up to about ${seconds(check.aboutMs)}${space}, then starts the copy, checks that it reset its identity, and only then hands it over.`,
+    check.gpu === "none" ? "The fork starts with no GPU card." : `The fork's GPU is ${check.gpu}.`,
     FORK_HOLDS,
     ...(forkMayMissWords(snapshot) ? [forkMayMissWords(snapshot)!] : []),
     "Nothing changed.",
@@ -151,6 +152,8 @@ export function restoreCheckText(check: RestoreCheck): string {
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
   lines.push(`Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
   if (check.from && check.to && describeSize(check.from) !== describeSize(check.to)) lines.push(`It goes back to ${describeSize(check.to)}, as it was then; it has ${describeSize(check.from)} now.`);
+  if (check.gpuStay) lines.push(check.gpuStay);
+  if (check.userspaceNote) lines.push(check.userspaceNote);
   if (snapshot.excludes) lines.push(`It leaves out ${snapshot.excludes}.`);
   if (check.anyway.length) lines.push(`It would also end what is on it now: ${check.anyway.join("; ")}. Restore anyway with --force.`);
   lines.push("Nothing changed. Run it again with --replace instead of --check to restore.");

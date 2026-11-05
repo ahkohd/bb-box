@@ -1036,7 +1036,7 @@ Fork a snapshot of a thread's box, or with --machine one of your machines, into 
 
 ```text
 Usage:
-  bb box snapshot fork <box> <snapshot> [--thread <value>] [--machine] [--json] [--as-machine] [--name <value>] [--check] [--request <value>]
+  bb box snapshot fork <box> <snapshot> [--thread <value>] [--machine] [--json] [--as-machine] [--name <value>] [--check] [--request <value>] [--gpu <value>]
 
 Arguments:
   <box>       The box's name or ID. (required)
@@ -1050,6 +1050,7 @@ Options:
   --name <value>     The new box's name. One is made up when left out.
   --check            Say what the fork would be, and refuse what it would refuse, changing nothing.
   --request <value>  An ID you make, so a repeat of this command is the same fork.
+  --gpu <value>      none, the default, or shared. A shared fork places a card before the copy, and only a desktop can take it.
   --help, -h         Show this help and exit
 ```
 

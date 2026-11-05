@@ -38,7 +38,7 @@ import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../prox
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
@@ -74,7 +74,9 @@ import {
   type BoxIdentity,
   type BoxKind,
   type CardClaim,
+  type GpuHandoff,
   type GpuPart,
+  type GpuRestoreFacts,
   type MachineSize,
   type BoxTransports,
   type Capacity,
@@ -120,9 +122,10 @@ import {
   type ForkArming,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { currentKindId } from "../kinds.ts";
 import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, atLeast, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
-import { answerTo, cardName, claimMarkerOf, gpuDeviceLines, judgeGpuMigration, markerOf, markerTag, parseHelperLines, pendingDeviceChange, rawGpuLines, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type MarkAnswer } from "./gpu-marking.ts";
+import { answerTo, cardName, claimMarkerOf, deviceSetOf, gpuDeviceLines, judgeGpuMigration, linesDiffer, linesFor, markerOf, markerTag, NO_HELPER_LINES, parseHelperLines, pendingDeviceChange, rawGpuLines, reportedDriver, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type LedgerClaim, type MarkAnswer } from "./gpu-marking.ts";
 import {
   ANSWER_POLL_MS,
   ANSWER_WAIT_MS,
@@ -547,6 +550,37 @@ interface StartGate {
 
 const UNGATED: StartGate = { claim: null, reservation: null, gpu: null };
 
+interface HeldClaim {
+  readonly part: GpuPart;
+  readonly card: string | null;
+  readonly generation: number;
+}
+
+const NO_CLAIM: HeldClaim = { part: "none", card: null, generation: 0 };
+
+interface CardPin {
+  readonly part: GpuPart;
+  readonly card: string;
+  readonly node: string;
+  readonly reservation: Reservation | null;
+}
+
+function ledgerBoxOf(install: string, box: string): string {
+  return `${install}/${box}`;
+}
+
+function grantedAs(claim: LedgerClaim | null, marker: ClaimMarker): boolean {
+  return claim?.answer === "granted" && claim.generation === marker.generation && claim.part === marker.part && (claim.card ?? null) === (marker.card ?? null);
+}
+
+function startsAtBoot(config: Readonly<Record<string, unknown>>): boolean {
+  return config.onboot === 1 || config.onboot === "1" || config.onboot === true;
+}
+
+function carriesNoCard(config: Readonly<Record<string, unknown>>): boolean {
+  return (claimMarkerOf(parseTags(config.tags))?.part ?? "none") === "none" && !gpuDeviceLines(config).length;
+}
+
 const POWER_ON_THE_NODE_FROM = [0, 4, 0];
 const WARM_BOUND_FROM = [0, 4, 1];
 const POWER_NODES = "gpu-helper-power";
@@ -758,6 +792,8 @@ export class ProxmoxLxcBackend implements Backend {
   #unstarted: Record<string, Record<string, string>> | undefined;
   #settling: Promise<void> | null = null;
   readonly #written = new Map<number, number>();
+  readonly #forkGpu = new Map<string, { readonly part: GpuPart; readonly card: string | null; readonly reservation: Reservation | null; readonly node: string }>();
+  readonly #pins = new Map<string, CardPin>();
   readonly #snapshots: ProxmoxSnapshotting;
 
   /**
@@ -939,7 +975,11 @@ export class ProxmoxLxcBackend implements Backend {
       await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), storageOfVolume(config.rootfs), hooks, signal, undefined, sizeOf(config)?.diskGiB ?? null);
       const owner = copyOwner(this.#context.installId, label.box);
       await disarm(this.#writesFor(api, owner), vmid, signal);
-      await this.#owned(api).configure(vmid, owner, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false }, signal);
+      const cloned = (await api.config(vmid, signal)) ?? {};
+      const none = await this.#noneFor(api, vmid, cloned, signal);
+      const tags = heldCopyTags(this.#context.installId, label, this.#now(), template);
+      await this.#owned(api).configure(vmid, owner, { tags: none ? withMarker(tags, none.marker) : tags, onboot: false }, signal);
+      if (none?.wait) await this.#askMarker(api, vmid, none.marker, signal);
       return copy;
     } finally {
       this.#reserved.delete(vmid);
@@ -972,7 +1012,10 @@ export class ProxmoxLxcBackend implements Backend {
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
     const owner = copyOwner(this.#context.installId, this.#boxData(copy));
     await disarm(this.#writesFor(api, owner), vmid, signal);
-    await this.#owned(api).configure(vmid, owner, { tags: heldCopyTags(this.#context.installId, label, this.#now(), template), onboot: false, delete: ["protection"] }, signal);
+    const none = await this.#noneFor(api, vmid, config, signal);
+    const tags = heldCopyTags(this.#context.installId, label, this.#now(), template);
+    await this.#owned(api).configure(vmid, owner, { tags: none ? withMarker(tags, none.marker) : tags, onboot: false, delete: ["protection"] }, signal);
+    if (none?.wait) await this.#askMarker(api, vmid, none.marker, signal);
     return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
   }
 
@@ -1068,11 +1111,252 @@ export class ProxmoxLxcBackend implements Backend {
       }
       const owner = madeOwner(this.#context.installId, box.boxId);
       await this.#owned(api).setNetwork(vmid, owner, nets, signal);
-      await this.#owned(api).configure(vmid, owner, { tags: boxTags(box, this.#context.installId, template), onboot: true, delete: ["protection"] }, signal);
+      await this.#owned(api).configure(vmid, owner, { tags: boxTags(box, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
       return { ...fresh, size: sizeOf(await api.config(vmid, signal)) };
     } finally {
       this.#reserved.delete(vmid);
     }
+  }
+
+  async #helperOrEmpty(api: Proxmox, signal?: AbortSignal): Promise<HelperLines> {
+    return (await this.#helperLines(api, signal).catch(() => null)) ?? NO_HELPER_LINES;
+  }
+
+  async #askMarker(api: Proxmox, vmid: number, marker: ClaimMarker, signal?: AbortSignal): Promise<void> {
+    const view = await this.#cardsView(api, signal);
+    if (view.is === "none") return;
+    const answer = await this.#askHelper(api, vmid, marker, signal);
+    if (answer.is === "granted") return;
+    const why = answer.is === "refused" ? answer.why : notAnsweredWords(api.node, answer);
+    throw new SnapshotFailed(`The host's GPU helper on ${api.node} did not grant ${markerTag(marker)}: ${why}`);
+  }
+
+  async #writeClaim(api: Proxmox, vmid: number, owner: GuestOwner, marker: ClaimMarker, signal?: AbortSignal, also: GuestSettings = {}): Promise<void> {
+    await this.#writeMarker(api, vmid, marker, owner, signal, also);
+    await this.#askMarker(api, vmid, marker, signal);
+  }
+
+  async #noneFor(api: Proxmox, vmid: number, config: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<{ readonly marker: ClaimMarker; readonly wait: boolean } | null> {
+    const marker = claimMarkerOf(parseTags(config.tags));
+    const lines = gpuDeviceLines(config);
+    if (!markerOf(parseTags(config.tags)) && !lines.length) return null;
+    if (marker?.part === "none" && !lines.length) return { marker, wait: false };
+    return { marker: await this.#nextClaim(api, vmid, "none", null, marker?.generation ?? 0, signal), wait: true };
+  }
+
+  async #nextClaim(api: Proxmox, vmid: number, part: GpuPart, card: string | null, onGuest: number, signal?: AbortSignal, boxId: string | null = null): Promise<ClaimMarker> {
+    const lines = await this.#helperOrEmpty(api, signal);
+    let generation = nextGeneration(lines, vmid, onGuest, this.#written.get(vmid) ?? 0);
+    for (const written of this.#written.values()) generation = Math.max(generation, written + 1);
+    const named = boxId === null ? null : ledgerBoxOf(this.#context.installId, boxId);
+    for (const [other, entry] of lines.ledger) {
+      if (other === vmid || named === null || entry.box !== named) continue;
+      generation = Math.max(generation, entry.answered + 1, (entry.claim?.generation ?? 0) + 1);
+    }
+    return { part, card: part === "none" ? null : card, generation };
+  }
+
+  async #holdClaim(api: Proxmox, vmid: number, owner: GuestOwner, held: HeldClaim, boxId: string | null, signal?: AbortSignal, also: GuestSettings = {}): Promise<boolean> {
+    const view = await this.#cardsView(api, signal);
+    if (view.is === "none") return false;
+    const marker = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags));
+    const card = held.part === "none" ? null : held.card;
+    const entry = (view.is === "on" ? view.lines : await this.#helperOrEmpty(api, signal)).ledger.get(vmid);
+    const asHeld = marker !== null && marker.part === held.part && marker.card === card && marker.generation >= held.generation;
+    if (asHeld && grantedAs(entry?.claim ?? null, marker)) return false;
+    if (asHeld && marker.generation > (entry?.answered ?? 0)) {
+      await this.#askMarker(api, vmid, marker, signal);
+      return false;
+    }
+    await this.#writeClaim(api, vmid, owner, await this.#nextClaim(api, vmid, held.part, card, Math.max(marker?.generation ?? 0, held.generation), signal, boxId), signal, also);
+    return true;
+  }
+
+  async #linesMatch(api: Proxmox, vmid: number, held: HeldClaim, signal?: AbortSignal): Promise<void> {
+    const view = await this.#cardsView(api, signal);
+    if (view.is === "none") return;
+    const config = await api.config(vmid, signal);
+    const cards = (view.is === "on" ? view.lines : await this.#helperOrEmpty(api, signal)).cards;
+    const card = held.part === "none" ? null : (cards.find((each) => each.uuid === held.card) ?? null);
+    const wanted = held.part === "none" ? [] : card ? linesFor(card, deviceSetOf(parseTags(config.tags), typeof config.description === "string" ? config.description : "")) : null;
+    const named = held.part === "none" ? "no card" : card ? cardName(card) : `card ${held.card}`;
+    if (!wanted) throw new SnapshotFailed(`The host's GPU helper on ${api.node} lists no device nodes for ${named}, so bb-box cannot check CT ${vmid}'s lines against its claim.`);
+    const { lacks, extra } = linesDiffer(gpuDeviceLines(config), wanted);
+    if (!lacks.length && !extra.length) return;
+    const wrong = [...(lacks.length ? [`it lacks ${lacks.join(", ")}`] : []), ...(extra.length ? [`it has ${extra.join(", ")}`] : [])].join(", and ");
+    throw new SnapshotFailed(`CT ${vmid}'s device lines do not match its claim, ${named}, after the host's GPU helper granted it: ${wrong}.`);
+  }
+
+  async readGpuClaim(guest: Guest, signal?: AbortSignal): Promise<GpuHandoff | null> {
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    const lines = await this.#helperOrEmpty(api, signal);
+    const claim = lines.ledger.get(vmid)?.claim ?? null;
+    if (claim?.answer === "granted") {
+      const index = lines.cards.find((card) => card.uuid === claim.card)?.index ?? null;
+      return { part: claim.part, card: claim.part === "none" ? null : claim.card, generation: claim.generation, index };
+    }
+    const marker = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags));
+    if (marker) return { part: marker.part, card: marker.card, generation: marker.generation, index: null };
+    return guest.claim ? { part: guest.claim.part, card: guest.claim.card, generation: guest.claim.generation, index: null } : null;
+  }
+
+  async keepGpuClaim(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    if (held.part === "none" && carriesNoCard(await api.config(vmid, signal))) return;
+    await this.#holdClaim(api, vmid, this.#boxOf(guest), held, this.#boxData(guest), signal);
+  }
+
+  async bootsWithNode(guest: Guest, signal?: AbortSignal): Promise<boolean> {
+    const api = await this.client();
+    return startsAtBoot(await api.config(this.#vmid(guest), signal));
+  }
+
+  async releaseGpuClaim(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    const owner = this.#boxOf(guest);
+    const config = await api.config(vmid, signal);
+    const gpuGuest = markerOf(parseTags(config.tags)) !== null || gpuDeviceLines(config).length > 0;
+    const written = gpuGuest && (await this.#holdClaim(api, vmid, owner, NO_CLAIM, this.#boxData(guest), signal, { onboot: false }));
+    if (!written && startsAtBoot(await api.config(vmid, signal))) await this.#owned(api).configure(vmid, owner, { onboot: false }, signal);
+  }
+
+  async armReturned(guest: Guest, held: GpuHandoff, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
+    await this.#armWithClaim(guest, this.#boxOf(guest), held, bootsWithNode, signal);
+  }
+
+  async armAdopted(guest: Guest, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
+    await this.#armWithClaim(guest, madeOwner(this.#context.installId, this.#boxData(guest)), held, bootsWithNode ?? true, signal);
+  }
+
+  async #armWithClaim(guest: Guest, owner: GuestOwner, held: GpuHandoff | null, bootsWithNode: boolean | null, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    const wanted = held ?? NO_CLAIM;
+    if (wanted.part !== "none" || !carriesNoCard(await api.config(vmid, signal))) {
+      await this.#holdClaim(api, vmid, owner, wanted, this.#boxData(guest), signal);
+      await this.#linesMatch(api, vmid, wanted, signal);
+    }
+    if (bootsWithNode !== null) await this.#owned(api).configure(vmid, owner, { onboot: bootsWithNode }, signal);
+  }
+
+  async holdGpuCard(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void> {
+    const box = this.#boxData(guest);
+    if (box === null || held.part === "none" || held.card === null) return;
+    const kept = this.#pins.get(box);
+    if (kept && kept.card === held.card && kept.part === held.part) return;
+    this.dropGpuCard(box);
+    const api = await this.client();
+    const view = await this.#cardsView(api, signal);
+    if (view.is === "none") return;
+    if (view.is === "blocked") throw new BackendError("no_capacity", blockedWords(view));
+    await this.#settled(api);
+    const key = this.#cardKey(api);
+    const vmid = this.#vmid(guest);
+    const pin: CardPin = { part: held.part, card: held.card, node: key, reservation: null };
+    const reservation = await underCardLock(key, async () => {
+      const fresh = await this.#cardsView(api, signal);
+      if (fresh.is !== "on") throw new BackendError("no_capacity", fresh.is === "blocked" ? blockedWords(fresh) : `The GPU helper's report on ${api.node} went while bb-box held box ${box}'s card.`);
+      const refused = await this.#noRoomOn(api, fresh, pin, vmid, signal);
+      if (refused) throw new BackendError("no_capacity", refused);
+      return reservationsOn(key).add(held.card!, held.part, DESKTOP_GPU_MIB, box, null);
+    });
+    this.#pins.set(box, { ...pin, reservation });
+  }
+
+  dropGpuCard(boxId: string): void {
+    const pin = this.#pins.get(boxId);
+    this.#pins.delete(boxId);
+    if (pin?.reservation) reservationsOn(pin.node).drop(pin.reservation);
+  }
+
+  async #noRoomOn(api: Proxmox, view: Extract<CardsView, { is: "on" }>, pin: CardPin, vmid: number, signal?: AbortSignal): Promise<string | null> {
+    const card = view.lines.cards.find((each) => each.uuid === pin.card);
+    if (!card) return `The GPU helper on ${api.node} no longer lists card ${pin.card}, which the box holds. A restore keeps a box on its card, so bb-box does not move it to another one.`;
+    const reservations = reservationsOn(this.#cardKey(api));
+    const ours = (await this.#ownGuests(api, signal)).filter((guest) => guest.vmid !== vmid);
+    const input = {
+      lines: view.lines,
+      memory: view.memory,
+      installId: this.#context.installId,
+      reserved: reservations.live(view.lines, this.#now()).filter((reservation) => reservation !== pin.reservation),
+      limit: pin.part === "whole" ? null : this.#config.desktop.perGpu,
+      needMiB: 0,
+      candidates: new Set([card.uuid]),
+      prefer: card.uuid,
+      vmid,
+      outstanding: outstandingRequests(view.lines, ours, reservations.inFlight()),
+      gone: reservations.gone(view.lines, this.#now()),
+    };
+    const placed = placeShared(input);
+    if (placed.is === "placed") return null;
+    const named = cardName(card);
+    return `${named.charAt(0).toUpperCase()}${named.slice(1)}, which the box holds, cannot take it now: ${placed.reasons.join("; ")}. A restore keeps a box on its card, so bb-box does not move it to another one. Release another desktop box on ${named}, or try again later.`;
+  }
+
+  #pinOf(guest: Guest): CardPin | null {
+    const box = this.#boxData(guest);
+    return box === null ? null : (this.#pins.get(box) ?? null);
+  }
+
+  async #gateOnPin(api: Proxmox, vmid: number, owner: GuestOwner, guest: Guest, pin: CardPin, signal?: AbortSignal): Promise<StartGate> {
+    const notStarted = (why: string) => new Error(`Container ${vmid} was not started: ${why} It is stopped, with its disk as it was.`);
+    const marker = claimMarkerOf(parseTags((await this.#owned(api).read(vmid, owner, signal)).tags));
+    if (!marker || marker.part !== pin.part || marker.card !== pin.card) {
+      throw notStarted(`its GPU marker is ${marker ? markerTag(marker) : "missing"}, and the box holds ${pin.part} card ${pin.card}, which a restore keeps.`);
+    }
+    await this.#settled(api);
+    const { view, granted, answer } = await this.#answered(api, vmid, marker, signal);
+    if (!granted) throw notStarted(answer.is === "refused" ? `the host's GPU helper refused its marker ${markerTag(marker)}, as ${answer.why}.` : notAnsweredWords(api.node, answer));
+    if (view.is !== "on") throw notStarted(view.is === "blocked" ? blockedWords(view) : `the GPU helper's report on ${api.node} went.`);
+    const key = this.#cardKey(api);
+    return underCardLock(key, async () => {
+      const fresh = await this.#cardsView(api, signal);
+      if (fresh.is !== "on") throw notStarted(fresh.is === "blocked" ? blockedWords(fresh) : `the GPU helper's report on ${api.node} went.`);
+      const refused = await this.#noRoomOn(api, fresh, pin, vmid, signal);
+      if (refused) throw notStarted(refused);
+      const box = this.#boxData(guest);
+      if (box !== null) this.#pins.delete(box);
+      const reservation = pin.reservation ?? reservationsOn(key).add(pin.card, pin.part, DESKTOP_GPU_MIB, box, vmid);
+      reservation.vmid = vmid;
+      return { claim: claimOf(marker, "granted"), reservation, gpu: this.#gpuIdOf(marker.card, fresh.notes) };
+    });
+  }
+
+  async gpuRestoreFacts(guest: Guest, signal?: AbortSignal): Promise<GpuRestoreFacts> {
+    const api = await this.client();
+    const view = await this.#cardsView(api, signal);
+    const driver = view.is === "on" ? reportedDriver(view.notes) : ((await this.#hostNvidia())?.version ?? null);
+    return { held: await this.readGpuClaim(guest, signal), driver };
+  }
+
+  async placeForkGpu(box: BoxIdentity, gpu: GpuPart, signal?: AbortSignal): Promise<void> {
+    this.clearForkGpu(box.boxId);
+    const desktop = currentKindId(box.kind) === "linux-desktop";
+    if (gpu === "whole") throw new BackendError("no_capacity", `Not forked: a whole card is not offered for a fork yet. Fork it with gpu shared or none. bb-box copied nothing.`);
+    if (gpu === "shared" && !desktop) throw new BackendError("unsupported", `A fork of a ${box.kind} box takes gpu none. Fork it with gpu none. bb-box copied nothing.`);
+    if (gpu === "none") {
+      if (desktop) this.#forkGpu.set(box.boxId, { part: "none", card: null, reservation: null, node: "" });
+      return;
+    }
+    const api = await this.client();
+    const offer = this.#offers().find((candidate) => candidate.flavour === "desktop");
+    if (!offer) throw new BackendError("unsupported", `Not forked: ${api.node} has no GPU desktop to place a fork on. Fork it with gpu none. bb-box copied nothing.`);
+    try {
+      const placed = await this.#placeNew(api, offer, box.boxId, new Set(), new Set(), signal);
+      this.#forkGpu.set(box.boxId, { part: "shared", card: placed.card.uuid, reservation: placed.reservation, node: this.#cardKey(api) });
+    } catch (error) {
+      const words = error instanceof Error ? error.message : String(error);
+      throw new BackendError("no_capacity", `Not forked: ${words} Fork it with gpu none, or ask the user. bb-box copied nothing.`);
+    }
+  }
+
+  clearForkGpu(boxId: string): void {
+    const plan = this.#forkGpu.get(boxId);
+    this.#forkGpu.delete(boxId);
+    if (plan?.reservation) reservationsOn(plan.node).drop(plan.reservation);
   }
 
   async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
@@ -1095,7 +1379,19 @@ export class ProxmoxLxcBackend implements Backend {
           for (const key of netKeys(made)) if (key !== "net0") nets[key] = netWith(String(made[key]), { mac: randomMac(), up: false });
           const owner = madeOwner(this.#context.installId, forked.boxId);
           await this.#owned(api).setNetwork(vmid, owner, nets, signal);
-          await this.#owned(api).configure(vmid, owner, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
+          const plan = this.#forkGpu.get(forked.boxId);
+          const onGuest = claimMarkerOf(parseTags(made.tags))?.generation ?? 0;
+          const marker = plan ? await this.#nextClaim(api, vmid, plan.part, plan.card, onGuest, signal) : null;
+          const tags = marker ? withMarker(boxTags(forked, this.#context.installId, template), marker) : boxTags(forked, this.#context.installId, template);
+          await this.#owned(api).configure(vmid, owner, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags, onboot: false, delete: ["protection"] }, signal);
+          if (marker) {
+            await this.#askMarker(api, vmid, marker, signal);
+            if (plan?.reservation) {
+              plan.reservation.vmid = vmid;
+              reservationsOn(plan.node).settle(plan.reservation, this.#now());
+            }
+            this.#forkGpu.delete(forked.boxId);
+          }
         },
         writes: (api, box, made) => this.#writesFor(api, made ? madeOwner(this.#context.installId, box) : boxOwner(this.#context.installId, box)),
         sizeOf,
@@ -1130,7 +1426,12 @@ export class ProxmoxLxcBackend implements Backend {
     const owner = copyOwner(this.#context.installId, this.#boxData(guest));
     await this.#owned(api).setNetwork(vmid, owner, (now) => Object.fromEntries(netKeys(now).map((key) => [key, netWith(String(now[key]), { mac: randomMac(), up: false })])), signal);
     const template = typeof guest.data?.template === "number" ? guest.data.template : null;
-    await this.#owned(api).configure(vmid, owner, { onboot: false, tags: [...boxTags(box, this.#context.installId, template), EARLIER_GUEST], description: `${describe(box, this.#context.installId)}\nearlier guest` }, signal);
+    const kept = claimMarkerOf(parseTags(config.tags));
+    const lines = gpuDeviceLines(config);
+    const none = kept?.part === "none" && !lines.length ? kept : kept || lines.length ? await this.#nextClaim(api, vmid, "none", null, kept?.generation ?? 0, signal) : null;
+    const tags = [...boxTags(box, this.#context.installId, template), EARLIER_GUEST];
+    await this.#owned(api).configure(vmid, owner, { onboot: false, tags: none ? withMarker(tags, none) : tags, description: `${describe(box, this.#context.installId)}\nearlier guest` }, signal);
+    if (none && none !== kept) await this.#askMarker(api, vmid, none, signal);
     return guest;
   }
 
@@ -1615,10 +1916,12 @@ export class ProxmoxLxcBackend implements Backend {
     const owner = this.#boxOf(guest);
     let gate = UNGATED;
     const marked = claimMarkerOf(parseTags((await api.config(vmid, signal)).tags)) !== null;
+    const pin = this.#pinOf(guest);
     if (status.status === "running") {
       if (marked) gate = { ...UNGATED, gpu: await this.#grantedGpu(api, vmid, signal) };
     } else {
-      if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
+      if (pin) gate = await step("gpu", () => this.#gateOnPin(api, vmid, owner, guest, pin, signal));
+      else if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
       const reservations = reservationsOn(this.#cardKey(api));
       try {
         await step("boot", () => this.#owned(api).start(vmid, owner, signal));
@@ -2088,6 +2391,19 @@ export class ProxmoxLxcBackend implements Backend {
               `Free memory on the GPU: release a desktop box, or stop what else uses it on ${node}.` + (cpu ? " Use linux-desktop-cpu boxes meanwhile." : ""),
             );
           }
+        }
+      }
+
+      const helper = await this.#helperLines(api, signal).catch(() => null);
+      if (helper?.ledgerReported) {
+        for (const card of helper.cards) {
+          const holders = helper.holders.filter((holder) => holder.card === card.uuid);
+          const whole = holders.filter((holder) => holder.part === "whole");
+          const check: Check = [`gpu.${card.uuid}.whole`, `GPU ${card.index} whole`];
+          const named = holders.map((holder) => `CT ${holder.vmid}`).join(", ");
+          if (whole.length === 1 && holders.length === 1) pass(check, `CT ${whole[0]!.vmid} holds card ${card.index} whole, and no other guest has its lines.`);
+          else if (whole.length === 0) pass(check, `No box holds card ${card.index} whole.`);
+          else fail(check, `Card ${card.index} is held whole and also by another guest: ${named}. A claim went wrong.`, "Stop the guests that should not hold it. bb-box does not move them.");
         }
       }
 
@@ -3382,8 +3698,8 @@ export class ProxmoxLxcBackend implements Backend {
     throw new BackendError("no_capacity", answer.is === "refused" ? `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${answer.why}. bb-box released the guest; nothing else changed.` : notAnsweredWords(api.node, answer));
   }
 
-  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.#owned(api).configure(vmid, owner, (config) => ({ tags: withMarker(parseTags(config.tags), marker) }), signal);
+  async #writeMarker(api: Proxmox, vmid: number, marker: ClaimMarker, owner: GuestOwner, signal?: AbortSignal, also: GuestSettings = {}): Promise<void> {
+    await this.#owned(api).configure(vmid, owner, (config) => ({ tags: withMarker(parseTags(config.tags), marker), ...also }), signal);
     this.#written.set(vmid, Math.max(this.#written.get(vmid) ?? 0, marker.generation));
   }
 

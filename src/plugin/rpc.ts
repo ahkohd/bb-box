@@ -404,18 +404,18 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return picture ? { jpeg: Buffer.from(picture.jpeg).toString("base64"), width: picture.width, height: picture.height } : null;
     },
     "snapshot.settle": ({ box }) => snapshotChange(box, "Checking the restore", () => snapshots.recover()),
-    async "snapshot.forkCheck"({ box: boxId, snapshot, asMachine }) {
+    async "snapshot.forkCheck"({ box: boxId, snapshot, asMachine, gpu }) {
       try {
         const { standing, box } = await standingFor(boxId, snapshot);
-        return await forkPreview(snapshots, box, standing, snapshot, asMachine === true);
+        return await forkPreview(snapshots, box, standing, snapshot, asMachine === true, gpu);
       } catch (error) {
         return { refusal: describeError(error, "Planning the fork"), check: null };
       }
     },
-    async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, request }) {
+    async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, gpu, request }) {
       try {
         const { standing, box } = await standingFor(boxId, snapshot);
-        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, request, projectId: box?.projectId ?? null });
+        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, ...(gpu ? { gpu } : {}), request, projectId: box?.projectId ?? null });
         return { error: null, box: answer.box ? { id: answer.box.id, name: answer.box.name } : null };
       } catch (error) {
         return { error: describeError(error, "Forking the snapshot"), box: null };

@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.1';
+use constant VERSION => '0.4.2';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -432,11 +432,12 @@ sub cards_named {
 
 sub labels_from {
     my ($description, $tags) = @_;
-    my %labels = (install => undef, box => undef, kind => undef, held => 0, earlier => 0);
+    my %labels = (install => undef, box => undef, kind => undef, held => 0, earlier => 0, described_box => undef, held_described => 0);
     my %tag = map { $_ => 1 } @$tags;
     if ($description =~ /^bb-box install (\S+) box (\S+) held copy of snapshot /) {
         $labels{install} = $1;
         $labels{held} = 1;
+        $labels{held_described} = 1;
     } elsif ($description =~ /^bb-box /) {
         $labels{install} = $1 if $description =~ /^install (\S+)$/m;
         $labels{box} = $1 if $description =~ /^box (\S+)$/m;
@@ -444,11 +445,15 @@ sub labels_from {
         $labels{kind} //= "warm-$1" if $description =~ /^bb-box warm (\S+)$/m;
         $labels{earlier} = 1 if $description =~ /^earlier guest$/m;
     }
+    $labels{described_box} = $labels{box};
+    $labels{unlabelled} = $labels{held_described} && !$tag{'held-copy'} ? 1 : 0;
     $labels{held} = 1 if $tag{'held-copy'};
     $labels{earlier} = 1 if $tag{'earlier-guest'};
     my ($kind_tag) = grep { /^kind\./ } @$tags;
     $labels{kind} = substr($kind_tag, 5) if defined $kind_tag;
     $labels{box} = undef if $labels{held} || $labels{earlier} || !defined $labels{install};
+    my ($box_tag) = grep { /^box\./ } @$tags;
+    $labels{tagged_box} = defined $box_tag ? substr($box_tag, 4) : undef;
     my $kind = $labels{kind} // '';
     $labels{set} = ($kind =~ /^linux-desktop/ || $kind =~ /^warm-desktop/) ? 'desktop' : 'server';
     return \%labels;
@@ -494,6 +499,9 @@ sub describe_guest {
         set => $labels->{set},
         held => $labels->{held},
         earlier => $labels->{earlier},
+        unrearmed => (defined $labels->{install} && defined $labels->{tagged_box} && defined $labels->{described_box} && $labels->{tagged_box} ne $labels->{described_box}) ? 1 : 0,
+        unlabelled => $labels->{unlabelled},
+        onboot => is_true($conf->{onboot}),
         template => is_true($conf->{template}),
         unprivileged => is_true($conf->{unprivileged}),
         lock => $conf->{lock},
@@ -507,6 +515,7 @@ sub describe_guest {
     $guest->{malformed} = @gpu_tags && !$guest->{marker} ? 1 : 0;
     $guest->{ineligible} = ineligibility($guest, $ctx->{served});
     $guest->{holds_nothing} = $guest->{template} || $guest->{held} || $guest->{earlier};
+    $guest->{copy} = $guest->{unrearmed} ? 'not re-armed' : $guest->{unlabelled} ? 'held copy not labelled' : undef;
     return $guest;
 }
 
@@ -780,14 +789,15 @@ sub lines_label {
 }
 
 sub change_guest {
-    my ($ctx, $vmid, $conf, $desired, $why, $label) = @_;
+    my ($ctx, $vmid, $conf, $desired, $why, $label, $no_boot) = @_;
     my $before = gpu_device_lines($conf);
-    my $change = describe_change($before, $desired);
+    my $change = describe_change($before, $desired) . ($no_boot ? '; start at boot off' : '');
     if (!$ctx->{writes}) {
         remember_would($ctx, $vmid, $why, $label, $change);
         return 'would';
     }
     with_device_lines($conf, $desired);
+    $conf->{onboot} = 0 if $no_boot;
     if ($previewing) {
         push @{ $ctx->{previewed_writes} }, "would write CT $vmid for $why: $change";
         return 'wrote';
@@ -971,6 +981,9 @@ sub evaluate_request {
     my $generation = $marker->{generation};
     my $source = copy_source($ctx, $guest);
     return refuse($ctx, $guest, 'copy', detail => $source, strip => "copy of $source") if defined $source;
+    return refuse($ctx, $guest, 'copy', detail => 'unrearmed', strip => 'not re-armed') if $guest->{unrearmed} && $marker->{part} ne 'none';
+    return refuse($ctx, $guest, $guest->{held} ? 'held' : 'earlier', strip => $guest->{held} ? 'held copy' : 'earlier guest')
+        if ($guest->{held} || $guest->{earlier}) && $marker->{part} ne 'none';
     return refuse($ctx, $guest, 'locked', detail => $guest->{lock}) if $guest->{lock};
     return refuse($ctx, $guest, 'pending') if $guest->{pending_devices};
     my $desired = [];
@@ -1319,6 +1332,12 @@ sub rebuild_ledger {
         my $guest = $guests->{$vmid};
         next if $guest->{ineligible} || !$guest->{marker} || $guest->{marker}{part} eq 'release';
         my $marker = $guest->{marker};
+        if ($guest->{unrearmed} || (($guest->{held} || $guest->{earlier}) && $marker->{part} ne 'none')) {
+            my $entry = entry_for($ctx, $guest);
+            $entry->{strip} = { why => 'not a claim', generation => $marker->{generation} } if $ctx->{writes};
+            refuse_quietly($ctx, $guest, 'copy', $guest->{unrearmed} ? 'unrearmed' : ($guest->{held} ? 'held' : 'earlier'));
+            next;
+        }
         if ($marker->{part} ne 'none' && card_blocked($ctx, $guests, $marker->{card}, $vmid)) {
             unsettle($ctx, $guest);
             next;
@@ -1820,6 +1839,35 @@ sub pass {
     return $ok ? 0 : 1;
 }
 
+sub boot_safety {
+    my ($ctx, $guests, $guest) = @_;
+    my $marker = $guest->{marker} or return;
+    return if $guest->{ineligible};
+    my $entry = $ctx->{ledger}{guests}{ $guest->{vmid} };
+    return if $marker->{generation} <= (($entry && $entry->{answered}) // 0);
+    return unless $marker->{part} eq 'none' || $guest->{unrearmed} || $guest->{held} || $guest->{earlier};
+    evaluate_request($ctx, $guests, $guest);
+}
+
+sub disarm_copy {
+    my ($ctx, $guests, $guest) = @_;
+    return unless $guest->{copy};
+    return if $guest->{ineligible} || $guest->{malformed} || $guest->{running} || $guest->{lock} || $guest->{pending_devices};
+    return unless %{ $guest->{devices} } || $guest->{onboot};
+    my $vmid = $guest->{vmid};
+    my $why = $guest->{copy};
+    return if !$ctx->{writes} && would_known($ctx, would_signature($vmid, $why, $guest, []) . ($guest->{onboot} ? '|boot' : ''));
+    with_guest($ctx, $vmid, sub {
+        my ($conf, $running) = @_;
+        my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
+        return if $running || $conf->{lock} || $fresh->{pending_devices} || !same_guest($guest, $fresh) || !$fresh->{copy};
+        return unless %{ $fresh->{devices} } || $fresh->{onboot};
+        $ctx->{would_pending} = would_signature($vmid, $fresh->{copy}, $fresh, []) . ($fresh->{onboot} ? '|boot' : '');
+        my $done = change_guest($ctx, $vmid, $conf, [], $fresh->{copy}, %{ $fresh->{devices} } ? 'lines none' : 'start at boot off', $fresh->{onboot});
+        refresh_guest($ctx, $guests, $vmid, $conf, $running) if $done eq 'wrote';
+    });
+}
+
 sub decide {
     my ($ctx, $guests, $mode) = @_;
     my $tested = pve_container_tested($ctx->{pve_container});
@@ -1852,7 +1900,12 @@ sub decide {
     }
     $ctx->{ledger_known} = 1;
     settle_identities($ctx, $guests);
-    if ($mode ne 'boot') {
+    if ($mode eq 'boot') {
+        for my $vmid (sort { $a <=> $b } keys %$guests) {
+            last if $stopping;
+            boot_safety($ctx, $guests, $guests->{$vmid});
+        }
+    } else {
         for my $vmid (request_order($guests)) {
             last if $stopping;
             decide_request($ctx, $guests, $guests->{$vmid});
@@ -1861,6 +1914,10 @@ sub decide {
     for my $vmid (sort { $a <=> $b } keys %$guests) {
         last if $stopping;
         converge($ctx, $guests, $guests->{$vmid});
+    }
+    for my $vmid (sort { $a <=> $b } keys %$guests) {
+        last if $stopping;
+        disarm_copy($ctx, $guests, $guests->{$vmid});
     }
     if ($mode ne 'boot' && !$previewing) {
         for my $vmid (sort { $a <=> $b } keys %$guests) {

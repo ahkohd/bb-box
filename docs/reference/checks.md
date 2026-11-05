@@ -109,6 +109,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.gpu-migration` | Markers on GPU guests | Where the GPU helper, bb-box-gpu, reports: every guest of this install whose device lines name a card carries the marker bb box gpu mark gives it, the helper answered each, and, in its dry run, it would write no guest (071). It names the guests that fail. |
 | `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
 | `gpu.<gpu>` | GPU &lt;gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
+| `gpu.<gpu>.whole` | GPU &lt;gpu> whole | A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071). |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 
 ## Proxmox QEMU

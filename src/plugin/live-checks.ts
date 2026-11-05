@@ -26,7 +26,7 @@ export class ReplyDrops {
   }
 }
 
-export const HOLD_STEPS = ["planned", "task", "checked", "stopped", "copied", "undo", "rolled-back", "adopted", "answered", "started", "forked"] as const;
+export const HOLD_STEPS = ["planned", "task", "checked", "stopped", "copied", "undo", "rolled-back", "claim-kept", "claim-cleared", "adopted", "claim-given", "answered", "started", "forked"] as const;
 export type HoldStepName = (typeof HOLD_STEPS)[number];
 
 export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
@@ -37,7 +37,10 @@ export const HOLD_WORDS: Readonly<Record<HoldStepName, string>> = {
   copied: "a held copy was cloned, for a restore's undo or a kept snapshot at its box's release, before it is a template",
   undo: "a restore's undo",
   "rolled-back": "a restore's rollback",
-  adopted: "a swap's new guest was made, before the swap",
+  "claim-kept": "a restore wrote the box's GPU claim back after its rollback, before its start",
+  "claim-cleared": "a swap set its old guest's GPU claim to none, before its new guest is made",
+  adopted: "a swap's new guest was made, before it has the box's GPU claim",
+  "claim-given": "a swap gave its new guest the box's GPU claim and set it to start at boot, before the swap",
   answered: "a restored box's access file, written as it started, before its own start command ran",
   started: "a restored box's start",
   forked: "a fork's copy was made, given its own addresses and disarmed, before its links come up and its first start",

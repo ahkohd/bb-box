@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import type { AcquireHooks, BoxIdentity, CardPlacement, GpuPart } from "../src/backends/types.ts";
-import { cardsOf, chooseGpu, gpuPartsOf, gpuWhenNotAsked, hasGpuPart, holdsCard, kindNamingNoGpu, recordedGpu, userspaceOf, withGpu, withRecordedGpu } from "../src/core/gpu.ts";
+import { cardsOf, chooseGpu, gpuPartsOf, gpuStayWords, gpuWhenNotAsked, hasGpuPart, holdsCard, kindNamingNoGpu, recordedGpu, userspaceOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "../src/core/gpu.ts";
 import { sameMachineSize, sameSize } from "../src/core/sizes.ts";
 import { FAKE_KINDS, FakeBackend } from "./fake-backend.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
@@ -205,4 +205,17 @@ test("071 unit 1: on the fake backend a stopped shared box starts on its card wh
   await two.backend.start!(moved);
   assert.deepEqual((await two.backend.held()).find((guest) => guest.ref === moved.ref)!.claim, { card: CARDS[1]!.card, part: "shared", generation: 2, answer: "granted" });
   assert.deepEqual(await two.holders(), [["bxgpu2 whole running"], ["bxgpu1 shared running"]]);
+});
+
+test("071 unit 6: a restore says the GPU stays as it is now, and names a userspace that no longer matches the host", () => {
+  assert.equal(gpuStayWords("none", null), "Its GPU stays as it is now: none.");
+  assert.equal(gpuStayWords("shared", 1), "Its GPU stays as it is now: shared, card 1.");
+  assert.equal(gpuStayWords("whole", null), "Its GPU stays as it is now: whole, its card.");
+  const recorded = (userspace: SnapshotGpu["userspace"], part: SnapshotGpu["part"] = "shared"): SnapshotGpu => ({ part, card: part === "none" ? null : "card", index: 0, userspace });
+  assert.equal(userspaceRestoreWords(null, "580.65.06"), "GPU not recorded.");
+  assert.equal(userspaceRestoreWords(recorded("570.86"), "580.65.06"), "This snapshot has NVIDIA's userspace 570.86, and the host's driver is now 580.65.06: nvidia-smi will fail in the box until its userspace is updated.");
+  assert.equal(userspaceRestoreWords(recorded("unknown"), "580.65.06"), "Whether this snapshot's NVIDIA userspace matches the host's driver is not known.");
+  assert.equal(userspaceRestoreWords(recorded("570.86"), null), "Whether this snapshot's NVIDIA userspace matches the host's driver is not known.");
+  assert.equal(userspaceRestoreWords(recorded("580.65.06"), "580.65.06"), null);
+  assert.equal(userspaceRestoreWords(recorded("none", "none"), "580.65.06"), null);
 });

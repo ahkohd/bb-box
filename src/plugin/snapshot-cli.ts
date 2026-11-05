@@ -209,11 +209,15 @@ export function snapshotCommands(app: BbBox) {
         name: { type: "string", description: "The new box's name. One is made up when left out." },
         check: { type: "boolean", description: "Say what the fork would be, and refuse what it would refuse, changing nothing." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same fork." },
+        gpu: { type: "string", description: "none, the default, or shared. A shared fork places a card before the copy, and only a desktop can take it." },
       },
       run: ({ positionals, options }, ctx) =>
         guard("Forking the snapshot", async () => {
           const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
-          const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}) };
+          const asked = options.gpu === undefined ? undefined : String(options.gpu);
+          if (asked !== undefined && asked !== "none" && asked !== "shared") throw new BoxError("invalid_value", "gpu is none or shared. bb-box copied nothing.");
+          const gpu: "none" | "shared" | undefined = asked === "shared" ? "shared" : asked === "none" ? "none" : undefined;
+          const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}), ...(gpu ? { gpu } : {}) };
           const gone = box ? null : snapshots.findGone(positionals.box, positionals.snapshot);
           if (options.check) {
             const check = gone ? await snapshots.checkForkGone(gone, input) : await snapshots.checkFork(COMMAND, box!, standingOf(box!), positionals.snapshot, input);
@@ -305,7 +309,7 @@ export function snapshotCommands(app: BbBox) {
                 type: "enum",
                 values: HOLD_STEPS,
                 description:
-                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; forked: once a fork's copy is made, given its own addresses and disarmed, before its links come up and its first start.",
+                  "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; claim-kept: once a restore has written the box's GPU claim back after its rollback; claim-cleared: once a swap has set its old guest's GPU claim to none; adopted: once a swap's new guest is made, before it has the claim; claim-given: once a swap's new guest has the claim; forked: once a fork's copy is made, given its own addresses and disarmed, before its links come up and its first start.",
               },
               seconds: { type: "integer", min: 1, max: 3600, description: "Hold for this many seconds, then go on. Without it, the hold lasts until bb-box restarts." },
               off: { type: "boolean", description: "Hold nothing." },
