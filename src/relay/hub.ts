@@ -233,9 +233,13 @@ export class RelayHub {
     return since > 0 && now - since < REOPEN_MS;
   }
 
-  drop(hostId: string, reason: string): void {
-    void this.#machines.get(hostId)?.relay?.then(
-      (mux) => mux.close(reason),
+  drop(hostId: string, reason: string): Promise<void> {
+    const relay = this.#machines.get(hostId)?.relay;
+    if (!relay) return Promise.resolve();
+    return relay.then(
+      (mux) => {
+        mux.close(reason);
+      },
       () => {},
     );
   }

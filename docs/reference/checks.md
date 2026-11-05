@@ -136,6 +136,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `docker.cli` | docker CLI | The docker CLI runs on BB's server. |
 | `docker.daemon` | Docker daemon | The Docker host answers, runs Linux containers, and its architecture. |
+| `docker.attach` | Attached output | On a Windows machine, a Docker host at tcp://127.0.0.1, or a BB machine whose Docker there is, returns an attached command's output. WSL's localhost forwarder does not: docker run and docker exec print nothing and exit 0. For a BB machine, set machine-docker-host to wsl://&lt;distro>. |
 | `docker.ssh` | SSH connection reuse | Over ssh://, whether the docker calls share one SSH connection. |
 | `docker.limits` | CPU and memory limits | Docker can limit a container's CPU and memory, as each box needs. |
 | `docker.cpuset` | Cores a box sees | Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores. |

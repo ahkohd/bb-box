@@ -7,6 +7,7 @@
 // runs an image the setup guide builds from the same guest scripts as the
 // Proxmox LXC templates (setup/docker/README.md).
 
+import { endpointOf } from "../../host/relay.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
 export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"] as const;
@@ -17,9 +18,10 @@ export const IMAGE_VERSION = "1";
 
 export interface DockerConfig {
   /**
-   * A unix:// or ssh:// address, bb:<machine ID> for a BB machine reached
-   * through bb-box's relay (042), or null for the docker CLI's own default:
-   * DOCKER_HOST, its context, or the local socket.
+   * A unix://, tcp://, ssh:// or wsl:// address, bb:<machine ID> for a BB
+   * machine reached through bb-box's relay (042), or null for the docker
+   * CLI's own default: DOCKER_HOST, its context, or the local socket.
+   * wsl://distro reaches Docker in that WSL distribution through wsl.exe.
    */
   readonly host: string | null;
   /** The BB machine's ID when the host is one, else null. */
@@ -34,6 +36,7 @@ export interface DockerConfig {
   readonly boxes: number;
   readonly desktopsPerGpu: number;
   readonly reserveMemoryMiB: number;
+  readonly machineDockerHost: string | null;
 }
 
 export const DOCKER_DEFAULTS = {
@@ -49,6 +52,7 @@ export const DOCKER_DEFAULTS = {
 /** Field keys in bb-box's configuration (029). Docker had no BB settings before it. */
 export const DOCKER_KEYS = {
   host: "host",
+  machineDockerHost: "machine-docker-host",
   linuxImage: "linux-image",
   desktopImage: "desktop-image",
   waylandImage: "wayland-desktop-image",
@@ -65,7 +69,15 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.",
+      "The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. wsl:// reaches Docker in that WSL distribution through wsl.exe and docker system dial-stdio, not through WSL's localhost forwarder. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.",
+    group: "connection",
+    default: "",
+  },
+  [DOCKER_KEYS.machineDockerHost]: {
+    type: "string",
+    label: "Docker on the machine",
+    description:
+      "Where Docker is on a BB machine, when Host is bb:<machine ID>. Give wsl://distro or wsl://user@distro, unix:///path/to/docker.sock, or tcp://host:port. bb-box sends it when that machine's relay opens, and the machine dials it instead of its own DOCKER_HOST or docker context. Empty leaves those. On a Windows machine whose Docker is at tcp://127.0.0.1, set wsl://<distro>: WSL's localhost forwarder drops attached output, so docker exec prints nothing and exits 0.",
     group: "connection",
     default: "",
   },
@@ -158,6 +170,11 @@ const UNIX = /^unix:\/\/\/[^\s'"]+$/;
 export const BB_MACHINE = /^bb:([A-Za-z0-9_-]{1,64})$/;
 const SSH = /^ssh:\/\/(?:[a-z_][a-z0-9_.-]{0,31}@)?(?:\[[0-9a-fA-F:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]*)(?::\d{1,5})?$/;
 
+function directHost(host: string): boolean {
+  if (!host.startsWith("tcp://") && !host.startsWith("wsl://")) return false;
+  return endpointOf(host) !== null;
+}
+
 /** Docker's part of bb-box's configuration (029), with each problem at its field. */
 export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> {
   const values = part.fields;
@@ -165,8 +182,15 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const problem = (path: string, message: string) => problems.push({ path, message });
 
   const host = text(values, DOCKER_KEYS.host);
-  if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host)) {
-    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host or bb:<machine ID>, or empty for the docker CLI's default.`);
+  if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host) && !directHost(host)) {
+    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID>, or empty for the docker CLI's default.`);
+  }
+  const machineTarget = text(values, DOCKER_KEYS.machineDockerHost);
+  const machineId = BB_MACHINE.exec(host)?.[1] ?? null;
+  if (machineTarget && !endpointOf(machineTarget)) {
+    problem(DOCKER_KEYS.machineDockerHost, `Docker: machine-docker-host "${machineTarget}" must be wsl://distro, wsl://user@distro, unix:///path/to/docker.sock or tcp://host:port.`);
+  } else if (machineTarget && !machineId) {
+    problem(DOCKER_KEYS.machineDockerHost, "Docker: machine-docker-host is for a host of bb:<machine ID>. It names where Docker is on that machine.");
   }
 
   const linux = text(values, DOCKER_KEYS.linuxImage, DOCKER_DEFAULTS.linuxImage);
@@ -200,5 +224,16 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, machine: BB_MACHINE.exec(host)?.[1] ?? null, images, docker: privileged, network, boxes, desktopsPerGpu, reserveMemoryMiB } };
+  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null } };
+}
+
+export function machineDockerHost(backends: readonly { readonly type: string; readonly fields: Readonly<Record<string, unknown>> }[], hostId: string): string | null {
+  const values = new Set<string>();
+  for (const backend of backends) {
+    if (backend.type !== "docker" || backend.fields.host !== `bb:${hostId}`) continue;
+    const value = backend.fields[DOCKER_KEYS.machineDockerHost];
+    if (typeof value === "string" && value.trim()) values.add(value.trim());
+  }
+  if (values.size > 1) throw new Error(`BB machine ${hostId} has more than one machine-docker-host: ${[...values].join(", ")}.`);
+  return [...values][0] ?? null;
 }

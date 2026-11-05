@@ -23,6 +23,8 @@ import {
 } from "../../transports/types.ts";
 import type { DockerCli } from "./cli.ts";
 
+export const MISSING_STATUS = "docker exec ended without an exit status. The stream closed before the command's exit status, so exit 0 would not be the command's.";
+
 export const BOX_USER = "box";
 export const BOX_HOME = `/home/${BOX_USER}`;
 
@@ -43,7 +45,11 @@ export class DockerTransport implements CommandTransport {
   constructor(cli: DockerCli, container: string) {
     this.#cli = cli;
     this.#container = container;
-    this.#line = new CommandLine({ argv: (script) => this.#exec(["/bin/sh", "-c", PRELUDE + script]) });
+    this.#line = new CommandLine({
+      argv: (script) => this.#exec(["/bin/sh", "-c", PRELUDE + script]),
+      statusFromMark: true,
+      missingStatus: MISSING_STATUS,
+    });
   }
 
   /** `docker exec` of `command` as the box user, in the box user's home, with stdin open. */

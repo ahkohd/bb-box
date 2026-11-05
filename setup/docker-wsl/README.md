@@ -2,9 +2,11 @@
 
 This makes a Windows PC a Docker host for bb-box's
 [Docker backend](../docker/README.md). Docker Engine runs in one WSL 2
-distribution, `bbdocker`, with its own SSH server on port 2222. WSL's
-mirrored networking puts that port on the PC's own address, so the backend's
-host is `ssh://box@<pc>:2222`. Boxes then work as on a Linux Docker host.
+distribution, `bbdocker`, and listens on its unix socket only. When BB runs
+on this PC, the backend's host is `wsl://bbdocker`. bb-box reaches the
+daemon with `wsl.exe` and `docker system dial-stdio`, inside the
+distribution, so the bytes never cross WSL's localhost forwarder. The
+distribution also runs SSH on port 2222, for a BB server on another machine.
 
 It works on every edition of Windows 11, Home too, needs no Docker Desktop,
 and runs before anyone signs in. A box is ready 2 to 4 s after it is asked
@@ -25,13 +27,15 @@ How it works:
   distribution listens on the PC's addresses, and turns off WSL's idle
   timeout, so it keeps running with nobody using it. It also turns off WSLg,
   WSL's Linux GUI support, whose compositor crashes with nobody signed in.
-  Mirrored networking is also how attached output arrives. WSL's localhost
-  forwarding, which a program on Windows uses to reach Docker in the
-  distribution at `tcp://127.0.0.1:2375`, drops an attached stream: `docker
-  run` that prints output, and `docker exec`, exit 0 and print nothing.
-  This host uses SSH on port 2222, which does not go through that
-  forwarder. bb-box itself no longer needs attached output: it reads a file
-  out of an image with `docker create`, `docker cp` and `docker rm`.
+  Mirrored networking is how SSH from another machine reaches the
+  distribution. It is not how bb-box on this PC reaches Docker.
+- dockerd stays on its unix socket. Nothing listens on `127.0.0.1:2375`.
+  WSL's localhost forwarder, which a program on Windows uses to reach a TCP
+  port inside the distribution, drops an attached stream once the client
+  closes its write side. `docker run` that prints output, and `docker exec`,
+  then exit 0 and print nothing. `wsl://bbdocker` does not use that
+  forwarder: `wsl.exe` runs `docker system dial-stdio` in the distribution,
+  and the daemon's reply comes back on the process's stdout.
 - A rule in the Hyper-V firewall, which filters WSL's traffic, lets port 2222
   in. The Windows firewall can stay on.
 - A scheduled task, "bb-box WSL Docker host", starts the distribution when
@@ -88,8 +92,15 @@ prints the host to use and the PC's addresses. Its options:
 
 ### 2. Build the images
 
-From a checkout of bb-box on the machine that runs BB, as the user BB runs
-as, log in once to accept the PC's host key, then build:
+On this PC, run the build inside the distribution, on dockerd's unix socket.
+`cd` to a checkout of bb-box. `/mnt/c/...` is a path on the PC's `C:` drive:
+
+```powershell
+wsl.exe -d bbdocker -u box -e bash -lc "cd /mnt/c/src/bb-box && setup/docker/build.sh"
+```
+
+From a BB server on another machine, log in once to accept the PC's host key,
+then build:
 
 ```sh
 ssh -p 2222 box@<pc> true
@@ -98,9 +109,22 @@ DOCKER_HOST=ssh://box@<pc>:2222 setup/docker/build.sh
 
 ### 3. Configure bb-box
 
-Set up the Docker backend as its [guide](../docker/README.md) says, with
-`host` set to `ssh://box@<pc>:2222`. Use the PC's name or a fixed address: a
-DHCP address can change.
+Set up the Docker backend as its [guide](../docker/README.md) says.
+
+When BB runs on this PC, set `host` to `wsl://bbdocker`. That is the
+distribution's name. `wsl://box@bbdocker` is the same with the Linux user
+named. bb-box runs `wsl.exe -d bbdocker -u box -e docker`, and dial-stdio
+for the relay, against the unix socket. Do not set `tcp://127.0.0.1:2375`.
+
+When BB's server is another machine and this PC is a BB machine, leave
+`host` as `bb:<this machine's ID>`. Set `machine-docker-host` to
+`wsl://bbdocker`. bb-box sends that when the machine's relay opens, and the
+Windows daemon dials `wsl.exe` and `docker system dial-stdio`. It does not
+read the machine's `DOCKER_HOST` or docker context, which stay as they are.
+Do not point those at `wsl://`: `docker.exe` does not understand it.
+
+When this PC is not a BB machine, set `host` to `ssh://box@<pc>:2222`. Use
+the PC's name or a fixed address: a DHCP address can change.
 
 Set Memory kept free (`reserve-memory-mib`) to 1024. WSL's memory limit
 already keeps Windows' share, and with WSL at 12 GB the default of 4096
@@ -109,9 +133,12 @@ refuses a desktop box.
 ## Check it worked
 
 ```sh
-DOCKER_HOST=ssh://box@<pc>:2222 docker info
+wsl.exe -d bbdocker -u box -e docker info
 bb box doctor
 ```
+
+From another machine, `DOCKER_HOST=ssh://box@<pc>:2222 docker info` is the
+same check.
 
 `linux` and `linux-desktop-cpu` boxes are tested on WSL. The Wayland desktop
 image builds there too, but has not been tried on WSL yet, and GPU desktops
@@ -145,10 +172,13 @@ are not tested: use `linux-desktop-cpu`.
 ## When it goes wrong
 
 - **`docker run` or `docker exec` from Windows prints nothing and exits 0**:
-  that is WSL's localhost forwarding, as above. Point Docker at
-  `ssh://box@<pc>:2222` with mirrored networking, not at
-  `tcp://127.0.0.1:2375`. bb-box's own image build does not need the attached
-  stream.
+  that is WSL's localhost forwarder. When BB runs on this PC, the host is
+  `wsl://bbdocker`, not `tcp://127.0.0.1:2375`. When BB's server is another
+  machine, `host` stays `bb:<this machine's ID>` and `machine-docker-host`
+  is `wsl://bbdocker`. dockerd stays on its unix socket. bb-box's doctor
+  fails a Windows machine whose Docker is at `tcp://127.0.0.1` when an
+  attached command's output does not come back, and a box command whose
+  stream ends without an exit status fails instead of reporting exit 0.
 - **`Connection refused` on port 2222**: check that the distribution runs,
   with `wsl --list --verbose` as the user who set it up, and that the
   scheduled task runs: `Get-ScheduledTask "bb-box WSL Docker host"`.

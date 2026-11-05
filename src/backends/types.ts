@@ -1299,6 +1299,12 @@ export interface MachineAccess {
   platform?(hostId: string): GuestOs | null;
   /** Whether BB shows the machine connected now and has heard from it lately, with no call to it. Null when BB has no such machine. */
   connected(hostId: string): Promise<boolean | null>;
+  /**
+   * What the machine's host entry reaches for Docker, and whether an attached
+   * command's output comes back. `attached` is false when WSL's localhost
+   * forwarder dropped it. Null when the machine did not say.
+   */
+  dockerProbe?(hostId: string, signal?: AbortSignal): Promise<{ endpoint: string; attached: boolean | null }>;
   /** bb-box's msb on BB machine `hostId`, which its host entry runs there (053). */
   msb?(hostId: string): MsbAccess;
 }

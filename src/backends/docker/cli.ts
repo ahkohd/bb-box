@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
+import { wslArgs, wslFrom } from "../../host/relay.ts";
 import { parseCpuList } from "./cpus.ts";
 import { mountsLxcfs } from "./lxcfs.ts";
 
@@ -257,6 +258,8 @@ export class DockerCli {
 
   /** The command line for `docker <args>` on this host. */
   argv(args: readonly string[]): [string, ...string[]] {
+    const wsl = this.host ? wslFrom(this.host) : null;
+    if (wsl) return ["wsl.exe", ...wslArgs(wsl, ["docker", ...args])];
     return [this.#binary, ...(this.host ? ["-H", this.host] : []), ...args];
   }
 
@@ -341,3 +344,4 @@ export class DockerCli {
     return this.inspect(ids, signal);
   }
 }
+

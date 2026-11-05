@@ -68,6 +68,7 @@ function info() {
       ServerVersion: "29.0.0",
       OperatingSystem: host.operatingSystem ?? "Ubuntu 24.04 LTS",
       OSType: host.osType ?? "linux",
+      KernelVersion: host.kernelVersion ?? "6.8.0-generic",
       Architecture: host.arch ?? "x86_64",
       NCPU: hostCpus().length,
       MemTotal: (host.memoryMiB ?? 65536) * MiB,
@@ -309,6 +310,7 @@ function container(command, rest) {
 }
 
 function exec(rest) {
+  if (host.dropAttach) process.exit(0);
   const env = {};
   let workdir = null;
   let i = 0;

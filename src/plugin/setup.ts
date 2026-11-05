@@ -48,6 +48,7 @@ import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi, type JoinAgain, type JoinAlarm } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "./holder.ts";
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
+import { machineDockerHost } from "../backends/docker/config.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
 import { EncoderLedgers, type Decision } from "../core/encoder-ledger.ts";
@@ -517,11 +518,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         ? `BB has no machine ${hostId}.`
         : `${machineNames.get(hostId) ?? `BB machine ${hostId}`} ${machineStates.get(hostId)?.offline ?? "is offline in BB."}`,
     );
+  const relayTargets = new Map<string, string>();
+  const dockerOnMachine = (hostId: string) => machineDockerHost(configuration.document.backends, hostId);
   const relay = new RelayHub({
     async open(hostId, secret, signal) {
       const connected = await machineConnected(hostId);
       if (connected !== true) throw offline(hostId, connected);
-      return host.call("relay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${RELAY_ROUTE}` }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      const dockerHost = dockerOnMachine(hostId);
+      relayTargets.set(hostId, dockerHost ?? "");
+      return host.call("relay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${RELAY_ROUTE}`, ...(dockerHost ? { dockerHost } : {}) }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
     },
     // While bb-box has a box on a Docker backend on the machine, its relay stays open.
     async keep(hostId) {
@@ -574,7 +579,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async ready(hostId) {
       const connected = await machineConnected(hostId);
       if (connected !== true) throw offline(hostId, connected);
+      const want = dockerOnMachine(hostId) ?? "";
+      const had = relayTargets.get(hostId);
+      if (had !== undefined && had !== want) {
+        await relay.drop(hostId, "bb-box's machine-docker-host for this machine changed");
+        relayTargets.delete(hostId);
+      }
       await relay.endpoint(hostId);
+    },
+    async dockerProbe(hostId, signal) {
+      const dockerHost = dockerOnMachine(hostId);
+      const answer = await host.call("docker", dockerHost ? { dockerHost } : {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      return { endpoint: answer.endpoint, attached: answer.attached ?? null };
     },
     name: (hostId) => machineNames.get(hostId) ?? null,
     platform: (hostId) => machinePlatforms.get(hostId),
@@ -1333,12 +1349,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     document: () => configuration.document,
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
     async found(hostId, signal) {
-      const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      const dockerHost = machineDockerHost(configuration.document.backends, hostId);
+      const answer = await host.call("docker", dockerHost ? { dockerHost } : {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
       if (answer.setup) setupFactsOf.set(hostId, answer.setup);
       // A machine's OS newly known: panels with the form open learn it for "Runs on".
       if (answer.platform && (await machinePlatforms.learn(hostId, answer.platform))) notify(null);
       // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
       if (answer.refused) throw new Error(answer.reason ?? "Docker's socket refused BB's daemon.");
+      if (answer.attached === false) throw new Error(answer.reason ?? "WSL's localhost forwarder dropped the attached output.");
       return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;
     },
     async docker(hostId, signal) {

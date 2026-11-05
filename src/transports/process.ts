@@ -173,6 +173,8 @@ export interface CommandLineOptions {
    * Their runs end only once nothing holds the output open.
    */
   readonly posix?: boolean;
+  readonly statusFromMark?: boolean;
+  readonly missingStatus?: string;
 }
 
 export class CommandLine {
@@ -271,6 +273,7 @@ export class CommandLine {
       let timedOut = false;
       let killed = false;
       let settled = false;
+      let closing = false;
       // After a kill, anything that inherited the pipes could hold them open,
       // so the result is settled on exit rather than on close. A command line
       // that has exited already is settled at once.
@@ -317,13 +320,19 @@ export class CommandLine {
       };
       /** Ends a run without both marks: output held back as a possible mark was output after all. */
       const ended = (code: number | null) => {
-        if (settled) return;
+        if (closing || settled) return;
+        closing = true;
         if (marks) {
           const [out, err] = [marks.stdout.rest(), marks.stderr.rest()];
           if (out.length) onStdout(out);
           if (err.length) onStderr(err);
         }
-        finish(null, marks?.stdout.status ?? marks?.stderr.status ?? code);
+        const status = marks?.stdout.status ?? marks?.stderr.status ?? null;
+        if (status === null && this.#options.statusFromMark && code === 0) {
+          finish(this.#error(this.#options.missingStatus ?? "the command ended without an exit status"), null);
+          return;
+        }
+        finish(null, status ?? code);
       };
       child.stdout.on("data", pass(marks?.stdout, onStdout));
       child.stderr.on("data", pass(marks?.stderr, onStderr));

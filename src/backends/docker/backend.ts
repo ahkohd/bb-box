@@ -56,6 +56,8 @@ import {
   type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { endpointOf } from "../../host/relay.ts";
+import { ATTACH_PING, forwarderReason, isLocalhost, readAfterHalfClose } from "./attach.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsMountArgs, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
@@ -71,6 +73,7 @@ import { dockerImageBuilding } from "./building.ts";
 const READY_TIMEOUT_MS = 60_000;
 /** setup/docker/start writes it once the box is up. /run is a tmpfs, so it is new at each start. */
 const READY_FILE = "/run/bb-box/ready";
+const MACHINE_ATTACH_FIX = "Set machine-docker-host to wsl://<distro> on this backend. The host stays bb:<machine ID>. dockerd stays on its unix socket.";
 /** The image's main process. */
 const START = "/usr/local/sbin/bb-box-start";
 const VNC_PORT = 5900;
@@ -401,6 +404,7 @@ function hostWords(host: string | null, machines?: MachineAccess): string {
   const machine = BB_MACHINE.exec(host)?.[1];
   if (machine) return machines?.name(machine) ?? `BB machine ${machine}`;
   if (host.startsWith("ssh://")) return host.slice(6).replace(/^[^@]*@/, "");
+  if (host.startsWith("wsl://")) return host.slice("wsl://".length);
   return host;
 }
 
@@ -1113,7 +1117,9 @@ export class DockerBackend implements Backend {
         "docker CLI",
         "fail",
         version instanceof Error ? version.message : version.stderr.trim() || `exit code ${version.exitCode}`,
-        "Install the docker CLI on BB's server, on the PATH of the user BB runs as.",
+        this.#config.host?.startsWith("wsl://")
+          ? `Check that wsl.exe can start ${hostWords(this.#config.host)} and that docker system dial-stdio there reaches Docker.`
+          : "Install the docker CLI on BB's server, on the PATH of the user BB runs as.",
       );
     } else {
       push("docker.cli", "docker CLI", "ok", version.stdout.trim());
@@ -1131,7 +1137,9 @@ export class DockerBackend implements Backend {
           ? "Start Docker on BB's server, and let the user BB runs as use it (on Linux, add it to the docker group), or set the Docker host in bb-box's settings."
           : this.#config.host.startsWith("ssh://")
             ? `Check that the user BB runs as logs in to ${hostWords(this.#config.host)} over SSH without a prompt, and that the user it logs in as may use Docker there.`
-            : `Check that ${this.#config.host} is a Docker socket the user BB runs as may use.`;
+            : this.#config.host.startsWith("wsl://")
+              ? `Check that wsl.exe can start ${hostWords(this.#config.host)} and that docker system dial-stdio there reaches Docker.`
+              : `Check that ${this.#config.host} is a Docker socket the user BB runs as may use.`;
         push("docker.daemon", "Docker daemon", "fail", message(error), fix);
       }
     } else {
@@ -1154,6 +1162,7 @@ export class DockerBackend implements Backend {
       } else {
         push("docker.daemon", "Docker daemon", "ok", `${facts}.`);
       }
+      await this.#attached(push, signal);
 
       const reuse = await sshReuse(this.#cli.host, this.#options.ssh, signal);
       if (reuse?.shared) {
@@ -1715,12 +1724,63 @@ export class DockerBackend implements Backend {
     return this.#imageBuild(tag, current.kind, "standard", labels, false);
   }
 
+  async #attached(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw signal.reason;
+    if (this.#config.machine) {
+      if (this.hostOs !== "windows") return;
+      const probe = this.#context.machines?.dockerProbe;
+      if (!probe) return;
+      let answer: { endpoint: string; attached: boolean | null };
+      try {
+        answer = await probe(this.#config.machine, signal);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        push("docker.attach", "Attached output", "fail", `An attached command on ${this.#host} failed: ${message(error)}`, MACHINE_ATTACH_FIX);
+        return;
+      }
+      const named = answer.endpoint.includes("://") ? answer.endpoint : `tcp://${answer.endpoint}`;
+      const tcp = endpointOf(named);
+      if (!tcp || !("host" in tcp) || !isLocalhost(tcp.host)) return;
+      const where = `${tcp.host}:${tcp.port}`;
+      if (answer.attached === false) {
+        push("docker.attach", "Attached output", "fail", forwarderReason(where), MACHINE_ATTACH_FIX);
+        return;
+      }
+      push("docker.attach", "Attached output", "ok", `An attached command's output comes back from tcp://${where} on ${this.#host}.`);
+      return;
+    }
+    const address = this.#config.host;
+    const tcp = address ? endpointOf(address) : null;
+    if (!tcp || !("host" in tcp) || !isLocalhost(tcp.host) || this.hostOs !== "windows") return;
+    const where = `${tcp.host}:${tcp.port}`;
+    let text = "";
+    let failed: string | null = null;
+    try {
+      text = await readAfterHalfClose(tcp.port, tcp.host, ATTACH_PING);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      failed = message(error);
+    }
+    if (text.trim()) {
+      push("docker.attach", "Attached output", "ok", `An attached command's output comes back from tcp://${where}.`);
+      return;
+    }
+    push(
+      "docker.attach",
+      "Attached output",
+      "fail",
+      failed ? `An attached command to tcp://${where} failed: ${failed}` : forwarderReason(where),
+      "Set the Docker host to wsl://<distro>, as setup/docker-wsl does. dockerd stays on its unix socket.",
+    );
+  }
+
   /** Waits for the box's main process to say the box is up, in one `docker exec`. */
   async #ready(ref: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const seconds = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
-    const script = `i=0; while [ ! -e ${READY_FILE} ]; do i=$((i+1)); [ "$i" -le ${seconds * 10} ] || exit 3; sleep 0.1; done`;
+    const script = `i=0; while [ ! -e ${READY_FILE} ]; do i=$((i+1)); [ "$i" -le ${seconds * 10} ] || exit 3; sleep 0.1; done; echo bb-box-ready`;
     const result = await this.#cli.run(["exec", "--user", BOX_USER, ref, "/bin/sh", "-c", script], { timeoutMs: (seconds + 30) * 1000, signal });
-    if (result.exitCode === 0) return;
+    if (result.exitCode === 0 && result.stdout.includes("bb-box-ready")) return;
+    if (result.exitCode === 0) throw new Error(`docker exec ended without an exit status: ${ref} printed nothing, so exit 0 is not the command's status.`);
     if (signal?.aborted) throw signal.reason;
     const [found] = await this.#cli.inspect([ref], signal).catch(() => []);
     const logs = await this.#logs(ref, signal);

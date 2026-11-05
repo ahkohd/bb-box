@@ -1,0 +1,154 @@
+import assert from "node:assert/strict";
+import { createServer, type Socket } from "node:net";
+import { test } from "node:test";
+import { ATTACH_PING, readAfterHalfClose } from "../src/backends/docker/attach.ts";
+import { MISSING_STATUS } from "../src/backends/docker/transport.ts";
+import { CommandLine } from "../src/transports/process.ts";
+import { DockerBackend } from "../src/backends/docker/backend.ts";
+import { machineDockerHost, parseDockerPart } from "../src/backends/docker/config.ts";
+import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
+import { MemoryStorage, testContext } from "./helpers.ts";
+import type { AcquireHooks, BoxIdentity, MachineSize } from "../src/backends/types.ts";
+
+const SMALL: MachineSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const signal = () => AbortSignal.timeout(30_000);
+
+function listen(answer: string | null): Promise<{ port: number; close: () => Promise<void> }> {
+  const open = new Set<Socket>();
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    open.add(socket);
+    socket.on("close", () => open.delete(socket));
+    socket.on("error", () => {});
+    socket.on("data", () => {});
+    socket.on("end", () => socket.end(answer ?? ""));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      resolve({
+        port,
+        close: () =>
+          new Promise((done) => {
+            for (const socket of open) socket.destroy();
+            server.close(() => done());
+          }),
+      });
+    });
+  });
+}
+
+test("a forwarder that drops output after a half-close fails the doctor and is not an exit status", async () => {
+  const dropped = await listen(null);
+  const honest = await listen("OK");
+  try {
+    assert.equal(await readAfterHalfClose(honest.port, "127.0.0.1", ATTACH_PING, 1_000), "OK");
+    assert.equal(await readAfterHalfClose(dropped.port, "127.0.0.1", ATTACH_PING, 1_000), "");
+
+    const fake = fakeDockerHost({ kernelVersion: "6.6.87.2-microsoft-standard-WSL2" });
+    const backend = new DockerBackend(dockerConfig({ host: `tcp://127.0.0.1:${dropped.port}` }), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000 });
+    const report = await backend.doctor(signal());
+    const check = report.checks.find((entry) => entry.id === "docker.attach");
+    assert.equal(check?.status, "fail");
+    assert.match(check?.detail ?? "", /localhost forwarder/);
+    assert.match(check?.fix ?? "", /wsl:\/\//);
+
+    const kept = new DockerBackend(dockerConfig({ host: `tcp://127.0.0.1:${honest.port}` }), testContext(new MemoryStorage(), "other"), { binary: fake.binary, readyTimeoutMs: 2_000 });
+    const ok = await kept.doctor(signal());
+    assert.equal(ok.checks.find((entry) => entry.id === "docker.attach")?.status, "ok");
+
+    const linux = new DockerBackend(dockerConfig({ host: `tcp://127.0.0.1:${dropped.port}` }), testContext(new MemoryStorage(), "linux-host"), { binary: fakeDockerHost().binary, readyTimeoutMs: 2_000 });
+    const plain = await linux.doctor(signal());
+    assert.equal(plain.checks.some((entry) => entry.id === "docker.attach"), false);
+
+    const missing = new CommandLine({
+      argv: () => ["/bin/sh", "-c", "exit 0"],
+      statusFromMark: true,
+      missingStatus: MISSING_STATUS,
+    });
+    await assert.rejects(missing.run("hostname; echo x; exit 3"), /without an exit status/);
+  } finally {
+    await dropped.close();
+    await honest.close();
+  }
+});
+
+test("docker exec that exits 0 without an end mark is not a success", async () => {
+  const fake = fakeDockerHost();
+  const backend = new DockerBackend(dockerConfig(), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000 });
+  let n = 0;
+  const identity = (): BoxIdentity => {
+    n += 1;
+    return { boxId: `bxwsl${String(n).padStart(9, "0")}`, threadId: "thr_abc123", name: `calm-otter-${n}`, kind: "linux", createdAt: 1_790_000_000_000, size: { ...SMALL, gpu: "none" } };
+  };
+  const hooks: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
+  const guest = await backend.acquire(identity(), null, hooks, signal());
+  fake.set({ dropAttach: true });
+  const { command } = await backend.transports(guest, "linux");
+  await assert.rejects(command!.run("hostname; echo x; exit 3"), /without an exit status/);
+});
+
+test("a wsl host that cannot start wsl.exe fails the doctor with the reason", async () => {
+  const fake = fakeDockerHost();
+  const backend = new DockerBackend(dockerConfig({ host: "wsl://bbdocker" }), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const report = await backend.doctor(signal());
+  const cli = report.checks.find((entry) => entry.id === "docker.cli");
+  assert.equal(cli?.status, "fail");
+  assert.match(`${cli?.detail ?? ""} ${cli?.fix ?? ""}`, /wsl\.exe/);
+  assert.equal(report.checks.find((entry) => entry.id === "docker.daemon")?.status, "skipped");
+});
+
+test("machine-docker-host names where Docker is on a relayed machine", () => {
+  assert.equal(dockerConfig({ host: "bb:host_win", "machine-docker-host": "wsl://archlinux" }).machineDockerHost, "wsl://archlinux");
+  assert.equal(dockerConfig({ host: "bb:host_win", "machine-docker-host": "wsl://box@archlinux" }).machineDockerHost, "wsl://box@archlinux");
+  assert.equal(dockerConfig({ host: "bb:host_win", "machine-docker-host": "unix:///var/run/docker.sock" }).machineDockerHost, "unix:///var/run/docker.sock");
+  assert.equal(dockerConfig({ host: "bb:host_win", "machine-docker-host": "tcp://10.0.0.2:2375" }).machineDockerHost, "tcp://10.0.0.2:2375");
+  assert.equal(dockerConfig({ host: "bb:host_win" }).machineDockerHost, null);
+  const bad = parseDockerPart({ id: "docker", fields: { host: "bb:host_win", "machine-docker-host": "ssh://box@pc" }, hosts: [] });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.match(bad.problems.map((problem) => problem.message).join("\n"), /machine-docker-host/);
+  const local = parseDockerPart({ id: "docker", fields: { "machine-docker-host": "wsl://archlinux" }, hosts: [] });
+  assert.equal(local.ok, false);
+  if (!local.ok) assert.match(local.problems.map((problem) => problem.message).join("\n"), /bb:<machine ID>/);
+  assert.equal(machineDockerHost([{ type: "docker", fields: { host: "bb:host_win", "machine-docker-host": "wsl://archlinux" } }], "host_win"), "wsl://archlinux");
+  assert.equal(machineDockerHost([{ type: "docker", fields: { host: "bb:host_win" } }], "host_win"), null);
+  assert.throws(() => machineDockerHost([
+    { type: "docker", fields: { host: "bb:host_win", "machine-docker-host": "wsl://archlinux" } },
+    { type: "docker", fields: { host: "bb:host_win", "machine-docker-host": "wsl://other" } },
+  ], "host_win"), /more than one/);
+});
+
+test("a relayed Windows machine at tcp://127.0.0.1 fails the attach check and the fix names machine-docker-host", async () => {
+  const fake = fakeDockerHost();
+  const context = testContext();
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_win" }), {
+    ...context,
+    machines: {
+      dockerHost: () => "unix:///tmp/bb-box-test.sock",
+      ready: async () => {},
+      name: () => "pc",
+      platform: () => "windows",
+      connected: async () => true,
+      dockerProbe: async () => ({ endpoint: "127.0.0.1:2375", attached: false }),
+    },
+  }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const report = await backend.doctor(signal());
+  const check = report.checks.find((entry) => entry.id === "docker.attach");
+  assert.equal(check?.status, "fail");
+  assert.match(check?.detail ?? "", /localhost forwarder/);
+  assert.match(check?.fix ?? "", /machine-docker-host/);
+
+  const kept = new DockerBackend(dockerConfig({ host: "bb:host_win", "machine-docker-host": "wsl://archlinux" }), {
+    ...testContext(new MemoryStorage(), "kept"),
+    machines: {
+      dockerHost: () => "unix:///tmp/bb-box-test.sock",
+      ready: async () => {},
+      name: () => "pc",
+      platform: () => "windows" as const,
+      connected: async () => true,
+      dockerProbe: async () => ({ endpoint: "wsl://archlinux", attached: null }),
+    },
+  }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const ok = await kept.doctor(signal());
+  assert.equal(ok.checks.some((entry) => entry.id === "docker.attach"), false);
+});

@@ -1,6 +1,7 @@
 # Sets up a Windows PC as a Docker host for bb-box's Docker backend: Docker
-# Engine in one WSL 2 distribution, which BB's server reaches over SSH on
-# the PC's own address. See README.md.
+# Engine in one WSL 2 distribution. BB on this PC uses host wsl://<name>,
+# which reaches the daemon through wsl.exe and docker system dial-stdio.
+# A BB server on another machine uses SSH on the PC's own address. See README.md.
 #
 # Run it in PowerShell 7.4 or later as an administrator, signed in as the
 # Windows user who will own the distribution, from a copy of this directory:
@@ -159,5 +160,9 @@ if ($restart) {
   "WSL's settings changed while it ran. To apply them, run 'wsl --shutdown' when no box is busy:"
   "it stops every box, and the scheduled task starts $Name again within a minute."
 }
-"Done. In bb-box's Docker backend, set host to ssh://$User@<this PC>:$Port"
+"Done. When BB runs on this PC, set the Docker backend host to wsl://$Name"
+"When BB's server is another machine and this PC is a BB machine, leave host as bb:<this machine's ID> and set machine-docker-host to wsl://$Name"
+"dockerd listens on its unix socket. Do not publish 127.0.0.1:2375: WSL's localhost forwarder drops attached output."
+"Do not set DOCKER_HOST to wsl://. docker.exe does not understand it."
+"When this PC is not a BB machine, set host to ssh://${User}@<this PC>:${Port}"
 "This PC: $env:COMPUTERNAME, $($addresses -join ', ')"

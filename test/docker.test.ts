@@ -81,6 +81,7 @@ test("parses the fields, with the setup guide's defaults", () => {
     boxes: 10,
     desktopsPerGpu: 4,
     reserveMemoryMiB: 4096,
+    machineDockerHost: null,
   });
   const all = dockerConfig({ privileged: false, "gpu-desktops": true, host: "ssh://builder@docker.example:2222", boxes: 3 });
   assert.equal(all.docker, false);
@@ -90,6 +91,9 @@ test("parses the fields, with the setup guide's defaults", () => {
   assert.equal(dockerConfig({ "host": "unix:///run/user/1000/docker.sock" }).host, "unix:///run/user/1000/docker.sock");
   // A BB machine, reached through bb-box's relay (042).
   assert.deepEqual([dockerConfig({ host: "bb:host_m1" }).host, dockerConfig({ host: "bb:host_m1" }).machine], ["bb:host_m1", "host_m1"]);
+  assert.equal(dockerConfig({ host: "tcp://127.0.0.1:2375" }).host, "tcp://127.0.0.1:2375");
+  assert.equal(dockerConfig({ host: "wsl://bbdocker" }).host, "wsl://bbdocker");
+  assert.equal(dockerConfig({ host: "wsl://box@bbdocker" }).host, "wsl://box@bbdocker");
   // An empty image turns its kinds off.
   assert.deepEqual(dockerConfig({ "desktop-image": "", "gpu-desktops": true }).images, {
     linux: "bbbox/linux:1",
@@ -110,7 +114,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
   const parsed = parseDockerPart({
     id: "docker",
     fields: {
-      host: "tcp://192.0.2.10:2375",
+      host: "http://192.0.2.10:2375",
       "linux-image": "--privileged",
       "wayland-desktop-image": "-v /:/host",
       network: "bad name",

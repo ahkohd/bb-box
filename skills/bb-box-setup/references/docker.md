@@ -70,11 +70,28 @@ prompt.
 
 ## In WSL on a Windows PC
 
-A Windows PC can host boxes in a WSL distribution of bb-box's own, with SSH
-on port 2222. The person runs `setup/docker-wsl/setup.ps1` on the PC, in
-PowerShell 7 as an administrator, with BB's public SSH key. Follow
-`setup/docker-wsl/README.md`: it ends with a backend whose `host` is
-`ssh://box@<pc>:2222`. Add it as for a host over SSH.
+A Windows PC can host boxes in a WSL distribution. Docker stays on the
+distribution's unix socket. The person runs `setup/docker-wsl/setup.ps1` on
+the PC, in PowerShell 7 as an administrator. Follow
+`setup/docker-wsl/README.md`.
+
+When BB's server is another machine and the PC is a BB machine, the
+backend's `host` is already `bb:<machine ID>`. Set `machine-docker-host` to
+`wsl://<distro>` (the distribution the script created, `bbdocker` unless
+they named another):
+
+```sh
+bb box backend set docker:<name> --field machine-docker-host=wsl://bbdocker
+```
+
+bb-box sends that when the machine's relay opens. The Windows daemon dials
+`wsl.exe` and `docker system dial-stdio`. Leave the machine's `DOCKER_HOST`
+and docker context alone. Do not set them to `wsl://`: `docker.exe` does not
+understand it. `tcp://127.0.0.1:2375` is WSL's localhost forwarder, which
+drops attached output, so `docker exec` prints nothing and exits 0.
+
+When BB runs on the PC itself, set `host` to `wsl://bbdocker` instead.
+When the PC is not a BB machine, set `host` to `ssh://box@<pc>:2222`.
 
 ## Fields worth knowing
 
@@ -82,7 +99,8 @@ PowerShell 7 as an administrator, with BB's public SSH key. Follow
 
 | Field | Default | What it does |
 | --- | --- | --- |
-| `host` | empty | `unix:///path/docker.sock`, `ssh://user@host`, or empty for the `docker` CLI's own default |
+| `host` | empty | `unix:///path/docker.sock`, `ssh://user@host`, `wsl://distro`, `tcp://host:port`, `bb:<machine ID>`, or empty for the `docker` CLI's own default |
+| `machine-docker-host` | empty | For a `bb:<machine ID>` host: `wsl://distro`, a unix socket or `tcp://host:port` on that machine. Empty leaves the machine's own `DOCKER_HOST`. On Windows set `wsl://<distro>` |
 | `linux-image`, `desktop-image`, `wayland-desktop-image` | `bbbox/...:1` | The image of each kind. Empty turns the kind off here |
 | `privileged` | `true` | Boxes have Docker of their own and can take over the host |
 | `gpu-desktops` | `false` | Offers `linux-desktop` on the host's NVIDIA GPUs, through CDI |

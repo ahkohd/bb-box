@@ -127,6 +127,7 @@ test("a side with no onOpen refuses channels the other side opens", async (t) =>
 
 import { createServer as createHttpServer, request } from "node:http";
 import { connect, createServer, type Server } from "node:net";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -384,6 +385,9 @@ test("the worker finds Docker as the docker CLI would", () => {
   assert.deepEqual(endpointOf("unix:///var/run/docker.sock"), { path: "/var/run/docker.sock" });
   assert.deepEqual(endpointOf("npipe:////./pipe/docker_engine"), { path: "\\\\.\\pipe\\docker_engine" });
   assert.deepEqual(endpointOf("tcp://127.0.0.1:2375"), { host: "127.0.0.1", port: 2375 });
+  assert.deepEqual(endpointOf("wsl://bbdocker"), { wsl: { user: null, distro: "bbdocker" } });
+  assert.deepEqual(endpointOf("wsl://box@bbdocker"), { wsl: { user: "box", distro: "bbdocker" } });
+  assert.equal(endpointOf("wsl://"), null);
   assert.equal(endpointOf("ssh://me@host"), null);
 });
 
@@ -471,4 +475,110 @@ test("a file copy through the worker refuses a file outside its folder or missin
   await assert.rejects(relay.copy("host_abc", { file: join(dir, "kept.bin"), root: dir, direction: "receive", expect }, sending), /not the box's 5 bytes with 0{64}: the file may have changed in the box/);
   assert.equal(readFileSync(join(dir, "kept.bin"), "utf8"), "before");
   assert.equal(existsSync(join(dir, "kept.bin.bb-box-part")), false);
+});
+
+test("wsl dial-stdio returns what it writes after the client half-closes", async (t) => {
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  const dial = () => {
+    const child = spawn(process.execPath, ["-e", "process.stdin.resume(); process.stdin.on('end', () => process.stdout.end('after-half-close'))"], { stdio: ["pipe", "pipe", "pipe"] });
+    if (!child.stdin || !child.stdout || !child.stderr) throw new Error("dial-stdio did not open its pipes");
+    return child;
+  };
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => ({ wsl: { distro: "bbdocker", user: "box" } }), dial } }));
+  t.after(() => worker.experimental_dispose());
+  hub = new RelayHub({ dir: tempDir("relay-hub"), open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" }), keep: async () => false, logError: () => {} });
+  t.after(() => hub.dispose());
+  const socketPath = (await hub.endpoint("host_wsl")).slice("unix://".length);
+  const reply = await new Promise<string>((resolve, reject) => {
+    const socket = connect({ path: socketPath, allowHalfOpen: true });
+    let text = "";
+    socket.on("data", (part) => (text += part));
+    socket.on("end", () => resolve(text));
+    socket.on("error", reject);
+    socket.end("request");
+  });
+  assert.equal(reply, "after-half-close");
+});
+
+test("a relay open names the machine's Docker host, and the machine dials that instead of its own", async (t) => {
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  const seen: string[] = [];
+  const dial = (wsl: { distro: string; user: string | null }) => {
+    seen.push(wsl.user ? `${wsl.user}@${wsl.distro}` : wsl.distro);
+    const child = spawn(process.execPath, ["-e", "process.stdin.resume(); process.stdin.on('end', () => process.stdout.end('after-half-close'))"], { stdio: ["pipe", "pipe", "pipe"] });
+    if (!child.stdin || !child.stdout || !child.stderr) throw new Error("dial-stdio did not open its pipes");
+    return child;
+  };
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  const worker = experimental_createHostEntryHarness(hostEntry({
+    relay: {
+      connect: connectTo,
+      endpoint: async () => {
+        throw new Error("the machine's DOCKER_HOST");
+      },
+      dial,
+    },
+  }));
+  t.after(() => worker.experimental_dispose());
+  hub = new RelayHub({
+    dir: tempDir("relay-hub"),
+    open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay", dockerHost: "wsl://archlinux" }),
+    keep: async () => false,
+    logError: () => {},
+  });
+  t.after(() => hub.dispose());
+  const socketPath = (await hub.endpoint("host_wsl_field")).slice("unix://".length);
+  const reply = await new Promise<string>((resolve, reject) => {
+    const socket = connect({ path: socketPath, allowHalfOpen: true });
+    let text = "";
+    socket.on("data", (part) => (text += part));
+    socket.on("end", () => resolve(text));
+    socket.on("error", reject);
+    socket.end("request");
+  });
+  assert.equal(reply, "after-half-close");
+  assert.deepEqual(seen, ["archlinux"]);
+  const asked = await worker.experimental_call("docker", { dockerHost: "wsl://box@archlinux" });
+  assert.equal(asked.endpoint, "wsl://box@archlinux");
+  assert.equal(asked.found, true);
+  assert.equal(asked.attached, undefined);
+  assert.deepEqual(seen, ["archlinux", "box@archlinux"]);
+});
+
+test("a dial-stdio child that exits without stdout gives the client the reason, and the hub logs it", async (t) => {
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  const dial = () => {
+    const child = spawn(process.execPath, ["-e", "process.stderr.end('no such distro', () => process.exit(1))"], { stdio: ["pipe", "pipe", "pipe"] });
+    if (!child.stdin || !child.stdout || !child.stderr) throw new Error("dial-stdio did not open its pipes");
+    return child;
+  };
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => ({ wsl: { distro: "missing", user: null } }), dial } }));
+  t.after(() => worker.experimental_dispose());
+  const logs: string[] = [];
+  hub = new RelayHub({ dir: tempDir("relay-hub"), open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" }), keep: async () => false, logError: () => {}, log: (line) => logs.push(line) });
+  t.after(() => hub.dispose());
+  const answer = await get((await hub.endpoint("host_wsl_fail")).slice("unix://".length), "/_ping");
+  assert.deepEqual([answer.status, answer.text], [503, "bb-box could not reach Docker on the BB machine: no such distro"]);
+  assert.ok(logs.includes("Docker on BB machine host_wsl_fail did not answer: no such distro"), logs.join("\n"));
+});
+
+test("a wsl host whose dial-stdio cannot start fails the docker check with the reason", async () => {
+  const worker = experimental_createHostEntryHarness(hostEntry({
+    relay: {
+      endpoint: async () => ({ wsl: { distro: "bbdocker", user: null } }),
+      dial: () => {
+        throw new Error("wsl.exe: spawn wsl.exe ENOENT");
+      },
+    },
+  }));
+  const answer = await worker.experimental_call("docker", {});
+  await worker.experimental_dispose();
+  assert.equal(answer.found, false);
+  assert.match(answer.reason ?? "", /wsl.exe/);
+  assert.equal(answer.endpoint, "wsl://bbdocker");
 });
