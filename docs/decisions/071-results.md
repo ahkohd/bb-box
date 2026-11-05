@@ -2425,3 +2425,173 @@ the watcher and a harness for the lent VMIDs are in the report to the lead.
   copies and earlier guests, are named in a request by install and marker
   generation only: a replacement would have to carry bb-box's request tag
   with its random nonce.
+
+## Unit 6: snapshot safety
+
+Built on main `e64cc838` in four commits, after three rounds of two
+reviews each (Astra, Fable), and merged as `21d79fcb` (PR 1363). It ships
+bb-box-gpu 0.4.2. Production's bb-box was deployed with it before the
+helper was upgraded, as section 5 now requires.
+
+### What it does
+
+- **A fork starts with no card, unless asked for one.** `box_fork`, `bb
+  box snapshot fork` and the fork form take `gpu`, none by default, or
+  shared for a `linux-desktop` on a backend that places a fork's GPU. A
+  shared fork is placed and its card reserved before anything is copied.
+  The fork's marker goes in the same write as 070's re-arm. Whole, and
+  shared for any other kind or backend, is refused before any record.
+- **A restore keeps the box's card.** The restore records the box's claim
+  and reserves its card, under the card lock, before the stop. After the
+  rollback it writes the box's current marker with a new generation, a
+  recorded step (`claim-kept`), unless the rolled-back marker is already
+  that granted claim. A box with no GPU needs no helper. The start uses
+  that exact claim and refuses rather than move cards. A card with no room
+  refuses the restore before anything changes; after a restart, recovery
+  holds the card again, or leaves the box stopped and says why.
+- **A swap moves the claim.** The old guest's marker is set to `gpu.none`
+  with its start at boot off, in one write (`claim-cleared`). The new guest
+  is made with its start at boot off, then gets the box's claim with a
+  generation above every ledger entry of its box, named `install/box` as
+  the helper names it. Its lines are checked, and only then does it get the
+  old guest's start at boot (`claim-given`). If the new guest cannot be
+  made after the clear, the old guest gets the claim back, granted and
+  checked, and its start at boot back, before it starts; if the helper does
+  not grant it, the box stays stopped at `claim-back` and the next sweep
+  tries again.
+- **Held copies and earlier guests carry no claim.** Each gets `gpu.none`
+  in its disarm or retire write, and the helper takes its lines out.
+- **The helper refuses copies a claim.** From 0.4.2 a copy whose
+  description names another box than its `box.` tag is refused as not
+  re-armed. Any copy bb-box was making when it stopped, proven by its own
+  labels, marker or not, loses its NVIDIA lines and its start at boot, in
+  one write under its config lock while it is stopped, on each pass and on
+  the boot pass. That is the helper's only write outside device lines.
+- **The doctor's `gpu.<card>.whole`** passes when a card held whole has no
+  other holder, and fails naming the guests.
+- **Live-check holds** at `claim-kept`, `claim-cleared` and `claim-given`
+  join the others, for the node steps and the tests.
+
+### What was run
+
+On `linux` boxes, as the box user and as root, as CI runs them, on the
+final commit `93e84764`, merged as `21d79fcb`:
+
+- `tsc` clean. The node suite as root: 3,662 tests, 3,366 passed, 0
+  failed, 296 skipped. As the box user: 3,328 passed, 0 failed, 334
+  skipped, the root-only `gpu-setup` tests among the skipped. vitest: 451
+  passed. One vitest UI test (a thread card's spinner, not touched here)
+  failed once in a full run and passed three runs alone and the next full
+  run.
+- `test/gpu-restore.test.ts` drives restores and swaps through `Snapshots`
+  against a fake card ledger, with restarts at `rolled-back`,
+  `claim-kept`, `claim-cleared`, `adopted`, `claim-given` and
+  `claim-back`, and a crash after the clear but before its step was
+  recorded.
+- `test/gpu-restore-helper.test.ts` runs the backend against the real
+  helper on the fake node: a held copy from before this unit with another
+  card's lines and no marker; generations after a restart; the card held
+  through a restore; a restore with no GPU never reading the helper; the
+  old guest's start at boot; the driver read from an indented report.
+- `test/gpu-helper.test.ts`: unmarked copies, held copies' clones before
+  their labels, a fork of a legacy held copy and card-free copies lose
+  their lines and their start at boot, on a pass and on the boot pass,
+  while an ordinary unmarked guest keeps both.
+- Each fix was reverted once on a box, and its test failed: 11 reverts
+  after the first reviews, 8 after the second, and after the third the
+  helper's card-free rule and the setup fixtures, whose old versions
+  failed 3 runs of 3 as root.
+
+### The live check
+
+Run by the lead on the node and by the builder on a test BB, on 5 November
+2026 (UTC). The test BB was a fresh `npx bb-app@0.48.1` on a Proxmox LXC box,
+with no account, bb-box installed from `git archive 21d79fcb`, and
+`BB_BOX_LIVE_CHECKS=1`. Its server ran as a systemd unit, so "stop the test
+BB" was a `KILL` of the unit's whole cgroup, and iptables let only the lent
+addresses reach its ports. The lead added its Proxmox LXC backend: a pool
+of its own, five lent VMIDs and addresses, desktops per GPU 1, production's
+desktop templates. S was a GPU desktop made as one of the person's machines.
+Both cards had about 97 GiB free throughout; nothing loaded them beyond two
+desktops' displays.
+
+Proxmox LXC marks only the `linux` kind for the identity reset, so a
+`linux-desktop` there is never fork-safe, and bb-box neither forks it nor
+takes a held copy of it. With the lead's agreement, S's identity marker was
+written by hand inside S (`bb-box-identity enable`, then `write --box
+<S's box> --source eth`, then a stop and a start) so that every step could
+run. Production desktops cannot reach the fork, held-copy and swap paths
+below until desktops get an identity source.
+
+| Step | Evidence |
+| --- | --- |
+| 0 | Production's `bb plugin source bb-box` resolved `21d79fcb9b7f`, on main at unit 6; its doctor passed the GPU helper (0.4.1, writes on) and the markers |
+| A, B | 0.4.2 and 0.4.1 copied in. `setup-gpu.sh`: the preview would write no guest; 0.4.2 restarted with writes on; `u5-compare.sh`: no guest changed. Production's doctor: Host's GPU helper ok on 0.4.2. A production desktop made, stopped, started and released through it |
+| C | The watcher started |
+| D, fork none (11:13) | The fork F: `gpu.none.g2`, claim and ledger g2 granted none, no card lines, journal `granted CT <F> g2: none`. Its source marker had been refused `not-served` (g1) in the copy window. S kept card 1 |
+| E, fork shared (11:15) | F on card 0 at g3, granted, holding it running; S on card 1. A third fork exited 1 naming both cards at their limit, and no lent CT came or went. The words checks failed: see the findings |
+| F, restore after a move (11:17) | The harness moved S to card 0 at g2 (488 ms). The restore's check said "Its GPU stays as it is now: shared, card 0"; it exited 0. S ran on card 0 at g4, the ledger granted g4, and the journal has the grant |
+| G, held copy (11:19) | The undo's held copy C: `gpu.none.g5` granted none, no card lines, onboot 0, not a template; then a template with the same tags and no lines. The restore exited 0 |
+| H, swap (11:23) | OLD cleared to `gpu.none.g7`, no lines, onboot 0. NEW held with no claim and onboot 0 while the swap waited; then `gpu.shared` card 0 g8 granted, running, onboot 1. One lent holder of card 0. The restore exited 0, "It runs on a new guest made from that held copy" |
+| I1a, fork's copy, shared marker (11:26) | The test BB stopped 1 s after the fork claimed its guest; the clone task was running, the copy locked `create` with onboot 1 and S's marker. Helper: `refused … g8: not-served`, then `wrote CT <copy> for not re-armed: remove dev0 /dev/nvidia1 …; add nothing; start at boot off`. No lines, no holder, onboot 0. Restarted, 070 deleted the copy and made the fork again |
+| I1b, fork of a held copy (11:33) | The clone was seen running. The copy: `gpu.none.g6` and held-copy tags, `refused … g6: not-served`, no card lines, no holder, onboot 0. 070 deleted it and made the fork again |
+| I1c, snapshot with no marker (11:35) | S's marker taken off by hand for the take, then put back at g9 (458 ms). The clone was seen running. Helper: `wrote CT <copy> for not re-armed: remove dev0 /dev/nvidia1 …; add nothing; start at boot off`. No gpu tag, no lines, no holder, onboot 0. 070 deleted it |
+| I2, rollback and re-tag (11:42) | The harness moved S to card 1 at g10. Held after the rollback: S's tags carried the snapshot's card 0 g9, the ledger card 1 g10; the helper wrote card 1's lines in while S was stopped (`wrote CT <S> for claim g10`). Test BB stopped. S stopped on card 1's lines with onboot 1, as the box itself; the boot pass by hand: `0 running guests on the wrong lines`, the same after. Restarted: S ran on card 1 at g11 |
+| I3, swap's gap (11:45) | Held at `adopted`: OLD `gpu.none.g12`, no lines, onboot 0; NEW no marker, no holder, onboot 0. Test BB stopped; the boot pass by hand left both onboot 0 with no lines. Restarted: NEW granted card 1 g13, running, onboot 1; OLD, an earlier guest, onboot 0 |
+| I4, failed swap (11:48) | Every lent VMID in use. The restore cleared S at g14 (11:48:34), could not make the new guest, gave the claim back on card 1 at g15 (11:48:35) and started S: running, onboot 1. It exited 1: "… Nothing on its disk changed, and bb-box started box <S> again as it was." |
+| I5, held copy's template step (11:49) | Held after the clone: C `gpu.none.g16` granted none, no lines, no holder, onboot 0, not a template. Test BB stopped. Restarted: 070 deleted C, made the copy again in another lent VMID, and finished the restore; no lent template had NVIDIA lines |
+| J, boot pass (11:53) | `boot pass: 0 running guests on the wrong lines, writes on`; no mismatch; each card 4 holders, none whole. The test BB's doctor: `GPU 0 whole` and `GPU 1 whole` pass, "No box holds card N whole" |
+| K (11:53) | Lent VMIDs empty. The helper wrote and refused no guest outside the lent VMIDs from 11:08. Production's doctor: the GPU helper, migration, report and both `gpu.<card>.whole` pass |
+
+Where the lead changed a block on the node: `read </dev/tty` does not work
+over ssh, so E, I2, I3 and I5 ran in two halves; I3 and I5 dropped a rule on
+claim history at a reused VMID and judged the guest by its own config;
+`u5-compare.sh` ran against a baseline taken after D (`d-rebase.txt`),
+since a production warm desktop and its replacement, from the smoke test
+after B, changed meanwhile; step J's mismatch check left out
+`u5-check.sh`'s `mismatch lines: 0` summary. The test BB's side used two
+helpers for restores (`--check`, then `--replace` in the background), and
+for I1 a script that stopped the test BB one second after the fork had
+claimed its guest, as a relayed message would land too late.
+
+Limits: the cards loaded nothing; at most two test desktops; one node; a
+test BB with one install; S's identity marker by hand.
+
+### Findings from the live check
+
+| Finding | Severity | What happens | Follow-up |
+| --- | --- | --- | --- |
+| Desktops have no identity source on Proxmox LXC | high, for the gate | bb-box never marks a `linux-desktop` there for the identity reset, so it forks no GPU desktop and takes no held copy of one. Section 16's gate item "a fork of a GPU desktop with none and with shared" cannot be met on production desktops; it passed here only with the marker written by hand | 070: an identity source for `linux-desktop` on Proxmox LXC (`eth`, as `linux` has), and its live check |
+| A shared fork with no card free gets the acquire's words | medium | The provider's capacity check at the fork's admission refuses it before `placeForkGpu`, with "Release a desktop box, or raise the desktops per GPU", not "Not forked: … bb-box copied nothing". An agent's `box_fork` may be told to release a box or change a setting, against section 3 | The fork's own refusal for each audience, and a test of both |
+| The snapshot store drops the snapshot's GPU record | medium | `SnapshotRecord.gpu` has no column in `snapshot-store.ts`, so every restore's check says "GPU not recorded", and section 9's userspace-mismatch warning can never show | A column and its migration, and a test through the real store |
+| A fork with gpu none names a card in its facts | low | The fork's box facts named a card's GPU ID while it had no lines and no claim | The facts from the claim, not the template |
+| A fresh clone's first answer is `not-served` | note | Proxmox adds a clone to the pool after its config exists, so the helper's first answer to the copy's inherited marker is `refused not-served`, not `copy unrearmed`. The copy still lost its lines and its start at boot, as a proven copy | Steps accept either answer, keyed to the copy's own generation |
+| Rules on claim history at a reused VMID | note | A lent VMID used before keeps its earlier guests' `claim` lines in the report for 10 minutes, so a rule that a line exists, or does not, can match an earlier guest | Steps key such rules to the generation on the guest's own tags, or drop them |
+| Step J's mismatch check | note | `^mismatch ` also matches `u5-check.sh`'s `mismatch lines: 0` | `^mismatch [0-9]+ ` |
+| `read </dev/tty` pauses | note | They do not work when the lead runs a block over ssh | Each such block split in two |
+| `watch_clone` | note | The lead's copy failed at once on an extra `cat` under `pipefail`. The library's own config checks pipe `conf_of` into `grep -q` under `pipefail`, which can fail the same way when grep exits first | Config checks read a here-string (`conf_has`), and `watch_clone` uses it |
+| The kill wrapper | note | The builder's first wrapper returned while the unit was still deactivating | It waits until the unit has stopped |
+
+### Deviations from the note
+
+- A fork with gpu shared is offered only for `linux-desktop` and only on a
+  backend that places a fork's GPU; whole waits for unit 8.
+- The helper writes one key besides device lines: `onboot`, set to 0 on a
+  copy proven not re-armed, so a crash-left copy never starts at boot.
+- The restore refuses before the stop when the box's card has no room for
+  it, rather than moving it to another card.
+- `claim-back` is a restore step of its own: a failed swap whose claim the
+  helper does not give back leaves the box stopped and the restore
+  unconfirmed, retried at each sweep.
+- `giveGpuClaim` became `armAdopted`, which also sets the new guest's start
+  at boot; `armReturned`, `bootsWithNode`, `holdGpuCard` and `dropGpuCard`
+  join the backend's optional methods.
+
+### Still open
+
+- The identity source for desktops, above: until it comes, units 7 to 9 that
+  rely on forks or held copies of desktops cannot be checked on production
+  desktops.
+- I4's other path, where the helper does not give the claim back, was not
+  run on the node, as it needs the production helper paused. The tests cover
+  it.
