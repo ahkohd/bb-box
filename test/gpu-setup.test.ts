@@ -425,10 +425,10 @@ hosted("071 unit 5: an upgrade keeps writes on, a failed one puts the helper bef
   assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.3 protocol 1 writes on /);
   assert.deepEqual(units(host), ["/usr/local/sbin/bb-box-gpu", "/usr/local/sbin/bb-box-gpu --boot"]);
 
-  const broken = releaseWith("0.4.3-broken", [...versioned("0.4.3"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.4-broken", [...versioned("0.4.4"), WRITES_NO_REPORT]);
   const failed = host.setup([], {}, broken);
   assert.equal(failed.status, 1);
-  assert.match(failed.stderr, /bb-box-gpu 0\.4\.3 wrote no fresh, healthy report with writes on in VM 9190 within 6 s, so bb-box-gpu 0\.4\.3 is back as it was, with its settings and ledger/);
+  assert.match(failed.stderr, /bb-box-gpu 0\.4\.4 wrote no fresh, healthy report with writes on in VM 9190 within 6 s, so bb-box-gpu 0\.4\.3 is back as it was, with its settings and ledger/);
   assert.match(host.helperLine() ?? "", /^helper bb-box-gpu 0\.4\.3 protocol 1 writes on /);
   assert.equal(host.conf(), "pools bbbox\nwrites on\n");
 
@@ -662,11 +662,11 @@ hosted("an upgrade whose helper writes no fresh report puts the helper before it
   const guests = host.guests();
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
   const ledger = host.node.ledger().guests;
-  const broken = releaseWith("0.4.2-broken", [...versioned("0.4.2"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.3-broken", [...versioned("0.4.3"), WRITES_NO_REPORT]);
   const started = Math.floor(Date.now() / 1000);
   const failed = host.setup(["--pool", "team"], {}, broken);
   assert.equal(failed.status, 1, failed.stdout + failed.stderr);
-  assert.match(failed.stderr, /bb-box-gpu 0\.4\.2 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.2 is back as it was, with its settings and ledger/);
+  assert.match(failed.stderr, /bb-box-gpu 0\.4\.3 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.2 is back as it was, with its settings and ledger/);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.equal(host.conf(), "pools bbbox\nwrites off\n", "gpu.conf is as it was before the run");
   assert.ok(host.active("bb-box-gpu.service") && host.enabled("bb-box-gpu.service"));
@@ -904,7 +904,7 @@ hosted("a rollback interrupted right after it stops the failed helper leaves the
   const before = releaseWith("0.4.2-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
-  const broken = releaseWith("0.4.2-broken", [...versioned("0.4.2"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.3-broken", [...versioned("0.4.3"), WRITES_NO_REPORT]);
   host.forgetCalls();
   const result = host.setup([], { FAKE_SYSTEMCTL_SIGNAL: "stop bb-box-gpu.service#2=TERM" }, broken);
   interrupted(result, "TERM", ["bb-box-gpu-memory.timer"]);
@@ -923,14 +923,14 @@ hosted("an upgrade killed while its helper fails to report is put right by the n
   const before = releaseWith("0.4.2-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
   const program = readFileSync(host.node.file("usr/local/sbin/bb-box-gpu"));
-  const broken = releaseWith("0.4.2-broken", [...versioned("0.4.2"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.3-broken", [...versioned("0.4.3"), WRITES_NO_REPORT]);
   host.forgetCalls();
   interrupted(host.setup([], { FAKE_SYSTEMCTL_SIGNAL: "start bb-box-gpu.service=KILL" }, broken), "KILL", []);
   assert.deepEqual(host.writers(), ["bb-box-gpu", "bb-box-gpu-memory.timer"]);
   assert.ok(host.backupKept());
   const again = host.setup([], {}, broken);
   assert.equal(again.status, 1, again.stdout + again.stderr);
-  assert.match(again.stderr, /bb-box-gpu 0\.4\.2 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.2 is back as it was/);
+  assert.match(again.stderr, /bb-box-gpu 0\.4\.3 wrote no fresh, healthy report with writes off in VM 9190 within 6 s, so bb-box-gpu 0\.4\.2 is back as it was/);
   assert.deepEqual(readFileSync(host.node.file("usr/local/sbin/bb-box-gpu")), program);
   assert.deepEqual(host.writers(), ["bb-box-gpu"]);
   assert.equal(host.timerInstalled(), false);
@@ -939,7 +939,7 @@ hosted("an upgrade killed while its helper fails to report is put right by the n
 hosted("a rollback that fails part way under set -e leaves the timer writing the report and the backup in place; the release before then installs cleanly (Astra 1)", (host) => {
   const before = releaseWith("0.4.2-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
-  const broken = releaseWith("0.4.2-broken", [...versioned("0.4.2"), WRITES_NO_REPORT]);
+  const broken = releaseWith("0.4.3-broken", [...versioned("0.4.3"), WRITES_NO_REPORT]);
   host.forgetCalls();
   const result = host.setup([], { FAKE_SYSTEMCTL_FAIL_NTH: "daemon-reload#3" }, broken);
   assert.equal(result.status, 1, result.stdout + result.stderr);

@@ -1849,16 +1849,9 @@ sub boot_safety {
     evaluate_request($ctx, $guests, $guest);
 }
 
-sub a_gpu_copy {
-    my ($guest) = @_;
-    return 0 unless $guest->{copy};
-    return 1 if %{ $guest->{devices} };
-    return $guest->{marker} && $guest->{marker}{part} =~ /^(?:shared|whole)$/ ? 1 : 0;
-}
-
 sub disarm_copy {
     my ($ctx, $guests, $guest) = @_;
-    return unless a_gpu_copy($guest);
+    return unless $guest->{copy};
     return if $guest->{ineligible} || $guest->{malformed} || $guest->{running} || $guest->{lock} || $guest->{pending_devices};
     return unless %{ $guest->{devices} } || $guest->{onboot};
     my $vmid = $guest->{vmid};
@@ -1867,10 +1860,10 @@ sub disarm_copy {
     with_guest($ctx, $vmid, sub {
         my ($conf, $running) = @_;
         my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
-        return if $running || $conf->{lock} || $fresh->{pending_devices} || !same_guest($guest, $fresh) || !a_gpu_copy($fresh);
+        return if $running || $conf->{lock} || $fresh->{pending_devices} || !same_guest($guest, $fresh) || !$fresh->{copy};
         return unless %{ $fresh->{devices} } || $fresh->{onboot};
         $ctx->{would_pending} = would_signature($vmid, $fresh->{copy}, $fresh, []) . ($fresh->{onboot} ? '|boot' : '');
-        my $done = change_guest($ctx, $vmid, $conf, [], $fresh->{copy}, 'lines none', $fresh->{onboot});
+        my $done = change_guest($ctx, $vmid, $conf, [], $fresh->{copy}, %{ $fresh->{devices} } ? 'lines none' : 'start at boot off', $fresh->{onboot});
         refresh_guest($ctx, $guests, $vmid, $conf, $running) if $done eq 'wrote';
     });
 }

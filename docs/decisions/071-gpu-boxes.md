@@ -541,10 +541,10 @@ move a box. See [Alternatives](#alternatives-considered).
   stopped, proven by its own labels. That is a fork's copy whose
   description names another box than its `box.` tag, or a held copy whose
   description says so while its tags do not label it yet. Such a copy is
-  not a box. When it has NVIDIA lines or a shared or whole marker, the
-  helper takes its NVIDIA lines out and turns its start at boot off, in
-  one write under its config lock while it is stopped, on each pass and
-  on the boot pass, marker or not (section 9).
+  not a box. The helper turns its start at boot off, card or none, and
+  takes out any NVIDIA lines it has, in one write under its config lock
+  while it is stopped, on each pass and on the boot pass, marker or not
+  (section 9).
 
 #### The marker
 
@@ -1116,9 +1116,10 @@ claim.
   0.4.2) refuses it a claim as a copy not re-armed, and takes its NVIDIA
   lines out. A snapshot taken before markers gives a copy with the
   snapshot's lines and no marker; the helper proves it a copy from the same
-  labels, and takes its lines out too. Either way it also turns the copy's
-  start at boot off, which the copy brings from the snapshot, so a node
-  boot neither starts it on the snapshot's card nor with no card. A held
+  labels, and takes its lines out too. Either way, and for a copy of a
+  snapshot with `gpu.none` and no lines as well, it turns the copy's start
+  at boot off, which the copy brings from the snapshot, so a node boot
+  neither starts it on the snapshot's card nor with no card. A held
   copy's clone cut short before its labels is treated the same way. A copy
   whose description still names its source's box is refused as a copy of
   the guest that holds that box's claim, and loses its lines the same way.

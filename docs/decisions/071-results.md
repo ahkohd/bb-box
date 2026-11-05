@@ -2279,7 +2279,7 @@ same guest.
 | `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
-| `change_guest`, in the helper | a container it serves | GPU device lines; for a copy proven not re-armed (its description names another box than its tags, or a held copy its tags do not label yet), also its start at boot, off | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned, and still such a copy |
+| `change_guest`, in the helper | a container it serves | GPU device lines; for a copy proven not re-armed (its description names another box than its tags, or a held copy its tags do not label yet), also its start at boot, off, with a card or none | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned, and still such a copy |
 | `decide_power`, in the helper | a container it serves that carries a request | start, stop, shutdown, delete | under the guest's config lock, the install, box or warm token, and marker generation the request names |
 
 Not through the check, and why:

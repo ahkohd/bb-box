@@ -1643,14 +1643,17 @@ test("071 unit 6 round 2, Astra 1: a fork's copy cut short before its re-arm, fr
     node.guest(1623, { box: "bxplain", lines: cardLines(CARD_A, "server"), keys: { onboot: "1" } });
     node.guest(1624, { description: fork.description, tags: source.tags, marker: marker("shared", CARD_A, 4), lines: cardLines(CARD_A, "server"), keys: { onboot: "1" } });
     node.guest(1625, { description: fork.description, tags: held.tags, lines: cardLines(CARD_A, "server") });
+    node.guest(1626, { description: fork.description, tags: source.tags, marker: marker("none", null, 3), keys: { onboot: "1" } });
+    node.guest(1627, { description: fork.description, tags: source.tags, keys: { onboot: "1" } });
+    node.guest(1628, { box: "bxplainer", marker: marker("none", null, 1), keys: { onboot: "1" } });
   };
   for (const args of [["--once"], ["--boot"]]) {
     const node = new FakeNode({ writes: "on" });
     copies(node);
-    const kept = snapshot(node, [1620, 1623]);
+    const kept = snapshot(node, [1620, 1623, 1628]);
     const said = ran(node, args);
     assertUnchanged(node, kept);
-    for (const vmid of [1621, 1622, 1624]) {
+    for (const vmid of [1621, 1622, 1624, 1626, 1627]) {
       assert.deepEqual(node.lines(vmid), [], `${args[0]}: CT ${vmid}'s lines`);
       assert.equal(node.config(vmid).keys.onboot, "0", `${args[0]}: CT ${vmid} does not start with the node`);
     }
@@ -1660,8 +1663,10 @@ test("071 unit 6 round 2, Astra 1: a fork's copy cut short before its re-arm, fr
     assert.match(said, /refused CT 1624 g4: copy unrearmed/);
     assert.deepEqual(node.lines(1625), [], `${args[0]}: a fork's copy of a legacy held copy loses the copy's lines`);
     assert.match(said, /wrote CT 1625 for not re-armed: remove .*; add nothing\n/);
+    assert.match(said, /wrote CT 1626 for not re-armed: remove nothing; add nothing; start at boot off/, "a copy with no card still does not start with the node");
+    assert.match(said, /wrote CT 1627 for not re-armed: remove nothing; add nothing; start at boot off/);
     assert.ok(!lines(node, "holder").some((line) => / 162[124] /.test(line)), lines(node, "holder").join("\n"));
-    const again = snapshot(node, [1620, 1621, 1622, 1623, 1624, 1625]);
+    const again = snapshot(node, [1620, 1621, 1622, 1623, 1624, 1625, 1626, 1627, 1628]);
     ran(node, args);
     assertUnchanged(node, again);
   }
