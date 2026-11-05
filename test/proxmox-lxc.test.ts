@@ -790,6 +790,14 @@ test("the doctor's GPU helper check fails a report dated a minute or more ahead 
   assert.deepEqual(verdict((await doctorOnReport(notes, at - 30_000))("proxmox.gpu-helper"))?.slice(0, 2), ["ok", "bb-box-gpu 0.4.2 on pve reported just now, with writes on, for pool bbbox, on pve-container 6.1.14, which it was tested on."], "a clock under a minute behind the host's is allowed");
 });
 
+test("071 unit 7, Fable 5: box_list's room for servers says nothing on a node with no card at all, and says why there is no GPU on one with cards and no helper", async () => {
+  const bare = setup({ "proxmox-lxc-desktop-templates": "" });
+  assert.deepEqual(await bare.backend.gpuRoom("linux"), { readings: [], fullUntil: null });
+  const carded = setup({ "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });
+  assert.deepEqual((await carded.backend.gpuRoom("linux")).parts, ["none"]);
+  assert.match((await carded.backend.gpuRoom("linux")).withheld ?? "", /it has no GPU helper to give a box a card/);
+});
+
 test("071 unit 7: a node with cards and no GPU helper warns that servers get no GPU, whole cards and changes of card need it; a node with no cards has no helper check", async () => {
   const now = 1_790_000_000_000;
   const timer = await doctorOnReport(reportNotes(now, [[UUID_A, "00000000:01:00.0", 6100]]), now, { "proxmox-lxc-desktop-templates": `9001 ${UUID_A}` });

@@ -169,7 +169,11 @@ template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
   drivers from their loaders at each boot, as they would otherwise crash
   EGL's GBM platform and slow every Vulkan program, and shows them again
   once the box has a card. NVIDIA's GBM platform is shown only with a DRM
-  render node, which a server's card does not have.
+  render node, which a server's card does not have. In a box,
+  `bb-box-nvidia-drivers --check` prints each of those files' state and
+  changes nothing. Both templates install the userspace with
+  `guest/nvidia-userspace.sh <build-dir>`, as root in the build CT, which
+  prints the version it installed.
 - `desktop` gives the template no device lines: the GPU helper gives each
   box its card, and a box with none draws on the CPU, with x264 video. List
   it in bb-box's GPU desktop templates by its VMID alone. `--gpu` gives the

@@ -559,11 +559,25 @@ export type BackendErrorCode =
 
 export class BackendError extends Error {
   readonly code: BackendErrorCode;
-  constructor(code: BackendErrorCode, message: string) {
+  readonly agentMessage: string | null;
+  constructor(code: BackendErrorCode, message: string, agentMessage: string | null = null) {
     super(message);
     this.name = "BackendError";
     this.code = code;
+    this.agentMessage = agentMessage;
   }
+}
+
+export class AudienceError extends Error {
+  readonly agentMessage: string;
+  constructor(message: string, agentMessage: string) {
+    super(message);
+    this.agentMessage = agentMessage;
+  }
+}
+
+export function agentMessageOf(error: unknown): string | null {
+  return error instanceof BackendError || error instanceof AudienceError ? error.agentMessage : null;
 }
 
 /**

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cardFactWords, cardsSeenIn, judgeCardCheck } from "../src/backends/proxmox-lxc/gpu-servers.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type GpuPart } from "../src/backends/types.ts";
+import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, wrongCardSeen } from "../src/backends/proxmox-lxc/gpu-servers.ts";
+import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type GpuPart } from "../src/backends/types.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { CARD_A, CARD_B, ClaimsBridge } from "./gpu-helper/claims-bridge.ts";
+import { CARD_A, CARD_B, ClaimsBridge, devices } from "./gpu-helper/claims-bridge.ts";
 import { cardLines, marker } from "./gpu-helper/node.ts";
 import { gpuPartsText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
@@ -35,22 +35,53 @@ function clones(bridge: ClaimsBridge): number {
   return bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
 }
 
+const DONE = "card check done";
+
+function answer(...lines: string[]): string {
+  return [...lines, DONE].join("\n");
+}
+
 test("071 unit 7: nvidia-smi's answer in a box says whether it has its card, and why not", () => {
-  const listed = `GPU-${A}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 97887\ncuinit 0\nuserspace 580.142`;
+  const listed = answer(`GPU-${A}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 97887`, "cuinit 0", "userspace 580.142");
   assert.deepEqual(judgeCardCheck(listed, A, "580.142"), { ok: true, card: { uuid: A, model: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition", memoryMiB: 97887 } });
-  assert.deepEqual(judgeCardCheck(`GPU-${B}, NVIDIA Fake Card, 97887\ncuinit 0\nuserspace 580.142`, A, "580.142"), { ok: false, why: `nvidia-smi in it listed card ${B}, not its card ${A}`, seen: [B], userspace: "580.142" });
-  const failed = "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running.\ncuinit 100\nuserspace 580.142";
-  assert.equal(judgeCardCheck(failed, A, "580.142").ok, false);
-  assert.match((judgeCardCheck(failed, A, "580.142") as { why: string }).why, /^nvidia-smi in it listed no card, not its card .* \(NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver\. Make sure that the latest NVIDIA driver is installed and running\)$/);
-  const mismatch = "Failed to initialize NVML: Driver/library version mismatch\ncuinit 999\nuserspace 570.86";
-  assert.deepEqual(judgeCardCheck(mismatch, A, "580.142"), { ok: false, why: "nvidia-smi in it fails: its NVIDIA userspace is 570.86 and the host's driver 580.142", seen: [], userspace: "570.86" });
-  assert.deepEqual(judgeCardCheck(`GPU-${A}, NVIDIA Fake Card, 97887\ncuinit 3\nuserspace 580.142`, A, "580.142"), { ok: false, why: "CUDA's driver did not initialise in it: cuInit returned 3", seen: [A], userspace: "580.142" });
-  assert.equal(judgeCardCheck(`GPU-${A}, NVIDIA Fake Card, 97887\ncuinit unknown\nuserspace 580.142`, A, "580.142").ok, true, "a box with no python3 is checked by nvidia-smi alone");
-  assert.deepEqual(cardsSeenIn(`GPU-${A}\nGPU-${B}`), [A, B]);
-  assert.deepEqual(cardsSeenIn("No devices were found"), []);
-  assert.equal(cardsSeenIn("sh: nvidia-smi: not found"), null, "an answer that names no card is not a reading");
-  assert.equal(cardFactWords("shared", 1, { uuid: A, model: "NVIDIA RTX PRO 6000", memoryMiB: 97887 }), "card 1, shared, NVIDIA RTX PRO 6000, 96 GiB");
+  assert.deepEqual(judgeCardCheck(answer(`GPU-${B}, NVIDIA Fake Card, 97887`, "cuinit 0", "userspace 580.142"), A, "580.142"), {
+    ok: false,
+    why: `nvidia-smi in it listed card ${B}, not its card ${A}`,
+    seen: [B],
+    userspace: "580.142",
+    reading: "cards",
+    userspaceOff: false,
+  });
+  const failed = answer("NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running.", "cuinit 100", "userspace 580.142");
+  const unreadable = judgeCardCheck(failed, A, "580.142");
+  assert.ok(!unreadable.ok && unreadable.reading === "unreadable");
+  assert.match(unreadable.why, /^nvidia-smi in it listed no card, not its card .* \(NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver\. Make sure that the latest NVIDIA driver is installed and running\)$/);
+  const none = judgeCardCheck(answer("No devices were found", "cuinit 100", "userspace 580.142"), A, "580.142");
+  assert.ok(!none.ok && none.reading === "none", "nvidia-smi's own answer that there is no card is a reading");
+  const stale = judgeCardCheck(answer("Failed to initialize NVML: Driver/library version mismatch", "cuinit 999", "userspace 570.86"), A, "580.142");
+  assert.deepEqual(stale, { ok: false, why: "nvidia-smi in it fails: its NVIDIA userspace is 570.86 and the host's driver 580.142", seen: [], userspace: "570.86", reading: "unreadable", userspaceOff: true });
+  assert.deepEqual(cardFactWords("shared", 1, { uuid: A, model: "NVIDIA RTX PRO 6000", memoryMiB: 97887 }), "card 1, shared, NVIDIA RTX PRO 6000, 96 GiB");
   assert.equal(cardFactWords("shared", null, null), "a card, shared");
+});
+
+test("071 unit 7, Astra 7: CUDA's check is skipped only where the box has no Python; a library that does not load, a non-zero cuInit or a check that did not finish fails", () => {
+  const card = `GPU-${A}, NVIDIA Fake Card, 97887`;
+  assert.equal(judgeCardCheck(answer(card, "cuinit no-python", "userspace 580.142"), A, "580.142").ok, true, "a box with no python3 is checked by nvidia-smi alone");
+  const missing = judgeCardCheck(answer(card, "cuinit OSError: libcuda.so.1: cannot open shared object file: No such file or directory", "userspace 580.142"), A, "580.142");
+  assert.deepEqual(missing.ok ? null : missing.why, "CUDA's driver did not load in it: OSError: libcuda.so.1: cannot open shared object file: No such file or directory");
+  const empty = judgeCardCheck(answer(card, "cuinit", "userspace 580.142"), A, "580.142");
+  assert.equal(empty.ok, false, "Python that printed nothing fails");
+  assert.deepEqual(judgeCardCheck(answer(card, "cuinit 3", "userspace 580.142"), A, "580.142").ok ? null : "failed", "failed");
+  const cut = judgeCardCheck(`${card}\ncuinit 0`, A, "580.142");
+  assert.deepEqual(cut.ok ? null : [cut.why, cut.reading], ["the check in it did not finish", "cards"], "a check cut short fails, though the card was listed");
+  const noCuda = judgeCardCheck(answer(card, "userspace 580.142"), A, "580.142");
+  assert.equal(noCuda.ok, false, "a check with no CUDA line fails");
+  assert.equal(wrongCardSeen(cut, A), false, "a check cut short is not a wrong card");
+  assert.equal(wrongCardSeen(judgeCardCheck(answer("sh: 1: nvidia-smi: not found", "cuinit no-python", "userspace none"), A, null), A), false, "an unreadable reading is not a wrong card");
+  assert.equal(wrongCardSeen(judgeCardCheck(answer("No devices were found", "cuinit 100", "userspace 580.142"), A, "580.142"), A), true);
+  assert.equal(wrongCardSeen(judgeCardCheck(answer(`GPU-${B}, NVIDIA Fake Card, 97887`, "cuinit 0", "userspace 580.142"), A, "580.142"), A), true);
+  assert.equal(wrongCardSeen(judgeCardCheck(answer("Failed to initialize NVML: Driver/library version mismatch", "cuinit 999", "userspace 570.86"), A, "580.142"), A), false, "stale userspace is not a wrong card");
+  assert.match(CARD_CHECK_COMMAND, /if command -v python3 >\/dev\/null 2>&1; then .* 2>&1 \| tail -1\)"; else echo 'cuinit no-python'; fi/);
 });
 
 test("071 unit 7: a server with a shared GPU is placed on a card, its marker goes in the same write as its labels, the helper writes the server set of lines into the stopped clone, and it starts on its card, as nvidia-smi in it shows", async () => {
@@ -246,7 +277,7 @@ test("071 unit 7: the sweep's nvidia-smi in each running box with a GPU finds a 
   const cards = report.checks.find((check) => check.id === "proxmox.gpu-cards");
   assert.equal(cards?.status, "fail", JSON.stringify(cards));
   assert.match(cards!.detail, new RegExp(`^CT ${vmid} holds card \\d, and nvidia-smi in it listed card \\d, (just now|\\d+ \\w+ ago)\\. bb-box places no new box on those cards until it is put right, and does not stop the boxes\\.$`));
-  await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), /left out for now/);
+  await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), /takes no new box while a box there is on another card's lines or lists another card/);
   assert.equal(bridge.proxmox.guests.get(vmid)!.status, "running", "bb-box never stops it by itself");
   bridge.seenInBox.delete(vmid);
   bridge.pass();
@@ -287,4 +318,157 @@ test("071 unit 7: box_list says per kind which providers give a GPU, the room on
   assert.equal(gpuPartsText(docker, now), "", "a provider with no GPU part says nothing");
   const desktop = { desktop: true, offers: [offer(null, ["none", "shared"])] } as unknown as KindView;
   assert.equal(gpuPartsText(desktop, now), " gpu none gives a desktop drawn by the CPU, from the same image.");
+});
+
+function imageTemplate(bridge: ClaimsBridge, vmid: number, kind: string, nvidia: string | null, lines: readonly string[] = []): void {
+  const record = JSON.stringify({ contract: 1, image: "rust-tools", kind, arch: "x86_64", build: "build.20261105-100000-3c4d", built: "2026-11-05T10:00:00Z", os: "Ubuntu 24.04.5 LTS", tools: {}, nvidia });
+  bridge.proxmox.addTemplate(vmid, { unprivileged: "1", description: `bb-box image rust-tools\n${record}`, ...devices(lines) });
+}
+
+function fromImage(kind: string, gpu: GpuPart, image: number): BoxIdentity {
+  return { ...box(kind, gpu), from: String(image) };
+}
+
+test("071 unit 7, Astra 3 and Fable 2: the sweep skips a reading it cannot read and a box whose userspace is stale, so neither closes its card or fails the doctor", async () => {
+  for (const shows of ["Failed to initialize NVML: Driver/library version mismatch", "sh: 1: nvidia-smi: not found", "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver."]) {
+    const bridge = new ClaimsBridge();
+    withUserspace(bridge);
+    const backend = bridge.backend();
+    const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+    bridge.seenInBox.set(Number(made.ref), { shows });
+    bridge.cudaInBox.set(Number(made.ref), "999");
+    bridge.pass();
+    await backend.maintain(signal());
+    const cards = (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-cards");
+    assert.equal(cards?.status, "ok", `${shows}: ${cards?.detail}`);
+  }
+});
+
+test("071 unit 7, Astra 4: a card the helper reports a running guest on the wrong lines of, and the card those lines name, take no new box", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const made = await bridge.backend().acquire(box("linux", "shared"), null, hooks(), signal());
+  const vmid = Number(made.ref);
+  const other = made.claim!.card === A ? CARD_B : CARD_A;
+  const config = bridge.proxmox.guests.get(vmid)!.config;
+  for (const key of Object.keys(config)) if (/^dev\d+$/.test(key) && /\/dev\/nvidia/.test(config[key]!)) delete config[key];
+  Object.assign(config, devices(cardLines(other, "server")));
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().some((line) => line === `mismatch ${vmid} ${made.claim!.card}`), bridge.node.reportLines().join("\n"));
+  await assert.rejects(bridge.backend().acquire(box("linux", "shared"), null, hooks(), signal()), /takes no new box while a box there is on another card's lines or lists another card/);
+});
+
+test("071 unit 7, Astra 5: a box the sweep found on the wrong card stops closing its cards once it is released, stopped, or checked again on its card", async () => {
+  for (const end of ["release", "stop", "check"] as const) {
+    const bridge = new ClaimsBridge();
+    withUserspace(bridge);
+    const backend = bridge.backend();
+    const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+    const vmid = Number(made.ref);
+    bridge.seenInBox.set(vmid, { shows: `GPU-${made.claim!.card === A ? B : A}` });
+    bridge.pass();
+    await backend.maintain(signal());
+    await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), /takes no new box while a box there is on another card's lines or lists another card/, `${end}: closed first`);
+    bridge.seenInBox.delete(vmid);
+    bridge.pass();
+    if (end === "release") await backend.release(made, { resetting: async () => {}, timing: () => {} });
+    if (end === "stop") await backend.stop(made);
+    if (end === "check") await backend.start(made, signal());
+    const next = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+    assert.ok(next.claim?.card, `${end}: a new server is placed`);
+  }
+});
+
+test("071 unit 7, Astra 2 and Fable 3: a restore's start on the card it holds never moves the box when the check fails: it is left stopped on its card, with words", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  const vmid = Number(made.ref);
+  const held = made.claim!.card!;
+  await backend.stop(made);
+  bridge.pass();
+  await backend.holdGpuCard(made, { part: "shared", card: held, generation: made.claim!.generation, index: held === A ? 0 : 1 });
+  bridge.seenInBox.set(vmid, { shows: "No devices were found" });
+  const before = bridge.gpuTags(vmid);
+  await assert.rejects(backend.start(made, signal()), (error: unknown) => {
+    assert.ok(error instanceof AudienceError, String(error));
+    assert.match(error.message, /^The box did not get card \d: nvidia-smi in it listed no card, .* A restore starts a box only on the card it holds, so bb-box did not move it\. It is stopped, with its disk as it was\. Start tries again; bb box doctor has more\.$/);
+    assert.match(error.agentMessage, /It is stopped, with its disk as it was\. Start it again later, or ask the user\.$/);
+    return true;
+  });
+  assert.equal(bridge.proxmox.guests.get(vmid)!.status, "stopped");
+  assert.deepEqual(bridge.gpuTags(vmid), before, "its claim stays on the card it holds");
+  assert.deepEqual(bridge.lines(vmid), cardLines(held === A ? CARD_A : CARD_B, "server"));
+});
+
+test("071 unit 7, Astra 1 and Fable 1: a server with a shared GPU from a project's image is placed and marked as a template's clone is, once the image has the host's userspace", async () => {
+  const bridge = new ClaimsBridge();
+  imageTemplate(bridge, 9050, "linux", "580.142");
+  imageTemplate(bridge, 9051, "linux", null);
+  const backend = bridge.backend();
+  const made = await backend.acquire(fromImage("linux", "shared", 9050), null, hooks(), signal());
+  const vmid = Number(made.ref);
+  const card = made.claim?.card === A ? CARD_A : CARD_B;
+  assert.equal(made.claim?.answer, "granted");
+  assert.equal(made.data?.template, 9050);
+  assert.deepEqual(bridge.gpuTags(vmid), [marker("shared", card, 1)]);
+  assert.deepEqual(bridge.lines(vmid), cardLines(card, "server"));
+  const before = clones(bridge);
+  await assert.rejects(backend.acquire(fromImage("linux", "shared", 9051), null, hooks(), signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.match(error.message, /the image this box starts from has no NVIDIA userspace for its driver 580\.142: image build 9051 has none/);
+    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+    return true;
+  });
+  assert.equal(clones(bridge), before, "refused before any copy");
+});
+
+test("071 unit 7, Fable 1: a desktop from an image takes a placed card's lines when shared, and loses the lines its image carries when it has no GPU; with the helper's writes off such an image is refused for gpu none", async () => {
+  const bridge = new ClaimsBridge();
+  imageTemplate(bridge, 9052, "linux-desktop", "580.142", cardLines(CARD_A, "desktop"));
+  const backend = bridge.backend();
+  const none = await backend.acquire(fromImage("linux-desktop", "none", 9052), null, hooks(), signal());
+  assert.deepEqual(bridge.gpuTags(Number(none.ref)), ["gpu.none.g1"]);
+  assert.deepEqual(bridge.lines(Number(none.ref)), [], "the helper took the image's lines out");
+  const shared = await backend.acquire(fromImage("linux-desktop", "shared", 9052), null, hooks(), signal());
+  const card = shared.claim?.card === A ? CARD_A : CARD_B;
+  assert.deepEqual(bridge.gpuTags(Number(shared.ref)), [marker("shared", card, 1)]);
+  assert.deepEqual(bridge.lines(Number(shared.ref)), cardLines(card, "desktop"));
+
+  const off = new ClaimsBridge({ writes: "off" });
+  imageTemplate(off, 9052, "linux-desktop", "580.142", cardLines(CARD_A, "desktop"));
+  const before = clones(off);
+  await assert.rejects(off.backend().acquire(fromImage("linux-desktop", "none", 9052), null, hooks(), signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.match(error.message, /carries a card's device lines, and the GPU helper on pve has writes off/);
+    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu shared, or ask the user\. bb-box changed nothing\.$/);
+    return true;
+  });
+  assert.equal(clones(off), before);
+});
+
+test("071 unit 7, Astra 8 and Fable 4: a refusal inside an acquire and a start carries an agent's words, which tell it neither to release a box nor to change a setting", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ perGpu: 1 });
+  const server = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  await backend.acquire(box("linux-desktop", "shared"), null, hooks(), signal());
+  await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.match(error.message, /Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
+    assert.match(error.agentMessage ?? "", /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+    assert.doesNotMatch(error.agentMessage!, /release|raise|settings/i);
+    return true;
+  });
+  await backend.stop(server);
+  bridge.pass();
+  await backend.acquire(box("linux-desktop", "shared"), null, hooks(), signal());
+  await assert.rejects(backend.start(server, signal()), (error: unknown) => {
+    assert.ok(error instanceof AudienceError, String(error));
+    assert.match(error.message, /Release another desktop box, or start it again later\./);
+    assert.match(error.agentMessage, /Start it again later, or ask the user\. It is stopped, with its disk as it was\.$/);
+    assert.doesNotMatch(error.agentMessage, /release|raise|settings/i);
+    return true;
+  });
 });

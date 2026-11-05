@@ -1,6 +1,4 @@
 #!/bin/bash
-# usage: nvidia-userspace.sh <build-dir>
-#   as root in the build CT; prints the version it installed
 set -Eeuo pipefail
 trap 'echo "nvidia-userspace: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022

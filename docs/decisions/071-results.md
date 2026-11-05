@@ -2660,21 +2660,25 @@ unchanged until the lead rebuilds its Linux template, after the gate.
 - **The check after each start** bb-box makes of a box with a card:
   `nvidia-smi --query-gpu=uuid,name,memory.total` lists the claimed card,
   and `cuInit(0)` returns 0, through Python's `ctypes`, which takes no card
-  memory; a box with no `python3` is checked by `nvidia-smi` alone. A fresh
-  acquire that fails it is released and made again on another card within
-  the kind's time, and that card is left out for 10 minutes. A stopped
-  server that fails it is stopped, placed once on another card and started
-  again; if that fails too, it is left stopped with its disk, and the start
-  says why. A box whose userspace is not the host's driver is not moved,
-  and its GPU fact says so. The GPU fact reads as section 11's words: "card
+  memory; a box with no `python3` is checked by `nvidia-smi` alone, and a
+  check that does not finish fails. A fresh acquire that fails it is
+  released and made again on another card within the kind's time, and that
+  card is left out for 10 minutes. A stopped server that fails it is
+  stopped, placed once on another card and started again; if that fails
+  too, it is left stopped with its disk, and the start says why. A
+  restore's start is never moved: it is left stopped on its card. A box
+  whose userspace is not the host's driver is not moved, and its GPU fact
+  says so. The GPU fact reads as section 11's words: "card
   1, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96
   GiB".
 - **The sweep's check.** Every 10 minutes the backend's upkeep runs
   `nvidia-smi` in each running box of this install that holds a granted
-  card. A box that lists another card or none is logged, placements leave
-  out both cards until it is put right, and the doctor's new
-  `proxmox.gpu-cards` check fails, naming it, as it does for the helper's
-  `mismatch` lines. bb-box never stops it.
+  card. A box whose `nvidia-smi` lists another card, or says there is none,
+  is logged, placements leave out both cards until it is released, stopped
+  or checked again on its card, and the doctor's new `proxmox.gpu-cards`
+  check fails, naming it. The helper's `mismatch` lines close their cards
+  the same way. A reading the sweep cannot read, and a box whose userspace
+  is not the host's driver, are skipped. bb-box never stops a box for it.
 - **The tools.** `box_acquire` and `bb box acquire` take `gpu`, none or
   shared. Left out, it is the kind's: none for `linux`, shared for
   `linux-desktop`. Each offer says the GPU parts it gives (`gpuParts`), and
@@ -2805,6 +2809,35 @@ to G, through the lead.
   template's still fails, as 049 has it.
 - NVIDIA's OpenCL ICD is left visible.
 - `bb box acquire` takes `--gpu` too.
+
+### After the reviews
+
+Two reviews (Astra, Fable) said no-go. Each finding is fixed in one more
+commit, with the lead's decisions, and each fix has a test that failed with
+the fix reverted, on a box, 16 reverts in all.
+
+| Finding | Fix |
+| --- | --- |
+| A box from a project's image with a GPU part skipped placement and its marker (Astra 1, Fable 1) | A server from an image is placed as a template's clone is, once the image's record has the host's userspace, and refused before any copy otherwise. A shared desktop from an image is placed on any card while the helper writes, or on the card its lines name while it does not. A desktop with no GPU from an image gets a `gpu.none` marker, and the helper takes the image's lines out; with no helper or writes off, an image with lines is refused for gpu none |
+| A failed check moved a restore's pinned start to another card (Astra 2, Fable 3) | A restore's start never moves: the box is stopped and left on its card, and the start says why |
+| The sweep took an unreadable reading for "no card" (Astra 3, Fable 2) | The sweep runs the full check and calls a box on the wrong card only when nvidia-smi lists another card or says there is none. An unreadable reading, a check cut short and a box whose userspace is not the host's driver are skipped |
+| Placement ignored the helper's `mismatch` lines (Astra 4) | A card named in a `mismatch` line, and the card that guest's lines name, take no new box |
+| Exclusions outlived their box (Astra 5) | A box's exclusion ends when it is released, stopped, or passes a check |
+| `build.sh linux --cpu` set an empty device line (Astra 6) | Empty lines are left out |
+| Any Python failure passed the CUDA check (Astra 7) | CUDA is skipped only where the box has no Python; a library that does not load, a non-zero `cuInit`, or a check whose last line is missing fails. A check bb-box could not run at all fails too |
+| Refusals inside acquire and start reached an agent in the person's words (Astra 8, Fable 4) | Errors carry an agent's words beside the person's: `BackendError.agentMessage`, and `AudienceError` for a start. A failed box keeps both, and `box_acquire`, `box_status`, `box_list` and every tool's failure show the agent's |
+| The node steps' memory parser split NVIDIA's CSV on spaces, and the PyTorch run passed when Python failed (Astra 9, 10) | The watcher writes one `time index used` line per card; the readings fail on missing or malformed samples, no load, or 1 GiB or more; the run exits with Python's status and asserts a finite result. No block passes by default |
+| Comments in the new scripts (Astra 11) | Removed; their usage is in the setup guide |
+| `box_list` said "no GPU helper" on a node with no card (Fable 5) | It says nothing about GPUs there |
+
+Run on a `linux` box in `node:26-bookworm` as root, on the commit after the
+reviews: `tsc` clean; the node suite, 3,722 tests, 3,427 passed, 0 failed,
+295 skipped; vitest, 462 passed in four runs of five, and 461 in the first,
+whose one failing test's name was not kept. Each block of the node steps
+passes `bash -n`, and the readings block, run as written on a made-up watcher
+log, gives a delta of 800 MiB for the reviewers' case and fails for a load
+of 1.3 GiB, a card with no samples, a watcher that stopped, no load, and a
+malformed sample.
 
 ### Still open
 

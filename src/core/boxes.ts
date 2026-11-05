@@ -26,6 +26,7 @@ import { encoderKey, encoderKeyParts, type EncoderPlace } from "./encoder-ledger
 import { chooseModel, parseBoxDevice, parseDeviceOffer } from "./device-parse.ts";
 import {
   BackendError,
+  agentMessageOf,
   type AcquireHooks,
   type Backend,
   type BackendStorage,
@@ -191,6 +192,7 @@ export interface BoxRecord {
   readonly state: BoxState;
   /** Why the box failed, or what went wrong with its last change. */
   readonly error: string | null;
+  readonly agentError?: { readonly of: string; readonly words: string } | null;
   readonly createdAt: number;
   readonly readyAt: number | null;
   readonly releaseRequestedAt: number | null;
@@ -673,6 +675,16 @@ export function describeError(error: unknown, action: string): string {
   if (error instanceof BoxError || error instanceof BackendError || error instanceof TransportError) return error.message;
   const message = error instanceof Error ? error.message : String(error);
   return `${action} failed: ${message}`;
+}
+
+export function describeErrorForAgent(error: unknown, action: string): string {
+  const words = agentMessageOf(error);
+  if (words === null) return describeError(error, action);
+  return error instanceof BackendError ? words : `${action} failed: ${words}`;
+}
+
+export function errorForAgent(box: Pick<BoxRecord, "error" | "agentError">): string | null {
+  return box.agentError && box.agentError.of === box.error ? box.agentError.words : box.error;
 }
 
 function hoursWords(ms: number): string {
@@ -2459,7 +2471,9 @@ export class Boxes {
       const next = await this.update(box, (current) => {
         if (this.#disposed && current.state !== "releasing" && placedOnSharedHost(current)) return {};
         if (current.state === "releasing" || this.#disposed) return { guest: null };
-        return { state: "failed", guest: null, error: describeError(error, "Acquiring the box"), timings: { ...timings }, waitingOn: null };
+        const said = describeError(error, "Acquiring the box");
+        const agentWords = agentMessageOf(error) === null ? null : { of: said, words: describeErrorForAgent(error, "Acquiring the box") };
+        return { state: "failed", guest: null, error: said, agentError: agentWords, timings: { ...timings }, waitingOn: null };
       });
       if (next?.state === "failed") this.#deps.logError("acquire", error);
       return;

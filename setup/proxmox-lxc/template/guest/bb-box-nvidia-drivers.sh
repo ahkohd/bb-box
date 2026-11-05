@@ -1,7 +1,4 @@
 #!/bin/bash
-# usage: bb-box-nvidia-drivers [--check]
-#   --check  prints each file's state and changes nothing
-# BB_BOX_ROOT: the root its files and device nodes are under, for tests.
 set -euo pipefail
 
 root=${BB_BOX_ROOT:-}

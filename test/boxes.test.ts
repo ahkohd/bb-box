@@ -7,20 +7,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { AudienceError, BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type SpareSettling, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, errorForAgent, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type SpareSettling, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
-import { gpuRoomText } from "../src/plugin/tools.ts";
+import { failure, gpuRoomText, seenByAgent } from "../src/plugin/tools.ts";
 import { adminText, boxDetail, boxLine, boxView, gpuRooms, kindResizeText, kindViews, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
@@ -3747,4 +3747,25 @@ test("071 unit 7: a provider's own refusal reaches an agent in the words it give
   world.backend = new Refusing({ root: tempDir("gpu-refusing"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }] });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), { code: "no_capacity", message: "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing." });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), { code: "no_capacity", message: "No card has room. Release a box on a card." });
+});
+
+test("071 unit 7, Astra 8 and Fable 4: a box whose acquire is refused keeps the person's words and the agent's, and an agent's tools show the agent's", async () => {
+  class RefusedLate extends FakeBackend {
+    override async acquire(): Promise<never> {
+      throw new BackendError("no_capacity", "No card has room. Release a box on a card.", "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.");
+    }
+  }
+  const world = setup({ id: "fake:plain" });
+  world.backend = new RefusedLate({ root: tempDir("gpu-refused-late"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain" });
+  const failed = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.error, "No card has room. Release a box on a card.");
+  assert.equal(errorForAgent(failed), "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.match(boxDetail(seenByAgent(failed)), /State: failed\. Not made: no card has room\./);
+  assert.match(boxLine(seenByAgent(failed)), /Not made: no card has room\./);
+  assert.match(boxDetail(failed), /Release a box on a card\./, "the person's page keeps the person's words");
+  assert.equal(errorForAgent({ ...failed, error: "Release did not finish: the backend did not answer." }), "Release did not finish: the backend did not answer.", "a later error is not hidden behind the agent's words for an earlier one");
+  const start = new AudienceError("Container 7000 was not started: Release another desktop box.", "Container 7000 was not started: Start it again later, or ask the user.");
+  const answered = failure(start, "Starting the box") as { readonly content: readonly { readonly text: string }[] };
+  assert.equal(answered.content[0]!.text.split("\n")[0], "Starting the box failed: Container 7000 was not started: Start it again later, or ask the user.");
 });

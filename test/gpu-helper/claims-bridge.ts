@@ -60,6 +60,7 @@ export class ClaimsBridge {
   beforePass: (() => void) | null = null;
   readonly #configs: LxcConfig[] = [];
   readonly seenInBox = new Map<number, { readonly onCard?: string; readonly shows: string }>();
+  readonly cudaInBox = new Map<number, string>();
 
   constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string } = {}) {
     this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}) });
@@ -118,6 +119,7 @@ export class ClaimsBridge {
       mkdirSync(bin, { recursive: true });
       if (shown === null) rmSync(join(bin, "nvidia-smi"), { force: true });
       else writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncase "$*" in\n  *memory.free*) echo '${card?.freeMiB ?? 0}, ${card?.totalMiB ?? 0}' ;;\n  *) printf '%s\\n' '${shown}' ;;\nesac\n`, { mode: 0o755 });
+      writeFileSync(join(bin, "python3"), `#!/bin/sh\nprintf '%s\\n' '${this.cudaInBox.get(vmid) ?? (card ? "0" : "100")}'\n`, { mode: 0o755 });
     }
   }
 

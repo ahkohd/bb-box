@@ -164,7 +164,7 @@ add_devices() { # ct device...
     config=$(pct config "$ct")
   done
 }
-devices_of() { grep -v '^#' <<<"$1" || true; }
+devices_of() { grep -v -e '^#' -e '^$' <<<"$1" || true; }
 # /dev/net/tun, so boxes can run Tailscale and other VPNs with a TUN device
 # (050), as CT <ct>'s next free devN. A copy keeps the line its template has.
 add_tun() { # ct
