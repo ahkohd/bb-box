@@ -16,7 +16,7 @@ import { flush, startTestMonitor } from "./monitor-helpers.ts";
 test("a box whose BB machine is known is not called no BB machine when that machine is offline, and one still joining is not called offline", () => {
   assert.equal(unreadReason("calm-otter", { state: "enrolled", hostId: "host_1" }), offlineMachineWords("calm-otter"));
   assert.equal(unreadReason("calm-otter", { state: "failed", hostId: "host_1" }), offlineMachineWords("calm-otter"));
-  assert.equal(unreadReason("calm-otter", { state: "failed", hostId: null }), offlineMachineWords("calm-otter"));
+  assert.equal(unreadReason("calm-otter", { state: "failed", hostId: null }), unreadableWords("calm-otter"));
   assert.equal(unreadReason("calm-otter", { state: "enrolling", hostId: "host_1" }), stillJoiningWords("calm-otter"));
   assert.equal(unreadReason("calm-otter", { state: "enrolling", hostId: null }), stillJoiningWords("calm-otter"));
   assert.equal(unreadReason("calm-otter", { state: "off", hostId: null }), unreadableWords("calm-otter"));

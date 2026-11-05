@@ -141,6 +141,8 @@ const FALLBACK_NOTE_MS = 8_000;
 
 type Stream = "rfb" | "selkies";
 type ViewerSession = DesktopSession | SelkiesSession;
+const NO_STREAM: Connection = { state: "connecting" };
+const DESKTOP_ENDED = "The connection to the desktop ended.";
 
 function storedChoice(boxId: string): Stream | null {
   try {
@@ -602,7 +604,7 @@ export class DesktopSession implements Kept {
       this.#closePointer();
       const wait = retryWait(this.#failures);
       this.#failures += 1;
-      this.#set({ state: "disconnected", reason: this.#refused ?? "The connection to the desktop ended.", retryMs: wait });
+      this.#set({ state: "disconnected", reason: this.#refused ?? DESKTOP_ENDED, retryMs: wait });
       if (this.hidden) {
         this.onEnded?.();
         return;
@@ -856,6 +858,7 @@ export class DesktopSession implements Kept {
     const client = this.#client;
     this.#client = null;
     client?.disconnect();
+    if (this.connection.state !== "disconnected") this.#set({ state: "disconnected", reason: DESKTOP_ENDED, retryMs: 0 });
     this.#listeners.clear();
     this.element.remove();
   }
@@ -1189,7 +1192,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
     keyBefore.current = key;
   }, [key]);
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
-  const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
+  const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? NO_STREAM);
   const [device, setDevice] = useState<DeviceShown | null>(null);
   const [deviceView, setDeviceView] = useState<DeviceView>(() => storedDeviceView(boxId));
   useEffect(() => setDeviceView(storedDeviceView(boxId)), [boxId]);
@@ -1437,7 +1440,10 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
-    if (state && key && !(streamHeld && (connected || !quiet))) dropKept(key);
+    if (state && key && !(streamHeld && (connected || !quiet))) {
+      dropKept(key);
+      setConnection(NO_STREAM);
+    }
     if (state && box?.state !== "ready") dropKept(deviceKeyOf(shown));
   }, [state, key, streamHeld, connected, quiet, box?.state, shown]);
 

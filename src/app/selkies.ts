@@ -683,12 +683,16 @@ export class SelkiesSession implements Kept {
     }
     const wait = retryWait(this.#failures);
     this.#failures += 1;
-    this.#set({ state: "disconnected", reason: reason || (this.#device ? "The connection to the device ended." : "The connection to the desktop ended."), retryMs: wait });
+    this.#set({ state: "disconnected", reason: reason || this.#endedWords(), retryMs: wait });
     if (this.hidden) {
       this.onEnded?.();
       return;
     }
     this.#retry = setTimeout(() => this.connect(), wait);
+  }
+
+  #endedWords(): string {
+    return this.#device ? "The connection to the device ended." : "The connection to the desktop ended.";
   }
 
   /** A new decoder, which takes nothing until a key frame. */
@@ -1487,6 +1491,7 @@ export class SelkiesSession implements Kept {
     window.removeEventListener("focus", this.#onFocus);
     this.#observer?.disconnect();
     clearTimeout(this.#drawnSettle);
+    if (this.connection.state !== "disconnected") this.#set({ state: "disconnected", reason: this.#endedWords(), retryMs: 0 });
     this.#stage?.dispose();
     this.#answers.ended(this.#device?.state ?? null);
     this.#keyboard.ungrab();

@@ -201,6 +201,9 @@ type Connection =
   | { readonly state: "connected" }
   | { readonly state: "ended"; readonly reason: string };
 
+const TERMINAL_CLOSED = "The connection to the terminal closed.";
+const SHELL_CLOSED: Connection = { state: "ended", reason: TERMINAL_CLOSED };
+
 /**
  * One shell's terminal: xterm and the socket to the plugin, in an element of
  * its own that a tab puts inside its screen area. It is kept across tab
@@ -355,7 +358,7 @@ export class TerminalClient implements Kept {
       this.#socket = null;
       this.#set({
         state: "ended",
-        reason: event.reason || "The connection to the terminal closed.",
+        reason: event.reason || TERMINAL_CLOSED,
       });
       if (this.hidden) this.onEnded?.();
     };
@@ -377,6 +380,7 @@ export class TerminalClient implements Kept {
       this.#socket = null;
     }
     this.#view.dispose();
+    if (this.connection.state !== "ended") this.#set(SHELL_CLOSED);
     this.#listeners.clear();
     this.element.remove();
   }
@@ -541,7 +545,7 @@ export function BoxTerminal({
   const connected = connection.state === "connected" || kept?.connection.state === "connected";
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = connected || (quiet === null && (ready || kept !== undefined));
+  const wanted = (openable && connected) || (quiet === null && (ready || kept !== undefined));
 
   // The shell's terminal is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept terminal is in the page before it paints.
@@ -581,7 +585,9 @@ export function BoxTerminal({
 
   // A box that stops or goes takes its shell with it.
   useEffect(() => {
-    if (state && !openable) dropKept(key);
+    if (!state || openable) return;
+    dropKept(key);
+    setConnection(SHELL_CLOSED);
   }, [state, openable, key]);
 
   const renew = () => {

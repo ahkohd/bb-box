@@ -9258,6 +9258,88 @@ test("a connected terminal or desktop stays up when a reach check fails, and Che
   await waitFor(() => expect(changes).toEqual(["refresh box_2", "refresh box_2"]));
 });
 
+function withAnswering(handlers: PluginRpcTestHandlers<Contract>, boxId: string) {
+  let reach: BoxView["reach"] = null;
+  const loadDesktop = handlers.desktop;
+  const live: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: async (input) => {
+      const answer = await loadDesktop(input);
+      if (!answer.box || answer.box.id !== boxId) return answer;
+      return { ...answer, box: { ...answer.box, reach } };
+    },
+  };
+  return { live, setAnswering: (answering: boolean) => void (reach = answering ? null : NOT_ANSWERING) };
+}
+
+async function stopBox(handlers: PluginRpcTestHandlers<Contract>, tab: ReturnType<typeof terminalTab>, boxId: string) {
+  await handlers.stop!({ threadId: THREAD, box: boxId } as never);
+  await tab.behavior.emitRealtime("changed", { threadId: THREAD });
+}
+
+async function startBox(handlers: PluginRpcTestHandlers<Contract>, tab: ReturnType<typeof terminalTab>, boxId: string) {
+  await handlers.start!({ threadId: THREAD, box: boxId } as never);
+  await tab.behavior.emitRealtime("changed", { threadId: THREAD });
+}
+
+test("a connected terminal whose box stops and starts again opens a new shell in the same tab", async () => {
+  const { handlers } = server([desktopBox()]);
+  const term = terminalTab(handlers, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  act(() => FakeSocket.made[0]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  await stopBox(handlers, term, "box_2");
+  expect(await term.findByText("bold-heron is stopped.")).toBeTruthy();
+  expect(FakeSocket.made[0]!.readyState).toBe(3);
+  expect(term.queryByText("Connected")).toBeNull();
+  await startBox(handlers, term, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+  expect(term.getByText("Connecting…")).toBeTruthy();
+  act(() => FakeSocket.made[1]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  const screenArea = term.getByTestId("terminal-screen");
+  expect(screenArea.contains(xterm.FakeTerminal.made.at(-1)!.target)).toBe(true);
+  expect(screenArea.className).not.toContain("invisible");
+});
+
+test("a connected desktop whose box stops and comes back not answering opens no noVNC client until it answers", async () => {
+  const { handlers } = server([desktopBox()]);
+  const { live, setAnswering } = withAnswering(handlers, "box_2");
+  const desk = desktopTab(live, "box_2");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  expect(await desk.findByText("The agent has control.")).toBeTruthy();
+  await stopBox(live, desk, "box_2");
+  expect(await desk.findByText("bold-heron is stopped.")).toBeTruthy();
+  expect(novnc.FakeRfb.made[0]!.disconnected).toBe(true);
+  setAnswering(false);
+  await startBox(live, desk, "box_2");
+  expect(await desk.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(novnc.FakeRfb.made).toHaveLength(1);
+  setAnswering(true);
+  await desk.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+});
+
+test("a connected terminal whose box stops and comes back not answering opens no shell until it answers", async () => {
+  const { handlers } = server([desktopBox()]);
+  const { live, setAnswering } = withAnswering(handlers, "box_2");
+  const term = terminalTab(live, "box_2");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  act(() => FakeSocket.made[0]!.open());
+  expect(await term.findByText("Connected")).toBeTruthy();
+  await stopBox(live, term, "box_2");
+  expect(await term.findByText("bold-heron is stopped.")).toBeTruthy();
+  setAnswering(false);
+  await startBox(live, term, "box_2");
+  expect(await term.findByText("bold-heron does not answer")).toBeTruthy();
+  expect(term.getByText("Not answering")).toBeTruthy();
+  expect(FakeSocket.made).toHaveLength(1);
+  setAnswering(true);
+  await term.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+});
+
 test("a desktop or terminal of a box that does not answer does not connect, and says why", async () => {
   const quiet = desktopBox({ reach: NOT_ANSWERING });
   const { handlers } = server([quiet]);

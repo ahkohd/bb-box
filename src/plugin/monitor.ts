@@ -71,7 +71,7 @@ export function stillJoiningWords(name: string): string {
 
 export function unreadReason(name: string, enrol: { readonly state: string; readonly hostId: string | null }): string {
   if (enrol.state === "enrolling") return stillJoiningWords(name);
-  return enrol.state === "enrolled" || enrol.state === "failed" ? offlineMachineWords(name) : unreadableWords(name);
+  return enrol.state === "enrolled" || enrol.hostId !== null ? offlineMachineWords(name) : unreadableWords(name);
 }
 
 export function readableState(state: string): boolean {
