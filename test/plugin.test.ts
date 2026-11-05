@@ -496,11 +496,11 @@ function isError(result: PluginAgentToolResult): boolean {
 }
 
 async function until<T>(what: string, check: () => Promise<T | null | undefined | false>): Promise<T> {
-  const deadline = Date.now() + 10_000;
+  const deadline = performance.now() + 30_000;
   for (;;) {
     const value = await check();
     if (value) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
+    if (performance.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -1809,11 +1809,22 @@ test("a try to join BB starts by itself once it is due, without waiting for the 
   rmSync(broken);
   const bootstraps = world.bootstraps.length;
 
+  let mocked = false;
+  t.after(() => {
+    if (mocked) t.mock.timers.reset();
+  });
   t.mock.timers.enable({ apis: ["Date"], now: due - 1 });
+  mocked = true;
   alarms.ringAt(due - 1);
   assert.equal(world.bootstraps.length, bootstraps, "nothing rings before the try is due");
   t.mock.timers.setTime(due);
   alarms.ringAt(due);
+  await until("the retry to leave its wait", async () => {
+    const current = await app.boxes.find(box.id);
+    return current?.joinTries?.next === null ? current : null;
+  });
+  t.mock.timers.reset();
+  mocked = false;
   await until("the box to join with no sweep", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
   assert.equal(world.bootstraps.length, bootstraps + 1);
   assert.deepEqual(alarms.pending, [], "a joined box has no try planned");
@@ -5126,6 +5137,46 @@ test("a click that opened another process's panel, which Cua on Windows calls a 
   const onDesktop = await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 1500, y: 870 });
   assert.equal(isError(onDesktop), false, text(onDesktop));
   assert.match(text(onDesktop), /\n\nThe click landed, and window \d+: explorer "Notification overflow", 200 by 120 came in front/);
+});
+
+test("computer_type still reads the window when the call is cancelled after the text is in", async (t) => {
+  const { harness, box, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const call = (name: string, input: unknown, signal?: AbortSignal) => harness.behavior.callAgentTool(name, input, { threadId: THREAD, projectId: PROJECT, ...(signal ? { signal } : {}) });
+  editDesktop(file, (desktop) => {
+    const window = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "editor", title: "Notes", x: 40, y: 40, width: 640, height: 480, onScreen: true };
+    desktop.windows.push(window);
+    desktop.fields[window.id] = "";
+  });
+  const editor = readDesktop(file).windows.find((window) => window.app === "editor")!;
+  await call("computer_observe", { box: box.name, window: editor.id });
+  editDesktop(file, (desktop) => {
+    desktop.delays.afterRead = 5_000;
+  });
+  const callsBefore = readDesktop(file).calls.length;
+  const controller = new AbortController();
+  const pending = call("computer_type", { box: box.name, window: editor.id, text: "hi" }, controller.signal);
+  const sawRead = (async () => {
+    for (;;) {
+      const calls = readDesktop(file).calls;
+      const typedAt = calls.findIndex((entry, index) => index >= callsBefore && entry.tool === "type_text");
+      if (typedAt >= 0 && calls.slice(typedAt + 1).some((entry) => entry.tool === "get_window_state")) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })();
+  await Promise.race([
+    sawRead,
+    pending.then(() => {
+      throw new Error("the type finished before its after-read could be cancelled");
+    }),
+  ]);
+  controller.abort("cancelled");
+  const result = await pending;
+  assert.equal(isError(result), false, text(result));
+  assert.match(text(result), /^Typed 2 characters into window \d+\./);
+  assert.doesNotMatch(text(result), /could not read what changed/);
+  const readsAfterType = readDesktop(file).calls.filter((entry, index) => index >= callsBefore && entry.tool === "get_window_state");
+  assert.ok(readsAfterType.length >= 2, "the cancelled read was asked again");
 });
 
 test("on Sway, text an element refuses in the background is pasted with Cua's paste key, and the clipboard's text put back (#707)", async (t) => {

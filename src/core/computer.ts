@@ -2371,16 +2371,24 @@ export class Computer {
       read = await this.#read(use, id, false);
     } catch (error) {
       if (error instanceof ComputerError && error.code === "stale") return this.#gone(use, before.window);
-      // A window closing as it is read can fail the read with no reason, as on Windows: look once more.
-      if (options.late && !use.signal?.aborted) {
-        await sleep(LATE_CLOSE_MS, use.signal);
-        const now = await this.#listWindows(use).catch(() => null);
-        if (now && !now.has(id)) {
-          this.#lost(use.state, id);
-          return this.#gone(use, before.window);
+      if (readCancelled(error)) {
+        try {
+          read = await this.#read({ ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) }, id, false);
+        } catch (again) {
+          if (again instanceof ComputerError && again.code === "stale") return this.#gone(use, before.window);
+          return unread(again, `Call computer_observe with window ${id}.`);
         }
+      } else {
+        if (options.late && !use.signal?.aborted) {
+          await sleep(LATE_CLOSE_MS, use.signal);
+          const now = await this.#listWindows(use).catch(() => null);
+          if (now && !now.has(id)) {
+            this.#lost(use.state, id);
+            return this.#gone(use, before.window);
+          }
+        }
+        return unread(error, `Call computer_observe with window ${id}.`);
       }
-      return unread(error, `Call computer_observe with window ${id}.`);
     }
     const after = read.snapshot;
     const parts: string[] = [];
@@ -2659,6 +2667,12 @@ export class Computer {
     }
     return { parts, hints };
   }
+}
+
+function readCancelled(error: unknown): boolean {
+  if (error instanceof ComputerError) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "The call was cancelled." || message === "The call was cancelled" || /was aborted/i.test(message);
 }
 
 /** What bb-box says when it cannot read what an action it did changed. */

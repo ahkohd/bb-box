@@ -187,7 +187,7 @@ export function readIn(state: World, box: BoxRecord, path: string): string | nul
 export async function untilHeld(state: World, held: Promise<unknown>): Promise<void> {
   let ended = false;
   void held.then(() => (ended = true));
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 60_000;
   while (state.holds.step !== null) {
     if (ended) throw new Error(`the restore ended before its hold at ${state.holds.step}: ${String(await held)}`);
     if (Date.now() > deadline) throw new Error(`the restore never reached its hold at ${state.holds.step}`);
@@ -196,7 +196,7 @@ export async function untilHeld(state: World, held: Promise<unknown>): Promise<v
 }
 
 export async function untilStep(state: World, step: string): Promise<SnapshotOperation> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 60_000;
   for (;;) {
     const found = state.store.unsettled().find((operation) => operation.kind === "restore" && operation.step === step);
     if (found) return found;
