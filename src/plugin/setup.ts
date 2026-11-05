@@ -15,7 +15,7 @@ import { joinChecks, joiningWords } from "../core/join-tries.ts";
 import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
 import { recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
-import { pinsDigest, type ImageFacts } from "../backends/images.ts";
+import { chromePin, imageProgram, pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { ImageBakes } from "./bakes.ts";
 import { BoxFiles } from "./box-files.ts";
@@ -599,6 +599,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const url = bb.server.experimental_appUrl;
       return url ? bbAppDigest(url).catch(() => null) : null;
     },
+    program: (kind, backendId) => imageProgram(pins, kind, backendId),
+    chrome: (arch) => chromePin(pins, arch),
   };
 
   // A kind a backend changed by itself, as when a Mac reports Windows video ready: its boxes take it, once there are boxes.

@@ -5,7 +5,7 @@
  * it: how old it is, what is in it, and what it was built with.
  */
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { companionWorksWith, IOS_PAIRINGS_WORDS, type OfferedDeviceOf, type OfferedDevices } from "../core/device.ts";
 import { parseOfferedDevices } from "../core/device-parse.ts";
@@ -49,6 +49,11 @@ export interface ImageRecord {
   readonly sizeGiB: number | null;
   readonly devices: OfferedDevices | null;
   readonly encoders?: { readonly hardware: boolean | null; readonly software: string | null } | null;
+  /**
+   * SHA-256 of the guest scripts, the identity reset this kind's build writes,
+   * and the prepare script. Absent on an image built before bb-box recorded it.
+   */
+  readonly program?: string | null;
 }
 
 const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
@@ -92,6 +97,7 @@ export function parseImageRecord(value: unknown): ImageRecord | null {
     sizeGiB: typeof record.sizeGiB === "number" ? record.sizeGiB : null,
     devices: devices && devices.value,
     ...(encodersOf(record.encoders) ? { encoders: encodersOf(record.encoders) } : {}),
+    ...(text(record.program) ? { program: text(record.program) } : {}),
   };
 }
 
@@ -160,12 +166,90 @@ export async function pinsDigest(setup: string, set: PinSet): Promise<string | n
   }
 }
 
+/**
+ * The prepare script a backend's Linux image is built with, under setup/.
+ * A refresh records this file's SHA-256, so a change to it makes the image due.
+ */
+const PREPARE_FILES: Readonly<Record<string, string>> = {
+  tart: "tart/prepare-linux-image.sh",
+  docker: "docker/customize.sh",
+  microsandbox: "docker/customize.sh",
+  "proxmox-lxc": "proxmox-lxc/template/build.sh",
+  "proxmox-qemu": "proxmox-qemu/build-linux.sh",
+  boat: "boat/template.sh",
+};
+
+/** What a Linux image's build writes for BOX_IDENTITY_RESET: on for a headless Linux image, off for a desktop. */
+export function identityResetFor(kind: string): "on" | "off" {
+  return kind === "linux" || kind === "linux-arm64" ? "on" : "off";
+}
+
+/** The SHA-256 of a backend's prepare script, or null when this bb-box has no such file. */
+export async function prepareDigest(setup: string, backendId: string): Promise<string | null> {
+  const file = PREPARE_FILES[backendId.split(":")[0] ?? ""];
+  if (!file) return null;
+  try {
+    return createHash("sha256").update(await readFile(join(setup, file))).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The SHA-256 image-record.sh writes as `program`: the identity reset, each
+ * guest script in order, then the prepare script's SHA-256. Null when the
+ * guest directory is not there.
+ */
+export async function programDigest(guestDir: string, identityReset: string, prepare: string): Promise<string | null> {
+  let names: string[];
+  try {
+    names = (await readdir(guestDir)).filter((name) => name.endsWith(".sh")).sort();
+  } catch {
+    return null;
+  }
+  const hash = createHash("sha256");
+  hash.update(`BOX_IDENTITY_RESET=${identityReset}\n`);
+  for (const name of names) {
+    hash.update(`file ${name}\n`);
+    hash.update(await readFile(join(guestDir, name)));
+  }
+  hash.update(`PREPARE=${prepare}\n`);
+  return hash.digest("hex");
+}
+
+/** The program digest a rebuild of `kind` on `backendId` would record, or null when the files are not there. */
+export async function imageProgram(setup: string, kind: string, backendId: string): Promise<string | null> {
+  if (!PREPARE_FILES[backendId.split(":")[0] ?? ""]) return null;
+  const prepare = await prepareDigest(setup, backendId);
+  if (!prepare) return null;
+  return programDigest(join(setup, "proxmox-lxc/template/guest"), identityResetFor(kind), prepare);
+}
+
+/** Chrome's version in the desktop pins for an architecture, such as 156.0.8078.79, or null. */
+export async function chromePin(setup: string, arch: string): Promise<string | null> {
+  try {
+    const text = await readFile(join(setup, "proxmox-lxc/template/desktop-pins.tsv"), "utf8");
+    for (const line of text.split("\n")) {
+      const [name, file = "", , , lineArch = ""] = line.split("\t");
+      if (name !== "chrome" || lineArch !== arch) continue;
+      return /^google-chrome-stable_([^_]+)_/.exec(file)?.[1]?.replace(/-\d+$/, "") ?? null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** What bb-box knows now to judge an image by. Each is null when it cannot tell. */
 export interface ImageFacts {
   /** The SHA-256 of the pins this bb-box builds a set of images with. */
   pins(set: PinSet): Promise<string | null>;
   /** The SHA-256 of BB's host app that BB's server gives now. */
   bbApp(signal?: AbortSignal): Promise<string | null>;
+  /** The program digest a rebuild of this kind on this backend would record. */
+  program?(kind: string, backendId: string): Promise<string | null>;
+  /** The Chrome pin for an architecture, such as 156.0.8078.79. */
+  chrome?(arch: string): Promise<string | null>;
 }
 
 /** Days after which an image warns: twice the interval it is rebuilt at, a week for Linux and a month for Android, Windows and macOS. */
@@ -238,6 +322,8 @@ export function judgeImage(
     readonly joins?: boolean;
     readonly macosBuild?: string | null;
     readonly now?: number;
+    /** Chrome's pin for this image's architecture. A newer Chrome in the image warns: a rebuild from the pin would go backwards. */
+    readonly pinChrome?: string | null;
   },
   rebuild: string,
 ): ImageJudgement {
@@ -271,6 +357,10 @@ export function judgeImage(
   }
   if (facts.pins && record.pins !== facts.pins) {
     warnings.push("It was built with other pins than this bb-box's, so it lacks what a bb-box update brought.");
+  }
+  const chrome = record.tools.chrome;
+  if (chrome && facts.pinChrome && !atLeast(facts.pinChrome, chrome)) {
+    warnings.push(`Its Chrome is ${chrome}, newer than this bb-box's pin ${facts.pinChrome}, so a rebuild from the pins would go backwards. The pin is what a failed version check kept.`);
   }
   if (facts.os === "android" && (!record.devices || record.devices[0].runtime.platform !== "android")) {
     failures.push("It offers no Android devices in its record, so no android box can boot one from it.");

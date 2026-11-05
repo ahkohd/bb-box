@@ -237,6 +237,7 @@ DESKTOP_GPU=$desktop_gpu
 DESKTOP_SESSION=${wayland:+wayland}
 BUILD_ID=$build
 BOX_IDENTITY_RESET=$([ "$kind" = linux ] && echo on || echo off)
+PREPARE=$(sha256sum "$0" | awk 'NR==1{print $1}')
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in

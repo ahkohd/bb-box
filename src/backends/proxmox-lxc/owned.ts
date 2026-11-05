@@ -262,7 +262,7 @@ export class OwnedGuests {
     }
   }
 
-  async destroy(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
+  async destroy(vmid: number, owner: GuestOwner, signal?: AbortSignal, beforeRemove?: (signal?: AbortSignal) => Promise<void>): Promise<void> {
     const config = await this.#configOrNull(vmid, signal);
     if (!config) {
       await this.#power?.acted(vmid, "delete");
@@ -278,6 +278,7 @@ export class OwnedGuests {
       await this.#power!.acted(vmid, "delete");
       return;
     }
+    await beforeRemove?.(signal);
     if ((await this.#api.status(vmid, signal))?.status === "running") await this.stop(vmid, owner, signal);
     for (let tries = 1; ; tries++) {
       await this.read(vmid, owner, signal);

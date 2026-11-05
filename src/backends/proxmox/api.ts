@@ -791,6 +791,7 @@ export class Proxmox {
       response = await this.#fetch(url, { method, headers, body, signal: combined });
     } catch (error) {
       if (signal?.aborted) throw signal.reason;
+      if (clientClosed(error)) throw new ProxmoxError(method, path, 0, "bb-box stopped this Proxmox backend, or rebuilt it, as when Settings are saved.");
       const reason = timeout.aborted ? "timed out" : fetchFailure(error);
       throw new ProxmoxError(method, path, 0, `cannot reach the Proxmox API: ${reason}`);
     }
@@ -814,6 +815,13 @@ export class Proxmox {
     }
     return parsed?.data as T;
   }
+}
+
+function clientClosed(error: unknown): boolean {
+  const cause = error instanceof Error && error.cause !== undefined ? error.cause : error;
+  if (!(cause instanceof Error)) return false;
+  const code = "code" in cause && typeof cause.code === "string" ? cause.code : "";
+  return cause.name === "ClientDestroyedError" || cause.name === "ClientClosedError" || code === "UND_ERR_DESTROYED" || code === "UND_ERR_CLOSED";
 }
 
 /** Why a fetch failed. Node's fetch says only "fetch failed" and puts the reason in `cause`. */

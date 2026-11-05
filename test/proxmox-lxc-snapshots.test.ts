@@ -604,6 +604,29 @@ test("070 unit 7 re-review: a fork's clone is disarmed before each attempt to de
   assert.ok(state.proxmox.guests.has(Number(again.ref)));
 });
 
+test("a fork's later release disarms it again before deleting it", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  const forked = identity();
+  const made = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forked, null, quiet, new AbortController().signal);
+  const vmid = Number(made.ref);
+  const config = state.proxmox.guests.get(vmid)!;
+  config.config.onboot = "1";
+  let refuse = true;
+  state.proxmox.intercept = (call) => (refuse && call.method === "DELETE" && call.path.endsWith(`/lxc/${vmid}`) ? { ok: false, status: 500, statusText: "CT is locked", text: async () => JSON.stringify({ data: null }) } : undefined);
+  const hooks = { resetting: async () => {}, timing: () => {} };
+  await assert.rejects(state.backend.release(made, hooks), /locked|delete|500|Proxmox/i);
+  assert.equal(config.config.onboot, "0", "the release that could not delete still disarmed it");
+  config.config.onboot = "1";
+  const calls = state.proxmox.calls.length;
+  refuse = false;
+  await state.backend.release(made, hooks);
+  const again = state.proxmox.calls.slice(calls).filter((call) => (call.method === "PUT" && call.path.endsWith(`/lxc/${vmid}/config`)) || (call.method === "DELETE" && call.path.endsWith(`/lxc/${vmid}`)));
+  assert.deepEqual(again.map((call) => call.method), ["PUT", "DELETE"]);
+  assert.equal(again[0]!.params.onboot, "0");
+});
+
 test("a held copy cut short before its own labels still carries its source's tags, and the sweep sees it as a guest that names no box, never one to restore", async () => {
   const state = world();
   const { guest, vmid, id } = await box(state);

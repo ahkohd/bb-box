@@ -13,9 +13,17 @@
 
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../transports/spawns.ts";
+import { noteDockerImageBuild } from "../backends/docker/building.ts";
 import { LABELS } from "../backends/docker/cli.ts";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
 import { IMAGE_CONTRACT, recordFromJson } from "../backends/images.ts";
+
+function imageRefs(images: readonly string[], targets: readonly string[]): string[] {
+  return images.filter((image) => {
+    const target = BUILT_IMAGES[image] ?? BUILT_IMAGES[image.replace(/:(\d+)-arm64$/, ":$1")];
+    return !!target && targets.includes(target);
+  });
+}
 
 /** What build.sh builds: its target, by the image it tags. */
 export const BUILT_IMAGES: Readonly<Record<string, "linux" | "desktop" | "desktop-wayland">> = {
@@ -187,6 +195,7 @@ export class DockerImages {
       if (!targets.length) {
         return set({ state: "built", detail: unknown.length ? `bb-box does not build ${unknown.join(", ")}; load it on the machine.` : null, endedAt: now() });
       }
+      noteDockerImageBuild(hostId, imageRefs(this.#deps.images(hostId), targets), true);
       if (!this.#deps.script) {
         return set({ state: "failed", targets, detail: "This install of bb-box has no setup/docker/build.sh to build the images with.", endedAt: now() });
       }
@@ -213,6 +222,8 @@ export class DockerImages {
     } catch (error) {
       this.#deps.logError("docker images", error);
       return set({ state: "failed", detail: message(error), endedAt: now() });
+    } finally {
+      noteDockerImageBuild(hostId, this.#deps.images(hostId), false);
     }
   }
 

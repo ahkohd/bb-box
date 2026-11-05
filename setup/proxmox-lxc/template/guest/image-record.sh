@@ -61,16 +61,30 @@ pins=$(jq -r --arg set "$pin_set" '.pinned[$set] // empty' "$build/pins.json")
 [ -n "$pins" ] || pins=$(cat "${pin_files[@]}" | sha256sum | cut -d' ' -f1)
 build_id=$(settings BUILD_ID)
 [ -n "$build_id" ] || build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
+program=$(
+  {
+    printf 'BOX_IDENTITY_RESET=%s\n' "$(settings BOX_IDENTITY_RESET)"
+    if [ -d "$build/guest" ]; then
+      for f in $(cd "$build/guest" && LC_ALL=C ls -1 *.sh 2>/dev/null | LC_ALL=C sort); do
+        [ -f "$build/guest/$f" ] || continue
+        printf 'file %s\n' "$f"
+        cat "$build/guest/$f"
+      done
+    fi
+    printf 'PREPARE=%s\n' "$(settings PREPARE)"
+  } | sha256sum | cut -d' ' -f1
+)
 
 jq -cn --arg kind "$image_kind" --arg arch "$arch" --arg build "$build_id" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg os "$(. /etc/os-release && echo "$PRETTY_NAME")" \
   --arg snapshot "$(sed -n 's/^apt_snapshot=//p' "$out/template-release" | grep -v '^none$' || true)" \
   --arg pins "$pins" \
   --arg app "$(cat /home/*/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -1 || true)" \
-  --arg nvidia "$nvidia" --argjson tools "$tools" --argjson devices "$devices" \
+  --arg nvidia "$nvidia" --arg program "$program" --argjson tools "$tools" --argjson devices "$devices" \
   '{contract: 1, image: "standard", kind: $kind, arch: $arch, build: $build, built: $built, base: null, os: $os,
     aptSnapshot: ($snapshot | select(. != "") // null), pins: $pins, bbApp: ($app | select(. != "") // null),
-    tools: $tools, nvidia: ($nvidia | select(. != "") // null), layer: null, sizeGiB: null}
+    tools: $tools, nvidia: ($nvidia | select(. != "") // null), layer: null, sizeGiB: null,
+    program: ($program | select(. != "") // null)}
    + (if $devices == null then {} else {devices: $devices} end)' \
   >"$out/image.json"
 chmod 0644 "$out/image.json"

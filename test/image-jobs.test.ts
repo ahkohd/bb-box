@@ -62,7 +62,7 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
 
 const versions = (async () => ({ resolvedAt: "", following: true, aptSnapshot: { pinned: "", version: "" }, tools: [{ name: "node", arch: "x86_64", pinned: "24.21.0", version: "24.21.0", source: "", kept: null }], files: { "pins.json": "", "desktop-pins.tsv": "", "apt-snapshot": "" } })) as unknown as () => Promise<Versions>;
 
-function jobs(backends: Backend[], options: { app?: string | { value: string }; fail?: string[]; clock?: { now: number }; follow?: { on: boolean }; gate?: () => Promise<void>; changes?: { count: number } } = {}) {
+function jobs(backends: Backend[], options: { app?: string | { value: string }; fail?: string[]; clock?: { now: number }; follow?: { on: boolean }; gate?: () => Promise<void>; changes?: { count: number }; program?: (kind: string, backendId: string) => Promise<string | null> } = {}) {
   const clock = options.clock ?? { now: NOW };
   const refreshed: string[] = [];
   const storage = new MemoryStorage();
@@ -70,7 +70,7 @@ function jobs(backends: Backend[], options: { app?: string | { value: string }; 
     backends: () => backends,
     setup: "/plugin/setup",
     bbUrl: () => "https://bb.example.com",
-    facts: { pins: async () => PINS, bbApp: async () => (typeof options.app === "object" ? options.app.value : (options.app ?? APP)) },
+    facts: { pins: async () => PINS, bbApp: async () => (typeof options.app === "object" ? options.app.value : (options.app ?? APP)), ...(options.program ? { program: options.program } : {}) },
     storage,
     afterBbUpdates: () => options.follow?.on ?? false,
     changed: () => void (options.changes && options.changes.count++),
@@ -94,6 +94,29 @@ function jobs(backends: Backend[], options: { app?: string | { value: string }; 
   });
   return { job, refreshed, storage, clock };
 }
+
+test("an image is due when its guest program or prepare script is not the one this bb-box would build", async () => {
+  const lxc = backend("proxmox-lxc", [
+    build("9100", "linux", record(1, { program: "same" })),
+    build("9101", "linux", record(1, { program: "other" })),
+    build("9102", "linux", record(1)),
+    build("9103", "linux", record(1, { program: null })),
+  ]);
+  const { job } = jobs([lxc.backend], { program: async () => "same" });
+  const views = await job.list();
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9100")?.due, null);
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9101")?.due, "its guest program or prepare script changed");
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9102")?.due, null, "an image built before the program was recorded ages out on its interval");
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9103")?.due, null);
+  assert.deepEqual(job.unlistable(), []);
+  const down = backend("docker", []);
+  down.backend.images!.list = async () => {
+    throw new Error("docker on the machine did not answer");
+  };
+  const failed = jobs([down.backend]);
+  assert.deepEqual(await failed.job.list(), []);
+  assert.deepEqual(failed.job.unlistable(), ["docker did not list its images: docker on the machine did not answer"]);
+});
 
 test("images are due in 049's order: failing the doctor, past their interval, another BB app, other pins; Windows and project images wait (049)", async () => {
   const lxc = backend("proxmox-lxc", [
@@ -350,9 +373,9 @@ test("Rebuild now starts the night's refresh, shows it image by image with its b
   const { job } = jobs([lxc.backend], { gate: () => held, fail: ["9101"], changes });
   assert.equal(job.progress(), null);
   assert.deepEqual(job.startNow(), { started: true, message: null });
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  const during = job.progress()!;
+  let during = job.progress();
+  for (let wait = 0; wait < 50 && !during?.images[0]?.line; wait++) await new Promise((resolve) => setImmediate(resolve));
+  during = job.progress()!;
   assert.equal(during.ended, null);
   assert.deepEqual(
     during.images.map((image) => [image.name, image.state]),

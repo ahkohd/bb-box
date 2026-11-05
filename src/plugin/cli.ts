@@ -14,7 +14,7 @@ import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
-import { setupDocker } from "./setup-docker.ts";
+import { listensOnEveryAddress, reachableUrl, setupDocker, type ListenOffer } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
@@ -68,6 +68,29 @@ function json(value: unknown): PluginCliResult {
 /** A line for a box an acquire waited for that is not ready yet, with the command that follows it (#533). */
 function starting(box: BoxRecord, restarted: boolean, follow: string): string {
   return isAcquiring(box) ? `\n${startingWords(box, restarted)} Follow it with: ${follow}\n` : "";
+}
+
+function portOf(url: string | null | undefined): number | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+export function bbServerPort(appUrl: string | null | undefined, machineServerUrl: string | null | undefined): number | null {
+  return portOf(appUrl) ?? portOf(machineServerUrl);
+}
+
+export function bbDirectListen(appUrl: string | null | undefined, machineServerUrl: string | null | undefined, tcp: string, tcp6: string, addresses: readonly string[]): ListenOffer | null {
+  const port = bbServerPort(appUrl, machineServerUrl);
+  if (port === null || !listensOnEveryAddress(port, tcp, tcp6)) return null;
+  return { port, url: reachableUrl(port, addresses) };
 }
 
 function threadOf(option: string | undefined, ctx: PluginCliContext): string {
@@ -313,7 +336,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
-              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}` };
+              const failed = box.state === "failed" || (!options["no-wait"] && box.enrol.state === "failed");
+              const detail = `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}`;
+              return failed ? { exitCode: 1, stderr: detail } : { exitCode: 0, stdout: detail };
             }),
         }),
         "machines resize": cliCommand({
@@ -511,13 +536,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ options }, ctx) =>
             guard("Listing the images", async () => {
               const views = await app.imageJobs.list(ctx.signal);
+              const problems = app.imageJobs.unlistable();
               if (options.json) return json(views);
               if (options.output) {
                 const view = views.find((candidate) => candidate.name === options.output);
                 if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
                 return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
               }
-              if (!views.length) return out("No backend that is on has images bb-box rebuilds.");
+              if (!views.length) return out(problems.length ? problems.join("\n") : "No backend that is on has images bb-box rebuilds.");
               const running = app.imageJobs.running();
               const soon = await app.imageJobs.dueSoon(ctx.signal).catch(() => null);
               return out(
@@ -583,12 +609,37 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           options: {
             machine: { type: "string", description: "The BB machine, by ID or name, from bb machine list. The one that runs BB by default." },
             "no-wait": { type: "boolean", description: "Start the build, and say how far it is, without waiting for it." },
+            "set-machine-access": { type: "boolean", description: "Where BB listens on every address and boxes cannot join, set Machine access to direct at an address they can reach. This changes BB's settings. Without it, the command only says it can." },
           },
           run: ({ options }, ctx) =>
             guard("Setting up Docker", () =>
               setupDocker(
-                { setups: () => app.setups(), setDockerHost: (hostId, enabled, linuxOnly) => app.setDockerHost(hostId, enabled, linuxOnly), ensure: (hostId) => app.dockerImages.ensure(hostId), machineAccess: () => app.machineAccess() },
-                { ...(options.machine ? { machine: String(options.machine) } : {}), wait: !options["no-wait"], ...(ctx.signal ? { signal: ctx.signal } : {}) },
+                {
+                  setups: () => app.setups(),
+                  setDockerHost: (hostId, enabled, linuxOnly) => app.setDockerHost(hostId, enabled, linuxOnly),
+                  ensure: (hostId) => app.dockerImages.ensure(hostId),
+                  machineAccess: () => app.machineAccess(),
+                  say: (line) => process.stderr.write(`${line}\n`),
+                  listening: async () => {
+                    const { readFileSync } = await import("node:fs");
+                    const { networkInterfaces } = await import("node:os");
+                    const read = (path: string) => {
+                      try {
+                        return readFileSync(path, "utf8");
+                      } catch {
+                        return "";
+                      }
+                    };
+                    const config = await bb.sdk.system.config().catch(() => null);
+                    const addresses = Object.values(networkInterfaces()).flatMap((entries) => entries?.filter((entry) => entry.family === "IPv4" && !entry.internal).map((entry) => entry.address) ?? []);
+                    return bbDirectListen(bb.server.experimental_appUrl, config?.generalSettings.machineServerUrl, read("/proc/net/tcp"), read("/proc/net/tcp6"), addresses);
+                  },
+                  setDirectAccess: async (url) => {
+                    const config = await bb.sdk.system.config();
+                    await bb.sdk.system.updateGeneralSettings({ ...config.generalSettings, machineServerUrl: url, defaultMachineAccess: "direct" });
+                  },
+                },
+                { ...(options.machine ? { machine: String(options.machine) } : {}), wait: !options["no-wait"], setAccess: options["set-machine-access"] === true, ...(ctx.signal ? { signal: ctx.signal } : {}) },
               ),
             ),
         }),

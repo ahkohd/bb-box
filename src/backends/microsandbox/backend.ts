@@ -1401,11 +1401,13 @@ export class MsbBackend implements Backend {
       );
 
       const docker = facts.docker;
-      const [linuxPins, desktopPins, app] = await Promise.all([
+      const [linuxPins, desktopPins, app, chromeAmd, chromeArm] = await Promise.all([
         this.#context.images?.pins("linux") ?? null,
         this.#context.images?.pins("linux-desktop") ?? null,
         this.#context.images?.bbApp(signal) ?? null,
-      ]).catch(() => [null, null, null] as const);
+        this.#context.images?.chrome?.("x86_64") ?? null,
+        this.#context.images?.chrome?.("arm64") ?? null,
+      ]).catch(() => [null, null, null, null, null] as const);
       const images = [...new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))];
       const ids = images.length ? scriptValues((await this.#cli.script("images", images, signal).catch(() => ({ stdout: "" }))).stdout) : {};
       for (const image of images) {
@@ -1429,7 +1431,8 @@ export class MsbBackend implements Backend {
           continue;
         }
         const imported = await this.#context.storage.get<string>(this.#importedKey(image));
-        const judged = judgeImage(recordFromJson(labels[LABELS.imageRecord]), { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
+        const recorded = recordFromJson(labels[LABELS.imageRecord]);
+        const judged = judgeImage(recorded, { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app, pinChrome: recorded?.arch === "arm64" ? chromeArm : chromeAmd }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
         const behind = inDocker && imported && inDocker !== imported ? " Docker has a newer build, which bb-box imports within a few minutes." : "";
         push(id, name, judged.status, `For ${serves.join(", ")} boxes. ${judged.detail}${behind}`, judged.fix);
       }

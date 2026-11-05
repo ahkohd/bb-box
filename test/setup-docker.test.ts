@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ImageBuild } from "../src/plugin/docker-images.ts";
-import { setupDocker, type SetupDockerDeps } from "../src/plugin/setup-docker.ts";
+import { listensOnEveryAddress, reachableUrl, setupDocker, type SetupDockerDeps } from "../src/plugin/setup-docker.ts";
 import type { MachineSetup } from "../src/plugin/setup-offer.ts";
 
 function machine(overrides: Partial<MachineSetup> = {}): MachineSetup {
@@ -84,4 +84,54 @@ test("--no-wait says how far the build is; a failed build says why; BB's machine
   const failed = await waiting;
   assert.equal(failed.exitCode, 1);
   assert.equal(failed.stderr, "Docker on devpc is on for BB Box, but the Linux image did not build, after 1 min: build.sh exited with 1: no space left on device\n");
+});
+
+test("it says it is waiting before the build ends", async () => {
+  const said: string[] = [];
+  let release!: (build: ImageBuild) => void;
+  const { all } = deps([machine()], {
+    ensure: () => new Promise((done) => (release = done)),
+    say: (line) => said.push(line),
+  });
+  const waiting = setupDocker(all, { wait: true });
+  await new Promise((done) => setTimeout(done, 5));
+  assert.deepEqual(said, ["Docker on devpc: waiting for its images."]);
+  release(BUILT);
+  assert.equal((await waiting).exitCode, 0);
+});
+
+test("when BB listens on every address it asks before setting machine access, and --set-machine-access does it", async () => {
+  const set: string[] = [];
+  const offer = {
+    listening: async () => ({ port: 4777, url: "http://10.0.0.8:4777" }),
+    machineAccess: async () => ({ provider: "direct", message: "Machine access is not set" }),
+    setDirectAccess: async (url: string) => void set.push(url),
+  };
+  const { all } = deps([machine()], offer);
+  const asked = await setupDocker(all, { wait: true });
+  assert.equal(set.length, 0);
+  assert.match(asked.stdout ?? "", /Run again with --set-machine-access to set Machine access to direct at http:\/\/10\.0\.0\.8:4777/);
+  const done = await setupDocker(all, { wait: true, setAccess: true });
+  assert.deepEqual(set, ["http://10.0.0.8:4777"]);
+  assert.match(done.stdout ?? "", /Set Machine access to direct at http:\/\/10\.0\.0\.8:4777/);
+});
+
+function proc(port: number, address: string, state = "0A"): string {
+  const hex = port.toString(16).toUpperCase().padStart(4, "0");
+  return `   0: ${address}:${hex} 00000000:0000 ${state} 00000000:00000000\n`;
+}
+
+const HEADER = "  sl  local_address rem_address   st tx_queue rx_queue\n";
+const IPV6_ANY = "0".repeat(32);
+
+test("BB's own port listens on every address in IPv4 or IPv6, and another daemon's port does not count", () => {
+  const others = proc(5355, "00000000") + proc(22, "00000000");
+  const loopback = proc(4777, "0100007F");
+  assert.equal(listensOnEveryAddress(4777, HEADER + others + loopback, HEADER), false);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others + proc(4777, "00000000"), HEADER), true);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others, HEADER + proc(4777, IPV6_ANY)), true);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others, HEADER + proc(4777, IPV6_ANY, "01")), false);
+  assert.equal(listensOnEveryAddress(4777, HEADER, HEADER), false);
+  assert.equal(reachableUrl(4777, ["127.0.0.1", "10.0.0.8"]), "http://10.0.0.8:4777");
+  assert.equal(reachableUrl(4777, ["127.0.0.1"]), null);
 });

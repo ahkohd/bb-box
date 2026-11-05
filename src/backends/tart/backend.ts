@@ -2901,9 +2901,10 @@ export class TartBackend implements Backend {
       images?.pins("windows-arm64") ?? null,
       images?.bbApp(signal) ?? null,
       this.#config.iosImage ? (images?.pins("ios") ?? null) : null,
-    ]).catch(() => [null, null, null, null, null, null] as const);
+      images?.chrome?.("arm64") ?? null,
+    ]).catch(() => [null, null, null, null, null, null, null] as const);
     const states = keys ? await this.#states(signal) : new Map<string, MacState | Error>();
-    const [linuxPins, desktopPins, macosPins, windowsPins, app, iosPins] = await judging;
+    const [linuxPins, desktopPins, macosPins, windowsPins, app, iosPins, chromeArm] = await judging;
     /** An image's record judged, with the prepare script's command that builds it again as the fix. */
     const judge = (kind: TartKind, image: string, record: ImageRecord | null, on: string): ImageJudgement => {
       const os = guestOsOf(kind);
@@ -2916,7 +2917,7 @@ export class TartBackend implements Backend {
             : `prepare-image.sh ${key} --name ${image} --bb-url <BB's server URL> --replace`;
       const pins = os === "windows" ? windowsPins : os === "macos" ? macosPins : kind === "linux-arm64-desktop-cpu" ? desktopPins : linuxPins;
       // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB.
-      return judgeImage(record, { os, pins, bbApp: os === "windows" ? null : app, joins: this.#config.windowsEnrol }, `Build it again on ${on} with setup/tart/${command}.`);
+      return judgeImage(record, { os, pins, bbApp: os === "windows" ? null : app, joins: this.#config.windowsEnrol, pinChrome: os === "linux" ? chromeArm : null }, `Build it again on ${on} with setup/tart/${command}.`);
     };
     const others = new Map<string, number>();
     const tart = this.#tart();
@@ -3727,11 +3728,11 @@ export class TartBackend implements Backend {
       return { ...build, ref: current.ref, image: "standard", current: true };
     }
     if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
-    await this.#run(target.host, replaceScript(source.vm, target.vm), { timeoutMs: 10 * 60_000, signal });
+    await this.#run(target.host, replaceScript(source.vm, target.vm, this.#context.installId), { timeoutMs: 10 * 60_000, signal });
     // The base's copies no tag names, as a pull before the build left them (#475).
     const builtOnTheMacosImage = current.kind === IOS_IMAGE_KIND;
     const from = builtOnTheMacosImage ? "" : await this.#baseOf(target.host, target.vm, signal).catch(() => "");
-    if (from) await this.#run(target.host, pruneBaseScript(from), { timeoutMs: 10 * 60_000, signal }).catch((error: unknown) => this.#context.logError("remove an old base", error));
+    if (from) await this.#run(target.host, pruneBaseScript(from, this.#context.installId), { timeoutMs: 10 * 60_000, signal }).catch((error: unknown) => this.#context.logError("remove an old base", error));
     return { ...build, ref: current.ref, image: "standard", current: true };
   }
 
@@ -3791,7 +3792,7 @@ export class TartBackend implements Backend {
       const from = ios ? macosImage! : await this.#baseOf(host, image, options.signal);
       // A newer push to the base's tag is pulled first, room allowing (#475).
       if (from && !ios) {
-        const pulled = await this.#run(host, baseScript(from, this.#config.reserve.diskGiB), { timeoutMs: 3 * 60 * 60_000, signal: options.signal });
+        const pulled = await this.#run(host, baseScript(from, this.#config.reserve.diskGiB, this.#context.installId), { timeoutMs: 3 * 60 * 60_000, signal: options.signal });
         for (const line of pulled.stdout.split("\n")) if (line.trim()) options.log(line);
       }
       const args = ios ? iosPrepareCommand(from, vm) : [

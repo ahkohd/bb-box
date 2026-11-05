@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, recordInDescription, type ImageRecord } from "../src/backends/images.ts";
+import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, type ImageRecord } from "../src/backends/images.ts";
 import { tempDir } from "./helpers.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -118,6 +118,13 @@ test("image-record.sh writes a record bb-box reads, with the pins' digest bb-box
     assert.equal(JSON.parse(readFileSync(join(out, "image.json"), "utf8")).kind, kind, settings);
   }
   assert.equal(readFileSync(join(out, "image.json"), "utf8").split("\n").filter(Boolean).length, 1, "on one line, as a label holds it");
+
+  cpSync(join(TEMPLATE, "guest"), join(build, "guest"), { recursive: true });
+  writeFileSync(join(build, "build.env"), "BOX_IDENTITY_RESET=on\nPREPARE=abc\nBUILD_ID=build.20261003-021500-3f9c\n");
+  const recorded = spawnSync("bash", [join(TEMPLATE, "guest", "image-record.sh"), build, "linux", out], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const wrote = parseImageRecord(JSON.parse(readFileSync(join(out, "image.json"), "utf8")));
+  assert.equal(wrote?.program, await programDigest(join(build, "guest"), "on", "abc"));
 });
 
 test("an image says what it is and how old", () => {
@@ -156,6 +163,11 @@ test("an image warns when it has no record, is old, or has another BB app or oth
   const pins = judgeImage(record(1, { pins: "q".repeat(64) }), facts, REBUILD);
   assert.deepEqual([pins.status, pins.fix], ["warn", REBUILD]);
   assert.match(pins.detail, /built with other pins than this bb-box's/);
+
+  const chrome = judgeImage(record(1, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "154.0.8037.92" }, REBUILD);
+  assert.equal(chrome.status, "warn");
+  assert.match(chrome.detail, /Its Chrome is 156\.0\.8078\.79, newer than this bb-box's pin 154\.0\.8037\.92/);
+  assert.equal(judgeImage(record(1, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "156.0.8078.79" }, REBUILD).status, "ok");
 });
 
 test("an image fails with an older contract, or NVIDIA's userspace other than the host's driver", () => {

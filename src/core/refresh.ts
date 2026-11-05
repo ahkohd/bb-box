@@ -74,6 +74,8 @@ export interface RefreshOptions {
   readonly versions?: typeof resolveVersions;
   /** Replaces the clock, for tests. */
   readonly now?: () => number;
+  /** The prepare script's SHA-256, recorded in the image so a later change to that script makes it due. */
+  readonly prepare?: string | null;
   /** How long to wait for room for a box when the backend has none, and how often to ask (#650). */
   readonly room?: { readonly waitMs: number; readonly pollMs: number };
   /** How long a Windows box may take to come back after a restart, how often to ask, and how long it must stay up (steadyMs). */
@@ -99,7 +101,7 @@ export interface RefreshResult {
 }
 
 /** The script that runs the guest scripts again in a build box, as root through sudo, from the staged files in setup.tgz. */
-export function buildScript(kind: string, bbUrl: string | null, buildId: string): string {
+export function buildScript(kind: string, bbUrl: string | null, buildId: string, prepare = ""): string {
   const build = BUILDS[kind];
   if (!build) throw new Error(`bb-box refreshes no ${kind} image.`);
   const src = `${BUILD_DIR}/proxmox-lxc/template`;
@@ -120,7 +122,8 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string)
     ...(build.gpu ? [`DESKTOP_GPU=${build.gpu}`] : []),
     ...(build.session ? [`DESKTOP_SESSION=${build.session}`] : []),
     `BUILD_ID=${buildId}`,
-    `BOX_IDENTITY_RESET=${kind === "linux" ? "on" : "off"}`,
+    `BOX_IDENTITY_RESET=${kind === "linux" || kind === "linux-arm64" ? "on" : "off"}`,
+    `PREPARE=${prepare}`,
     "EOF",
     'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',
     `sudo env BBBOX_ENV=/nonexistent BBBOX_BB_URL=${quote(bbUrl ?? "")} bash ${src}/fetch-artifacts.sh ${src}/artifacts ${build.artifacts} "$arch"`,
@@ -540,7 +543,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const { box } = await boxOf(current, `refresh of ${current.ref}`);
       made.push(box.ref);
       await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
-      const built = await streamLines(box.command, buildScript(kind, options.bbUrl, buildId), options.buildTimeoutMs ?? 90 * 60_000, signal, buildOutput);
+      const built = await streamLines(box.command, buildScript(kind, options.bbUrl, buildId, options.prepare ?? ""), options.buildTimeoutMs ?? 90 * 60_000, signal, buildOutput);
       if (built.exitCode !== 0) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}. Its whole output is in ${buildLog.path}.`);
 
       // The capture.
