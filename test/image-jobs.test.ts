@@ -96,12 +96,18 @@ function jobs(backends: Backend[], options: { app?: string | { value: string }; 
 }
 
 test("an image is due when its guest program or prepare script is not the one this bb-box would build", async () => {
-  const current = record(1, { program: "same" });
-  const lxc = backend("proxmox-lxc", [build("9100", "linux", current), build("9101", "linux", record(1))]);
+  const lxc = backend("proxmox-lxc", [
+    build("9100", "linux", record(1, { program: "same" })),
+    build("9101", "linux", record(1, { program: "other" })),
+    build("9102", "linux", record(1)),
+    build("9103", "linux", record(1, { program: null })),
+  ]);
   const { job } = jobs([lxc.backend], { program: async () => "same" });
   const views = await job.list();
   assert.equal(views.find((view) => view.name === "proxmox-lxc/9100")?.due, null);
   assert.equal(views.find((view) => view.name === "proxmox-lxc/9101")?.due, "its guest program or prepare script changed");
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9102")?.due, null, "an image built before the program was recorded ages out on its interval");
+  assert.equal(views.find((view) => view.name === "proxmox-lxc/9103")?.due, null);
   assert.deepEqual(job.unlistable(), []);
   const down = backend("docker", []);
   down.backend.images!.list = async () => {

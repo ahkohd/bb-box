@@ -1198,7 +1198,17 @@ test("a refresh's base is pulled when the registry has moved its tag, room allow
   const pruned = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27", "inst1"), "0");
   assert.match(pruned.stdout, /base: removed the old cached ghcr\.io\/acme\/macos-xcode@sha256:old/);
   assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new")), existsSync(join(cache, "sha256:stray"))], [false, true, true]);
+  assert.equal(readFileSync(join(dir, ".bb-box", "tart", "base-used", "inst1"), "utf8"), "sha256:new\n");
   assert.match(run(baseScript("bb-box-macos", 60, "inst1"), "0").stdout, /base: bb-box-macos is a local VM/);
+
+  mkdirSync(join(cache, "sha256:pinned"), { recursive: true });
+  writeFileSync(join(bases, "inst2"), "sha256:pinned\n");
+  const pinned = run(baseScript("ghcr.io/acme/macos-xcode@sha256:pinned", 60, "inst1"), "0");
+  assert.match(pinned.stdout, /base: ghcr\.io\/acme\/macos-xcode@sha256:pinned is pinned by digest/);
+  assert.equal(readFileSync(join(dir, ".bb-box", "tart", "base-used", "inst1"), "utf8"), "sha256:pinned\n");
+  const kept = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27", "inst2"), "0");
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.equal(existsSync(join(cache, "sha256:pinned")), true, "another install uses this digest, pinned by @sha256");
 });
 
 test("prepare-image.sh's boot waits while macOS's two VM slots are taken, saying so, and boots once one is free; with no slot in time it stops (#650)", async () => {

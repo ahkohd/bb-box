@@ -233,7 +233,7 @@ export class ImageJobs {
     if (carriesBbApp(build.kind) && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
     if (pins && record.pins !== pins) return [5, "it was built with other pins than this bb-box's"];
     const program = await this.#deps.facts.program?.(build.kind, backend.id).catch(() => null);
-    if (program && record.program !== program) return [6, "its guest program or prepare script changed"];
+    if (program && record.program && record.program !== program) return [6, "its guest program or prepare script changed"];
     return null;
   }
 

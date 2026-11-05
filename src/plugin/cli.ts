@@ -14,7 +14,7 @@ import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
-import { everyAddressPort, reachableUrl, setupDocker } from "./setup-docker.ts";
+import { listensOnEveryAddress, reachableUrl, setupDocker, type ListenOffer } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
@@ -68,6 +68,29 @@ function json(value: unknown): PluginCliResult {
 /** A line for a box an acquire waited for that is not ready yet, with the command that follows it (#533). */
 function starting(box: BoxRecord, restarted: boolean, follow: string): string {
   return isAcquiring(box) ? `\n${startingWords(box, restarted)} Follow it with: ${follow}\n` : "";
+}
+
+function portOf(url: string | null | undefined): number | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+export function bbServerPort(appUrl: string | null | undefined, machineServerUrl: string | null | undefined): number | null {
+  return portOf(appUrl) ?? portOf(machineServerUrl);
+}
+
+export function bbDirectListen(appUrl: string | null | undefined, machineServerUrl: string | null | undefined, tcp: string, tcp6: string, addresses: readonly string[]): ListenOffer | null {
+  const port = bbServerPort(appUrl, machineServerUrl);
+  if (port === null || !listensOnEveryAddress(port, tcp, tcp6)) return null;
+  return { port, url: reachableUrl(port, addresses) };
 }
 
 function threadOf(option: string | undefined, ctx: PluginCliContext): string {
@@ -600,11 +623,16 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                   listening: async () => {
                     const { readFileSync } = await import("node:fs");
                     const { networkInterfaces } = await import("node:os");
-                    const tcp = readFileSync("/proc/net/tcp", "utf8");
-                    const port = everyAddressPort(tcp);
-                    if (!port) return null;
+                    const read = (path: string) => {
+                      try {
+                        return readFileSync(path, "utf8");
+                      } catch {
+                        return "";
+                      }
+                    };
+                    const config = await bb.sdk.system.config().catch(() => null);
                     const addresses = Object.values(networkInterfaces()).flatMap((entries) => entries?.filter((entry) => entry.family === "IPv4" && !entry.internal).map((entry) => entry.address) ?? []);
-                    return { port, url: reachableUrl(port, addresses) };
+                    return bbDirectListen(bb.server.experimental_appUrl, config?.generalSettings.machineServerUrl, read("/proc/net/tcp"), read("/proc/net/tcp6"), addresses);
                   },
                   setDirectAccess: async (url) => {
                     const config = await bb.sdk.system.config();

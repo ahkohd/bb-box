@@ -78,16 +78,29 @@ function pick(machines: readonly MachineSetup[], wanted: string | undefined): Ma
   return `No BB machine has Docker that BB Box can use. ${why}. Install Docker Engine on one, or set up another backend in BB Box's settings.`;
 }
 
-/** A listening socket on 0.0.0.0 in `/proc/net/tcp`, or null. `0A` is LISTEN. */
-export function everyAddressPort(tcp: string): number | null {
-  for (const line of tcp.split("\n").slice(1)) {
+const LISTEN = "0A";
+const IPV4_ANY = "00000000";
+const IPV6_ANY = "00000000000000000000000000000000";
+
+function procPort(port: number): string {
+  return port.toString(16).toUpperCase().padStart(4, "0");
+}
+
+function listens(table: string, address: string, port: string): boolean {
+  const local = `${address}:${port}`;
+  for (const line of table.split("\n").slice(1)) {
     const parts = line.trim().split(/\s+/);
-    const local = parts[1];
-    if (parts[3] !== "0A" || !local?.startsWith("00000000:")) continue;
-    const port = Number.parseInt(local.slice(local.indexOf(":") + 1), 16);
-    if (port > 0) return port;
+    if (parts[3]?.toUpperCase() !== LISTEN) continue;
+    if (parts[1]?.toUpperCase() === local) return true;
   }
-  return null;
+  return false;
+}
+
+/** Whether `port` is LISTEN on every IPv4 address or every IPv6 address, in `/proc/net/tcp` and `/proc/net/tcp6`. `0A` is LISTEN. */
+export function listensOnEveryAddress(port: number, tcp: string, tcp6: string): boolean {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return false;
+  const hex = procPort(port);
+  return listens(tcp, IPV4_ANY, hex) || listens(tcp6, IPV6_ANY, hex);
 }
 
 export function reachableUrl(port: number, addresses: readonly string[]): string | null {

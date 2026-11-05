@@ -10,6 +10,7 @@ import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 
 export const TEMPLATE_ROLE = "template";
 export const TRIAL_ROLE = "template-trial";
+export const TRIAL_TEMPLATE_LABEL = "bbbox-template";
 export const TEMPLATE_SIZE: SandboxSize = "default";
 export const TEMPLATE_REBUILT_AFTER_MS = 7 * 24 * 3_600_000;
 export const RETIRED_TEMPLATE_KEPT_MS = 60 * 60_000;
@@ -194,7 +195,11 @@ export function customizeScript(kind: BoatKind): string {
 }
 
 export function progressScript(): string {
-  return [`d=${BUILD_DIR}`, 'echo "exit=$(cat "$d/exit" 2>/dev/null || true)"', 'tail -n 20 "$d/log" 2>/dev/null'].join("\n");
+  return [`d=${BUILD_DIR}`, 'echo "exit=$(cat "$d/exit" 2>/dev/null || true)"', 'if [ -f "$d/log" ]; then echo "log=$d/log"; else echo "log="; fi', 'tail -n 20 "$d/log" 2>/dev/null'].join("\n");
+}
+
+function progressShowsNoLog(stdout: string): boolean {
+  return stdout.split("\n").some((line) => line.trim() === "log=");
 }
 
 export const CHECKS_BOAT_ANSWERS_FOR = [/^docker stopped after boot\b/];
@@ -376,13 +381,15 @@ export class BoatTemplates {
       await this.#running(made.id);
       const asUser = await this.#deps.reach(made.id, "user");
       await this.#deps.answers(made.id, "user", now() + STATE_WITHIN_MS);
-      const archive = await (this.#deps.setupArchive ?? templateArchive)();
-      await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
-      const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
-      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
-      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
-      if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
-      await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
+      if (!existing || (await this.#noBuildLog(made.id))) {
+        const archive = await (this.#deps.setupArchive ?? templateArchive)();
+        await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
+        const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
+        await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
+        await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
+        if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
+        await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
+      }
       await this.#follow(made.id, kind);
       const finalized = await (await this.#deps.reach(made.id, "user")).run(`${OUT_OF_BOATS_HOME} && sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
       if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
@@ -421,8 +428,9 @@ export class BoatTemplates {
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const going = (await api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind })).find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
-    const trial = going ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` }));
+    const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [TRIAL_TEMPLATE_LABEL]: template };
+    const going = (await api.list(trialLabels)).find((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
+    const trial = going ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
     this.#buildSandboxes.add(trial.id);
     try {
       await this.#running(trial.id);
@@ -467,6 +475,11 @@ export class BoatTemplates {
     await this.#deps.forget(id);
     await this.#deps.api.stop(id);
     await this.#deps.api.waitArchived(id, this.#deps.now() + ARCHIVE_WITHIN_MS);
+  }
+
+  async #noBuildLog(id: string): Promise<boolean> {
+    const progress = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(progressScript())}`, { timeoutMs: 30_000 }).catch(() => null);
+    return !!progress && progressShowsNoLog(progress.stdout);
   }
 
   async #follow(id: string, kind: BoatKind): Promise<void> {

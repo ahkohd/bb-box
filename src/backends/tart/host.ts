@@ -1032,7 +1032,8 @@ cache=\${TART_HOME:-$HOME/.tart}/cache/OCIs/$reg/$repo`;
  */
 export function baseScript(ref: string, reserveGiB: number, install: string): string {
   return script(sh`ref=${quote(ref)}; reserve=${reserveGiB}; install=${quote(install)}
-case $ref in *@*) echo "base: $ref is pinned by digest"; exit 0 ;; */*) ;; *) echo "base: $ref is a local VM"; exit 0 ;; esac
+using_base() { [ -n "$1" ] || return 0; mkdir -p "$d/base-used"; printf '%s\n' "$1" > "$d/base-used/$install"; }
+case $ref in *@*) using_base "\${ref##*@}"; echo "base: $ref is pinned by digest"; exit 0 ;; */*) ;; *) echo "base: $ref is a local VM"; exit 0 ;; esac
 ${BASE_PARTS}
 link=$(readlink "$cache/$tag" 2>/dev/null || true); old=\${link##*/}
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -1044,21 +1045,23 @@ if [ -n "$realm" ]; then
   [ -z "$token" ] || set -- -H "Authorization: Bearer $token"
 fi
 if ! curl -fsS -m 30 -D "$tmp/headers" -o "$tmp/manifest" "$@" -H 'Accept: application/vnd.oci.image.manifest.v1+json' "https://$reg/v2/$repo/manifests/$tag" 2>/dev/null; then
-  echo "base: $reg did not answer for $ref, so its cached copy is used"; exit 0
+  using_base "$old"; echo "base: $reg did not answer for $ref, so its cached copy is used"; exit 0
 fi
 new=$(tr -d '\r' <"$tmp/headers" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -n 1)
-[ -n "$new" ] || { echo "base: $reg gave no digest for $ref, so its cached copy is used"; exit 0; }
-[ "$new" != "$old" ] || { echo "base: $ref is current"; exit 0; }
+[ -n "$new" ] || { using_base "$old"; echo "base: $reg gave no digest for $ref, so its cached copy is used"; exit 0; }
+[ "$new" != "$old" ] || { using_base "$new"; echo "base: $ref is current"; exit 0; }
 size=$(tr ',' '\n' <"$tmp/manifest" | sed -n 's/.*"org.cirruslabs.tart.uncompressed-disk-size" *: *"\([0-9]*\)".*/\1/p' | head -n 1)
 free=$({ df -k "\${TART_HOME:-$HOME/.tart}" 2>/dev/null || df -k "$HOME"; } | awk 'NR == 2 { print $4 }')
 free=\${free:-0}
 if [ "$free" -lt $(( \${size:-0} / 1024 + reserve * 1048576 )) ]; then
+  using_base "$old"
   echo "base: no room to pull $ref: its disk is $(( \${size:-0} / 1073741824 )) GiB, and $(( free / 1048576 - reserve )) GiB is free beyond the $reserve GiB reserve." >&2
   exit 3
 fi
 echo "base: pulling $ref, $new\${old:+, in place of $old}"
 tart pull "$ref" >"$tmp/pull" 2>&1 || { echo "base: tart pull $ref failed: $(tail -n 1 "$tmp/pull")" >&2; exit 1; }
 if [ -n "$old" ]; then mkdir -p "$d/bases"; printf '%s\n' "$old" >> "$d/bases/$install"; fi
+using_base "$new"
 echo "base: pulled $ref"
 `);
 }
@@ -1066,7 +1069,8 @@ echo "base: pulled $ref"
 /**
  * Removes the cached copies of a refresh's base that no tag names any more
  * (#475): after a pull moved the tag, the old copy only takes disk, as images
- * cloned from it are copies of their own. Prints "base: …" lines.
+ * cloned from it are copies of their own. A digest an install recorded as the
+ * base it uses stays, including one pinned by digest. Prints "base: …" lines.
  */
 export function pruneBaseScript(ref: string, install: string): string {
   return script(sh`ref=${quote(ref)}; install=${quote(install)}
@@ -1081,6 +1085,10 @@ for copy in "$cache"/sha256:*; do
   ! printf '%s\n' "$named" | grep -qx "$digest" || continue
   printf '%s\n' "$ours" | grep -qx "$digest" || continue
   held=
+  for note in "$d/base-used"/*; do
+    [ -f "$note" ] || continue
+    grep -qx "$digest" "$note" && held=1
+  done
   for note in "$d/bases"/*; do
     [ -f "$note" ] || continue
     [ "$(basename "$note")" = "$install" ] && continue

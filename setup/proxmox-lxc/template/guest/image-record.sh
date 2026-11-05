@@ -61,8 +61,6 @@ pins=$(jq -r --arg set "$pin_set" '.pinned[$set] // empty' "$build/pins.json")
 [ -n "$pins" ] || pins=$(cat "${pin_files[@]}" | sha256sum | cut -d' ' -f1)
 build_id=$(settings BUILD_ID)
 [ -n "$build_id" ] || build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
-# The guest scripts, the identity reset and the prepare script's SHA-256, as
-# bb-box hashes them to tell that an image is due after one of them changes.
 program=$(
   {
     printf 'BOX_IDENTITY_RESET=%s\n' "$(settings BOX_IDENTITY_RESET)"

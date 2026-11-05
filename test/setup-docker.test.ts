@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ImageBuild } from "../src/plugin/docker-images.ts";
-import { everyAddressPort, reachableUrl, setupDocker, type SetupDockerDeps } from "../src/plugin/setup-docker.ts";
+import { listensOnEveryAddress, reachableUrl, setupDocker, type SetupDockerDeps } from "../src/plugin/setup-docker.ts";
 import type { MachineSetup } from "../src/plugin/setup-offer.ts";
 
 function machine(overrides: Partial<MachineSetup> = {}): MachineSetup {
@@ -116,10 +116,22 @@ test("when BB listens on every address it asks before setting machine access, an
   assert.match(done.stdout ?? "", /Set Machine access to direct at http:\/\/10\.0\.0\.8:4777/);
 });
 
-test("a listen on 0.0.0.0 is that port, and the URL is an address that is not the machine's own", () => {
-  const tcp = "  sl  local_address rem_address   st tx_queue rx_queue\n   0: 0100007F:1A2B 00000000:0000 0A 00000000:00000000\n   1: 00000000:12A5 00000000:0000 0A 00000000:00000000\n";
-  assert.equal(everyAddressPort(tcp), 0x12a5);
-  assert.equal(everyAddressPort("  sl  local_address\n"), null);
+function proc(port: number, address: string, state = "0A"): string {
+  const hex = port.toString(16).toUpperCase().padStart(4, "0");
+  return `   0: ${address}:${hex} 00000000:0000 ${state} 00000000:00000000\n`;
+}
+
+const HEADER = "  sl  local_address rem_address   st tx_queue rx_queue\n";
+const IPV6_ANY = "0".repeat(32);
+
+test("BB's own port listens on every address in IPv4 or IPv6, and another daemon's port does not count", () => {
+  const others = proc(5355, "00000000") + proc(22, "00000000");
+  const loopback = proc(4777, "0100007F");
+  assert.equal(listensOnEveryAddress(4777, HEADER + others + loopback, HEADER), false);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others + proc(4777, "00000000"), HEADER), true);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others, HEADER + proc(4777, IPV6_ANY)), true);
+  assert.equal(listensOnEveryAddress(4777, HEADER + others, HEADER + proc(4777, IPV6_ANY, "01")), false);
+  assert.equal(listensOnEveryAddress(4777, HEADER, HEADER), false);
   assert.equal(reachableUrl(4777, ["127.0.0.1", "10.0.0.8"]), "http://10.0.0.8:4777");
   assert.equal(reachableUrl(4777, ["127.0.0.1"]), null);
 });
