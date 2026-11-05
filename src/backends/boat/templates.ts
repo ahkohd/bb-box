@@ -2,10 +2,11 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { abortable } from "../../core/abortable.ts";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
-import { BoatError, isRunning, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
+import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 
 export const TEMPLATE_ROLE = "template";
@@ -59,6 +60,8 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/pins.json",
 ] as const;
 const BUILD_DIR = "/var/tmp/bb-box-build";
+const BUILD_STATE = "/run/bb-box-build";
+const IN_HAND_ELSEWHERE = 75;
 export const OUT_OF_BOATS_HOME = "cd /";
 const DESKTOP_UP = 'pgrep -x xfwm4 >/dev/null && test -S "$HOME/.cache/cua-driver/cua-driver.sock"';
 export const CUA_READY = [
@@ -74,11 +77,15 @@ const BUILD_POLL_MS = 10_000;
 const FAILED_BUILD_LOG_LINES = 120;
 const BUILD_RENEW_MS = 15 * 60_000;
 const CUSTOMIZE_WITHIN_MS = 90 * 60_000;
+const FINALIZE_WITHIN_MS = 20 * 60_000;
+const GUEST_SCRIPTS_WITHIN_MS = CUSTOMIZE_WITHIN_MS + FINALIZE_WITHIN_MS;
+const STAGE_WITHIN_MS = 3 * 60_000;
 const STATE_WITHIN_MS = 10 * 60_000;
 export const ARCHIVE_WITHIN_MS = 60 * 60_000;
 const RECORD = "template/";
 const FAILED = "template-failed/";
 export const FAILED_BUILD_RETRY_MS = 6 * 3_600_000;
+export const LEFT_BUILD_WHY = "a build was going when bb-box restarted";
 const RETIRED = "retired-templates";
 
 export const TEMPLATE_STEP: Readonly<Record<BoatKind, "linux" | "desktop" | "android">> = { linux: "linux", "linux-desktop-cpu": "desktop", android: "android" };
@@ -112,7 +119,34 @@ export interface TemplateLabels {
   readonly role: string;
   readonly kind: string;
   readonly key: string;
+  readonly template: string;
 }
+
+export type TemplateStage = "building" | "checking" | "ready";
+
+export function templateName(kind: BoatKind, stage: TemplateStage): string {
+  return stage === "ready" ? `bb-box ${kind} template` : `bb-box ${kind} template, ${stage}`;
+}
+
+export interface StagedFiles {
+  readonly buildEnv: string;
+  readonly publicKey: string;
+  readonly licence: string | null;
+}
+
+export interface GuestBuild {
+  readonly running: boolean;
+  readonly started: boolean;
+  readonly staged: boolean;
+  readonly stateKept: boolean;
+  readonly customized: number | null;
+  readonly finalized: number | null;
+  readonly tail: readonly string[];
+}
+
+export type GuestStep = "finished" | "customize-failed" | "finalize-failed" | "running" | "died" | "unstaged";
+
+export class BuildLeftRunning extends Error {}
 
 export interface Reached {
   run(script: string, options: { readonly stdin?: Buffer | string; readonly timeoutMs: number; readonly signal?: AbortSignal }): Promise<RunResult>;
@@ -179,17 +213,81 @@ export function buildWaitWords(kind: BoatKind, lastBuildMs: number | null): stri
   return `Building boat's ${KIND_WORDS[kind]} template first, which takes about ${minutes} minutes. Later boxes of this kind fork it and start in seconds.`;
 }
 
-export function customizeScript(kind: BoatKind): string {
+export function guestJobScript(): string {
+  return [
+    'echo $$ > "$2/pid"',
+    'bash "$1/boat/template.sh" customize "$3" > "$1/log" 2>&1 9>&-',
+    "code=$?",
+    'echo "$code" > "$2/customized"',
+    '[ "$code" = 0 ] || exit 0',
+    'bash "$1/boat/template.sh" finalize "$3" > "$2/finalize.log" 2>&1 9>&-',
+    'echo "$?" > "$2/finalized"',
+  ].join("\n");
+}
+
+export function stageScript(kind: BoatKind, files: StagedFiles): string {
+  const write = (text: string, file: string, what: string) => `printf %s '${Buffer.from(text).toString("base64")}' | base64 -d > "$d/proxmox-lxc/template/${file}" || fail "could not ${what}"`;
   return [
     OUT_OF_BOATS_HOME,
     `d=${BUILD_DIR}`,
-    'rm -f "$d/exit"',
-    `setsid nohup sh -c 'bash "$1/boat/template.sh" customize ${TEMPLATE_STEP[kind]} > "$1/log" 2>&1; echo $? > "$1/exit"' sh "$d" </dev/null >/dev/null 2>&1 &`,
+    `s=${BUILD_STATE}`,
+    'fail() { echo "$1" >&2; exit 1; }',
+    'mkdir -p "$s" || fail "could not make $s"',
+    'exec 9>>"$s/lock"',
+    `flock -w 5 9 || exit ${IN_HAND_ELSEWHERE}`,
+    `[ ! -e "$s/pid" ] || exit ${IN_HAND_ELSEWHERE}`,
+    `rm -rf "$d" && mkdir -p "$d" && : > "$d/log" && tar -xzf - -C "$d" || fail "could not unpack bb-box's template scripts"`,
+    write(files.buildEnv, "build.env", "write the build's settings"),
+    write(`${files.publicKey}\n`, "plugin-key.pub", "write bb-box's key"),
+    ...(files.licence ? [write(`${files.licence}\n`, "android-sdk-license", "write the Android SDK licence's acceptance")] : []),
+    `setsid nohup sh -c ${quote(guestJobScript())} sh "$d" "$s" ${TEMPLATE_STEP[kind]} </dev/null >/dev/null 2>&1 &`,
   ].join("\n");
 }
 
 export function progressScript(): string {
-  return [`d=${BUILD_DIR}`, 'echo "exit=$(cat "$d/exit" 2>/dev/null || true)"', 'tail -n 20 "$d/log" 2>/dev/null'].join("\n");
+  return [
+    `d=${BUILD_DIR}`,
+    `s=${BUILD_STATE}`,
+    'if [ -e "$s/lock" ] && ! flock -n "$s/lock" true; then echo running=yes; else echo running=no; fi',
+    'if [ -s "$s/pid" ]; then echo started=yes; else echo started=no; fi',
+    'if [ -e "$d/log" ]; then echo staged=yes; else echo staged=no; fi',
+    'if [ -e "$s/lock" ]; then echo state=yes; else echo state=no; fi',
+    'echo "customized=$(cat "$s/customized" 2>/dev/null || true)"',
+    'echo "finalized=$(cat "$s/finalized" 2>/dev/null || true)"',
+    "echo --",
+    'if [ -e "$s/finalize.log" ]; then tail -n 20 "$s/finalize.log"; else tail -n 20 "$d/log" 2>/dev/null; fi',
+    "exit 0",
+  ].join("\n");
+}
+
+export function guestBuildFrom(stdout: string): GuestBuild | null {
+  const lines = stdout.split("\n");
+  const end = lines.indexOf("--");
+  if (end < 0) return null;
+  const fields = new Map(lines.slice(0, end).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1).trim()] as const));
+  const flag = (name: string) => fields.get(name) === "yes";
+  const code = (name: string) => (/^\d+$/.test(fields.get(name) ?? "") ? Number(fields.get(name)) : null);
+  if (!["running", "started", "staged", "state", "customized", "finalized"].every((name) => fields.has(name))) return null;
+  return { running: flag("running"), started: flag("started"), staged: flag("staged"), stateKept: flag("state"), customized: code("customized"), finalized: code("finalized"), tail: lines.slice(end + 1).filter((line) => line !== "") };
+}
+
+export function guestStep(build: GuestBuild): GuestStep {
+  if (build.finalized === 0) return "finished";
+  if (build.finalized !== null) return "finalize-failed";
+  if (build.customized !== null && build.customized !== 0) return "customize-failed";
+  if (build.running) return "running";
+  if (build.started || (build.staged && !build.stateKept)) return "died";
+  return "unstaged";
+}
+
+function followable(sandbox: Sandbox, kind: BoatKind): boolean {
+  if (sandbox.dataExpiredAt !== null) return false;
+  if (isRunning(sandbox.state) || isStarting(sandbox.state)) return true;
+  return isStopped(sandbox.state) && sandbox.name === templateName(kind, "checking");
+}
+
+function newestFirst(a: Sandbox, b: Sandbox): number {
+  return (b.createdAt ?? 0) - (a.createdAt ?? 0);
 }
 
 export const CHECKS_BOAT_ANSWERS_FOR = [/^docker stopped after boot\b/];
@@ -239,7 +337,7 @@ export class BoatTemplates {
     if (!record) {
       await waiting?.(buildWaitWords(kind, current?.buildMs ?? null));
       try {
-        record = await this.build(kind, current ? "its template is gone" : "there is none yet");
+        record = await abortable(this.build(kind, current ? "its template is gone" : "there is none yet"), signal);
       } finally {
         await waiting?.(null);
       }
@@ -253,9 +351,25 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     return (
       (await this.#deps.api.list({ [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: this.key() }, signal))
-        .filter((sandbox) => sandbox.state === "archived" && sandbox.dataExpiredAt === null && !this.#buildSandboxes.has(sandbox.id))
-        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0] ?? null
+        .filter((sandbox) => sandbox.state === "archived" && sandbox.dataExpiredAt === null && sandbox.name === templateName(kind, "ready") && !this.#buildSandboxes.has(sandbox.id))
+        .sort(newestFirst)[0] ?? null
     );
+  }
+
+  async leftBuild(kind: BoatKind, signal?: AbortSignal): Promise<Sandbox | null> {
+    return (await this.#leftBuilds(signal)).find((sandbox) => sandbox.labels[this.#deps.labelKeys.kind] === kind) ?? null;
+  }
+
+  async #leftBuilds(signal?: AbortSignal): Promise<Sandbox[]> {
+    const labels = this.#deps.labelKeys;
+    const recorded = await this.current();
+    const kinds = Object.keys(TEMPLATE_STEP) as BoatKind[];
+    return (await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.key]: this.key() }, signal))
+      .filter((sandbox) => {
+        const kind = kinds.find((each) => each === sandbox.labels[labels.kind]);
+        return kind !== undefined && !recorded.has(sandbox.id) && !this.#buildSandboxes.has(sandbox.id) && followable(sandbox, kind);
+      })
+      .sort(newestFirst);
   }
 
   async keepAdoptable(kind: BoatKind, signal?: AbortSignal): Promise<TemplateRecord | null> {
@@ -289,9 +403,15 @@ export class BoatTemplates {
 
   async due(signal?: AbortSignal): Promise<{ readonly kind: BoatKind; readonly why: string }[]> {
     const due: { kind: BoatKind; why: string }[] = [];
+    const left = await this.#leftBuilds(signal);
     for (const kind of Object.keys(TEMPLATE_STEP) as BoatKind[]) {
+      if (this.#building.has(kind)) continue;
+      if (left.some((sandbox) => sandbox.labels[this.#deps.labelKeys.kind] === kind)) {
+        due.unshift({ kind, why: LEFT_BUILD_WHY });
+        continue;
+      }
       const record = await this.record(kind);
-      if (!record || this.#building.has(kind) || (await this.failedLately(kind))) continue;
+      if (!record || (await this.failedLately(kind))) continue;
       const why = await this.whyBuild(kind);
       if (!why) continue;
       const adopted = why === "it is a week old" ? null : await this.#adopt(kind, signal);
@@ -327,7 +447,7 @@ export class BoatTemplates {
           return record;
         })
         .catch(async (error: unknown) => {
-          await this.#deps.storage.set(`${FAILED}${kind}`, { at: this.#deps.now(), why: (error instanceof Error ? error.message : String(error)).slice(0, 600) });
+          if (!this.#leaving(error)) await this.#deps.storage.set(`${FAILED}${kind}`, { at: this.#deps.now(), why: (error instanceof Error ? error.message : String(error)).slice(0, 600) });
           throw error;
         })
         .finally(() => this.#building.delete(kind));
@@ -341,54 +461,92 @@ export class BoatTemplates {
     const { api, now, log } = this.#deps;
     const started = now();
     const key = this.key();
-    const labels = this.#deps.labelKeys;
-    log(`boat: building the ${kind} template, as ${why}.`);
     const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
     const licence = TEMPLATE_STEP[kind] === "android" ? (this.#deps.androidLicence?.() ?? null) : null;
     if (TEMPLATE_STEP[kind] === "android" && !licence) throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
-    const made = await api
-      .create({
-        size,
-        ttlSeconds: BUILD_TTL_SECONDS,
-        labels: { [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
-        name: `bb-box ${kind} template`,
-      })
-      .catch((error: unknown) => {
-        if (error instanceof BoatError && error.code === "limit_reached")
-          throw new BoatError("full", error.status, error.code, `boat's ${KIND_WORDS[kind]} template must be built first, in a sandbox of its own for about ${USUAL_BUILD_MINUTES[kind]} minutes, and the plan's sandboxes at once are all in use. Release or stop a boat box, and ask again.`);
-        throw error;
-      });
+    this.#stillHere();
+    const left = await this.leftBuild(kind);
+    if (left) log(`boat: following the ${kind} template build ${left.id}, which bb-box started before it restarted, rather than build another.`);
+    else log(`boat: building the ${kind} template, as ${why}.`);
+    const made = left ?? (await this.#create(kind, key, size));
+    const since = Math.min(left?.createdAt ?? started, started);
     this.#buildSandboxes.add(made.id);
     try {
-      await this.#running(made.id);
-      const asUser = await this.#deps.reach(made.id, "user");
-      await this.#deps.answers(made.id, "user", now() + STATE_WITHIN_MS);
-      const archive = await (this.#deps.setupArchive ?? templateArchive)();
-      await this.#must(asUser.run(`sudo -n rm -rf ${BUILD_DIR} && sudo -n mkdir -p ${BUILD_DIR} && sudo -n tar -xzf - -C ${BUILD_DIR}`, { stdin: archive, timeoutMs: 120_000 }), "unpack bb-box's template scripts");
-      const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
-      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), timeoutMs: 30_000 }), "write the build's settings");
-      await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
-      if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
-      await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
-      await this.#follow(made.id, kind);
-      const finalized = await (await this.#deps.reach(made.id, "user")).run(`${OUT_OF_BOATS_HOME} && sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
-      if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
-      const devices = TEMPLATE_STEP[kind] === "android" ? await this.#devices(made.id) : null;
-      await this.#stop(made.id);
-      await this.#tryAFork(made.id, kind, TEMPLATE_STEP[kind] === "android" ? size : "small");
-      const record: TemplateRecord = { kind, sandbox: made.id, key, builtAt: now(), buildMs: now() - started, usedAt: null, ...(devices ? { devices } : {}) };
+      const devices = isStopped(made.state) ? await this.#checkingDevices(made.id, kind) : await this.#runGuestScripts(made.id, kind, licence, since, left !== null);
+      this.#stillHere();
+      await this.#tryAFork(made.id, kind, TEMPLATE_STEP[kind] === "android" ? (made.size ?? size) : "small");
+      await this.#rename(made.id, templateName(kind, "ready"));
+      const record: TemplateRecord = { kind, sandbox: made.id, key, builtAt: now(), buildMs: now() - since, usedAt: null, ...(devices ? { devices } : {}) };
       const previous = await this.record(kind);
       await this.#deps.storage.set(`${RECORD}${kind}`, record);
       if (previous && previous.sandbox !== made.id) await this.#retire(previous.sandbox);
       log(`boat: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
       return record;
     } catch (error) {
+      if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`bb-box is stopping, so it leaves boat's template build ${made.id} to the bb-box that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
       await this.#deps.forget(made.id);
       await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       throw error;
     } finally {
       this.#buildSandboxes.delete(made.id);
     }
+  }
+
+  async #create(kind: BoatKind, key: string, size: SandboxSize): Promise<Sandbox> {
+    const labels = this.#deps.labelKeys;
+    return this.#deps.api
+      .create({
+        size,
+        ttlSeconds: BUILD_TTL_SECONDS,
+        labels: { [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
+        name: templateName(kind, "building"),
+      })
+      .catch((error: unknown) => {
+        if (error instanceof BoatError && error.code === "limit_reached")
+          throw new BoatError("full", error.status, error.code, `boat's ${KIND_WORDS[kind]} template must be built first, in a sandbox of its own for about ${USUAL_BUILD_MINUTES[kind]} minutes, and the plan's sandboxes at once are all in use. Release or stop a boat box, and ask again.`);
+        throw error;
+      });
+  }
+
+  async #runGuestScripts(id: string, kind: BoatKind, licence: string | null, since: number, followed: boolean): Promise<readonly unknown[] | null> {
+    const { api, now } = this.#deps;
+    if (followed) await api.extend(id, BUILD_TTL_SECONDS).catch(() => undefined);
+    await this.#running(id);
+    await this.#deps.answers(id, "user", now() + STATE_WITHIN_MS);
+    await this.#follow(id, kind, () => this.#stage(id, kind, licence, `build.${new Date(since).toISOString().replace(/[-:]/g, "").slice(0, 15)}`), since);
+    const devices = TEMPLATE_STEP[kind] === "android" ? await this.#devices(id) : null;
+    await this.#rename(id, templateName(kind, "checking"));
+    this.#stillHere();
+    await this.#stop(id);
+    return devices;
+  }
+
+  async #checkingDevices(id: string, kind: BoatKind): Promise<readonly unknown[] | null> {
+    await this.#deps.api.waitArchived(id, this.#deps.now() + ARCHIVE_WITHIN_MS);
+    if (TEMPLATE_STEP[kind] !== "android") return null;
+    const text = await this.#deps.api.latestSnapshotFile(id, ANDROID_DEVICES_FILE).catch(() => null);
+    let devices: unknown = null;
+    try {
+      devices = text ? JSON.parse(text) : null;
+    } catch {
+      devices = null;
+    }
+    if (!Array.isArray(devices) || !devices.length) throw new Error(`boat's Android template ${id} lists no devices in ${ANDROID_DEVICES_FILE}.`);
+    return devices;
+  }
+
+  async #stage(id: string, kind: BoatKind, licence: string | null, buildId: string): Promise<boolean> {
+    this.#stillHere();
+    const archive = await (this.#deps.setupArchive ?? templateArchive)();
+    const files: StagedFiles = { buildEnv: (this.#deps.buildEnv ?? ((each: BoatKind) => buildEnvFor(buildId, each)))(kind), publicKey: await this.#deps.publicKey(), licence };
+    this.#stillHere();
+    const staged = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(stageScript(kind, files))}`, { stdin: archive, timeoutMs: STAGE_WITHIN_MS });
+    if (staged.exitCode === IN_HAND_ELSEWHERE) {
+      this.#deps.log(`boat: another bb-box is staging or running the ${kind} template build in ${id}, so this one follows it.`);
+      return false;
+    }
+    if (staged.exitCode !== 0) throw new Error(`boat's template build could not stage its scripts in ${id}: ${staged.stderr.trim().slice(-400) || `exit ${staged.exitCode}`}`);
+    return true;
   }
 
   async #devices(sandbox: string): Promise<readonly unknown[]> {
@@ -404,32 +562,46 @@ export class BoatTemplates {
   }
 
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
-    const { api, now } = this.#deps;
+    const { api, now, log } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trial = await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind }, name: `bb-box ${kind} template trial` });
+    const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
+    const left = (await api.list(trialLabels)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
+    this.#stillHere();
+    if (left) log(`boat: checking the ${kind} template ${template} in its trial fork ${left.id}, which bb-box made before it restarted.`);
+    const trial = left ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
     this.#buildSandboxes.add(trial.id);
+    let leftRunning = false;
     try {
       await this.#running(trial.id);
       await this.#deps.answers(trial.id, "box", now() + STATE_WITHIN_MS);
       await this.#deps.settled(trial.id, now() + STATE_WITHIN_MS);
       if (TEMPLATE_STEP[kind] === "desktop") {
+        this.#stillHere();
         await this.#desktopUp(trial.id, now() + STATE_WITHIN_MS);
         await this.#deps.restored(trial.id, now() + STATE_WITHIN_MS);
+        this.#stillHere();
         await this.#must((await this.#deps.reach(trial.id, "box")).run(this.#deps.cuaReady ?? CUA_READY, { timeoutMs: 240_000 }), "get Cua Driver answering in a fork of the template");
       }
+      this.#stillHere();
       const check = await (await this.#deps.reach(trial.id, "box")).run(TEMPLATE_CHECK[kind], { timeoutMs: 10 * 60_000 });
       const failed = failedChecks(check.stdout);
       if (check.exitCode !== 0 || failed.length) throw new Error(`boat's ${kind} template failed its check in a fork of it: ${failed.join("; ") || check.stderr.trim().slice(-400) || `exit ${check.exitCode}`}`);
+    } catch (error) {
+      leftRunning = this.#leaving(error);
+      throw error;
     } finally {
-      await this.#deps.forget(trial.id);
-      await api.delete(trial.id).catch((cause) => this.#deps.log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       this.#buildSandboxes.delete(trial.id);
+      if (!leftRunning) {
+        await this.#deps.forget(trial.id);
+        await api.delete(trial.id).catch((cause) => log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+      }
     }
   }
 
   async #desktopUp(sandbox: string, deadline: number): Promise<void> {
     const asBox = await this.#deps.reach(sandbox, "box");
     while (this.#deps.now() < deadline) {
+      this.#stillHere();
       const up = await asBox.run(DESKTOP_UP, { timeoutMs: 15_000 }).catch(() => null);
       if (up?.exitCode === 0) return;
       await this.#deps.sleep(1_000);
@@ -446,40 +618,65 @@ export class BoatTemplates {
     return this.#deps.api.waitFor(id, (sandbox) => isRunning(sandbox.state), this.#deps.now() + STATE_WITHIN_MS);
   }
 
+  async #rename(id: string, name: string): Promise<void> {
+    await this.#deps.api.rename(id, name).catch((cause) => this.#deps.log(`boat: could not name the template sandbox ${id} "${name}": ${cause instanceof Error ? cause.message : String(cause)}`));
+  }
+
   async #stop(id: string): Promise<void> {
     await this.#deps.forget(id);
-    await this.#deps.api.stop(id);
+    await this.#deps.api.stop(id).catch(async (error: unknown) => {
+      const after = await this.#deps.api.get(id).catch(() => null);
+      if (!after || !isStopped(after.state)) throw error;
+    });
     await this.#deps.api.waitArchived(id, this.#deps.now() + ARCHIVE_WITHIN_MS);
   }
 
-  async #follow(id: string, kind: BoatKind): Promise<void> {
+  #leaving(error: unknown): boolean {
+    return error instanceof BuildLeftRunning || this.#disposed;
+  }
+
+  #stillHere(): void {
+    if (this.#disposed) throw new BuildLeftRunning("bb-box is stopping, so it leaves boat's template build to the bb-box that starts next.");
+  }
+
+  async #follow(id: string, kind: BoatKind, stage: () => Promise<boolean>, since: number): Promise<void> {
     const { now, sleep, log } = this.#deps;
-    const deadline = now() + CUSTOMIZE_WITHIN_MS;
+    const deadline = since + GUEST_SCRIPTS_WITHIN_MS;
     let renewed = now();
     let unanswered = 0;
     let said = "";
+    let stagedHere = false;
     for (;;) {
-      if (this.#disposed) throw new Error("bb-box is stopping, so it gave up boat's template build.");
-      if (now() > deadline) throw new Error(`boat's ${kind} template build did not end within ${Math.round(CUSTOMIZE_WITHIN_MS / 60_000)} minutes.`);
+      this.#stillHere();
+      if (now() > deadline) throw new Error(`boat's ${kind} template build did not end within ${Math.round(GUEST_SCRIPTS_WITHIN_MS / 60_000)} minutes.`);
       if (now() - renewed >= BUILD_RENEW_MS) {
         await this.#deps.api.extend(id, BUILD_TTL_SECONDS).catch(() => undefined);
         renewed = now();
       }
       const progress: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string } = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(progressScript())}`, { timeoutMs: 30_000 }).catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: error instanceof Error ? error.message : String(error) }));
-      if (progress.exitCode !== 0) {
+      const build = progress.exitCode === 0 ? guestBuildFrom(progress.stdout) : null;
+      if (!build) {
         unanswered += 1;
-        if (unanswered >= 30) throw new Error(`boat's ${kind} template build stopped answering: ${progress.stderr.trim().slice(-300)}`);
-      } else {
-        unanswered = 0;
-        const [header = "", ...tail] = progress.stdout.split("\n");
-        const step = tail.filter((line) => /^\d\d:\d\d:\d\d {2}/.test(line)).pop();
-        if (step && step !== said) log(`boat: ${kind} template: ${(said = step).slice(10)}`);
-        const code = /^exit=(\d+)/.exec(header.trim());
-        if (code) {
-          if (code[1] === "0") return;
-          await this.#logBuildLog(id, kind);
-          throw new Error(`boat's ${kind} template build failed with exit ${code[1]}: ${tail.join("\n").trim().slice(-600)}`);
-        }
+        if (unanswered >= 30) throw new Error(`boat's ${kind} template build stopped answering: ${(progress.stderr.trim() || progress.stdout.trim()).slice(-300)}`);
+        await sleep(BUILD_POLL_MS);
+        continue;
+      }
+      unanswered = 0;
+      const step = build.tail.filter((line) => /^\d\d:\d\d:\d\d {2}/.test(line)).pop();
+      if (step && step !== said) log(`boat: ${kind} template: ${(said = step).slice(10)}`);
+      const next = guestStep(build);
+      if (next === "finished") return;
+      if (next === "customize-failed") {
+        await this.#logBuildLog(id, kind);
+        throw new Error(`boat's ${kind} template build failed with exit ${build.customized}: ${build.tail.join("\n").trim().slice(-600)}`);
+      }
+      if (next === "finalize-failed") throw new Error(`boat's ${kind} template did not finalize: ${build.tail.join("\n").trim().slice(-400) || `exit ${build.finalized}`}`);
+      if (next === "died") throw new Error(`boat's ${kind} template build in ${id} stopped without an exit code: no process holds it${build.started ? ", so its guest scripts died" : ", and its sandbox restarted or an older bb-box started it"}.`);
+      if (next === "unstaged") {
+        if (stagedHere) throw new Error(`boat's ${kind} template build in ${id} was staged, but no process runs its guest scripts.`);
+        stagedHere = await stage();
+        if (!stagedHere) await sleep(BUILD_POLL_MS);
+        continue;
       }
       await sleep(BUILD_POLL_MS);
     }
@@ -510,11 +707,16 @@ export class BoatTemplates {
     const current = await this.current();
     const retired = (await this.#deps.storage.get<RetiredTemplate[]>(RETIRED)) ?? [];
     const keep = new Set([...current, ...this.#buildSandboxes, ...retired.filter((each) => now() - each.retiredAt < RETIRED_TEMPLATE_KEPT_MS).map((each) => each.sandbox)]);
+    const leftBuilds = new Set<string>();
     for (const kind of Object.keys(TEMPLATE_STEP) as BoatKind[]) {
-      const newest = templates
-        .filter((sandbox) => sandbox.labels[labels.role] === TEMPLATE_ROLE && sandbox.labels[labels.kind] === kind && sandbox.labels[labels.key] === this.key() && sandbox.state === "archived")
-        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
+      const ofTheseScripts = templates.filter((sandbox) => sandbox.labels[labels.role] === TEMPLATE_ROLE && sandbox.labels[labels.kind] === kind && sandbox.labels[labels.key] === this.key());
+      const newest = ofTheseScripts.filter((sandbox) => sandbox.state === "archived" && sandbox.name === templateName(kind, "ready")).sort(newestFirst)[0];
       if (newest) keep.add(newest.id);
+      for (const sandbox of ofTheseScripts) if (followable(sandbox, kind)) leftBuilds.add(sandbox.id);
+    }
+    for (const sandbox of templates) {
+      const trialOf = sandbox.labels[labels.template];
+      if (leftBuilds.has(sandbox.id) || (sandbox.labels[labels.role] === TRIAL_ROLE && trialOf !== undefined && leftBuilds.has(trialOf) && (isRunning(sandbox.state) || isStarting(sandbox.state)))) keep.add(sandbox.id);
     }
     for (const sandbox of templates) {
       if (keep.has(sandbox.id)) continue;
