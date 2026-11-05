@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -327,6 +327,65 @@ test("the build script runs the guest scripts in a VM's way in a VM, and in a co
   } finally {
     rmSync(bin, { recursive: true, force: true });
   }
+});
+
+function runBuildScript(kind: string, host: { readonly virt: string; readonly machine: string; readonly driver: string | null }) {
+  const root = tempDir("refresh-build-script");
+  const bin = join(root, "bin");
+  const home = join(root, "home");
+  const driver = join(root, "nvidia-version");
+  mkdirSync(bin);
+  mkdirSync(join(home, ".ssh"), { recursive: true });
+  writeFileSync(join(home, ".ssh", "authorized_keys"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIplugin bb-box\n");
+  if (host.driver) writeFileSync(driver, `${host.driver}\n`);
+  const calls = join(root, "calls");
+  writeFileSync(
+    join(bin, "sudo"),
+    [
+      "#!/bin/bash",
+      'case "$1" in',
+      '  tee) cat > "$CALLS.$(basename "$2")" ;;',
+      '  env) shift; while [[ "$1" == *=* ]]; do shift; done; echo "$*" >> "$CALLS" ;;',
+      '  bash) shift; echo "bash $*" >> "$CALLS" ;;',
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  writeFileSync(join(bin, "systemd-detect-virt"), `#!/bin/sh\necho ${host.virt}\n[ ${host.virt} != none ]\n`, { mode: 0o755 });
+  writeFileSync(join(bin, "uname"), `#!/bin/sh\necho ${host.machine}\n`, { mode: 0o755 });
+  const script = buildScript(kind, null, "build.x").replaceAll("/sys/module/nvidia/version", driver);
+  const out = execFileSync("bash", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, CALLS: calls } }).toString();
+  const env = readFileSync(`${calls}.build.env`, "utf8").split("\n");
+  const ran = readFileSync(calls, "utf8").split("\n").filter(Boolean);
+  const fetched = ran.find((line) => line.includes("fetch-artifacts.sh"))!.split(" ").slice(-2).join(" ");
+  rmSync(root, { recursive: true, force: true });
+  return { out, env, ran, fetched };
+}
+
+test("071 unit 7b: a Linux image's refresh in a container on a host with an NVIDIA driver installs that driver's userspace, as build.sh linux does; in a VM, on arm64 or with no driver it builds as before", () => {
+  const gpu = runBuildScript("linux", { virt: "lxc", machine: "x86_64", driver: "580.142" });
+  assert.ok(gpu.env.includes("LINUX_GPU=nvidia"), gpu.env.join("\n"));
+  assert.equal(gpu.fetched, "linux-nvidia x86_64", "the Linux artifacts and NVIDIA's installer for the host's driver");
+  assert.match(gpu.out, /^building with NVIDIA's userspace for the host's driver 580\.142$/m);
+  assert.ok(gpu.ran.some((line) => /guest\/customize-base\.sh /.test(line)));
+  for (const [host, fetched] of [
+    [{ virt: "lxc", machine: "x86_64", driver: null }, "linux x86_64"],
+    [{ virt: "none", machine: "x86_64", driver: "580.142" }, "linux x86_64"],
+    [{ virt: "lxc", machine: "aarch64", driver: "580.142" }, "linux arm64"],
+  ] as const) {
+    const built = runBuildScript("linux", host);
+    assert.ok(built.env.includes("LINUX_GPU=none"), `${JSON.stringify(host)}: ${built.env.join(" ")}`);
+    assert.equal(built.fetched, fetched, JSON.stringify(host));
+    assert.doesNotMatch(built.out, /NVIDIA/);
+  }
+  const desktop = runBuildScript("linux-desktop", { virt: "lxc", machine: "x86_64", driver: "580.142" });
+  assert.ok(desktop.env.includes("DESKTOP_GPU=nvidia"));
+  assert.equal(desktop.env.some((line) => line.startsWith("LINUX_GPU=")), false, "a desktop gets the userspace from customize-desktop.sh, as before");
+  assert.equal(desktop.fetched, "desktop x86_64");
+  const android = runBuildScript("android", { virt: "none", machine: "x86_64", driver: "580.142" });
+  assert.equal(android.env.some((line) => line.startsWith("LINUX_GPU=")), false);
+  assert.equal(android.fetched, "linux x86_64");
 });
 
 const WINDOWS_OLD = record("build.20260901-020000-77aa", { pwsh: "7.6.6", git: "2.56.0", "cua-driver": "0.30.4" }, { kind: "windows-desktop", os: "Windows 11 Pro", aptSnapshot: null, bbApp: null, sizeGiB: null });
