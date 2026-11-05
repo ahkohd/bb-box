@@ -9,9 +9,8 @@
 # Docker host; any directory of such files, such as a Proxmox host's
 # artifacts, seeds a build too.
 #
-# usage: fetch-artifacts.sh <dir> linux|linux-nvidia|desktop|desktop-cpu|desktop-wayland-cpu [x86_64|arm64]
-# (headless is linux's earlier name; linux-nvidia is linux with NVIDIA's
-# installer for the host's driver). The architecture is the image's, by
+# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu|desktop-wayland-cpu [x86_64|arm64]
+# (headless is linux's earlier name). The architecture is the image's, by
 # default x86_64; it picks the tools in pins.json and desktop-pins.tsv.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

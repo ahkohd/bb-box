@@ -1,6 +1,6 @@
 import type { BbPluginApi, PluginAgentToolResult, PluginInteractionCancelReason } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { BoxError, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, describeError, describeErrorForAgent, errorForAgent, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, snapshotLine, type Caller, type Standing } from "../core/snapshot.ts";
 import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
 import { toolsForPurposes } from "./purposes.ts";
@@ -200,7 +200,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
             () => `bb-box deleted the snapshot "for a fork" it took for this, as the fork was refused.`,
             (cause: unknown) => `bb-box could not delete the snapshot "for a fork" it took for this: ${describeError(cause, "Deleting it")} Delete it with box_snapshot_delete.`,
           );
-          throw new BoxError(error instanceof BoxError ? error.code : "failed", `${describeError(error, "Forking the box")}\n${taken.words}${removed}`);
+          throw new BoxError(error instanceof BoxError ? error.code : "failed", `${describeError(error, "Forking the box")}\n${taken.words}${removed}`, `${describeErrorForAgent(error, "Forking the box")}\n${taken.words}${removed}`);
         }
         const made = answer.box;
         if (!made) throw new BoxError("not_found", "bb-box has no record of the fork's box any more.");
@@ -209,7 +209,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         const before = taken?.words ?? "";
         if (!settled || isAcquiring(settled)) return `${before}${startingWords(settled ?? made, !!settled && app.boxes.stopping)}${origin}${next(`Call box_status with box "${made.name}" to see when it is ready.`)}`;
         if (settled.state === "failed") {
-          return { content: [{ type: "text", text: `${before}Fork ${settled.name} failed: ${settled.error ?? "no reason given"}${next("Tell the person what it says, or fork again from another snapshot.")}` }], isError: true };
+          return { content: [{ type: "text", text: `${before}Fork ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}${next("Tell the person what it says, or fork again from another snapshot.")}` }], isError: true };
         }
         const enrolled = await app.boxes.enrolled(settled, signal);
         const mayMiss = answer.snapshot ? forkMayMissWords(answer.snapshot) : null;

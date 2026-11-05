@@ -2264,7 +2264,7 @@ same guest.
 | `acquire` | the guest it cloned, or the one it resumes | cores and memory, labels and marker, start, delete when refused or failed | box (the clone's description names this install and box until its labels do) |
 | `#grow` | the same | its disk | box |
 | `#settle`, `#settleWeight`, `settle` | a box's guest | the start weight and its tag | box |
-| `#gateStart`, `#gateOnPin`, `#writeMarker`, `start`, `#startOnAnotherCard` | a box's stopped guest | its marker, its start; `#gateOnPin` reads only, for a restore's start on the card it holds; `#startOnAnotherCard` stops a server bb-box has just started that did not see its card, and starts it once more on another (unit 7) | box |
+| `#gateStart`, `#gateOnPin`, `#writeMarker`, `start`, `#startOnAnotherCard`, `#stopAndLetGo`, `#resumedWithoutItsGpu` | a box's stopped guest | its marker, its start; `#gateOnPin` reads only, for a restore's start on the card it holds; `#startOnAnotherCard` stops a server bb-box has just started that did not see its card, and starts it once more on another, and `#stopAndLetGo` stops it when it lists other cards or none (unit 7); `#resumedWithoutItsGpu` reads only, a resumed acquire's guest | box |
 | `powerOff`, `stop` | a box's guest | stop | box |
 | `release` | a box's guest | delete | box |
 | `resize` | a box's guest | cores, memory, disk | box |
@@ -2838,6 +2838,24 @@ passes `bash -n`, and the readings block, run as written on a made-up watcher
 log, gives a delta of 800 MiB for the reviewers' case and fails for a load
 of 1.3 GiB, a card with no samples, a watcher that stopped, no load, and a
 malformed sample.
+
+### After the second reviews
+
+Fable said go with three lows; Astra no-go with one high, five mediums and
+a low. Each is fixed in one more commit, with the lead's decisions, and each
+fix has a test that failed with the fix reverted, on a box: 14 reverts.
+
+| Finding | Fix |
+| --- | --- |
+| An acquire resumed after its clone and before its marker started with no card, or kept an image's lines (Astra 1) | Before it starts, a resumed guest of a box with a GPU and no shared marker is placed and marked as a fresh one is; one with no GPU that carries a card's lines gets `gpu.none` and the helper takes them out. A resumed guest found running is released and the acquire refused |
+| A desktop template listed without a GPU ID was taken to carry no lines (Astra 2) | bb-box reads the template's config: lines it carries are taken out by the helper for a desktop with no GPU, or the acquire is refused before any copy |
+| A server stopped after both its checks failed kept a reservation (Astra 3) | Every stop after a failed check drops the box's reservation under the card lock, once the stop is confirmed |
+| Wrappers lost the agent's words (Astra 4) | A start's move to another card, the backend's fork placement and the registry's failed fork keep both audiences' words |
+| A check that did not finish released or moved a box (Fable 1) | A check that does not finish is run once more. Still unfinished, or failing in any way but a listing of other cards or none, the box is kept and the GPU fact says what the check found. Only a listing of other cards or none releases a fresh box or moves a stopped server |
+| A bare `cuinit` line (Fable 2) | Read as Python giving no answer |
+| A mismatch whose target is `none` (Fable 3) | Read apart: "runs with a card's lines while its claim is none"; it closes only the cards those lines name |
+| `free_on` returned the last row's status, and the watcher's checks passed with no samples or none during the run (Astra 5, 6) | `free_on` exits on its own found or not found. D1 needs five samples for each card. D5 needs three samples before the run and ten during it, the first within 1 s of the run's start and the last within 1 s of its end, and no gap over 2 s |
+| Comments this unit added to `build.sh`, `fetch-artifacts.sh` and `customize-base.sh` (Astra 7) | Removed; `LINUX_GPU` and `linux-nvidia` are in the setup guide |
 
 ### Still open
 

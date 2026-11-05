@@ -577,7 +577,8 @@ export class AudienceError extends Error {
 }
 
 export function agentMessageOf(error: unknown): string | null {
-  return error instanceof BackendError || error instanceof AudienceError ? error.agentMessage : null;
+  const said = error instanceof Error ? (error as { readonly agentMessage?: unknown }).agentMessage : undefined;
+  return typeof said === "string" ? said : null;
 }
 
 /**

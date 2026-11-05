@@ -221,6 +221,7 @@ export interface BoxRecord {
   readonly restoring?: RestoringMark | null;
   readonly fork?: ForkOrigin | null;
   readonly forkFailure?: string | null;
+  readonly agentForkFailure?: string | null;
   readonly endToldAt?: number | null;
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
@@ -594,10 +595,12 @@ export type JobResult =
 
 export class BoxError extends Error {
   readonly code: BoxErrorCode;
-  constructor(code: BoxErrorCode, message: string) {
+  readonly agentMessage: string | null;
+  constructor(code: BoxErrorCode, message: string, agentMessage: string | null = null) {
     super(message);
     this.name = "BoxError";
     this.code = code;
+    this.agentMessage = agentMessage;
   }
 }
 
@@ -680,7 +683,7 @@ export function describeError(error: unknown, action: string): string {
 export function describeErrorForAgent(error: unknown, action: string): string {
   const words = agentMessageOf(error);
   if (words === null) return describeError(error, action);
-  return error instanceof BackendError ? words : `${action} failed: ${words}`;
+  return error instanceof BackendError || error instanceof BoxError || error instanceof TransportError ? words : `${action} failed: ${words}`;
 }
 
 export function errorForAgent(box: Pick<BoxRecord, "error" | "agentError">): string | null {
@@ -2346,10 +2349,20 @@ export class Boxes {
       }
     }
     const why = sentenceOf(describeError(error, "Forking the box"));
+    const agentWhy = sentenceOf(describeErrorForAgent(error, "Forking the box"));
     const after = cleanup === null ? forkReleasedWords(box) : forkCleanupWords(left!.ref, cleanup, stopped);
     const next = await this.update(box, (current) => {
       if (current.state === "releasing") return cleanup === null ? { guest: null } : {};
-      return { state: "failed", guest: cleanup === null ? null : current.guest, error: `${why} ${after}`, forkFailure: why, timings: { ...timings }, waitingOn: null };
+      return {
+        state: "failed",
+        guest: cleanup === null ? null : current.guest,
+        error: `${why} ${after}`,
+        agentError: { of: `${why} ${after}`, words: `${agentWhy} ${after}` },
+        forkFailure: why,
+        agentForkFailure: agentWhy,
+        timings: { ...timings },
+        waitingOn: null,
+      };
     });
     if (next?.state === "failed") this.#deps.logError("fork", error);
   }
@@ -2367,7 +2380,11 @@ export class Boxes {
       this.#deps.log?.(`Could not delete guest ${guest.ref} of fork ${current.name} yet: ${describeError(error, "Deleting it")} bb-box tries again at its next sweep.`);
       return;
     }
-    const updated = await this.update(current, (latest) => (latest.guest?.ref === guest.ref ? { guest: null, error: `${latest.forkFailure ?? "The fork failed."} ${forkReleasedWords(latest)}` } : {}));
+    const updated = await this.update(current, (latest) => {
+      if (latest.guest?.ref !== guest.ref) return {};
+      const error = `${latest.forkFailure ?? "The fork failed."} ${forkReleasedWords(latest)}`;
+      return { guest: null, error, agentError: { of: error, words: `${latest.agentForkFailure ?? latest.forkFailure ?? "The fork failed."} ${forkReleasedWords(latest)}` } };
+    });
     this.#deps.log?.(`Deleted guest ${guest.ref} of fork ${current.name}, which bb-box could not delete when the fork failed.`);
     if (updated) this.#deps.forked?.(updated);
   }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after } from "node:test";
 import { ProxmoxLxcBackend } from "../../src/backends/proxmox-lxc/backend.ts";
@@ -61,6 +61,7 @@ export class ClaimsBridge {
   readonly #configs: LxcConfig[] = [];
   readonly seenInBox = new Map<number, { readonly onCard?: string; readonly shows: string }>();
   readonly cudaInBox = new Map<number, string>();
+  readonly cutInBox = new Set<number>();
 
   constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string } = {}) {
     this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}) });
@@ -117,7 +118,8 @@ export class ClaimsBridge {
       if (!address) continue;
       const bin = join(this.ssh.home(address), "bin");
       mkdirSync(bin, { recursive: true });
-      if (shown === null) rmSync(join(bin, "nvidia-smi"), { force: true });
+      if (this.cutInBox.has(vmid)) writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\necho cut >> "$(dirname "$0")/cut.log"\nkill -9 $PPID\n`, { mode: 0o755 });
+      else if (shown === null) rmSync(join(bin, "nvidia-smi"), { force: true });
       else writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncase "$*" in\n  *memory.free*) echo '${card?.freeMiB ?? 0}, ${card?.totalMiB ?? 0}' ;;\n  *) printf '%s\\n' '${shown}' ;;\nesac\n`, { mode: 0o755 });
       writeFileSync(join(bin, "python3"), `#!/bin/sh\nprintf '%s\\n' '${this.cudaInBox.get(vmid) ?? (card ? "0" : "100")}'\n`, { mode: 0o755 });
     }
@@ -176,6 +178,19 @@ export class ClaimsBridge {
 
   stoppedGuest(vmid: number, box: BoxIdentity, template: number): Guest {
     return { ref: String(vmid), host: "pve", address: null, size: null, data: { template, box: box.boxId } };
+  }
+
+  checksCutIn(vmid: number): number {
+    for (const config of this.#configs) {
+      const address = vmid >= config.vmids.first && vmid <= config.vmids.last ? addressFor(config, vmid) : null;
+      if (!address) continue;
+      try {
+        return readFileSync(join(this.ssh.home(address), "bin", "cut.log"), "utf8").split("\n").filter(Boolean).length;
+      } catch {
+        return 0;
+      }
+    }
+    return 0;
   }
 
   tags(vmid: number): string[] {

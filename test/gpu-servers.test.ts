@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, wrongCardSeen } from "../src/backends/proxmox-lxc/gpu-servers.ts";
+import { CARD_CHECK_COMMAND, cardFactWords, helperMismatches, judgeCardCheck, wrongCardSeen } from "../src/backends/proxmox-lxc/gpu-servers.ts";
 import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type GpuPart } from "../src/backends/types.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { CARD_A, CARD_B, ClaimsBridge, devices } from "./gpu-helper/claims-bridge.ts";
-import { cardLines, marker } from "./gpu-helper/node.ts";
+import { CARD_A, CARD_B, ClaimsBridge, INSTALL, devices } from "./gpu-helper/claims-bridge.ts";
+import { REPORT_VMID, cardLines, marker } from "./gpu-helper/node.ts";
 import { gpuPartsText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
 
@@ -73,7 +73,7 @@ test("071 unit 7, Astra 7: CUDA's check is skipped only where the box has no Pyt
   assert.equal(empty.ok, false, "Python that printed nothing fails");
   assert.deepEqual(judgeCardCheck(answer(card, "cuinit 3", "userspace 580.142"), A, "580.142").ok ? null : "failed", "failed");
   const cut = judgeCardCheck(`${card}\ncuinit 0`, A, "580.142");
-  assert.deepEqual(cut.ok ? null : [cut.why, cut.reading], ["the check in it did not finish", "cards"], "a check cut short fails, though the card was listed");
+  assert.deepEqual(cut.ok ? null : [cut.why, cut.reading], ["the check in it did not finish", "incomplete"], "a check cut short is no reading, though the card was listed");
   const noCuda = judgeCardCheck(answer(card, "userspace 580.142"), A, "580.142");
   assert.equal(noCuda.ok, false, "a check with no CUDA line fails");
   assert.equal(wrongCardSeen(cut, A), false, "a check cut short is not a wrong card");
@@ -471,4 +471,137 @@ test("071 unit 7, Astra 8 and Fable 4: a refusal inside an acquire and a start c
     assert.doesNotMatch(error.agentMessage, /release|raise|settings/i);
     return true;
   });
+});
+
+function stoppedGuestOf(vmid: number, made: BoxIdentity, template: number) {
+  return { ref: String(vmid), host: "pve", address: null, size: null, data: { template, box: made.boxId } };
+}
+
+test("071 unit 7 round 2, Astra 1: an acquire resumed after its clone and before its marker places, marks and lines a server as a fresh one, and takes the lines out of a desktop with no GPU; a guest found running is released", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const server = box("linux", "shared");
+  bridge.plain(7003, server, INSTALL);
+  const made = await backend.acquire(server, stoppedGuestOf(7003, server, 9000), hooks(), signal());
+  assert.equal(made.ref, "7003", "the guest it had made is kept");
+  assert.equal(made.claim?.answer, "granted");
+  const card = made.claim?.card === A ? CARD_A : CARD_B;
+  assert.deepEqual(bridge.gpuTags(7003), [marker("shared", card, 1)]);
+  assert.deepEqual(bridge.lines(7003), cardLines(card, "server"));
+
+  const desktop = box("linux-desktop", "none");
+  bridge.desktop(7004, CARD_A, desktop, INSTALL);
+  bridge.pass();
+  const plain = await backend.acquire(desktop, stoppedGuestOf(7004, desktop, 9001), hooks(), signal());
+  assert.equal(plain.ref, "7004");
+  assert.deepEqual(bridge.gpuTags(7004), ["gpu.none.g1"]);
+  assert.deepEqual(bridge.lines(7004), [], "the helper took out the card's lines the guest carried");
+
+  const running = box("linux", "shared");
+  bridge.plain(7005, running, INSTALL, { running: true });
+  bridge.pass();
+  await assert.rejects(backend.acquire(running, stoppedGuestOf(7005, running, 9000), hooks(), signal()), /was running before bb-box gave it its card, so bb-box released it/);
+  assert.equal(bridge.proxmox.guests.has(7005), false);
+});
+
+test("071 unit 7 round 2, Astra 2: a desktop template listed without a GPU ID that carries a card's lines gives a desktop with no GPU no card: the helper takes them out, or it is refused before any copy", async () => {
+  const bridge = new ClaimsBridge();
+  const made = await bridge.backend({ templates: "9001" }).acquire(box("linux-desktop", "none"), null, hooks(), signal());
+  assert.equal(made.data?.template, 9001);
+  assert.deepEqual(bridge.gpuTags(Number(made.ref)), ["gpu.none.g1"]);
+  assert.deepEqual(bridge.lines(Number(made.ref)), []);
+  const off = new ClaimsBridge({ writes: "off" });
+  const before = clones(off);
+  await assert.rejects(off.backend({ templates: "9001" }).acquire(box("linux-desktop", "none"), null, hooks(), signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.match(error.message, /^Desktop template 9001 carries a card's device lines, and the GPU helper on pve has writes off/);
+    assert.match(error.agentMessage ?? "", /^Not made: desktop template 9001 carries a card's device lines on pve, .* Ask for gpu shared, or ask the user\. bb-box changed nothing\.$/);
+    return true;
+  });
+  assert.equal(clones(off), before);
+});
+
+test("071 unit 7 round 2, Astra 3: a server stopped after both its checks failed holds no reservation, so both cards take new boxes", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ perGpu: 1 });
+  const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  await backend.stop(made);
+  bridge.pass();
+  bridge.seenInBox.set(Number(made.ref), { shows: "No devices were found" });
+  await assert.rejects(backend.start(made, signal()), /it did not get that one either/);
+  assert.equal(bridge.proxmox.guests.get(Number(made.ref))!.status, "stopped");
+  bridge.pass();
+  assert.deepEqual((await backend.gpuRoom("linux")).cards?.map((card) => card.boxes), [0, 0], "no card holds a place for the stopped server");
+  const first = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  const second = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  assert.deepEqual(new Set([first.claim?.card, second.claim?.card]), new Set([A, B]));
+});
+
+test("071 unit 7 round 2, Astra 4: a start's move and a fork's placement keep the agent's words through their wrappers", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ perGpu: 1 });
+  const server = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  await backend.acquire(box("linux-desktop", "shared"), null, hooks(), signal());
+  await backend.stop(server);
+  bridge.pass();
+  bridge.seenInBox.set(Number(server.ref), { shows: "No devices were found" });
+  await assert.rejects(backend.start(server, signal()), (error: unknown) => {
+    assert.ok(error instanceof AudienceError, String(error));
+    assert.match(error.message, /bb-box could not place it on another card: .*Release another desktop box/);
+    assert.match(error.agentMessage, /bb-box could not place it on another card: .*Start it again later, or ask the user\./);
+    assert.doesNotMatch(error.agentMessage, /release|raise|settings/i);
+    return true;
+  });
+  bridge.seenInBox.delete(Number(server.ref));
+  await backend.start(server, signal());
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "shared"), "shared", signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.match(error.message, /^Not forked: /);
+    assert.match(error.agentMessage ?? "", /^Not forked: No card on pve can take another box now: .* Fork it with gpu none, or ask the user\. bb-box copied nothing\.$/);
+    assert.doesNotMatch(error.agentMessage!, /release|raise|settings/i);
+    return true;
+  });
+});
+
+test("071 unit 7 round 2, Fable 1: a check that does not finish is run once more, and a box whose check still does not finish is kept on its card, with the fact on its page", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ readyTimeoutMs: 60_000 });
+  let cut: number | null = null;
+  bridge.proxmox.intercept = (call) => {
+    if (cut === null && call.method === "POST" && /\/lxc\/9000\/clone$/.test(call.path)) {
+      cut = Number(call.params.newid);
+      bridge.cutInBox.add(cut);
+    }
+    return undefined;
+  };
+  const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  assert.equal(Number(made.ref), cut, "the box is kept, not made again");
+  assert.equal(bridge.checksCutIn(cut!), 2, "the check ran once more");
+  assert.match(made.facts?.find((fact) => fact.label === "GPU")?.value ?? "", /^card \d, shared: the check in it did not finish$/);
+  const held = made.claim!.card;
+  await backend.stop(made);
+  bridge.pass();
+  const started = await backend.start(made, signal());
+  assert.equal((started as { claim: { card: string } }).claim.card, held, "a start whose check does not finish moves nothing");
+  assert.equal(bridge.proxmox.guests.get(cut!)!.status, "running");
+});
+
+test("071 unit 7 round 2, Fable 2 and 3: Python that prints nothing says so, and a helper's mismatch of a guest whose claim is none closes only the card its lines name and reads as such", async () => {
+  const card = `GPU-${A}, NVIDIA Fake Card, 97887`;
+  const quiet = judgeCardCheck([card, "cuinit", "userspace 580.142", "card check done"].join("\n"), A, "580.142");
+  assert.deepEqual(quiet.ok ? null : [quiet.why, quiet.reading], ["CUDA's driver did not load in it: Python gave no answer", "cards"]);
+  assert.deepEqual(helperMismatches(`    mismatch 7001 none\n    mismatch 7002 ${A}`), [{ vmid: 7001, card: null }, { vmid: 7002, card: A }]);
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const made = await backend.acquire(box("linux", "shared"), null, hooks(), signal());
+  const report = bridge.proxmox.guests.get(REPORT_VMID)!;
+  report.config.description = `${report.config.description}\n    mismatch ${made.ref} none`;
+  const cards = (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-cards");
+  assert.match(cards?.detail ?? "", new RegExp(`^CT ${made.ref} runs with a card's lines while its claim is none, as the GPU helper reports`));
+  assert.doesNotMatch(cards!.detail, /claim's card none/);
 });

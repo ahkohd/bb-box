@@ -5,8 +5,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { Backend, Guest, GuestIdentity, LeasedAddressNow } from "../src/backends/types.ts";
-import { OPERATOR, type BoxRecord } from "../src/core/boxes.ts";
+import { BackendError, type Backend, type Guest, type GuestIdentity, type LeasedAddressNow } from "../src/backends/types.ts";
+import { OPERATOR, errorForAgent, type BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, Standing } from "../src/core/snapshot.ts";
 import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
@@ -805,4 +805,20 @@ test("070 unit 11b review, Astra 2 and Opus 5: where the backend can, a fork sta
   const order = state.provider.order.filter((step) => step.startsWith("start ") || step.startsWith("the check") || step.startsWith("arm boot"));
   assert.deepEqual(order, ["start up to the check", "the check's own command", `arm boot ${fork.guest!.ref}`], state.provider.order.join(", "));
   assert.equal(state.provider.order.includes("start within 180 s"), false, "core never starts the fork whole before its check");
+});
+
+test("071 unit 7 round 2, Astra 4: a fork whose card the backend refuses keeps the person's words and the agent's, and the agent's tools get the agent's", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  (state.backend as unknown as Record<string, unknown>).placeForkGpu = async () => {
+    throw new BackendError("no_capacity", "Not forked: no card has room. Release a desktop box. bb-box copied nothing.", "Not forked: no card has room. Fork it with gpu none, or ask the user. bb-box copied nothing.");
+  };
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
+  const fork = await forked(state, answer.box);
+  assert.equal(fork.state, "failed");
+  assert.match(fork.error ?? "", /^Not forked: no card has room\. Release a desktop box\./);
+  assert.match(errorForAgent(fork) ?? "", /^Not forked: no card has room\. Fork it with gpu none, or ask the user\. bb-box copied nothing\. bb-box released it, so nothing of it acts as /);
+  assert.doesNotMatch(errorForAgent(fork) ?? "", /release a desktop/i);
 });

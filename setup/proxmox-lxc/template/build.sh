@@ -154,7 +154,7 @@ gpu_lines() {
     /dev/nvidia-modeset,mode=0666 "/dev/dri/$render,mode=0666" "/dev/dri/$card,mode=0666"
   echo "# gpu $pci"
 }
-add_devices() { # ct device...
+add_devices() {
   local ct=$1 config n=0 device
   shift
   config=$(pct config "$ct")
@@ -165,9 +165,7 @@ add_devices() { # ct device...
   done
 }
 devices_of() { grep -v -e '^#' -e '^$' <<<"$1" || true; }
-# /dev/net/tun, so boxes can run Tailscale and other VPNs with a TUN device
-# (050), as CT <ct>'s next free devN. A copy keeps the line its template has.
-add_tun() { # ct
+add_tun() {
   ! pct config "$1" | grep -Eq '^dev[0-9]+: /dev/net/tun(,|$)' || return 0
   add_devices "$1" /dev/net/tun
 }

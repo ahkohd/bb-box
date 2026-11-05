@@ -7,8 +7,7 @@
 #
 # usage: customize-base.sh <build-dir>
 # <build-dir>/build.env sets BOX_USER, BOX_DNS and BB_URL (see build.sh), and
-# BOX_RUNTIME: lxc (the default), docker, or vm (a Tart Linux VM), and
-# LINUX_GPU: none (the default), or nvidia for NVIDIA's userspace (071).
+# BOX_RUNTIME: lxc (the default), docker, or vm (a Tart Linux VM).
 set -Eeuo pipefail
 trap 'echo "customize-base: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022

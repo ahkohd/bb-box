@@ -34,3 +34,14 @@ test("071 unit 7: the new guest scripts carry no comments beyond the shebang", (
     assert.deepEqual(comments, [], name);
   }
 });
+
+test("071 unit 7 round 2, Astra 7: this unit adds no comments to build.sh, fetch-artifacts.sh or customize-base.sh; their usage is in the setup guide", () => {
+  const read = (path: string) => readFileSync(fileURLToPath(new URL(`../setup/proxmox-lxc/${path}`, import.meta.url)), "utf8").split("\n");
+  const comments = (lines: readonly string[]) => lines.filter((line) => /^\s*#/.test(line) || /\{ #/.test(line));
+  assert.deepEqual(read("template/build.sh").filter((line) => /^(add_devices|add_tun|devices_of)\(\)/.test(line) && /#/.test(line.replace(/'[^']*'/g, ""))), []);
+  assert.deepEqual(comments(read("template/fetch-artifacts.sh")).filter((line) => /linux-nvidia|NVIDIA's installer for the host/.test(line)), []);
+  assert.deepEqual(comments(read("template/guest/customize-base.sh")).filter((line) => /LINUX_GPU/.test(line)), []);
+  const guide = readFileSync(fileURLToPath(new URL("../setup/proxmox-lxc/README.md", import.meta.url)), "utf8");
+  assert.match(guide, /LINUX_GPU=nvidia/);
+  assert.match(guide, /fetch-artifacts\.sh <dir> linux-nvidia/);
+});

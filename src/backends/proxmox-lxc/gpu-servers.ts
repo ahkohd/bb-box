@@ -52,8 +52,8 @@ function listedWords(seen: readonly string[]): string {
 }
 
 function valueAfter(lines: readonly string[], key: string): string | null {
-  const line = lines.find((candidate) => candidate.startsWith(`${key} `));
-  return line === undefined ? null : line.slice(key.length + 1).trim();
+  const line = lines.find((candidate) => candidate === key || candidate.startsWith(`${key} `));
+  return line === undefined ? null : line.slice(key.length).trim();
 }
 
 export function judgeCardCheck(output: string, card: string, hostDriver: string | null): CardCheck {
@@ -61,13 +61,13 @@ export function judgeCardCheck(output: string, card: string, hostDriver: string 
   const cuinit = valueAfter(lines, "cuinit");
   const userspaceLine = valueAfter(lines, "userspace");
   const userspace = userspaceLine === null || userspaceLine === "none" ? null : userspaceLine;
-  const smi = lines.filter((line) => !line.startsWith("cuinit ") && !line.startsWith("userspace ") && line !== CHECK_DONE);
+  const smi = lines.filter((line) => valueAfter([line], "cuinit") === null && valueAfter([line], "userspace") === null && line !== CHECK_DONE);
   const cards = seenCards(smi);
   const seen = cards.map((listed) => listed.uuid);
   const mine = cards.find((listed) => listed.uuid === card);
   const reading: CardReading = cards.length ? "cards" : smi.some((line) => /^No devices were found/.test(line)) ? "none" : "unreadable";
   const failed = (why: string, as: CardReading = reading, userspaceOff = false): CardCheck => ({ ok: false, why, seen, userspace, reading: as, userspaceOff });
-  if (!lines.includes(CHECK_DONE) || cuinit === null) return failed("the check in it did not finish", mine ? "cards" : "incomplete");
+  if (!lines.includes(CHECK_DONE) || cuinit === null) return failed("the check in it did not finish", "incomplete");
   if (!mine) {
     if (!cards.length && userspace && hostDriver && userspace !== hostDriver) {
       return failed(`nvidia-smi in it fails: its NVIDIA userspace is ${userspace} and the host's driver ${hostDriver}`, reading, true);
@@ -80,8 +80,8 @@ export function judgeCardCheck(output: string, card: string, hostDriver: string 
   return failed(`CUDA's driver did not load in it: ${cuinit || "Python gave no answer"}`);
 }
 
-export function helperMismatches(notes: string): { readonly vmid: number; readonly card: string }[] {
-  return [...notes.matchAll(/^\s*mismatch (\d+) (\S+)\s*$/gm)].map(([, vmid, card]) => ({ vmid: Number(vmid), card: card!.toLowerCase().replace(/^gpu-/, "") }));
+export function helperMismatches(notes: string): { readonly vmid: number; readonly card: string | null }[] {
+  return [...notes.matchAll(/^\s*mismatch (\d+) (\S+)\s*$/gm)].map(([, vmid, card]) => ({ vmid: Number(vmid), card: card === "none" ? null : card!.toLowerCase().replace(/^gpu-/, "") }));
 }
 
 export function wrongCardSeen(check: CardCheck, card: string): boolean {

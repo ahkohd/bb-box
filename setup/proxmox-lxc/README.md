@@ -173,7 +173,10 @@ template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
   `bb-box-nvidia-drivers --check` prints each of those files' state and
   changes nothing. Both templates install the userspace with
   `guest/nvidia-userspace.sh <build-dir>`, as root in the build CT, which
-  prints the version it installed.
+  prints the version it installed. `build.sh` asks for it with `LINUX_GPU=nvidia`
+  in the build's `build.env` for a Linux template, `none` by default, and
+  fetches the installer with `fetch-artifacts.sh <dir> linux-nvidia`: the
+  Linux artifacts and NVIDIA's installer for the host's driver.
 - `desktop` gives the template no device lines: the GPU helper gives each
   box its card, and a box with none draws on the CPU, with x264 video. List
   it in bb-box's GPU desktop templates by its VMID alone. `--gpu` gives the
