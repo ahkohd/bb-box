@@ -358,7 +358,9 @@ export function judgeImage(
     warnings.push("It was built with other pins than this bb-box's, so it lacks what a bb-box update brought.");
   }
   const chrome = record.tools.chrome;
+  let chromeNewerThanPin = false;
   if (chrome && facts.pinChrome && !atLeast(facts.pinChrome, chrome)) {
+    chromeNewerThanPin = true;
     warnings.push(`Its Chrome is ${chrome}, newer than this bb-box's pin ${facts.pinChrome}, so a rebuild from the pins would go backwards. The pin is what a failed version check kept.`);
   }
   if (facts.os === "android" && (!record.devices || record.devices[0].runtime.platform !== "android")) {
@@ -381,10 +383,12 @@ export function judgeImage(
     }
   }
   const problems = [...failures, ...warnings];
+  const pinFirst = "Update the pins first, or leave this image until the pins catch up.";
+  const fix = !problems.length ? null : chromeNewerThanPin && problems.length === 1 ? pinFirst : chromeNewerThanPin ? `${pinFirst} ${rebuild}` : rebuild;
   return {
     status: failures.length ? "fail" : warnings.length ? "warn" : "ok",
     detail: [describeImage(record, now), ...problems].join(" "),
-    fix: problems.length ? rebuild : null,
+    fix,
   };
 }
 
