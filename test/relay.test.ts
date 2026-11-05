@@ -202,6 +202,89 @@ test("the docker CLI's connections reach Docker on the machine through the relay
   assert.match(refused, /unknown or used/);
 });
 
+function hijackHeaders(form: "101" | "200"): string {
+  return form === "101"
+    ? "HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n"
+    : "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.docker.raw-stream\r\n\r\n";
+}
+
+function hijackingDocker(listen: string | { host: string }, form: "101" | "200"): Promise<{ server: Server; dockerClosed: () => boolean }> {
+  let dockerClosed = false;
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    let request = Buffer.alloc(0);
+    let upgraded = false;
+    socket.on("data", (chunk) => {
+      request = Buffer.concat([request, chunk]);
+      if (upgraded || !request.includes(Buffer.from("\r\n\r\n"))) return;
+      upgraded = true;
+      socket.write(hijackHeaders(form));
+    });
+    socket.on("end", () => {
+      assert.equal(socket.destroyed, false, "a client half-close leaves Docker's socket up");
+      assert.equal(socket.writableEnded, false, "a client half-close does not end Docker's write side");
+      setTimeout(() => {
+        assert.equal(socket.destroyed || socket.writableEnded, false, "Docker can still write the stream after the client's half-close");
+        socket.end("hijacked-output");
+      }, 30);
+    });
+    socket.on("close", () => (dockerClosed = true));
+  });
+  return new Promise((resolve) => {
+    const ready = () => resolve({ server, dockerClosed: () => dockerClosed });
+    if (typeof listen === "string") server.listen(listen, ready);
+    else server.listen(0, listen.host, ready);
+  });
+}
+
+test("an attached run returns its output after the client half-closes, for a unix socket and a TCP port, in both hijack forms", async (t) => {
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  const forms = ["101", "200"] as const;
+  const targets = ["unix", "tcp"] as const;
+  for (const target of targets) {
+    for (const form of forms) {
+      const dir = tempDir(`relay-attach-${target}-${form}`);
+      const docker = await hijackingDocker(target === "unix" ? join(dir, "docker.sock") : { host: "127.0.0.1" }, form);
+      t.after(() => docker.server.close());
+      const endpoint = target === "unix" ? { path: join(dir, "docker.sock") } : { host: "127.0.0.1", port: (docker.server.address() as { port: number }).port };
+      let hub!: RelayHub;
+      const { connectTo } = joined(() => hub);
+      const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => endpoint } }));
+      t.after(() => worker.experimental_dispose());
+      hub = new RelayHub({
+        dir: tempDir("relay-hub"),
+        open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" }),
+        keep: async () => false,
+        logError: () => {},
+      });
+      t.after(() => hub.dispose());
+      const socketPath = (await hub.endpoint(`host_${target}_${form}`)).slice("unix://".length);
+      const reply = await new Promise<{ text: string; ended: boolean; closed: boolean }>((resolve, reject) => {
+        const socket = connect({ path: socketPath, allowHalfOpen: true });
+        let text = "";
+        let ended = false;
+        const finish = (closed: boolean) => resolve({ text, ended, closed });
+        socket.on("data", (part) => (text += part));
+        socket.on("end", () => (ended = true));
+        socket.on("close", () => finish(true));
+        socket.on("error", reject);
+        socket.write(`POST /containers/abc/attach?stdout=1 HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n`);
+        const waitForHeaders = () => {
+          if (!text.includes("\r\n\r\n")) return void setTimeout(waitForHeaders, 5);
+          socket.end();
+        };
+        waitForHeaders();
+        setTimeout(() => finish(false), 2_000);
+      });
+      assert.equal(reply.ended, true, `${target} ${form}: the client is told the stream ended`);
+      assert.equal(reply.closed, true, `${target} ${form}: both directions of the client's socket close`);
+      assert.ok(reply.text.startsWith(hijackHeaders(form)), `${target} ${form}: the hijack headers arrive`);
+      assert.ok(reply.text.endsWith("hijacked-output"), `${target} ${form}: the output follows the half-close`);
+      for (let i = 0; i < 50 && !docker.dockerClosed(); i++) await new Promise((r) => setTimeout(r, 10));
+      assert.equal(docker.dockerClosed(), true, `${target} ${form}: Docker's socket closes after the stream`);
+    }
+  }
+});
+
 test("a connection whose input ends first still gets its output, as docker exec needs", async (t) => {
   const dir = tempDir("relay-half");
   // Docker's side: reads all of the input, then answers and ends.
