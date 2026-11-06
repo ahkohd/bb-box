@@ -902,7 +902,7 @@ export interface Backend {
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
   gpuRoom?(kind: string): Promise<GpuRoom>;
   cardReach?(kind: string): string | null;
-  dockerDaemons?(signal?: AbortSignal): Promise<readonly DockerDaemonIdentity[]>;
+  dockerDaemons?(signal?: AbortSignal): Promise<readonly DockerDaemonReached[]>;
   markGpus?(request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
@@ -1284,6 +1284,10 @@ export interface DockerDaemonIdentity {
   readonly rootDir: string;
 }
 
+export interface DockerDaemonReached extends DockerDaemonIdentity {
+  readonly containers: readonly string[];
+}
+
 export interface BackendStorage {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
@@ -1297,7 +1301,7 @@ export interface BackendContext {
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
   readonly sharedStorage?: BackendStorage;
-  dockerDaemonsReached?(signal?: AbortSignal): Promise<readonly DockerDaemonIdentity[] | null>;
+  dockerDaemonsReached?(signal?: AbortSignal): Promise<readonly DockerDaemonReached[] | null>;
   /**
    * This bb-box install's ID (018). A backend records it on every guest from
    * its first write, warm and part-made guests too, and acts only on guests

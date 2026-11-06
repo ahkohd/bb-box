@@ -3428,13 +3428,16 @@ offered before it.
 - **WSL.** The toolkit's spec in WSL has one device, `nvidia.com/gpu=all`, as
   every card is `/dev/dxg`. Where the daemon lists only that, every card is
   given through it, and the box's card is the UUID bb-box placed it on.
-- **Placement**, under a lock of the Docker daemon's, which every backend
-  instance on that daemon shares, with its reservations and the cards left
-  out: a settings check's instance of a backend and the live one order
-  their placements on one lock. Every backend of the install that reaches
-  the daemon, on or off, reads a box's switched part from one record. A daemon is known by its engine ID, its name and its Docker
-  root from `docker info` together, as cloned hosts keep one engine ID. A
-  backend counts on a daemon once it places or plans a box there, and only
+- **Placement**, under a lock kept by the Docker daemon's engine ID, which
+  every backend instance on that daemon shares, with its reservations and
+  the cards left out: a settings check's instance of a backend and the live
+  one order their placements on one lock, and a rename of the host keeps it.
+  Cloned hosts that kept one engine ID share it too, which only makes them
+  place one at a time; their cards have different UUIDs. Every backend of
+  the install that reaches the daemon, on or off, reads a box's switched
+  part from one record. Two backends are on one daemon when its engine ID,
+  name and Docker root from `docker info` are all the same. A backend counts
+  on a daemon once it places or plans a box there, and only
   while it is on; listing, releasing and upkeep do not count. Of two
   backends of the install that count on one daemon, only the one whose ID
   sorts first places GPU boxes there; the other refuses them, for each
@@ -3508,12 +3511,11 @@ offered before it.
   when carried out. The part is this install's, kept in bb-box's storage
   where every backend of the install reads it, by the container's ID, with
   the engine ID, name and Docker root of the daemon it was written on, and
-  a generation that goes up at each switch. A release drops it. Once its
-  container is gone from a daemon, that daemon's upkeep drops it if it was
-  written under the daemon's engine ID, name and root, or under its engine
-  ID with a name and root no Docker daemon the install reaches has now, as
-  after a rename; never while bb-box cannot tell which daemons it reaches. The claim on the guest and the GPU fact
-  follow it, and the record's `gpu` changes. A GPU added or
+  a generation that goes up at each switch. A release drops it. Otherwise
+  the upkeep of a daemon with the engine ID it was written under drops it
+  once no Docker daemon the install reaches lists its container, and never
+  while bb-box cannot tell which daemons it reaches. The claim on the guest
+  and the GPU fact follow it, and the record's `gpu` changes. A GPU added or
   removed is refused, with words for each audience. A backend whose
   `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
   change.
@@ -3839,6 +3841,58 @@ skipped, the 112 the same environment's failures, by name, as on main
 
 The gate's results stand: it ran one daemon, renamed nothing and dropped no
 record.
+
+### After the fifth review
+
+Astra said no-go, with two findings, both from a host's name changing:
+
+- after two cloned hosts each switched a box to whole, one was renamed; the
+  other's upkeep dropped the renamed clone's record, as its old name was no
+  longer reached, and a shared box went on its whole card (high)
+- a rename while an acquire was making its box gave the daemon a new share,
+  without the pending box's reservation, so two boxes went on one card
+  (medium)
+
+The lead decided the fix, taking the name out of everything but one check:
+
+- The lock, the reservations and the cards left out are kept by the engine
+  ID alone, which a rename does not change. Cloned hosts with one engine ID
+  share them, so they place one at a time; their cards have different UUIDs,
+  so no card is counted for the other. Each reservation names the backend
+  that made it and counts only on that backend's daemon, so a box one clone
+  is making takes none of the other's memory, cores or box count, as
+  Hetzner Cloud hosts made from one snapshot would otherwise. A backend
+  always counts its own, through a rename too. This last part is the
+  builder's, beyond the lead's decision.
+- The engine ID, name and Docker root together only tell two backends on
+  one daemon apart, so that the second stops only GPU boxes.
+- Upkeep drops a record only when its container is gone from every Docker
+  daemon the install reaches, and bb-box can tell which those are; the
+  daemon whose upkeep drops it must have the engine ID the record was
+  written under. The lead's rule counted only daemons sharing that engine
+  ID; this counts every daemon reached, which keeps a record wherever its
+  container is listed, as on a clone whose engine ID was made new. A release
+  still drops its own box's record.
+
+Astra's two reproductions are tests: the renamed clone keeps its record and
+refuses a shared box on its whole card, and a rename while a whole box is
+being made refuses a shared box on that card ("card 0 is kept whole for
+pending-whole, which bb-box is making"). Every earlier sequence still runs:
+the backend turned off and the one made later, the rename and reconnect,
+the clones, and two backends on one daemon. Two more tests: a box one clone
+is making takes none of the other's room, and after a rename a backend still
+counts its own pending whole card when a settings check's instance of it
+last read the old name. Each of 11 rules has a revert that fails it, on a
+box, and the 57 earlier reverts ran again, 3 changed to
+the new lines and 4 of the last round's replaced by these, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,841 tests, 3,419 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 38 tests.
+
+The gate's results stand: it ran one daemon, whose share and record are the
+same under either key.
 
 ### Still open
 

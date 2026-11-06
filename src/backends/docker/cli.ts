@@ -348,12 +348,15 @@ export class DockerCli {
 
   /** Every container with all of `labels`, running or not. */
   async list(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ContainerInfo[]> {
+    return this.inspect(await this.ids(labels, signal), signal);
+  }
+
+  async ids(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string[]> {
     const filters = Object.entries(labels).flatMap(([key, value]) => ["--filter", `label=${key}=${value}`]);
-    const ids = (await this.ok(["container", "ls", "--all", "--quiet", "--no-trunc", ...filters], { timeoutMs: 30_000, signal }))
+    return (await this.ok(["container", "ls", "--all", "--quiet", "--no-trunc", ...filters], { timeoutMs: 30_000, signal }))
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    return this.inspect(ids, signal);
   }
 }
 

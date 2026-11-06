@@ -34,6 +34,7 @@ import {
   type BackendImages,
   type BackendStorage,
   type DockerDaemonIdentity,
+  type DockerDaemonReached,
   type BoxIdentity,
   type BoxKind,
   type CapacityAsking,
@@ -78,7 +79,7 @@ import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 import { dockerImageBuilding } from "./building.ts";
-import { backendsOn, daemonKey, daemonShare, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
+import { backendsOn, daemonKey, daemonShare, engineKey, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
 import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_RESIZE } from "../../core/gpu.ts";
 import { SERVER_GPU_MIB, type CardCheck } from "../card-check.ts";
 import {
@@ -230,6 +231,7 @@ function runScript(script: string, args: readonly string[], env: NodeJS.ProcessE
 
 /** A container bb-box is making, counted against the host until docker lists it. */
 interface Placing {
+  readonly backendId: string;
   readonly name: string;
   readonly memoryMiB: number;
   readonly gpu: string | null;
@@ -557,13 +559,6 @@ function daemonIdentityOf(info: DockerInfo): DockerDaemonIdentity {
   return { engineId: info.id, name: info.name, rootDir: info.rootDir };
 }
 
-function sameDaemon(one: DockerDaemonIdentity | undefined, other: DockerDaemonIdentity): boolean {
-  return Boolean(one) && one!.engineId === other.engineId && one!.name === other.name && one!.rootDir === other.rootDir;
-}
-
-function renamedFrom(writtenUnder: DockerDaemonIdentity | undefined, now: DockerDaemonIdentity): boolean {
-  return Boolean(writtenUnder && now.engineId) && writtenUnder!.engineId === now.engineId && !sameDaemon(writtenUnder, now);
-}
 
 export class DockerBackend implements Backend {
   readonly id: string;
@@ -809,7 +804,7 @@ export class DockerBackend implements Backend {
         hosts: [{ host: this.#host, ok: false, limits: [] }],
       };
     }
-    const placed = [...this.#placing.values()];
+    const placed = this.#placingOnThisDaemon();
     const unplaced: Unplaced = {
       count: Math.max(0, pending.length - placed.length),
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
@@ -863,8 +858,9 @@ export class DockerBackend implements Backend {
     return this.#info ? daemonIdentityOf(this.#info) : { engineId: "", name: "", rootDir: "" };
   }
 
-  async dockerDaemons(signal?: AbortSignal): Promise<readonly DockerDaemonIdentity[]> {
-    return [daemonIdentityOf(await this.#cli.info(signal))];
+  async dockerDaemons(signal?: AbortSignal): Promise<readonly DockerDaemonReached[]> {
+    const [info, containers] = await Promise.all([this.#cli.info(signal), this.#cli.ids({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId }, signal)]);
+    return [{ ...daemonIdentityOf(info), containers }];
   }
 
   async #partOf(container: ContainerInfo): Promise<StoredPart> {
@@ -878,11 +874,12 @@ export class DockerBackend implements Backend {
     const there = new Set(state.containers.map((container) => container.id));
     const keys = (await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[])).filter((key) => !there.has(key.slice(GPU_PARTS.length)));
     const gone = await Promise.all(keys.map(async (key) => ({ key, writtenUnder: (await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined))?.writtenUnder })));
-    const writtenHere = gone.filter((record) => sameDaemon(record.writtenUnder, here));
-    const renamed = gone.filter((record) => renamedFrom(record.writtenUnder, here));
-    const reached = renamed.length ? await (this.#context.dockerDaemonsReached?.(signal) ?? Promise.resolve(null)).catch(() => null) : null;
-    const writtenBeforeARename = reached ? renamed.filter((record) => !reached.some((daemon) => daemon.name === record.writtenUnder!.name && daemon.rootDir === record.writtenUnder!.rootDir)) : [];
-    await Promise.all([...writtenHere, ...writtenBeforeARename].map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
+    const ofThisEngine = gone.filter((record) => record.writtenUnder !== undefined && record.writtenUnder.engineId === here.engineId);
+    if (!ofThisEngine.length) return;
+    const reached = await (this.#context.dockerDaemonsReached?.(signal) ?? Promise.resolve(null)).catch(() => null);
+    if (!reached) return;
+    const listedSomewhere = new Set(reached.flatMap((daemon) => daemon.containers));
+    await Promise.all(ofThisEngine.filter((record) => !listedSomewhere.has(record.key.slice(GPU_PARTS.length))).map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
   }
 
   #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
@@ -922,7 +919,7 @@ export class DockerBackend implements Backend {
   }
 
   async #holders(state: HostState, cards: CardsOnHost): Promise<CardHolder[]> {
-    const placing = new Map([...this.#placing.values()].map((each) => [each.name, each]));
+    const placing = new Map(this.#placingOnThisDaemon().map((each) => [each.name, each]));
     const held = await Promise.all(
       state.containers.map(async (container): Promise<CardHolder | null> => {
         if (container.labels[LABELS.imageBox] || placing.has(container.name)) return null;
@@ -993,7 +990,7 @@ export class DockerBackend implements Backend {
   }
 
   #shareOf(info: DockerInfo): DaemonShare<Placing> {
-    const daemon = daemonKey(info, this.#config.machine ?? this.#config.host ?? "local");
+    const daemon = engineKey(info, this.#daemonFallback);
     if (this.#share?.daemon === daemon) return this.#share;
     if (this.#share && this.#joined) leaveDaemon(this.#share, this.id);
     this.#joined = false;
@@ -1001,9 +998,17 @@ export class DockerBackend implements Backend {
     return this.#share;
   }
 
+  get #daemonFallback(): string {
+    return this.#config.machine ?? this.#config.host ?? "local";
+  }
+
+  #daemonNow(): string {
+    return this.#info ? daemonKey(this.#info, this.#daemonFallback) : `host:${this.#daemonFallback}`;
+  }
+
   #join(): void {
     if (!this.#share || this.#joined) return;
-    joinDaemon(this.#share, this.id, () => this.#context.on?.() ?? true);
+    joinDaemon(this.#share, this.id, () => this.#context.on?.() ?? true, () => this.#daemonNow());
     this.#joined = true;
   }
 
@@ -1018,13 +1023,18 @@ export class DockerBackend implements Backend {
     return this.#share?.placing ?? new Map();
   }
 
+  #placingOnThisDaemon(): Placing[] {
+    const here = this.#daemonNow();
+    return [...this.#placing.values()].filter((each) => each.backendId === this.id || this.#share?.backends.get(each.backendId)?.daemon() === here);
+  }
+
   get #avoided(): Map<string, number> {
     return this.#share?.avoided ?? new Map();
   }
 
   #otherBackendOnDaemon(): string | null {
     if (!this.#share) return null;
-    const first = backendsOn(this.#share).find((id) => id !== this.id && id < this.id) ?? null;
+    const first = backendsOn(this.#share, this.#daemonNow()).find((id) => id !== this.id && id < this.id) ?? null;
     return first;
   }
 
@@ -1052,7 +1062,7 @@ export class DockerBackend implements Backend {
     const listed = new Set(containers.map((container) => container.name));
     const active = containers.filter((container) => ACTIVE.has(container.status));
     const holding = new Set(active.map((container) => container.name));
-    const placing = [...this.#placing.values()];
+    const placing = this.#placingOnThisDaemon();
     const unlisted = placing.filter((other) => !listed.has(other.name));
     const guests = containers.length + unlisted.length + unplaced.count;
     const memoryUsed =
@@ -1105,7 +1115,7 @@ export class DockerBackend implements Backend {
     const running = new Set(state.containers.filter((container) => ACTIVE.has(container.status)).map((container) => container.name));
     return [
       ...state.containers.filter((container) => running.has(container.name) && container.name !== name && container.cpus).map((container) => container.cpus!),
-      ...[...this.#placing.values()].filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
+      ...this.#placingOnThisDaemon().filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
     ];
   }
 
@@ -1199,7 +1209,7 @@ export class DockerBackend implements Backend {
   }
 
   #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null): Placing {
-    return { name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind) : 0, boxName: box.name, threadId: box.threadId };
+    return { backendId: this.id, name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind) : 0, boxName: box.name, threadId: box.threadId };
   }
 
   #resumePlacement(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, signal: AbortSignal, again = false): Promise<CpuList | null> {
@@ -1220,7 +1230,7 @@ export class DockerBackend implements Backend {
     const mine = running.filter((container) => container.labels[LABELS.install] === this.#context.installId);
     const held = [
       ...running.filter((container) => !mine.includes(container)).map((container) => container.cpus!),
-      ...[...this.#placing.values()].filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
+      ...this.#placingOnThisDaemon().filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
     ];
     const moves = movesOntoFreeCpus(await this.#cpusOfHost(state.info, signal), mine.map((container) => ({ id: container.id, cpus: container.cpus! })), held);
     for (const move of moves) {
@@ -1955,7 +1965,7 @@ export class DockerBackend implements Backend {
   }
 
   #checkOneBackend(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void): void {
-    const sharing = this.#share ? backendsOn(this.#share).filter((id) => id !== this.id) : [];
+    const sharing = this.#share ? backendsOn(this.#share, this.#daemonNow()).filter((id) => id !== this.id) : [];
     if (!sharing.length) return;
     const refused = this.#otherBackendOnDaemon();
     const fix = "Remove the other backend in BB Box's settings, or point it at another Docker host.";

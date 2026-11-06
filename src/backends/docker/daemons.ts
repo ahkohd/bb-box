@@ -1,6 +1,7 @@
 export interface DaemonMember {
   readonly instances: number;
   readonly on: () => boolean;
+  readonly daemon: () => string;
 }
 
 export interface DaemonShare<Placing> {
@@ -23,6 +24,10 @@ export function daemonKey(facts: DaemonFacts, fallback: string): string {
   return facts.id ? `daemon:${facts.id}|${facts.name}|${facts.rootDir}` : `host:${fallback}`;
 }
 
+export function engineKey(facts: DaemonFacts, fallback: string): string {
+  return facts.id ? `engine:${facts.id}` : `host:${fallback}`;
+}
+
 export function daemonShare<Placing>(daemon: string): DaemonShare<Placing> {
   let share = SHARES.get(daemon);
   if (!share) {
@@ -32,8 +37,8 @@ export function daemonShare<Placing>(daemon: string): DaemonShare<Placing> {
   return share as DaemonShare<Placing>;
 }
 
-export function joinDaemon(share: DaemonShare<unknown>, backendId: string, on: () => boolean): void {
-  share.backends.set(backendId, { instances: (share.backends.get(backendId)?.instances ?? 0) + 1, on });
+export function joinDaemon(share: DaemonShare<unknown>, backendId: string, on: () => boolean, daemon: () => string): void {
+  share.backends.set(backendId, { instances: (share.backends.get(backendId)?.instances ?? 0) + 1, on, daemon });
 }
 
 export function leaveDaemon(share: DaemonShare<unknown>, backendId: string): void {
@@ -43,8 +48,8 @@ export function leaveDaemon(share: DaemonShare<unknown>, backendId: string): voi
   else share.backends.delete(backendId);
 }
 
-export function backendsOn(share: DaemonShare<unknown>): string[] {
-  return [...share.backends].filter(([, member]) => member.on()).map(([id]) => id).sort();
+export function backendsOn(share: DaemonShare<unknown>, daemon: string): string[] {
+  return [...share.backends].filter(([, member]) => member.on() && member.daemon() === daemon).map(([id]) => id).sort();
 }
 
 export function underDaemonLock<T>(share: DaemonShare<unknown>, work: () => Promise<T>): Promise<T> {

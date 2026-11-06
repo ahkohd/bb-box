@@ -17,7 +17,7 @@ import { tartDriver } from "./tart/index.ts";
 import { GENERAL_DEFAULTS, WHOLE_CARDS_BY_DEFAULT, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import { encoderKey } from "../core/encoder-ledger.ts";
-import type { Backend, BackendContext, BackendDriver, EncoderAccess, BackendStorage, BoxKind, DockerDaemonIdentity, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
+import type { Backend, BackendContext, BackendDriver, EncoderAccess, BackendStorage, BoxKind, DockerDaemonReached, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
 import { DEVICE_DISPLAY, desktopDisplays } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
@@ -485,7 +485,7 @@ export class Backends {
     return this.#entries.get(id)?.backend ?? null;
   }
 
-  async #dockerDaemonsReached(signal?: AbortSignal): Promise<readonly DockerDaemonIdentity[] | null> {
+  async #dockerDaemonsReached(signal?: AbortSignal): Promise<readonly DockerDaemonReached[] | null> {
     const answers = await Promise.all([...this.#entries.values()].map((entry) => entry.backend.dockerDaemons?.(signal) ?? Promise.resolve([]))).catch(() => null);
     return answers ? answers.flat() : null;
   }
