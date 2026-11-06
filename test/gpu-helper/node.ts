@@ -140,10 +140,13 @@ export class FakeNode {
   #cards: FakeCard[] = [];
   #boot = "boot-1";
 
-  constructor(options: { readonly cards?: readonly FakeCard[]; readonly writes?: "on" | "off" | null; readonly pools?: readonly string[]; readonly pveContainer?: string; readonly ledger?: boolean } = {}) {
+  readonly #helper: string;
+
+  constructor(options: { readonly cards?: readonly FakeCard[]; readonly writes?: "on" | "off" | null; readonly pools?: readonly string[]; readonly pveContainer?: string; readonly ledger?: boolean; readonly helperVersion?: string } = {}) {
     for (const dir of ["etc/pve/nodes/pve/lxc", "etc/pve/nodes/pve/qemu-server", "etc/bb-box", "var/lib", "run/fake-pve/running", "bin", "sys/module/nvidia", "proc/sys/kernel/random", "dev/dri/by-path"]) {
       mkdirSync(join(this.root, dir), { recursive: true });
     }
+    this.#helper = options.helperVersion === undefined ? HELPER : helperAs(options.helperVersion, join(this.root, "bb-box-gpu-as-released"));
     for (const node of ["nvidiactl", "nvidia-uvm", "nvidia-uvm-tools", "nvidia-modeset", "dri/card0"]) writeFileSync(join(this.root, "dev", node), "");
     writeFileSync(join(this.root, "sys/module/nvidia/version"), "580.142\n");
     writeFileSync(join(this.root, "pve-container-version"), `${options.pveContainer ?? "6.1.14"}\n`);
@@ -409,12 +412,12 @@ export class FakeNode {
   }
 
   run(args: readonly string[] = ["--once"], env: Readonly<Record<string, string>> = {}): Run {
-    const result: SpawnSyncReturns<string> = spawnSync("perl", [HELPER, ...args], { encoding: "utf8", env: this.#env(env), timeout: 60_000 });
+    const result: SpawnSyncReturns<string> = spawnSync("perl", [this.#helper, ...args], { encoding: "utf8", env: this.#env(env), timeout: 60_000 });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
 
   start(args: readonly string[] = [], env: Readonly<Record<string, string>> = {}): ChildProcess & { output: () => string } {
-    const child = spawn("perl", [HELPER, ...args], { env: this.#env(env), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("perl", [this.#helper, ...args], { env: this.#env(env), stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout!.on("data", (chunk: Buffer) => (output += chunk.toString()));
     child.stderr!.on("data", (chunk: Buffer) => (output += chunk.toString()));
@@ -435,6 +438,15 @@ export class FakeNode {
     mkdirSync(dirname(join(this.root, path)), { recursive: true });
     writeFileSync(join(this.root, path), text);
   }
+}
+
+export function helperVersion(): string {
+  return /^use constant VERSION => '([^']+)';$/m.exec(readFileSync(HELPER, "utf8"))![1]!;
+}
+
+function helperAs(version: string, path: string): string {
+  writeFileSync(path, readFileSync(HELPER, "utf8").replace(/^use constant VERSION => '[^']+';$/m, `use constant VERSION => '${version}';`));
+  return path;
 }
 
 export function helperConstant(name: string): number {

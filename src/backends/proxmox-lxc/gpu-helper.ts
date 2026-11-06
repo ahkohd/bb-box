@@ -50,6 +50,8 @@ export function parseGpuHelper(notes: string): GpuHelperState | null {
 
 export const STOPS_ONLY_UNTESTED_FROM = [0, 4, 1];
 
+export const WHOLE_CARDS_FROM = [0, 4, 3];
+
 export function atLeast(version: string | null, from: readonly number[]): boolean {
   if (!version) return false;
   const parts = version.split(".").map(Number);

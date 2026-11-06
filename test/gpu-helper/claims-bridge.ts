@@ -10,7 +10,8 @@ import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from 
 import { boxTags, describe } from "../../src/backends/proxmox/owner.ts";
 import { addressFor } from "../../src/backends/proxmox/settings.ts";
 import type { LxcConfig } from "../../src/backends/proxmox-lxc/config.ts";
-import { CARD_A, CARD_B, FakeNode, INSTALL, POOL, REPORT_VMID, cardLines, type FakeCard } from "./node.ts";
+import { CARD_A, CARD_B, FakeNode, INSTALL, POOL, REPORT_VMID, cardLines, helperVersion, type FakeCard } from "./node.ts";
+import { WHOLE_CARDS_FROM, atLeast } from "../../src/backends/proxmox-lxc/gpu-helper.ts";
 
 export const SECOND_INSTALL = "9zz2";
 export const SECOND_POOL = "other";
@@ -65,8 +66,9 @@ export class ClaimsBridge {
   readonly cudaInBox = new Map<number, string>();
   readonly cutInBox = new Set<number>();
 
-  constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string } = {}) {
-    this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}) });
+  constructor(options: { readonly writes?: "on" | "off"; readonly pveContainer?: string; readonly helperVersion?: string } = {}) {
+    const version = options.helperVersion ?? (atLeast(helperVersion(), WHOLE_CARDS_FROM) ? undefined : WHOLE_CARDS_FROM.join("."));
+    this.node = new FakeNode({ writes: options.writes ?? "on", pools: [POOL, SECOND_POOL], ...(options.pveContainer ? { pveContainer: options.pveContainer } : {}), ...(version ? { helperVersion: version } : {}) });
     this.proxmox.pools.add(SECOND_POOL);
     this.proxmox.privileges.set(`/pool/${SECOND_POOL}`, new Set(TOKEN_ROLE));
     this.proxmox.addTemplate(9000, { unprivileged: "1" });

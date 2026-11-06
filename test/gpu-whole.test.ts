@@ -6,7 +6,7 @@ import { answerTo, parseHelperLines, type HelperLines } from "../src/backends/pr
 import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
 import { cardLines, marker } from "./gpu-helper/node.ts";
-import { gpuPartsText } from "../src/plugin/tools.ts";
+import { gpuPartsText, gpuRoomText } from "../src/plugin/tools.ts";
 import { Backends } from "../src/backends/index.ts";
 import { MemoryStorage } from "./helpers.ts";
 import { emptyDocument, generalConfig, readDraft } from "../src/core/document.ts";
@@ -516,4 +516,41 @@ test("071 unit 8, lead: general.wholeCards is a boolean, off unless set, and bb 
   assert.deepEqual(read({ wholeCards: "yes" }).problems.map((problem) => [problem.path, problem.message]), [["general.wholeCards", "wholeCards is true or false."]]);
   const option = OPTIONS.find((each) => each.name === "general.wholeCards");
   assert.deepEqual(option && { type: option.type, default: option.default }, { type: { kind: "boolean" }, default: false });
+});
+
+test("071 unit 8, round 2, Astra 1: with whole cards on, whole is refused while the node's helper is older than 0.4.3, which could take another install's stopped box's card; servers, desktops and forks alike", async () => {
+  const bridge = new ClaimsBridge({ helperVersion: "0.4.2" });
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const why = "pve cannot give a box a whole card now: its GPU helper is bb-box-gpu 0.4.2, and a whole card needs 0.4.3 or later, which takes a card only from this install's own stopped boxes.";
+  for (const kind of ["linux", "linux-desktop"]) {
+    const room = await backend.capacity(kind, { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
+    assert.equal(room.message, `${why} Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu 0.4.3 or later, as root on pve.`, kind);
+    assert.equal(room.agentMessage, `Not made: ${why} Ask for gpu shared, or ask the user. bb-box changed nothing.`, kind);
+    assert.doesNotMatch(room.agentMessage!, /setup-gpu|upgrade/i);
+  }
+  const before = clones(bridge);
+  await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), /its GPU helper is bb-box-gpu 0\.4\.2, and a whole card needs 0\.4\.3 or later/);
+  await assert.rejects(backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()), /its GPU helper is bb-box-gpu 0\.4\.2/);
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), /its GPU helper is bb-box-gpu 0\.4\.2/);
+  assert.equal(clones(bridge), before, "nothing was copied");
+  for (const kind of ["linux", "linux-desktop"]) {
+    const room = await backend.gpuRoom(kind);
+    assert.ok(!room.parts?.includes("whole"), kind);
+    assert.ok(room.cards?.every((card) => !card.freeForWhole), kind);
+    assert.equal(room.wholeOff, false, `${kind}: whole cards are not said to be off where the helper could not give one anyway`);
+  }
+  assert.equal((await backend.acquire(box("linux", "shared"), null, hooks(), signal())).claim?.part, "shared", "shared is as before");
+  const off = bridge.backend({ wholeCards: false });
+  for (const kind of ["linux", "linux-desktop"]) assert.equal((await off.gpuRoom(kind)).wholeOff, false, `${kind}: with whole cards off too, nothing is said of them where the helper could not give one`);
+});
+
+test("071 unit 8, round 2, Fable 4: box_list gives a desktop with cards one GPU line, and none that says ask with gpu shared while no card has room for a desktop", () => {
+  const room = { readings: [{ id: "GPU-a", freeMiB: 300, totalMiB: 97_887, at: 1_000, neededMiB: 384, source: "host" as const }], fullUntil: null, parts: ["none", "shared"], cards: [{ index: 0, boxes: 1, whole: false, freeMiB: 300, totalMiB: 97_887 }], host: "pve", limit: 4, at: 1_000, neededMiB: 384 };
+  const desktop = (gpuRoom: object) => ({ desktop: true, os: "linux", arch: "x86_64", windowing: "x11", gpu: true, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared"], gpuRoom }] }) as unknown as KindView;
+  assert.equal(gpuRoomText(desktop(room), [], 1_000), "", "the cards line carries the memory");
+  assert.match(gpuPartsText(desktop(room), 1_000), /^ GPU on Proxmox LXC on pve: none or shared; ask with gpu shared \(pve: 1 card; /);
+  const full = { ...room, fullUntil: 1_000 + 5 * 60_000 };
+  assert.match(gpuRoomText(desktop(full), [], 1_000), /^ No GPU has room for a desktop now \(GPU-a 300 MiB free/);
+  assert.doesNotMatch(gpuPartsText(desktop(full), 1_000), /ask with gpu shared/);
 });

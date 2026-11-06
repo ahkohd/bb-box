@@ -1,3 +1,4 @@
+import { wholeCardsOn } from "./whole-cards.ts";
 import { PluginCliError, cliCommand, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError, type BoxRecord } from "../core/boxes.ts";
 import { BY_COMMAND } from "../core/box-log.ts";
@@ -210,13 +211,20 @@ export function snapshotCommands(app: BbBox) {
         name: { type: "string", description: "The new box's name. One is made up when left out." },
         check: { type: "boolean", description: "Say what the fork would be, and refuse what it would refuse, changing nothing." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same fork." },
-        gpu: { type: "string", description: "none, the default, shared or whole. A fork with shared or whole places its card before the copy, and only a desktop can take either." },
+        gpu: {
+          type: "string",
+          get description() {
+            return wholeCardsOn(app)
+              ? "none, the default, shared or whole. A fork with shared or whole places its card before the copy, and only a desktop can take either."
+              : "none, the default, or shared. A shared fork places a card before the copy, and only a desktop can take it.";
+          },
+        },
       },
       run: ({ positionals, options }, ctx) =>
         guard("Forking the snapshot", async () => {
           const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
           const asked = options.gpu === undefined ? undefined : String(options.gpu);
-          if (asked !== undefined && asked !== "none" && asked !== "shared" && asked !== "whole") throw new BoxError("invalid_value", "gpu is none, shared or whole. bb-box copied nothing.");
+          if (asked !== undefined && asked !== "none" && asked !== "shared" && asked !== "whole") throw new BoxError("invalid_value", `gpu is ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}. bb-box copied nothing.`);
           const gpu: GpuPart | undefined = asked === "shared" || asked === "whole" || asked === "none" ? asked : undefined;
           const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}), ...(gpu ? { gpu } : {}) };
           const gone = box ? null : snapshots.findGone(positionals.box, positionals.snapshot);

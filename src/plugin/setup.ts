@@ -39,6 +39,8 @@ import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDeviceTools } from "./device-tools.ts";
+import { selectTools } from "./tool-selection.ts";
+import { wholeCardsOn } from "./whole-cards.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
 import { sweepStaleTempFolders } from "../core/temp-folders.ts";
@@ -1936,6 +1938,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   registerSnapshotTools(bb, api);
   registerComputerTools(bb, api);
   registerDeviceTools(bb, api);
+  selectTools(bb, () => wholeCardsOn(api), logError);
   registerRpc(bb, api);
   registerCli(bb, api);
   reloadTimes.phase("the rest");

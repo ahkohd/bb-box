@@ -333,6 +333,7 @@ export function gpuRoomText(kind: KindView, kinds: readonly KindView[], now = Da
         const each = room.readings.map((gpu) => `${gpu.id} ${gpu.freeMiB} MiB free, ${ago(now - gpu.at)}`).join("; ");
         return [` No GPU${on} has room for a desktop now (${each}; ${needs}). ${cpu ? `Acquire ${cpu.id} instead, or ${later}.` : `${later[0]!.toUpperCase()}${later.slice(1)}.`}`];
       }
+      if (room.cards?.length) return [];
       const each = room.readings.map((gpu) => `${gpu.id} ${gpu.freeMiB}${gpu.totalMiB === null ? "" : ` of ${gpu.totalMiB}`} MiB free, ${ago(now - gpu.at)}`).join("; ");
       return [` GPU memory${on}: ${each}; ${needs}.`];
     })
@@ -349,7 +350,8 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
       const room = offer.gpuRoom;
       const on = kind.offers.length > 1 || room?.parts ? ` on ${offer.name}` : "";
       const words: string[] = [];
-      if (room?.parts?.includes("shared") && room.cards) {
+      const full = room?.fullUntil != null && room.fullUntil > now;
+      if (room?.parts?.includes("shared") && room.cards?.length && !full) {
         const whole = room.parts.includes("whole");
         const cards = room.cards.map((card) => {
           const name = card.index === null ? "a card" : `card ${card.index}`;
@@ -408,6 +410,74 @@ export function grantsText(grants: BoxGrants): string {
       : "";
   if (!grants.canGrant) return `\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on.${signing}`;
   return `\nmacOS permissions granted with box_grant: ${listed.length ? listed.join(", ") : "none"}.${signing}`;
+}
+
+export function gpuParameter(wholeCards: boolean) {
+  return wholeCards
+    ? z
+        .enum(["none", "shared", "whole"])
+        .optional()
+        .describe(
+          "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box, where this install has whole cards on. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do, the room on each card, and whether whole cards are on.",
+        )
+    : z
+        .enum(["none", "shared"])
+        .optional()
+        .describe(
+          "The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
+        );
+}
+
+export function acquireParameters(wholeCards: boolean) {
+  return z.object({
+    kind: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("The kind, from box_list: linux, linux-desktop and the rest, or linux-docker for a linux box that must have Docker. Defaults to the user's default kind."),
+    size: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("small, medium or large. Defaults to the kind's default preset; box_list shows each kind's sizes."),
+    cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
+    memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size: at least 2 for a Linux box."),
+    disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
+    wait: z.boolean().optional().describe("Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true."),
+    on: z
+      .union([z.string().min(1), z.array(z.string().min(1))])
+      .optional()
+      .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room."),
+    image: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('The image the box starts from, from box_list: a project\'s image by name, or "standard" for bb-box\'s own. Leave it out for this project\'s image for the kind, or the standard one.'),
+    device: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first."),
+    slim: z
+      .boolean()
+      .optional()
+      .describe(
+        "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
+      ),
+    gpu: gpuParameter(wholeCards),
+    dedicated: z
+      .boolean()
+      .optional()
+      .describe(
+        "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Without it, an ios box is shared where a shared iOS host has room, and a VM of its own otherwise. Give it with a size, cores, memory_gib or disk_gib: where a shared iOS host is set up, a size without it is refused.",
+      ),
+    shared: z
+      .boolean()
+      .optional()
+      .describe(
+        `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows; an ios box is one already where a shared iOS host has room, and shared: true refuses rather than give it a VM of its own. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
+      ),
+  });
 }
 
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
@@ -483,60 +553,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     instructions:
       "bb-box: use box_acquire when you need a clean machine, root (box_list says which kinds give it), Docker, or to run what you would not run on the thread's machine. Release a box with box_release when you are done; a thread's boxes go when it is archived or deleted.",
     presentation: { label: { pending: "Acquiring a box", completed: "Acquired a box" } },
-    parameters: z.object({
-      kind: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("The kind, from box_list: linux, linux-desktop and the rest, or linux-docker for a linux box that must have Docker. Defaults to the user's default kind."),
-      size: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("small, medium or large. Defaults to the kind's default preset; box_list shows each kind's sizes."),
-      cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
-      memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size: at least 2 for a Linux box."),
-      disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
-      wait: z.boolean().optional().describe("Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true."),
-      on: z
-        .union([z.string().min(1), z.array(z.string().min(1))])
-        .optional()
-        .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room."),
-      image: z
-        .string()
-        .min(1)
-        .optional()
-        .describe('The image the box starts from, from box_list: a project\'s image by name, or "standard" for bb-box\'s own. Leave it out for this project\'s image for the kind, or the standard one.'),
-      device: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first."),
-      slim: z
-        .boolean()
-        .optional()
-        .describe(
-          "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
-        ),
-      gpu: z
-        .enum(["none", "shared", "whole"])
-        .optional()
-        .describe(
-          "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
-        ),
-      dedicated: z
-        .boolean()
-        .optional()
-        .describe(
-          "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Without it, an ios box is shared where a shared iOS host has room, and a VM of its own otherwise. Give it with a size, cores, memory_gib or disk_gib: where a shared iOS host is set up, a size without it is refused.",
-        ),
-      shared: z
-        .boolean()
-        .optional()
-        .describe(
-          `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows; an ios box is one already where a shared iOS host has room, and shared: true refuses rather than give it a VM of its own. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
-        ),
-    }),
+    parameters: acquireParameters(true),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, gpu, dedicated, shared }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({

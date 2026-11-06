@@ -4,6 +4,7 @@
 
 import assert from "node:assert/strict";
 import type { Backend, BackendContext } from "../src/backends/types.ts";
+import { manifestSkills } from "../src/plugin/tool-selection.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -196,6 +197,7 @@ async function start(
       return world.hostEntry ? world.hostEntry(method, hostId, input) : { started: false, pid: null };
     },
     pluginId: "bb-box",
+    agentSkillIds: ["bb-box", "bb-box-setup"],
     appUrl: options.appUrl ?? null,
     settings,
     sdk: {
@@ -7160,6 +7162,39 @@ test("071 unit 8: box_acquire takes gpu whole and box_fork too; the provider's r
   const fork = text(await tool("box_fork", { box: booted.name, snapshot: "one", gpu: "whole" }));
   assert.deepEqual(forked, ["whole"]);
   assert.match(fork, /Fork it with gpu shared or none, or ask the user\. bb-box copied nothing\./);
+});
+
+test("071 unit 8, round 2: while whole cards are off, the schemas agents get for box_acquire and box_fork and the CLI's help offer no whole card, and once they are on they do, from the next session", async (t) => {
+  const { harness, app } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const resolution = { threadId: THREAD, projectId: PROJECT };
+  const gpuOf = async (name: string) => {
+    const selected = (await harness.behavior.resolveAgentConfiguration(resolution as never)) as unknown as { tools: { name: string; inputSchema?: { properties?: Record<string, { enum?: string[]; description?: string }> } }[] };
+    const tool = selected.tools.find((each) => each.name === name);
+    assert.ok(tool, `${name} is selected`);
+    return tool.inputSchema?.properties?.gpu;
+  };
+  const toolCount = ((await harness.behavior.resolveAgentConfiguration(resolution as never)) as unknown as { tools: unknown[] }).tools.length;
+  assert.ok(toolCount > 20, `every tool is still selected: ${toolCount}`);
+  assert.deepEqual((await gpuOf("box_acquire"))?.enum, ["none", "shared"]);
+  assert.doesNotMatch((await gpuOf("box_acquire"))?.description ?? "", /whole/);
+  assert.deepEqual((await gpuOf("box_fork"))?.enum, ["none", "shared"]);
+  const help = async (words: readonly string[]) => (await harness.behavior.runCli([...words, "--help"])).stdout ?? "";
+  assert.match(await help(["acquire"]), /--gpu <value> +The box's GPU: none, or shared, one card other boxes may share\./);
+  assert.doesNotMatch(await help(["acquire"]), /whole/);
+  assert.doesNotMatch((await help(["snapshot", "fork"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /whole/);
+  const before = app.configuration.exported();
+  const turned = await app.configuration.apply({ ...before, general: { ...before.general, wholeCards: true } }, before.revision);
+  assert.ok(turned.ok, JSON.stringify(turned.ok ? null : turned));
+  assert.deepEqual((await gpuOf("box_acquire"))?.enum, ["none", "shared", "whole"]);
+  assert.match((await gpuOf("box_acquire"))?.description ?? "", /where this install has whole cards on/);
+  assert.deepEqual((await gpuOf("box_fork"))?.enum, ["none", "shared", "whole"]);
+  assert.match(await help(["acquire"]), /--gpu <value> +The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself\./);
+  assert.match((await help(["snapshot", "fork"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /shared or whole/);
+});
+
+test("071 unit 8, round 2: bb-box reads its skills' names from its manifest, as the tool selection must list them", () => {
+  assert.deepEqual(manifestSkills()?.sort(), ["bb-box", "bb-box-setup"]);
 });
 
 test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own words and never tell an agent to release a box or change a setting", async (t) => {

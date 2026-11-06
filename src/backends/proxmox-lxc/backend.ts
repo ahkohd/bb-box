@@ -131,7 +131,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { currentKindId } from "../kinds.ts";
-import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, atLeast, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, WHOLE_CARDS_FROM, atLeast, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
 import { answerTo, cardName, claimMarkerOf, deviceSetOf, gpuDeviceLines, judgeGpuMigration, linesDiffer, linesFor, markerOf, markerTag, NO_HELPER_LINES, parseHelperLines, pendingDeviceChange, rawGpuLines, reportedDriver, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type LedgerClaim, type MarkAnswer } from "./gpu-marking.ts";
 import {
@@ -3919,10 +3919,11 @@ export class ProxmoxLxcBackend implements Backend {
     const on = this.#onCards(view.notes, view.writes);
     const cards = view.lines.cards.filter((card) => on.has(card.uuid) && this.#templatesByCard(offer, view.notes, view.writes).has(card.uuid));
     if (!cards.length) return {};
-    const whole = (offer.kind.gpuParts ?? []).includes("whole") && (await this.#helperReady(api, view)) === null;
+    const wholeHere = (await this.#wholeHelperReady(api, view)) === null;
+    const whole = (offer.kind.gpuParts ?? []).includes("whole") && wholeHere;
     const parts = gpuPartsOffered(offer.kind).filter((part) => part !== "whole" || whole);
     const free = async (card: HelperCard) => whole && (await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "whole", new Set([card.uuid]))).is === "placed";
-    return { parts, cards: await this.#cardRooms(view, guests, cards, free), host: api.node, limit: this.#config.desktop.perGpu, at: parseGpuReport(view.notes)?.at ?? null, neededMiB: DESKTOP_GPU_MIB, wholeOff: !this.#wholeOn() };
+    return { parts, cards: await this.#cardRooms(view, guests, cards, free), host: api.node, limit: this.#config.desktop.perGpu, at: parseGpuReport(view.notes)?.at ?? null, neededMiB: DESKTOP_GPU_MIB, wholeOff: wholeHere && !this.#wholeOn() };
   }
 
   async #cardRooms(view: Extract<CardsView, { is: "on" }>, guests: readonly PoolGuest[], cards: readonly HelperCard[], free: (card: HelperCard) => Promise<boolean>): Promise<CardRoom[]> {
@@ -3959,12 +3960,13 @@ export class ProxmoxLxcBackend implements Backend {
     const ready = await this.#serverReady(api, view);
     if ("why" in ready || view.is !== "on") return { readings: [], fullUntil: null, parts: ["none"], withheld: "why" in ready ? `${api.node}: ${ready.why}` : null };
     const guests = await api.listPool(this.#config.proxmox.pool);
-    const parts = gpuPartsOffered(offer.kind);
+    const wholeHere = (await this.#wholeHelperReady(api, view)) === null;
+    const parts = gpuPartsOffered(offer.kind).filter((part) => part !== "whole" || wholeHere);
     const whole = parts.includes("whole");
     const free = async (card: HelperCard) => whole && this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "whole", SERVER_GPU_MIB, new Set([card.uuid])).is === "placed";
     const cards = await this.#cardRooms(view, guests, view.lines.cards, free);
     const at = parseGpuReport(view.notes)?.at ?? null;
-    return { readings: [], fullUntil: null, parts, withheld: null, cards, host: api.node, limit: this.#config.desktop.perGpu, at, neededMiB: SERVER_GPU_MIB, wholeOff: !this.#wholeOn() };
+    return { readings: [], fullUntil: null, parts, withheld: null, cards, host: api.node, limit: this.#config.desktop.perGpu, at, neededMiB: SERVER_GPU_MIB, wholeOff: wholeHere && !this.#wholeOn() };
   }
 
   #cardKey(api: Proxmox): string {
@@ -4205,8 +4207,20 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #wholeOnTheNode(api: Proxmox, view: CardsView, signal?: AbortSignal): Promise<void> {
-    const ready = await this.#helperReady(api, view, signal);
+    const ready = await this.#wholeHelperReady(api, view, signal);
     if (ready) throw refusedWith("no_capacity", wholeRefusal(api.node, ready.why, ready.fix));
+  }
+
+  async #wholeHelperReady(api: Proxmox, view: CardsView, signal?: AbortSignal): Promise<{ readonly why: string; readonly fix: string } | null> {
+    const ready = await this.#helperReady(api, view, signal);
+    if (ready || view.is !== "on") return ready ?? { why: "it has no GPU helper to give a box a card", fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}.` };
+    const version = parseGpuHelper(view.notes)?.version ?? null;
+    if (atLeast(version, WHOLE_CARDS_FROM)) return null;
+    const from = WHOLE_CARDS_FROM.join(".");
+    return {
+      why: `its GPU helper is bb-box-gpu ${version ?? "of an unknown version"}, and a whole card needs ${from} or later, which takes a card only from this install's own stopped boxes`,
+      fix: `Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu ${from} or later, as root on ${api.node}.`,
+    };
   }
 
   async #retireForWhole(api: Proxmox, placement: Pick<NewPlacement, "card" | "retire">, signal?: AbortSignal): Promise<void> {
@@ -4402,7 +4416,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #wholeDesktopChoice(api: Proxmox, offer: Offer, view: CardsView, guests: readonly PoolGuest[], before: LxcTemplate, threadId: string | null, signal?: AbortSignal): Promise<Choice> {
-    const ready = await this.#helperReady(api, view, signal);
+    const ready = await this.#wholeHelperReady(api, view, signal);
     if (ready || view.is !== "on") return refusedChoice(before, wholeRefusal(api.node, ready?.why ?? "it has no GPU helper to give a box a card", ready?.fix ?? "Run bb box doctor."));
     const placed = await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "whole");
     if (placed.is === "refused") return refusedChoice(before, (await this.#wholeWords(api.node, placed, { guests, lines: view.lines }, threadId)).refusal);
@@ -4588,6 +4602,8 @@ export class ProxmoxLxcBackend implements Backend {
     const view = await this.#cardsView(api, signal);
     const ready = await this.#serverReady(api, view, signal);
     if ("why" in ready) return refusedChoice(before, part === "whole" ? wholeRefusal(api.node, ready.why, ready.fix) : serverRefusal(api.node, ready.why, ready.fix));
+    const wholeNot = part === "whole" ? await this.#wholeHelperReady(api, view, signal) : null;
+    if (wholeNot) return refusedChoice(before, wholeRefusal(api.node, wholeNot.why, wholeNot.fix));
     const on = view as Extract<CardsView, { is: "on" }>;
     const placed = this.#serverPlacement(api, on, guests, NO_GPUS, NO_GPUS, part);
     const template = this.#leastUsed(ready.templates, guests);
@@ -4608,6 +4624,7 @@ export class ProxmoxLxcBackend implements Backend {
     await this.#settled(api);
     const ready = await this.#serverReady(api, await this.#cardsView(api, signal), signal, image, what);
     if ("why" in ready) throw refusedWith("no_capacity", part === "whole" ? wholeRefusal(api.node, ready.why, ready.fix) : serverRefusal(api.node, ready.why, ready.fix));
+    if (part === "whole") await this.#wholeReady(api, signal);
     return this.#reserveFor(api, making, refused, failed, signal, part, SERVER_GPU_MIB, null, (guests) => this.#leastUsed(ready.templates, guests), "a server", true);
   }
 
