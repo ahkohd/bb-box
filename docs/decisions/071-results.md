@@ -3943,6 +3943,36 @@ main (`ed5d3dee`) in the same box; vitest, 470 passed.
 The gate's results stand: it ran one backend, whose reservations count on
 its daemon as before.
 
+### After the seventh review
+
+Astra said no-go, with one medium finding. The daemon's lock first reads
+`docker info` to find the share, and that read had no signal. So a resumed
+acquire with no GPU, on a fresh backend whose BB machine was slow to be
+ready, ignored its cancellation, and the plugin could not stop: main's
+`Boxes.dispose()` settled at once, this branch's stayed pending.
+
+The fix passes each operation's signal through the placement lock to that
+read, for every placement, resize, release and upkeep, and to the read for a
+switched part's record. The builder checked the other calls this unit added
+on the placement path: each already had its signal. As the lock is now one
+per engine ID, shared by every instance of a backend, waiting for it ends
+when the signal aborts too; work already running under it ends by its own
+signal, so no reservation is made after its acquire has given up.
+
+Tests: Astra's reproduction, a plugin stopping while a resumed acquire with
+no GPU waits for a fresh backend's BB machine, settles at once; and a
+placement waiting for the lock that another instance holds ends when its
+signal aborts. Each of 3 rules has a revert that fails it, on a box, and the
+71 earlier reverts ran again, 3 changed to the new calls, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,845 tests, 3,423 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 42 tests.
+
+The gate's results stand: its operations were never cancelled, and an
+operation that is not cancelled runs as before.
+
 ### Still open
 
 - A switch made by one install is not seen by another on the same host; the

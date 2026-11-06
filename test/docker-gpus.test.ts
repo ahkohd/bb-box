@@ -3,13 +3,14 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DockerBackend } from "../src/backends/docker/backend.ts";
+import { DockerBackend, containerName } from "../src/backends/docker/backend.ts";
+import { Boxes, type BoxesDeps } from "../src/core/boxes.ts";
 import { Backends } from "../src/backends/index.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import type { DockerConfig } from "../src/backends/docker/config.ts";
-import type { ConfigDocument } from "../src/core/document.ts";
+import type { ConfigDocument, GeneralConfig } from "../src/core/document.ts";
 import { cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
-import { BackendError, type AcquireHooks, type BackendContext, type BoxIdentity, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BackendContext, type BoxIdentity, type MachineAccess, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
 import { cardReachText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -575,6 +576,85 @@ test("071 unit 11: Astra's round 6: a reconfigure while a box with no GPU is bei
     assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true, "the acquire dropped its reservation from the share it made it in");
   } finally {
     await backends.dispose();
+  }
+});
+
+function slowMachine() {
+  let answer = true;
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  const machines = { dockerHost: () => "unix:///tmp/bb-box-test-relay.sock", ready: () => (answer ? Promise.resolve() : blocked), name: () => "slow-host", connected: async () => true } as unknown as MachineAccess;
+  return { machines, block: () => void (answer = false), unblock: () => ((answer = true), release()) };
+}
+
+test("071 unit 11: Astra's round 7: a plugin stopping while a resumed acquire with no GPU waits for a fresh backend's BB machine settles at once", async () => {
+  const fake = fakeDockerHost();
+  const kv = new MemoryStorage();
+  const slow = slowMachine();
+  const makeBackend = () => new DockerBackend(dockerConfig({ host: "bb:host_slow" }), { ...testContext(new MemoryStorage()), machines: slow.machines }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  let backend = makeBackend();
+  const backends = {
+    get: (id: string) => (id === backend.id ? backend : null),
+    active: () => [backend],
+    on: () => [backend],
+    kinds: () => backend.kinds().map((kind) => ({ kind, backend })),
+    offered: (value: DockerBackend) => value.kinds(),
+    withheld: async () => [],
+    driverLabel: () => "Docker",
+  } as unknown as BoxesDeps["backends"];
+  const makeBoxes = () =>
+    new Boxes({
+      kv,
+      backends,
+      general: async () => ({ perThreadLimit: null, enrol: false, sizes: {}, spares: {} }) as unknown as GeneralConfig,
+      notify: () => {},
+      thread: async () => ({ state: "live", said: "live" }),
+      enrol: async () => {},
+      unenrol: async () => {},
+      logError: () => {},
+    });
+  const before = makeBoxes();
+  const box = await before.acquire({ threadId: "thr_abc123", projectId: null, kind: "linux" });
+  await before.dispose();
+  assert.equal((await before.all()).find((each) => each.id === box.id)?.state, "acquiring");
+  await backend.dispose();
+  slow.block();
+  backend = makeBackend();
+  const after = makeBoxes();
+  try {
+    const sweeping = new AbortController();
+    const sweep = after.sweep(sweeping.signal).catch(() => undefined);
+    setTimeout(() => sweeping.abort(new Error("stop the sweep")), 150);
+    await sweep;
+    const stopping = after.dispose().then(() => "settled");
+    assert.equal(await Promise.race([stopping, new Promise((resolve) => setTimeout(() => resolve("still pending"), 1_500))]), "settled");
+  } finally {
+    slow.unblock();
+    await after.dispose();
+    await backend.dispose();
+  }
+});
+
+test("071 unit 11: a placement waiting for the daemon's lock, which another instance holds, ends when its signal aborts", async () => {
+  const fake = fakeDockerHost();
+  const slow = slowMachine();
+  const make = () => new DockerBackend(dockerConfig({ host: "bb:host_slow" }), { ...testContext(new MemoryStorage(), "test", { id: "docker" }), machines: slow.machines }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const holder = make();
+  const waiter = make();
+  await holder.capacity("linux", { ...SMALL, gpu: "none" }, [], signal());
+  await waiter.capacity("linux", { ...SMALL, gpu: "none" }, [], signal());
+  slow.block();
+  const holding = holder.maintain();
+  try {
+    const box = identity("linux", "none");
+    const cancel = new AbortController();
+    const resumed = waiter.acquire(box, { ref: containerName(box.boxId), host: null, address: null, size: null, data: { box: box.boxId } }, hooks(), cancel.signal);
+    setTimeout(() => cancel.abort(new Error("the plugin stops")), 100);
+    const outcome = await Promise.race([resumed.then(() => "made", () => "ended"), new Promise((resolve) => setTimeout(() => resolve("still waiting"), 1_500))]);
+    assert.equal(outcome, "ended");
+  } finally {
+    slow.unblock();
+    await holding.catch(() => undefined);
   }
 });
 

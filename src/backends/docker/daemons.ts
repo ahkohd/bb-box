@@ -1,3 +1,5 @@
+import { abortable } from "../../core/abortable.ts";
+
 export interface DaemonMember {
   readonly instances: number;
   readonly on: () => boolean;
@@ -53,8 +55,10 @@ export function backendsOn(share: DaemonShare<unknown>, daemon: string): string[
   return [...share.backends].filter(([, member]) => member.on() && member.daemon() === daemon).map(([id]) => id).sort();
 }
 
-export function underDaemonLock<T>(share: DaemonShare<unknown>, work: () => Promise<T>): Promise<T> {
-  const done = share.lock.then(work);
+export function underDaemonLock<T>(share: DaemonShare<unknown>, work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const turn = share.lock;
+  const done = turn.then(work);
   share.lock = done.catch(() => undefined);
-  return done;
+  if (!signal) return done;
+  return Promise.race([done, abortable(turn, signal).then(() => done)]);
 }

@@ -855,8 +855,8 @@ export class DockerBackend implements Backend {
     return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? { part: stored.part, generation: stored.generation } : null;
   }
 
-  async #writtenUnder(): Promise<DockerDaemonIdentity> {
-    await this.#shared();
+  async #writtenUnder(signal?: AbortSignal): Promise<DockerDaemonIdentity> {
+    await this.#shared(signal);
     return this.#info ? daemonIdentityOf(this.#info) : { engineId: "", name: "", rootDir: "" };
   }
 
@@ -1035,9 +1035,9 @@ export class DockerBackend implements Backend {
     this.#joined = true;
   }
 
-  async #shared(): Promise<DaemonShare<Placing>> {
+  async #shared(signal?: AbortSignal): Promise<DaemonShare<Placing>> {
     if (this.#share) return this.#share;
-    const info = await this.#cli.info();
+    const info = await this.#cli.info(signal);
     this.#info = info;
     return this.#shareOf(info);
   }
@@ -1130,8 +1130,8 @@ export class DockerBackend implements Backend {
     return `${this.label} cannot take this ${kind} box: ${why}.`;
   }
 
-  async #underPlacement<T>(work: () => Promise<T>): Promise<T> {
-    return underDaemonLock(await this.#shared(), work);
+  async #underPlacement<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return underDaemonLock(await this.#shared(signal), work, signal);
   }
 
   #pinsCpus(info: DockerInfo): boolean {
@@ -1168,7 +1168,7 @@ export class DockerBackend implements Backend {
       this.#daemonCpus = null;
       await this.#probedCpus(state.info, signal, true);
       await this.#moveSharingBoxes(signal);
-    });
+    }, signal);
   }
 
   #probeImage(): string | null {
@@ -1232,7 +1232,7 @@ export class DockerBackend implements Backend {
       const cpus = await this.#allot(state, name, box.size.cores, signal);
       this.#reserve(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus));
       return { host: room.capacity.host, gpu: card?.device ?? null, card, part, cpus };
-    });
+    }, signal);
   }
 
   #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null): Placing {
@@ -1246,7 +1246,7 @@ export class DockerBackend implements Backend {
       this.#reserve(box.boxId, this.#placingOf(box, gpu, card, part, cpus));
       if (again) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto the host's CPUs as they are now", error));
       return cpus;
-    });
+    }, signal);
   }
 
   async #moveSharingBoxes(signal?: AbortSignal): Promise<void> {
@@ -1423,7 +1423,7 @@ export class DockerBackend implements Backend {
     const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
     if (removed) await this.#storageOfEveryBackend.delete(GPU_PART_KEY(removed));
-    await this.#underPlacement(() => this.#moveSharingBoxes(signal)).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
+    await this.#underPlacement(() => this.#moveSharingBoxes(signal), signal).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -1588,7 +1588,7 @@ export class DockerBackend implements Backend {
       const [now] = await this.#cli.inspect([found.id], signal);
       const resized: Guest = { ...guest, size: (now && sizeOf(now)) ?? machineSize(to) };
       return gpu ? this.#switchShare(resized, found, gpu, signal) : resized;
-    });
+    }, signal);
   }
 
   async #switchShare(guest: Guest, found: ContainerInfo, change: GpuResize, signal?: AbortSignal): Promise<Guest> {
@@ -1598,7 +1598,7 @@ export class DockerBackend implements Backend {
     const part = change.to;
     const generation = (await this.#partOf(found)).generation + 1;
     const claimed = cardOfUuid(card);
-    await this.#storageOfEveryBackend.set(GPU_PART_KEY(found.id), { part, generation, writtenUnder: await this.#writtenUnder() } satisfies PartRecord);
+    await this.#storageOfEveryBackend.set(GPU_PART_KEY(found.id), { part, generation, writtenUnder: await this.#writtenUnder(signal) } satisfies PartRecord);
     const known = await this.#knownCard(card, signal);
     const facts = guest.facts?.some((fact) => fact.label === GPU_FACT)
       ? guest.facts.map((fact) => (fact.label === GPU_FACT ? { ...fact, value: factWords(part, known, null) } : fact))
