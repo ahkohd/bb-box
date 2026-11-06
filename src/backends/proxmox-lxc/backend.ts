@@ -83,6 +83,7 @@ import {
   type GpuHandoff,
   type GpuPart,
   type GpuRestoreFacts,
+  type NvidiaHost,
   type MachineSize,
   type BoxTransports,
   type Capacity,
@@ -1492,6 +1493,24 @@ export class ProxmoxLxcBackend implements Backend {
     const view = await this.#cardsView(api, signal);
     const driver = view.is === "on" ? reportedDriver(view.notes) : ((await this.#hostNvidia())?.version ?? null);
     return { held: await this.readGpuClaim(guest, signal), driver };
+  }
+
+  async nvidiaHost(kind: string, signal?: AbortSignal): Promise<NvidiaHost | null> {
+    if (!this.#offers().some((offer) => offer.kind.id === currentKindId(kind))) return null;
+    const api = await this.client();
+    const view = await this.#cardsView(api, signal);
+    if (view.is === "blocked") return { driver: null, refused: { why: view.why, fix: view.fix } };
+    if (view.is === "on") {
+      const driver = reportedDriver(view.notes);
+      if (driver) return { driver, refused: null };
+      return { driver: null, refused: { why: `The GPU helper on ${api.node} does not report the host's NVIDIA driver.`, fix: `Run host/setup-gpu.sh again, as root on ${api.node}, then bb box doctor.` } };
+    }
+    const seen = (await this.#hostNvidia())?.version ?? null;
+    if (seen) return { driver: seen, refused: null };
+    return {
+      driver: null,
+      refused: { why: `bb-box does not know the NVIDIA driver on ${api.node}: it has no GPU helper, and no GPU desktop there has seen the driver yet.`, fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}.` },
+    };
   }
 
   async placeForkGpu(box: BoxIdentity, gpu: GpuPart, signal?: AbortSignal): Promise<void> {

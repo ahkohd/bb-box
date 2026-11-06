@@ -31,6 +31,7 @@ import {
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
+import { USERSPACE_READ, judgeReading, userspaceOfReading } from "./gpu-userspace.ts";
 import { WHOLE_CARDS_OFF_FOR_FORK, gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
 import { currentKindId } from "../backends/kinds.ts";
 import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
@@ -104,6 +105,7 @@ export interface SnapshotBoxes {
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
   wholeCards?(): Promise<boolean>;
+  readUserspace?(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord>;
 }
 
 export interface ThreadOnTheBox {
@@ -1863,6 +1865,17 @@ export class Snapshots {
     }
   }
 
+  async #userspaceAfter(box: BoxRecord): Promise<BoxRecord> {
+    if (box.state !== "ready" || !this.#deps.boxes.readUserspace) return box;
+    try {
+      return await this.#deps.boxes.readUserspace(box, this.#stopping.signal);
+    } catch (error) {
+      if (this.#stopping.signal.aborted) throw error;
+      this.#deps.log?.(`Could not read NVIDIA's userspace in box ${box.name} after its restore: ${message(error)}`);
+      return box;
+    }
+  }
+
   async #snapshotGpu(box: BoxRecord, backend: Backend): Promise<SnapshotGpu> {
     let gpu = snapshotGpuOf(box);
     if (!box.guest || box.capabilities.os !== "linux") return gpu;
@@ -1874,14 +1887,14 @@ export class Snapshots {
         if (this.#stopping.signal.aborted) throw error;
       }
     }
-    if (box.state !== "ready" || gpu.userspace !== "unknown" || (gpu.part === "none" && !box.kind.includes("desktop"))) return gpu;
+    if (box.state !== "ready" || (gpu.part === "none" && !box.kind.includes("desktop"))) return gpu;
     try {
-      const version = await withinWait(async (late) => {
+      const reading = await withinWait(async (late) => {
         const command = (await backend.transports(box.guest!, box.kind)).command;
-        const read = await command?.run('f=/usr/share/bb-box/nvidia-version; if [ ! -e "$f" ]; then echo none; else cat "$f"; fi', { timeoutMs: 2_000, signal: AbortSignal.any([this.#stopping.signal, late]), maxOutputBytes: 128 });
-        return read?.exitCode === 0 ? read.stdout.trim() : "unknown";
+        const read = await command?.run(USERSPACE_READ, { timeoutMs: 2_000, signal: AbortSignal.any([this.#stopping.signal, late]), maxOutputBytes: 2048 });
+        return read?.exitCode === 0 ? judgeReading(read.stdout, null, this.#now()) : null;
       }, 2_000);
-      if (version === "none" || /^\d+\.[\d.]+$/.test(version)) gpu = { ...gpu, userspace: version as SnapshotGpu["userspace"] };
+      if (reading) gpu = { ...gpu, userspace: userspaceOfReading(reading) };
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
     }
@@ -3226,7 +3239,7 @@ export class Snapshots {
       if (startParts.length) this.#deps.log?.(`Restored box ${box.name}: its start took ${startParts.join(", ")}.`);
       const now = this.#now();
       const done = ledger.transaction(() => ledger.updateOperation(operation.id, { state: "done", step: "done", endedAt: now, error: null }));
-      box = await this.#moved(box, { restoring: null, state: "ready" });
+      box = await this.#userspaceAfter(await this.#moved(box, { restoring: null, state: "ready" }));
       undo = undo ? ledger.record(undo.id) : null;
       const sized = sizeChangeWords(context.from, to);
       const left = context.swap && !context.fromSnapshot ? ledger.records({ box: box.id }).filter((record) => record.guest === "earlier" && record.livesOn.ref === ledger.operation(operation.id)?.guests?.old?.ref).length : 0;
@@ -3456,7 +3469,7 @@ export class Snapshots {
       try {
         await this.#holdCard(context, guest, this.#stopping.signal);
         const started = await backend.start!(guest, this.#stopping.signal);
-        box = await this.#moved(box, { state: "ready", error: null, restoring: null, ...(started ? { guest: startedGuest(guest, started) } : {}) });
+        box = await this.#userspaceAfter(await this.#moved(box, { state: "ready", error: null, restoring: null, ...(started ? { guest: startedGuest(guest, started) } : {}) }));
         back = `bb-box started box ${box.name} again as it was`;
         this.#deps.boxes.machineBack(box);
       } catch (error) {

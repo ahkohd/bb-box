@@ -625,6 +625,14 @@ Its fix is the `build.sh` command that rebuilds the template.
   you rebuild the desktop templates. To update the driver on a host with the
   GPU helper, run `systemctl stop bb-box-gpu` first, as its `nvidia-smi`
   keeps NVIDIA's module in use, and `systemctl start bb-box-gpu` after.
+  Boxes that already exist keep the userspace on their disks, so `nvidia-smi`
+  and CUDA fail in them with "Driver/library version mismatch". `bb box
+  doctor` names each such box with a GPU, and `bb box gpu update <box>`
+  updates it: it installs NVIDIA's userspace for the new driver in the box,
+  downloaded from NVIDIA and checked against NVIDIA's SHA-256, then restarts
+  the box and checks its card. Everything running in the box stops, so bb-box
+  never does this by itself. `--check` says what it would do first, and
+  `--snapshot` takes a snapshot of the box before it.
 - **After a bb-box update that adds a privilege**, run `host/setup-token.sh`
   again: it changes the role in place and keeps the token. Run
   `host/setup-host.sh` again if the update says so.

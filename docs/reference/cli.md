@@ -62,6 +62,7 @@
 | [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it. |
 | [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
+| [`bb box gpu update`](#bb-box-gpu-update) | Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). bb-box checks the box first: bb-box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. bb-box never updates a box's userspace by itself; bb box doctor names the boxes that need it. |
 | [`bb box gpu mark`](#bb-box-gpu-mark) | Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.&lt;card's UUID>.g&lt;N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
@@ -1112,6 +1113,27 @@ Arguments:
 Options:
   --yes       Forget them.
   --help, -h  Show this help and exit
+```
+
+## bb box gpu update
+
+Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). bb-box checks the box first: bb-box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. bb-box never updates a box's userspace by itself; bb box doctor names the boxes that need it.
+
+```text
+Usage:
+  bb box gpu update <box...> [--thread <value>] [--machine] [--check] [--force] [--snapshot] [--json]
+
+Arguments:
+  <box...>  The box's name or ID. Several, with spaces between, are updated one at a time. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The boxes are your machines, from bb box machines, not a thread's.
+  --check           Only say what it would do, and what stops; it changes nothing.
+  --force           Restart it even while threads are working on it, which ends their work.
+  --snapshot        Take a snapshot of the box first, where its provider takes snapshots, so it can be restored.
+  --json            Print JSON.
+  --help, -h        Show this help and exit
 ```
 
 ## bb box gpu mark

@@ -14,7 +14,7 @@ import { PRESETS } from "../core/sizes.ts";
 import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
+import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, userspaceFixLine, versionsText } from "./views.ts";
 import { listensOnEveryAddress, reachableUrl, setupDocker, type ListenOffer } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
@@ -302,7 +302,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
               if (options.json) return json(app.view(box));
               const snapshots = snapshotStatusLine(box, app.snapshots.offerFor(app.backends.get(box.backend), box.kind), app.snapshots.seen({ is: "command" }, { box: { id: box.id, threadId: box.threadId }, runsOn: false }), app.snapshots.settings.perBox);
-              return out(`${boxDetail(box, app.control(box))}${snapshots ? `\n${snapshots}` : ""}`);
+              const userspace = userspaceFixLine(box);
+              return out(`${boxDetail(box, app.control(box))}${userspace ? `\n${userspace}` : ""}${snapshots ? `\n${snapshots}` : ""}`);
             }),
         }),
         run: cliCommand({

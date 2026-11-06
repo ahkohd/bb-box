@@ -238,6 +238,8 @@ export interface GpuRestoreFacts {
   readonly driver: string | null;
 }
 
+export type NvidiaHost = { readonly driver: string; readonly refused: null } | { readonly driver: null; readonly refused: { readonly why: string; readonly fix: string | null } };
+
 export interface CardPlacement {
   readonly card: string;
   readonly index: number;
@@ -889,6 +891,7 @@ export interface Backend {
   holdGpuCard?(guest: Guest, held: GpuHandoff, signal?: AbortSignal): Promise<void>;
   dropGpuCard?(boxId: string): void;
   gpuRestoreFacts?(guest: Guest, signal?: AbortSignal): Promise<GpuRestoreFacts>;
+  nvidiaHost?(kind: string, signal?: AbortSignal): Promise<NvidiaHost | null>;
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
   readonly addressIsAnEndpoint?: boolean;
   leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;

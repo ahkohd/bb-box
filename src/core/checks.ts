@@ -34,6 +34,16 @@ export const CHECKS = {
     from: ["bb-box"],
     what: "A restore of a box that bb-box could not confirm (070), as when bb-box restarted while Proxmox rolled the box back: it keeps the snapshots it used and checks again at each sweep.",
   },
+  "gpu-userspace": {
+    name: "NVIDIA userspace",
+    from: ["bb-box"],
+    what: "How many boxes with a GPU have NVIDIA's userspace for their host's driver, as bb-box reads it in each running box at this check (071). bb-box never updates a box's userspace by itself.",
+  },
+  "gpu-userspace.<box>": {
+    name: "NVIDIA userspace in <box>",
+    from: ["bb-box"],
+    what: "A box with a GPU whose NVIDIA userspace is not the host's driver, is half-installed, or whose last update did not finish, so nvidia-smi and CUDA fail or may fail in it (071). A stopped box is named as bb-box last read it. It says the command that updates it: bb box gpu update.",
+  },
   "join.<box>": {
     name: "<box> joining BB",
     from: ["bb-box"],

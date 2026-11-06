@@ -10,11 +10,12 @@ import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
+import { OPERATOR, RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
 import { claimOf, gpuPartsOffered, holdsCard, recordedGpu, userspaceOf, type NvidiaUserspace } from "../core/gpu.ts";
+import { agentUserspaceWords, readingWords, updateLeftWords, userspaceState, type UserspaceReading, type UserspaceState, type UserspaceUpdate } from "../core/gpu-userspace.ts";
 import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -68,6 +69,9 @@ export interface BoxView {
   readonly gpuPart?: GpuPart;
   readonly claim?: CardClaim | null;
   readonly nvidiaUserspace?: NvidiaUserspace;
+  readonly userspaceRead?: UserspaceReading | null;
+  readonly userspaceUpdate?: UserspaceUpdate | null;
+  readonly userspaceNotice?: UserspaceNotice | null;
   readonly requires: readonly string[];
   /** Features beyond what the kind promises. */
   readonly extras: readonly string[];
@@ -167,6 +171,9 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     gpuPart: recordedGpu(box),
     claim: claimOf(box),
     nvidiaUserspace: userspaceOf(box),
+    userspaceRead: box.userspaceRead ?? null,
+    userspaceUpdate: box.userspaceUpdate ?? null,
+    userspaceNotice: userspaceNoticeOf(box),
     requires: box.requires,
     extras: extraFeatures(box),
     docker: box.capabilities.features.includes("docker"),
@@ -661,12 +668,51 @@ function cardReachOf(reach: string | null): { readonly cardReach?: string } {
   return reach ? { cardReach: reach } : {};
 }
 
+export interface UserspaceNotice {
+  readonly words: string;
+  readonly action: "update" | "update-again" | null;
+}
+
+function boxUserspaceState(box: BoxRecord): UserspaceState {
+  return userspaceState(box.userspaceRead, box.userspaceUpdate, box.userspaceRead?.hostDriver ?? null);
+}
+
+export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
+  if (!holdsCard(recordedGpu(box))) return null;
+  const state = boxUserspaceState(box);
+  switch (state.is) {
+    case "differs":
+      return {
+        words: `${state.version === "none" ? "It has no NVIDIA userspace" : `Its NVIDIA userspace is ${state.version}`}, and the host's driver ${state.driver}: nvidia-smi and CUDA fail in it until its userspace is updated.`,
+        action: "update",
+      };
+    case "half":
+      return { words: `It has ${readingWords(state.reading)}, so nvidia-smi and CUDA may fail in it.`, action: "update-again" };
+    case "unfinished":
+      return { words: updateLeftWords(box.name, state.update), action: "update-again" };
+    case "updating":
+      return { words: `bb-box is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
+    default:
+      return null;
+  }
+}
+
+export function userspaceFixLine(box: BoxRecord): string | null {
+  const notice = userspaceNoticeOf(box);
+  if (!notice?.action) return null;
+  const owner = box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`;
+  const command = `bb box gpu update ${box.name}${owner}`;
+  return `NVIDIA userspace: ${notice.words} ${notice.action === "update-again" ? "Update it again" : "Update it"}${box.state === "stopped" ? ` once it runs` : ""}: ${command}`;
+}
+
 export function gpuLine(box: BoxRecord): string | null {
   const part = recordedGpu(box);
   const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? null;
   if (!holdsCard(part)) return fact;
   const card = fact ?? part;
   if (/: (nvidia-smi in it|CUDA's driver|CUDA in it)/.test(card)) return `${card}. Ask the user${/NVIDIA userspace is/.test(card) ? " to update its NVIDIA userspace" : ""}.`;
+  const userspaceWords = agentUserspaceWords(box.name, boxUserspaceState(box));
+  if (userspaceWords) return `${card}. ${userspaceWords}`;
   const userspace = box.nvidiaUserspace;
   const seeIt = box.guest?.facts?.find((candidate) => candidate.label === "GPU check")?.value ?? "Run nvidia-smi to see it";
   return `${card}. ${seeIt}.${userspace && userspace !== "unknown" && userspace !== "none" ? ` NVIDIA's userspace in it: ${userspace}.` : ""}`;
