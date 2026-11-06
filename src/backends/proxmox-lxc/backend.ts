@@ -4339,10 +4339,17 @@ export class ProxmoxLxcBackend implements Backend {
     }
     if (granted && marker.part === "whole" && !leaving.has(marker.card ?? "")) return gpu(claimOf(marker, "granted"));
     if (!granted && answer.is !== "refused") throw unanswered();
+    const part = cardPartOf(marker.part);
+    if (part === "whole") {
+      const wholeNot = await this.#wholeHelperReady(api, view, signal);
+      if (wholeNot) {
+        const said = `its GPU marker ${markerTag(marker)} needs a new whole claim, and ${api.node} cannot give a box a whole card now: ${wholeNot.why}.`;
+        throw notStarted(`${said} ${wholeNot.fix}`, `${said} ${START_LATER}`);
+      }
+    }
     if (!granted && standing?.part === "whole" && !leaving.has(standing.card ?? "")) return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
     const key = this.#cardKey(api);
     const reservations = reservationsOn(key);
-    const part = cardPartOf(marker.part);
     const outcome = await underCardLock(key, async () => {
       const fresh = await this.#cardsView(api, signal);
       if (fresh.is === "blocked") throw notStarted(blockedWords(fresh), blockedRefusal(fresh, START_LATER).agent);

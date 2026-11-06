@@ -3250,6 +3250,20 @@ passed, 0 failed, 295 skipped; vitest, 469 passed. Merged with unit 8b's
 branch: the node suite, 3,787 tests, 0 failed. Step K was run on five sample
 reports, a failed read and a card the report leaves out among them.
 
+### After the third review
+
+Astra said no-go, with one high, one medium and one low:
+
+| Finding | Fix |
+| --- | --- |
+| The start gate's new whole claim, for a whole server moved after its check found no card, skipped the helper's version, so with 0.4.2 it took another install's stopped box's card that came onto the chosen card (high) | Before any new whole claim, a move to another card or a standing whole claim asked again, the start gate checks the node's helper is 0.4.3 or later; below it the box is left stopped, with words for each audience |
+| A manifest bb-box could not read, or a missing skills folder, threw out of the tool selection and could stop the plugin's setup (medium) | Reading the manifest and the skills gives no skills on any error, so the logged fallback leaves BB's own selection in place; a selection BB refuses is logged too. A candidate root whose manifest cannot be read is passed over |
+| A SKILL.md with CRLF line endings turned the narrowing off (low) | Line endings are made LF before the front matter is read |
+
+Each has a test that failed with its fix reverted, on a box: 5 reverts.
+Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node
+suite, 3,782 tests, 3,487 passed, 0 failed, 295 skipped; vitest, 469 passed.
+
 Merge order: this unit can merge and deploy at any time, as whole cards stay
 off and need 0.4.3. Unit 8b then upgrades the node's helper; then the gate on
 the test BB; then the owner turns `general.wholeCards` on.

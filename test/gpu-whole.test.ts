@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BackendError, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CardReservations, placeShared, placeWhole, reservationsOn, type PlaceInput } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { answerTo, parseHelperLines, type HelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
@@ -553,4 +553,35 @@ test("071 unit 8, round 2, Fable 4: box_list gives a desktop with cards one GPU 
   const full = { ...room, fullUntil: 1_000 + 5 * 60_000 };
   assert.match(gpuRoomText(desktop(full), [], 1_000), /^ No GPU has room for a desktop now \(GPU-a 300 MiB free/);
   assert.doesNotMatch(gpuPartsText(desktop(full), 1_000), /ask with gpu shared/);
+});
+
+test("071 unit 8, round 3, Astra 1: with helper 0.4.2, a whole server whose start check finds no card is left stopped, and no whole claim is asked on another card, where another install's box could yield", async () => {
+  const bridge = new ClaimsBridge({ helperVersion: "0.4.2" });
+  withUserspace(bridge);
+  const backend = bridge.backend({ readyTimeoutMs: 60_000 });
+  const server = box("linux", "whole", "thr_whole", "stuck-server");
+  bridge.plain(7014, server, INSTALL, { tags: [marker("whole", CARD_A, 1)] });
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().includes(`claim 7014 g1 granted whole ${A}`), bridge.node.reportLines().join("\n"));
+  let arrived = false;
+  bridge.proxmox.intercept = (call) => {
+    if (!arrived && call.method === "PUT" && call.path.endsWith("/lxc/7014/config") && (call.params.tags ?? "").includes(`gpu.whole.${B}.`)) {
+      arrived = true;
+      bridge.desktop(7068, CARD_B, { ...box("linux-desktop", "shared", "thr_theirs"), name: "their-desktop" }, SECOND_INSTALL, { marker: marker("shared", CARD_B, 1), pool: SECOND_POOL });
+    }
+    return undefined;
+  };
+  bridge.seenInBox.set(7014, { onCard: A, shows: "No devices were found" });
+  await assert.rejects(backend.start(bridge.stoppedGuest(7014, server, 9000), signal()), (error: unknown) => {
+    assert.ok(error instanceof AudienceError, String(error));
+    assert.match(error.message, /needs a new whole claim, and pve cannot give a box a whole card now: its GPU helper is bb-box-gpu 0\.4\.2, and a whole card needs 0\.4\.3 or later/);
+    assert.match(error.message, /It is stopped, with its disk as it was\./);
+    assert.match(error.agentMessage, /its GPU helper is bb-box-gpu 0\.4\.2/);
+    assert.match(error.agentMessage, /Start it again later, or ask the user\./);
+    assert.doesNotMatch(error.agentMessage, /setup-gpu|Upgrade/);
+    return true;
+  });
+  assert.equal(arrived, false, "no whole claim was asked on another card");
+  assert.equal(bridge.proxmox.guests.get(7014)!.status, "stopped");
+  assert.ok(!bridge.gpuTags(7014).some((tag) => tag.includes(B)), "its marker names no other card");
 });
