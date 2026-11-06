@@ -66,6 +66,7 @@ function info() {
     JSON.stringify({
       ID: host.daemonId ?? `fake-${createHash("sha256").update(root).digest("hex").slice(0, 16)}`,
       Name: host.name ?? "fake-docker",
+      DockerRootDir: host.rootDir ?? "/var/lib/docker",
       ServerVersion: "29.0.0",
       OperatingSystem: host.operatingSystem ?? "Ubuntu 24.04 LTS",
       OSType: host.osType ?? "linux",
@@ -374,7 +375,7 @@ function exec(rest) {
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
   const cards = cardsGiven(found.HostConfig.Devices ?? [], found.HostConfig.Privileged === true);
   const gpuEnv = Object.fromEntries((found.Config.Env ?? []).filter((pair) => /^(CUDA_VISIBLE_DEVICES|NVIDIA_VISIBLE_DEVICES)=/.test(pair)).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]));
-  const cardEnv = cards.length ? { PATH: `${join(root, "gpu-bin")}:${process.env.PATH}`, FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
+  const cardEnv = cards.length ? { PATH: `${join(root, "gpu-bin")}:${process.env.PATH}`, FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_CUDA_ERROR: host.cudaError ? String(host.cudaError) : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
   const child = spawn(command, commandArgs, {
     cwd: workdir ? own(workdir) : home,
     env: { PATH: process.env.PATH, HOME: home, ...gpuEnv, ...env, ...cardEnv },

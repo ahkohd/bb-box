@@ -3351,21 +3351,30 @@ offered before it.
   memory with `nvidia-smi` in a short-lived container given the cards (no
   network, not privileged, `--pull never`), kept 15 s for a placement and
   60 s for `box_list`. A card is known by its UUID; the CDI device a box gets
-  is the one the toolkit names for it, by UUID or index. Where the probe
-  fails, a device named by UUID is that card and one named by index is kept
-  by its device, with nothing read: shared boxes go on it, with no CUDA
-  variables and no check, as before this unit, and no whole card. A box with
-  no GPU never runs the probe.
+  is the one the toolkit names for it, by UUID or index. A card keeps its
+  key across readings: where the probe fails, the cards are as last read,
+  their free memory not known, so no whole card is placed. With no reading
+  since bb-box started, a device named by UUID is that card and one named by
+  index is kept by its device: shared boxes go on it, with no CUDA variables
+  and no check, as before this unit. A box's card is the one its labels
+  name when that is among the cards, or else the one its device gives.
+  Where a box holding a card whole matches no card, no GPU box is placed on
+  the host until it does. A box with no GPU never runs the probe.
 - **WSL.** The toolkit's spec in WSL has one device, `nvidia.com/gpu=all`, as
   every card is `/dev/dxg`. Where the daemon lists only that, every card is
   given through it, and the box's card is the UUID bb-box placed it on.
-- **Placement**, under a lock of the Docker daemon's, by its ID from `docker
-  info`, which every backend instance on that daemon shares, with its
-  reservations and the cards left out: a settings check's instance of a
-  backend and the live one order their placements on one lock, and read
-  switched parts from the backend's one storage. Of two backends of the install on one daemon, only the one whose
-  ID sorts first makes boxes there; the other refuses, for each audience,
-  and its doctor fails `docker.one-backend`. A box being made holds its card, with the memory it
+- **Placement**, under a lock of the Docker daemon's, which every backend
+  instance on that daemon shares, with its reservations and the cards left
+  out: a settings check's instance of a backend and the live one order
+  their placements on one lock, and read switched parts from the backend's
+  one storage. A daemon is known by its engine ID, its name and its Docker
+  root from `docker info` together, as cloned hosts keep one engine ID. A
+  backend counts on a daemon once it places or plans a box there, and only
+  while it is on; listing, releasing and upkeep do not count. Of two
+  backends of the install that count on one daemon, only the one whose ID
+  sorts first places GPU boxes there; the other refuses them, for each
+  audience, and makes boxes with no GPU as usual, and the doctor warns on
+  both with `docker.one-backend`. A box being made holds its card, with the memory it
   needs reserved, from its placement until docker lists it. Every bb-box
   container on the host holds the card its labels name, running or
   stopped, of any install, as a container's devices are fixed. Shared: a card
@@ -3405,10 +3414,12 @@ offered before it.
   fresh box whose CUDA picks another card or finds none (its device answer,
   or `cuInit` 100, with the card listed), or whose `nvidia-smi` lists none,
   is removed, its card left out for 10 minutes, and placed once more on
-  another card within the acquire, its record following it. When that fails
-  too, or no other card can take it, the acquire is refused for each
-  audience, naming each card and why, and nothing is left. Other failures
-  keep the box and its GPU fact says what the check found. A started box
+  another card within the acquire, its record following it and the removed
+  container's reservation dropped. When that fails too, or no other card
+  can take it, the acquire is refused for each audience, naming each card
+  and why, and nothing is left. Any other CUDA error, such as 802, and
+  other failures keep the box on its card, which is not left out, and its
+  GPU fact says what the check found. A started box
   cannot move on Docker, so its fact says what the check found.
 - **The words.** A GPU box's facts: "GPU: card 0, shared, <model>, 32 GiB.
   Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed."
@@ -3438,7 +3449,9 @@ offered before it.
 - **The doctor.** `docker.gpus` lists the cards with their memory when read,
   the boxes per card, whether they are one device, and the reach words; it
   warns, naming them, when another install's GPU boxes are on the host, as it
-  sees only the part they were made with. `gpu.<card>.whole` fails a whole
+  sees only the part they were made with; it warns when it could not read
+  the cards just now, and fails, naming it, when a box holding a card whole
+  matches no card it reads. `gpu.<card>.whole` fails a whole
   card with another box on it; `gpu.<card>.limit` (new) warns of a card over
   its limit, naming its boxes.
 - `setup/docker/README.md` has a "GPU boxes" section in place of "GPU
@@ -3617,6 +3630,35 @@ nightly images were off.
 What the gate did not cover: more than one card (the tests cover placement
 across cards and WSL's one device for several); a desktop with a GPU, as
 Xorg cannot draw on `/dev/dxg`; and switches seen by another install.
+
+### After the second reviews
+
+Astra said no-go and Fable go, with one medium finding. The lead decided the
+fixes below, in one more commit. Each has a test that failed with it
+reverted, on a box: 10 reverts for these fixes, and the 41 reverts of the
+earlier rounds run again, 5 of them changed to the new lines, each failing
+its tests.
+
+| Finding | Fix |
+| --- | --- |
+| A daemon was known by its engine ID alone, which a cloned host keeps, so two daemons, such as two Docker roots on one machine, were one, and the second backend refused every box, with a GPU or without (Astra 1) | A daemon is its engine ID, its name and its Docker root from its own `docker info` together; where they differ, the backends are on two daemons. Where two backends still look like one daemon, the second refuses GPU boxes alone, for each audience, and makes boxes with no GPU as usual; the doctor's `docker.one-backend` warns on both and no longer fails |
+| A backend that was off, or had only listed, released or kept up its boxes, counted on the daemon, so an old backend kept off beside a new one stopped it (Fable) | A backend counts once it places or plans a box there, through a capacity check, an acquire or a resize plan, and only while it is on in the install's settings; listing, releasing and upkeep use the daemon's lock without joining it |
+| A failed probe changed a card's key from its UUID to its device, so boxes, reservations and whole claims stopped counting on it, and a shared box went on a card held whole (Astra 2) | A card keeps its key across readings: where a probe fails, bb-box names the cards as last read, their free memory not known, so no whole card is placed, and the doctor warns. With no reading since bb-box started, a box's card is matched by its device. A box holding a card whole that matches no card bb-box reads stops every GPU placement there, for each audience, until it does, and the doctor fails, naming it |
+| A retry counted the reservation of the container it had removed, so with room for one more box it refused (Astra 3) | The retry drops that reservation before it reads the host |
+| Any CUDA error removed a fresh box and left its card out for 10 minutes (Astra 4) | Only CUDA's no-device answer (100) or another card's UUID does. Any other, such as 802 (system not ready), keeps the box on its card, with the error in its GPU fact, and the card is not left out |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,833 tests, 3,411 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures, by name, as on main (`ed5d3dee`)
+in the same box, where 114 failed; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 30 tests.
+
+The gate's results stand: none of these changes alters what it proved. It
+ran one backend on its daemon; every reading of the card succeeded; no fresh
+box failed its check, so none was made again; and CUDA returned 0 in each
+check. D6's 100 was CUDA run in the box, not bb-box's check, and a 100 in the
+check still removes a fresh box. The doctor's words the gate quoted are the
+same where the cards are read and no second backend counts.
 
 ### Still open
 

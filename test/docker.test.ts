@@ -233,6 +233,7 @@ test("reads the daemon's facts and its containers", () => {
     {
       id: "6f0a1b2c-daemon",
       name: "docker1",
+      rootDir: "",
       version: "29.0.0",
       operatingSystem: "Ubuntu 24.04 LTS",
       osType: "linux",

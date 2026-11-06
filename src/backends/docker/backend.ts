@@ -76,7 +76,7 @@ import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 import { dockerImageBuilding } from "./building.ts";
-import { backendPlacingFirst, daemonShare, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
+import { backendsOn, daemonKey, daemonShare, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
 import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_RESIZE } from "../../core/gpu.ts";
 import { SERVER_GPU_MIB, type CardCheck } from "../card-check.ts";
 import {
@@ -88,7 +88,9 @@ import {
   READING_FRESH_MS,
   READING_KEPT_MS,
   auditCards,
+  wholeHoldersOnNoCard,
   cardName,
+  cardKeyOf,
   cardOfLabels,
   cardOfUuid,
   cardRooms,
@@ -590,11 +592,13 @@ export class DockerBackend implements Backend {
     spares: true,
   };
   #share: DaemonShare<Placing> | null = null;
+  #joined = false;
   #hostCpus: { readonly at: number; readonly cpus: CpuList } | null = null;
   #daemonCpus: CpuList | null = null;
   #lxcfs: { readonly at: number; readonly on: LxcfsOnHost | null } | null = null;
   #reading: { readonly at: number; readonly probed: readonly ProbedCard[] | null; readonly unread: string | null } | null = null;
   #probing: Promise<void> | null = null;
+  #lastProbed: readonly ProbedCard[] | null = null;
 
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
@@ -795,7 +799,7 @@ export class DockerBackend implements Backend {
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
       gpuDesktops: Math.max(0, pending.filter((other) => other.kind === "linux-desktop").length - placed.filter((other) => other.gpu).length),
     };
-    const shared = this.#sharedDaemonRefusal();
+    const shared = this.#sharedDaemonRefusal(part);
     if (shared) return { ok: false, message: shared.person, agentMessage: shared.agent, warm: null, hosts: [{ host: state.info.name || this.#host, ok: false, limits: [] }] };
     const room = this.#room(state, kind, size, unplaced);
     if (room.why !== null || part === "none") return { ok: room.why === null, message: room.why === null ? null : this.#full(kind, room.why), warm: null, hosts: [room.capacity] };
@@ -855,6 +859,7 @@ export class DockerBackend implements Backend {
       const probed = result.exitCode === 0 ? parseProbe(result.stdout) : [];
       const said = `${result.stderr}`.trim().split("\n").at(-1) || `exit code ${result.exitCode ?? "none"}`;
       this.#reading = probed.length ? { at, probed, unread: null } : { at, probed: null, unread: `nvidia-smi in a container given the cards answered ${result.exitCode === 0 ? "with no card" : said}` };
+      if (probed.length) this.#lastProbed = probed;
     })().finally(() => {
       this.#probing = null;
     });
@@ -865,7 +870,8 @@ export class DockerBackend implements Backend {
     if (!info.gpus.length && !info.allGpus) return { cards: [], oneDeviceForEveryCard: false, readAt: null, unread: null };
     if (!this.#reading || this.#now() - this.#reading.at > freshMs) await this.#readCards(info, signal);
     const reading = this.#reading;
-    return cardsOnHost({ devices: info.gpus, allListed: info.allGpus, probed: reading?.probed ?? null, readAt: reading?.probed ? reading.at : null, unread: reading?.unread ?? null });
+    const lastKnown = this.#lastProbed?.map((card) => ({ ...card, freeMiB: null }));
+    return cardsOnHost({ devices: info.gpus, allListed: info.allGpus, probed: reading?.probed ?? lastKnown ?? null, readAt: reading?.probed ? reading.at : null, unread: reading?.unread ?? null });
   }
 
   #avoidedCards(): ReadonlySet<string> {
@@ -895,9 +901,10 @@ export class DockerBackend implements Backend {
         };
       }),
     );
-    const making = [...placing.values()].flatMap((each): CardHolder[] =>
-      each.card && each.part !== "none" ? [{ card: each.card, part: each.part, name: each.boxName, threadId: each.threadId, otherInstall: false, state: "making", container: each.name, needMiB: each.needMiB }] : [],
-    );
+    const making = [...placing.values()].flatMap((each): CardHolder[] => {
+      const card = each.part !== "none" ? cardKeyOf(each.card, each.gpu, cards.cards) : null;
+      return card ? [{ card, part: each.part as CardPart, name: each.boxName, threadId: each.threadId, otherInstall: false, state: "making", container: each.name, needMiB: each.needMiB }] : [];
+    });
     return [...held.filter((holder): holder is CardHolder => holder !== null), ...making];
   }
 
@@ -910,6 +917,19 @@ export class DockerBackend implements Backend {
       return { is: "refused", refusal: noCardsRefusal(host, why, what), limits: [] };
     }
     const holders = await this.#holders(state, cards);
+    const lost = wholeHoldersOnNoCard(holders, cards.cards);
+    if (lost.length) {
+      const names = listOf(lost.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
+      const why = `${names} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now${cards.unread ? `, as it could not read the cards: ${cards.unread}` : ""}`;
+      return {
+        is: "refused",
+        refusal: {
+          person: `${capitalise(host)} cannot give a box a GPU now: ${why}. Run bb box doctor.`,
+          agent: `Not made: ${host} cannot give a box a GPU now: ${why}. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+        },
+        limits: [],
+      };
+    }
     const limits: Limit[] = cards.cards.map((card) => ({
       resource: "gpu-desktops",
       id: cards.oneDeviceForEveryCard ? cudaVisible(card.uuid) : card.device,
@@ -927,25 +947,30 @@ export class DockerBackend implements Backend {
   async #state(signal?: AbortSignal): Promise<HostState> {
     const [info, containers] = await Promise.all([this.#cli.info(signal), this.#cli.list({ [LABELS.backend]: "docker" }, signal)]);
     this.#info = info;
-    this.#join(info);
+    this.#shareOf(info);
     return { info, containers };
   }
 
-  #join(info: DockerInfo): DaemonShare<Placing> {
-    const daemon = info.id ? `daemon:${info.id}` : `host:${this.#config.machine ?? this.#config.host ?? "local"}`;
+  #shareOf(info: DockerInfo): DaemonShare<Placing> {
+    const daemon = daemonKey(info, this.#config.machine ?? this.#config.host ?? "local");
     if (this.#share?.daemon === daemon) return this.#share;
-    if (this.#share) leaveDaemon(this.#share, this.id);
-    const share = daemonShare<Placing>(daemon);
-    joinDaemon(share, this.id);
-    this.#share = share;
-    return share;
+    if (this.#share && this.#joined) leaveDaemon(this.#share, this.id);
+    this.#joined = false;
+    this.#share = daemonShare<Placing>(daemon);
+    return this.#share;
   }
 
-  async #joined(): Promise<DaemonShare<Placing>> {
+  #join(): void {
+    if (!this.#share || this.#joined) return;
+    joinDaemon(this.#share, this.id, () => this.#context.on?.() ?? true);
+    this.#joined = true;
+  }
+
+  async #shared(): Promise<DaemonShare<Placing>> {
     if (this.#share) return this.#share;
     const info = await this.#cli.info();
     this.#info = info;
-    return this.#join(info);
+    return this.#shareOf(info);
   }
 
   get #placing(): Map<string, Placing> {
@@ -957,22 +982,26 @@ export class DockerBackend implements Backend {
   }
 
   #otherBackendOnDaemon(): string | null {
-    const first = this.#share ? backendPlacingFirst(this.#share) : null;
-    return first !== null && first !== this.id ? first : null;
+    if (!this.#share) return null;
+    const first = backendsOn(this.#share).find((id) => id !== this.id && id < this.id) ?? null;
+    return first;
   }
 
-  #sharedDaemonRefusal(): GpuRefusal | null {
+  #sharedDaemonRefusal(part: GpuPart): GpuRefusal | null {
+    this.#join();
+    if (part === "none") return null;
     const other = this.#otherBackendOnDaemon();
     if (other === null) return null;
     return {
-      person: `${this.label} reaches the same Docker daemon as the backend ${other}, so bb-box makes no box through it: two backends on one daemon would each count only their own boxes. Remove one of them in BB Box's settings.`,
-      agent: `Not made: ${this.label} reaches the same Docker daemon as another backend, so bb-box makes no box through it. Ask for another provider, or ask the user. bb-box changed nothing.`,
+      person: `${this.label} reaches the same Docker daemon as the backend ${other}, so bb-box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.`,
+      agent: `Not made: ${this.label} reaches the same Docker daemon as another backend, so bb-box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. bb-box changed nothing.`,
     };
   }
 
   async dispose(): Promise<void> {
-    if (this.#share) leaveDaemon(this.#share, this.id);
+    if (this.#share && this.#joined) leaveDaemon(this.#share, this.id);
     this.#share = null;
+    this.#joined = false;
   }
 
   /** Whether a box of `size` fits, and if not, why, with what to do. */
@@ -1024,7 +1053,7 @@ export class DockerBackend implements Backend {
   }
 
   async #underPlacement<T>(work: () => Promise<T>): Promise<T> {
-    return underDaemonLock(await this.#joined(), work);
+    return underDaemonLock(await this.#shared(), work);
   }
 
   #pinsCpus(info: DockerInfo): boolean {
@@ -1105,12 +1134,13 @@ export class DockerBackend implements Backend {
   /** Checks room and counts the box against the host, one acquire at a time. */
   #place(box: BoxIdentity, signal: AbortSignal): Promise<PlacedBox> {
     return this.#underPlacement(async () => {
+      this.#placing.delete(box.boxId);
       const state = await this.#state(signal);
-      const shared = this.#sharedDaemonRefusal();
-      if (shared) throw new BackendError("no_capacity", shared.person, shared.agent);
       const room = this.#room(state, box.kind, box.size);
       if (room.why !== null) throw new BackendError("no_capacity", this.#full(box.kind, room.why));
       const part = this.#gpuAsked(box.kind, box.size.gpu);
+      const shared = this.#sharedDaemonRefusal(part);
+      if (shared) throw new BackendError("no_capacity", shared.person, shared.agent);
       const refusedPart = this.#partRefusal(box.kind, part);
       if (refusedPart) throw new BackendError("unsupported", refusedPart.person, refusedPart.agent);
       let card: DockerCard | null = null;
@@ -1410,7 +1440,7 @@ export class DockerBackend implements Backend {
       return { from, to, way: "no", card: placement, others: [], words, refusal };
     }
     if (to === "whole" && !this.#wholeOn()) return { from, to, way: "no", card: placement, others: [], words: WHOLE_CARDS_OFF_FOR_RESIZE.person, refusal: WHOLE_CARDS_OFF_FOR_RESIZE };
-    const shared = this.#sharedDaemonRefusal();
+    const shared = this.#sharedDaemonRefusal(to);
     if (shared) {
       const refusal = { person: shared.person, agent: shared.agent.replace(/^Not made: /, "Not resized: ") };
       return { from, to, way: "live", card: placement, others: [], words: refusal.person, refusal };
@@ -1573,7 +1603,7 @@ export class DockerBackend implements Backend {
       this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId }, signal),
     ]);
     this.#info = info;
-    this.#join(info);
+    this.#shareOf(info);
     return Promise.all(
       // An image box (049) is no box's: its build removes it.
       containers.filter((container) => !container.labels[LABELS.imageBox]).map(async (container) => {
@@ -1883,15 +1913,15 @@ export class DockerBackend implements Backend {
   }
 
   #checkOneBackend(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void): void {
-    const sharing = [...(this.#share?.backends.keys() ?? [])].filter((id) => id !== this.id).sort();
+    const sharing = this.#share ? backendsOn(this.#share).filter((id) => id !== this.id) : [];
     if (!sharing.length) return;
     const refused = this.#otherBackendOnDaemon();
     const fix = "Remove the other backend in BB Box's settings, or point it at another Docker host.";
     if (refused) {
-      push("docker.one-backend", "One backend for this daemon", "fail", `${this.label} reaches the same Docker daemon as the backend ${refused}, so bb-box makes no box through it: two backends on one daemon would each count only their own boxes.`, fix);
+      push("docker.one-backend", "One backend for this daemon", "warn", `${this.label} reaches the same Docker daemon as the backend ${refused}, so bb-box places no GPU box through it, as two backends on one daemon would each count only their own boxes on its cards. Boxes with no GPU are made as usual.`, fix);
       return;
     }
-    push("docker.one-backend", "One backend for this daemon", "warn", `The ${sharing.length === 1 ? "backend" : "backends"} ${listOf(sharing)} ${sharing.length === 1 ? "reaches" : "reach"} the same Docker daemon as this one, so bb-box makes boxes there through this one alone.`, fix);
+    push("docker.one-backend", "One backend for this daemon", "warn", `The ${sharing.length === 1 ? "backend" : "backends"} ${listOf(sharing)} ${sharing.length === 1 ? "reaches" : "reach"} the same Docker daemon as this one, so bb-box places GPU boxes there through this one alone.`, fix);
   }
 
   async #checkCards(state: HostState, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
@@ -1907,16 +1937,20 @@ export class DockerBackend implements Backend {
     const listed = cards.cards.map((card) => `${cardName(card)}${card.model ? `, ${card.model}` : ""}${card.totalMiB !== null ? `, ${Math.round(card.totalMiB / 1024)} GiB` : ""}${card.freeMiB !== null ? `, ${card.freeMiB} MiB free when read` : ""}`).join("; ");
     const one = cards.oneDeviceForEveryCard ? ` Docker gives them as one device, ${ALL_CARDS_DEVICE}, as in WSL.` : "";
     const reach = reachWords(info.name, this.#config.docker && !info.rootless, cards.oneDeviceForEveryCard);
-    const facts = `${cards.cards.length} NVIDIA card${cards.cards.length === 1 ? "" : "s"} as CDI devices (${listed}), up to ${this.#config.desktopsPerGpu} boxes each.${one}${reach ? ` ${reach}` : ""}`;
+    const unread = cards.unread ? ` bb-box could not read them just now (${cards.unread}), so it names them as last read and their free memory is not known: no box gets a whole card until it can read them.` : "";
+    const facts = `${cards.cards.length} NVIDIA card${cards.cards.length === 1 ? "" : "s"} as CDI devices (${listed}), up to ${this.#config.desktopsPerGpu} boxes each.${one}${reach ? ` ${reach}` : ""}${unread}`;
     const others = holders.filter((holder) => holder.otherInstall);
-    if (others.length) {
-      push(
-        "docker.gpus",
-        "GPUs",
-        "warn",
-        `${facts} Another install's GPU boxes are on ${info.name}: ${listOf(others.map((holder) => holder.name))}. bb-box counts them on their cards, but sees the GPU part they were made with, not a later switch, and they see this install's boxes the same way.`,
-        "Give each install its own Docker host for GPU boxes, or switch none of them between shared and whole.",
-      );
+    const lost = wholeHoldersOnNoCard(holders, cards.cards);
+    const lostNames = listOf(lost.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
+    const fixes = [
+      lost.length ? `Release ${lostNames}, or give ${info.name} ${lost.length === 1 ? "its card" : "their cards"} back.` : null,
+      others.length ? "Give each install its own Docker host for GPU boxes, or switch none of them between shared and whole." : null,
+      unread ? `Check that nvidia-smi answers in a container given the cards on ${info.name}: docker run --rm --device ${info.allGpus ? ALL_CARDS_DEVICE : (info.gpus[0] ?? ALL_CARDS_DEVICE)} <a box image> nvidia-smi -L.` : null,
+    ].filter((fix): fix is string => fix !== null);
+    if (fixes.length) {
+      const otherWords = others.length ? ` Another install's GPU boxes are on ${info.name}: ${listOf(others.map((holder) => holder.name))}. bb-box counts them on their cards, but sees the GPU part they were made with, not a later switch, and they see this install's boxes the same way.` : "";
+      const lostWords = lost.length ? ` ${lostNames} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now, so it places no GPU box on ${info.name} until it can.` : "";
+      push("docker.gpus", "GPUs", lost.length ? "fail" : "warn", `${facts}${otherWords}${lostWords}`, fixes.join(" "));
     } else {
       push("docker.gpus", "GPUs", "ok", facts);
     }

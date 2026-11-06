@@ -66,6 +66,7 @@ export const LABELS = {
 export interface DockerInfo {
   readonly id: string;
   readonly name: string;
+  readonly rootDir: string;
   readonly version: string;
   /** For example "Ubuntu 24.04.3 LTS" or "Docker Desktop". */
   readonly operatingSystem: string;
@@ -147,6 +148,7 @@ export function parseInfo(text: string): DockerInfo {
   return {
     id: typeof info.ID === "string" ? info.ID : "",
     name: typeof info.Name === "string" ? info.Name : "",
+    rootDir: typeof info.DockerRootDir === "string" ? info.DockerRootDir : "",
     version: typeof info.ServerVersion === "string" ? info.ServerVersion : "",
     operatingSystem: typeof info.OperatingSystem === "string" ? info.OperatingSystem : "",
     osType: typeof info.OSType === "string" ? info.OSType : "",

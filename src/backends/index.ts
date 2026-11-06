@@ -350,6 +350,7 @@ export class Backends {
       factsChanged: () => this.#changed(),
       ...(this.#encoder ? { encoder: this.#encoderFor(id, this.#encoder) } : {}),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
+      on: () => this.#document?.backends.find((candidate) => candidate.id === id)?.enabled ?? false,
       kind: (kind) => {
         const document = this.#document;
         const backend = document?.backends.find((candidate) => candidate.id === id);

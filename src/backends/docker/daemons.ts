@@ -1,12 +1,27 @@
+export interface DaemonMember {
+  readonly instances: number;
+  readonly on: () => boolean;
+}
+
 export interface DaemonShare<Placing> {
   readonly daemon: string;
   lock: Promise<unknown>;
   readonly placing: Map<string, Placing>;
   readonly avoided: Map<string, number>;
-  readonly backends: Map<string, number>;
+  readonly backends: Map<string, DaemonMember>;
 }
 
 const SHARES = new Map<string, DaemonShare<unknown>>();
+
+export interface DaemonFacts {
+  readonly id: string;
+  readonly name: string;
+  readonly rootDir: string;
+}
+
+export function daemonKey(facts: DaemonFacts, fallback: string): string {
+  return facts.id ? `daemon:${facts.id}|${facts.name}|${facts.rootDir}` : `host:${fallback}`;
+}
 
 export function daemonShare<Placing>(daemon: string): DaemonShare<Placing> {
   let share = SHARES.get(daemon);
@@ -17,18 +32,19 @@ export function daemonShare<Placing>(daemon: string): DaemonShare<Placing> {
   return share as DaemonShare<Placing>;
 }
 
-export function joinDaemon(share: DaemonShare<unknown>, backendId: string): void {
-  share.backends.set(backendId, (share.backends.get(backendId) ?? 0) + 1);
+export function joinDaemon(share: DaemonShare<unknown>, backendId: string, on: () => boolean): void {
+  share.backends.set(backendId, { instances: (share.backends.get(backendId)?.instances ?? 0) + 1, on });
 }
 
 export function leaveDaemon(share: DaemonShare<unknown>, backendId: string): void {
-  const count = (share.backends.get(backendId) ?? 0) - 1;
-  if (count > 0) share.backends.set(backendId, count);
+  const member = share.backends.get(backendId);
+  if (!member) return;
+  if (member.instances > 1) share.backends.set(backendId, { ...member, instances: member.instances - 1 });
   else share.backends.delete(backendId);
 }
 
-export function backendPlacingFirst(share: DaemonShare<unknown>): string | null {
-  return [...share.backends.keys()].sort()[0] ?? null;
+export function backendsOn(share: DaemonShare<unknown>): string[] {
+  return [...share.backends].filter(([, member]) => member.on()).map(([id]) => id).sort();
 }
 
 export function underDaemonLock<T>(share: DaemonShare<unknown>, work: () => Promise<T>): Promise<T> {

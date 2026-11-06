@@ -140,14 +140,17 @@ function byIndex(a: DockerCard, b: DockerCard): number {
   return (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER) || a.uuid.localeCompare(b.uuid);
 }
 
-export function cardOfLabels(labels: Readonly<Record<string, string>>, cards: readonly DockerCard[], cardLabel: string, deviceLabel: string): string | null {
-  const named = labels[cardLabel] ? cardUuid(labels[cardLabel]!) : null;
-  if (named) return named;
-  const device = labels[deviceLabel];
-  if (!device) return null;
+export function cardKeyOf(named: string | null, device: string | null, cards: readonly DockerCard[]): string | null {
+  if (named && cards.some((card) => card.uuid === named)) return named;
+  if (!device) return named;
   const byDevice = cards.filter((card) => card.device === device);
   if (byDevice.length === 1) return byDevice[0]!.uuid;
-  return deviceCard(device);
+  return named ?? deviceCard(device);
+}
+
+export function cardOfLabels(labels: Readonly<Record<string, string>>, cards: readonly DockerCard[], cardLabel: string, deviceLabel: string): string | null {
+  const named = labels[cardLabel] ? cardUuid(labels[cardLabel]!) : null;
+  return cardKeyOf(named, labels[deviceLabel] ?? null, cards);
 }
 
 export function partOfLabel(value: string | undefined): CardPart {
@@ -402,7 +405,8 @@ export function judgeDockerCardCheck(output: string, card: string): CardCheck {
   if (lines.includes("cuinit no-python")) return checked;
   const cuda = cudaCardLine(output);
   const failed = (why: string): CardCheck => ({ ok: false, why, seen: [card], userspace: null, reading: "cards", userspaceOff: false });
-  if (cuda && cuda.result !== "0") return failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: it returned ${cuda.result || "nothing"}`);
+  if (cuda && cuda.result === CUDA_NO_DEVICE) return failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: it returned ${cuda.result}`);
+  if (cuda && cuda.result !== "0") return failed(`CUDA's driver did not initialise in it: it returned ${cuda.result || "nothing"}`);
   if (cuda && cuda.card !== card) return failed(`CUDA in it picks ${cuda.card ? cudaVisible(cuda.card) : "a card it cannot name"}, not its card ${cudaVisible(card)}`);
   if (!checked.ok) return lines.includes(`cuinit ${CUDA_NO_DEVICE}`) ? failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: cuInit returned ${CUDA_NO_DEVICE}`) : checked;
   if (!cuda) return failed("CUDA in it gave no answer for the card it picks");
@@ -443,6 +447,10 @@ export interface CardAudit {
   readonly others: readonly CardHolder[];
   readonly over: number;
   readonly holders: readonly CardHolder[];
+}
+
+export function wholeHoldersOnNoCard(holders: readonly CardHolder[], cards: readonly DockerCard[]): CardHolder[] {
+  return holders.filter((holder) => holder.part === "whole" && !cards.some((card) => card.uuid === holder.card));
 }
 
 export function auditCards(cards: readonly DockerCard[], holders: readonly CardHolder[], perCard: number): CardAudit[] {

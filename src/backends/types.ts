@@ -1303,6 +1303,7 @@ export interface BackendContext {
   warm(kind: string): number;
   /** Whether a host takes new boxes. Read each time, like `warm`. */
   hostOn(name: string): boolean;
+  on?(): boolean;
   /** What the configuration says now about a kind here. Read each time, like `warm`. */
   kind(id: string): KindSettings;
   /**

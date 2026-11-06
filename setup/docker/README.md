@@ -290,8 +290,10 @@ shows its own.
 - A desktop whose card cannot drive its display falls back to the CPU, and
   the reason is in the container's log.
 - Give each Docker daemon one backend. Where two of an install's backends
-  reach the same daemon, bb-box makes boxes there through the one whose ID
-  sorts first, and the doctor fails the other.
+  that are on reach the same daemon, bb-box places GPU boxes there through
+  the one whose ID sorts first, makes boxes with no GPU through either, and
+  the doctor warns on both. A daemon is its engine ID with its name and its
+  Docker root, so cloned hosts are told apart.
 
 ## Check it worked
 

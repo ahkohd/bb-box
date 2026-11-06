@@ -22,13 +22,14 @@ const WSL_ONE_CARD = { allGpus: true, kernelVersion: "6.6.87.2-microsoft-standar
 const WSL_TWO_CARDS = { allGpus: true, kernelVersion: "6.6.87.2-microsoft-standard-WSL2", cards: [card(0, CARD_A, "nvidia.com/gpu=all"), card(1, CARD_B, "nvidia.com/gpu=all")] };
 const signal = () => AbortSignal.timeout(30_000);
 
-function setup(values: Record<string, FieldValue> = {}, host: Record<string, unknown> = TWO_CARDS, options: { whole?: boolean; titles?: Record<string, string>; installId?: string } = {}) {
+function setup(values: Record<string, FieldValue> = {}, host: Record<string, unknown> = TWO_CARDS, options: { whole?: boolean; titles?: Record<string, string>; installId?: string; now?: () => number } = {}) {
   const fake = fakeDockerHost(host);
   const config = dockerConfig({ "gpu-desktops": true, ...values });
   const contextFor = (installId: string) => ({ ...testContext(new MemoryStorage(), installId), wholeCards: () => options.whole ?? false, threadTitle: async (threadId: string) => options.titles?.[threadId] ?? null });
   const context = contextFor(options.installId ?? "test");
-  const make = (installId: string) => new DockerBackend(config, contextFor(installId), { binary: fake.binary, readyTimeoutMs: 2_000 });
-  return { fake, context, make, backend: new DockerBackend(config, context, { binary: fake.binary, readyTimeoutMs: 2_000 }) };
+  const backendOptions = { binary: fake.binary, readyTimeoutMs: 2_000, ...(options.now ? { now: options.now } : {}) };
+  const make = (installId: string) => new DockerBackend(config, contextFor(installId), backendOptions);
+  return { fake, context, make, backend: new DockerBackend(config, context, backendOptions) };
 }
 
 let counter = 0;
@@ -260,29 +261,65 @@ test("071 unit 11: a fresh box whose CUDA finds no card, as cuInit 100 says, is 
   await assert.rejects(listing.acquire(identity("linux", "shared"), null, hooks(), signal()), /nvidia-smi in it listed no card, not its card/);
 });
 
-test("071 unit 11: two backends of one install on one Docker daemon share its card lock and reservations, and only the one whose ID sorts first makes boxes; the other is refused for each audience and its doctor fails", async () => {
+test("071 unit 11: two backends of one install on one Docker daemon share its card lock and reservations; only the one whose ID sorts first places GPU boxes there, boxes with no GPU are made through either, and the doctor warns", async () => {
   const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)] });
   const config = dockerConfig({ "gpu-desktops": true });
-  const make = (id: string) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const make = (id: string, on: () => boolean = () => true) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), wholeCards: () => true, on }, { binary: fake.binary, readyTimeoutMs: 2_000 });
   const first = make("docker");
   const twin = make("docker");
   const results = await Promise.allSettled([first.acquire(identity("linux", "whole"), null, hooks(), signal()), twin.acquire(identity("linux", "whole"), null, hooks(), signal())]);
   assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"], "two instances of one backend, as a settings check makes, share the card lock and its reservations");
   assert.equal(fake.calls().filter((args) => args[0] === "container" && args[1] === "create").length, 1);
+  const whole = (results.find((result) => result.status === "fulfilled") as PromiseFulfilledResult<Guest>).value;
   const second = make("docker:second");
-  const refused = await second.capacity("linux", { ...SMALL, gpu: "none" }, [], signal());
-  assert.equal(refused.message, "Docker on fake-docker reaches the same Docker daemon as the backend docker, so bb-box makes no box through it: two backends on one daemon would each count only their own boxes. Remove one of them in BB Box's settings.");
-  assert.equal(refused.agentMessage, "Not made: Docker on fake-docker reaches the same Docker daemon as another backend, so bb-box makes no box through it. Ask for another provider, or ask the user. bb-box changed nothing.");
-  await assert.rejects(second.acquire(identity("linux", "none"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && /reaches the same Docker daemon/.test(error.message));
-  assert.equal((await first.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true);
-  const made = (await first.held(signal()))[0]!;
-  const shared = await second.planResize(made, "linux", { ...SMALL, gpu: "shared" }, [], signal());
-  assert.match(shared.gpu?.refusal?.agent ?? "", /^Not resized: Docker on fake-docker reaches the same Docker daemon as another backend/);
-  assert.equal((await second.doctor(signal())).checks.find((check) => check.id === "docker.one-backend")?.status, "fail");
-  assert.equal((await first.doctor(signal())).checks.find((check) => check.id === "docker.one-backend")?.status, "warn");
+  assert.equal((await second.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true, "a box with no GPU is never stopped by another backend on the daemon");
+  const plain = await second.acquire(identity("linux", "none"), null, hooks(), signal());
+  const shared = await second.planResize(whole, "linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.match(shared.gpu?.refusal?.agent ?? "", /^Not resized: Docker on fake-docker reaches the same Docker daemon as another backend, so bb-box places no GPU box through it/);
+  await first.release(whole, { resetting: async () => {}, timing: () => {} }, signal());
+  const refused = await second.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.equal(refused.message, "Docker on fake-docker reaches the same Docker daemon as the backend docker, so bb-box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.");
+  assert.equal(refused.agentMessage, "Not made: Docker on fake-docker reaches the same Docker daemon as another backend, so bb-box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. bb-box changed nothing.");
+  await assert.rejects(second.acquire(identity("linux", "shared"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && /places no GPU box through it/.test(error.message));
+  assert.equal((await first.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true);
+  const doctor = async (backend: DockerBackend) => (await backend.doctor(signal())).checks.find((check) => check.id === "docker.one-backend");
+  assert.deepEqual([(await doctor(second))?.status, (await doctor(first))?.status], ["warn", "warn"]);
+  assert.match((await doctor(second))!.detail, /places no GPU box through it, .* Boxes with no GPU are made as usual\.$/);
+  await second.release(plain, { resetting: async () => {}, timing: () => {} }, signal());
   await first.dispose();
   await twin.dispose();
-  assert.equal((await second.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true, "once the other backend is gone, this one makes boxes");
+  assert.equal((await second.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "once the other backend is gone, this one places GPU boxes");
+});
+
+test("071 unit 11: a backend that is off, or that only listed, released or kept up its boxes, keeps no other backend on the daemon from placing GPU boxes", async () => {
+  const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)] });
+  const config = dockerConfig({ "gpu-desktops": true });
+  let oldOn = true;
+  const make = (id: string, on: () => boolean) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), wholeCards: () => true, on }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const old = make("a-old-docker", () => oldOn);
+  const fresh = make("b-new-docker", () => true);
+  await old.held(signal());
+  await old.maintain(signal());
+  assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "listing and upkeep do not count a backend as placing");
+  await old.capacity("linux", { ...SMALL, gpu: "none" }, [], signal());
+  assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, false, "once it places, the backend sorting first is the daemon's");
+  oldOn = false;
+  assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "a backend that is off does not count");
+});
+
+test("071 unit 11: a daemon is known by its engine ID with its name and Docker root, so cloned hosts that kept one engine ID are two daemons", async () => {
+  const config = dockerConfig({ "gpu-desktops": true });
+  const one = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], daemonId: "CLONED:ENGINE:ID", name: "clone-a" });
+  const two = fakeDockerHost({ gpus: [DEVICE_B], cards: [card(0, CARD_B, DEVICE_B)], daemonId: "CLONED:ENGINE:ID", name: "clone-b" });
+  const three = fakeDockerHost({ gpus: [DEVICE_B], cards: [card(0, CARD_B, DEVICE_B)], daemonId: "CLONED:ENGINE:ID", name: "clone-a", rootDir: "/srv/docker-two" });
+  const make = (id: string, fake: ReturnType<typeof fakeDockerHost>) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const a = make("docker:a", one);
+  const b = make("docker:b", two);
+  const c = make("docker:c", three);
+  await a.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.equal((await b.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "another host's name");
+  assert.equal((await c.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "another Docker root on one host");
+  assert.equal((await b.doctor(signal())).checks.find((check) => check.id === "docker.one-backend"), undefined);
 });
 
 test("071 unit 11: a share switch made through one instance of a backend holds for another instance of it, as after a restart, on the same storage", async () => {
@@ -295,6 +332,67 @@ test("071 unit 11: a share switch made through one instance of a backend holds f
   const box = await live.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
   await live.resize(box, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
   assert.match((await check.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).message ?? "", /card 0 is amber-fox's whole card/);
+});
+
+test("071 unit 11: a failed probe keeps each card's key and its last reading's name, so a card held whole takes no shared box; its free memory is unknown and no whole card is placed", async () => {
+  let clock = 1_800_000_000_000;
+  const devices = ["nvidia.com/gpu=0", "nvidia.com/gpu=1"];
+  const host = { gpus: devices, cards: [card(0, CARD_A, devices[0]!), card(1, CARD_B, devices[1]!)] };
+  const { fake, backend } = setup({ "desktops-per-gpu": 4 }, host, { whole: true, now: () => clock });
+  const whole = await backend.acquire(identity("linux", "whole", "thr_abc123", "quiet-elm"), null, hooks(), signal());
+  assert.equal(whole.claim?.card, CARD_A);
+  fake.set({ probeFails: "docker: Error response from daemon: the toolkit's hook failed" });
+  clock += 70_000;
+  const room = await backend.gpuRoom("linux");
+  assert.deepEqual(room.cards?.map((each) => [each.index, each.totalMiB, each.freeMiB, each.whole, each.wholeBy]), [
+    [0, 32_607, null, true, "quiet-elm"],
+    [1, 32_607, null, false, null],
+  ]);
+  assert.match((await backend.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal())).message!, /card 1's free memory could not be read/);
+  const shared = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.equal(shared.claim?.card, CARD_B, "the shared box goes on the card that is not held whole");
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.gpus")!;
+  assert.equal(doctor.status, "warn");
+  assert.match(doctor.detail, /bb-box could not read them just now \(nvidia-smi in a container given the cards answered docker: Error response from daemon: the toolkit's hook failed\), so it names them as last read/);
+});
+
+test("071 unit 11: with no reading at all, a box's card is matched by its device, so a card held whole takes no shared box; a whole holder that matches no card stops every GPU placement", async () => {
+  const devices = ["nvidia.com/gpu=0", "nvidia.com/gpu=1"];
+  const host = { gpus: devices, cards: [card(0, CARD_A, devices[0]!), card(1, CARD_B, devices[1]!)] };
+  const { fake, backend, make } = setup({}, host, { whole: true });
+  await backend.acquire(identity("linux", "whole", "thr_abc123", "quiet-elm"), null, hooks(), signal());
+  fake.set({ probeFails: "docker: Error response from daemon: the toolkit's hook failed" });
+  const restarted = make("test");
+  const shared = await restarted.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.equal(fake.inspect(shared.ref).Config.Labels["bbbox.gpu"], devices[1], "the shared box goes to the device whose card is not held whole");
+  fake.set({ gpus: [devices[1]] });
+  const lost = await restarted.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.equal(lost.ok, false);
+  assert.match(lost.message!, /^Fake-docker cannot give a box a GPU now: quiet-elm holds a card whole that bb-box cannot match to a card it reads now, as it could not read the cards: .*\. Run bb box doctor\.$/);
+  assert.match(lost.agentMessage!, /^Not made: fake-docker cannot give a box a GPU now: quiet-elm holds a card whole .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+  assert.equal((await restarted.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true);
+  const doctor = (await restarted.doctor(signal())).checks.find((check) => check.id === "docker.gpus")!;
+  assert.equal(doctor.status, "fail");
+  assert.match(doctor.detail, / quiet-elm holds a card whole that bb-box cannot match to a card it reads now, so it places no GPU box on fake-docker until it can\.$/);
+  assert.match(doctor.fix!, /^Release quiet-elm, or give fake-docker its card back\. Check that nvidia-smi answers/);
+});
+
+test("071 unit 11: a retry on another card does not count the reservation of the container it removed", async () => {
+  const { fake, backend } = setup({ boxes: 2 }, { ...TWO_CARDS, cudaIgnoresVisible: true });
+  await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  const moved = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.equal(moved.claim?.card, CARD_A);
+  assert.equal(fake.containers().length, 2);
+});
+
+test("071 unit 11: a CUDA error other than no device, such as 802, keeps a fresh box on its card with the error in its GPU fact, and the card is not left out", async () => {
+  const { fake, backend } = setup({}, { gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], cudaError: 802 });
+  const box = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.equal(fake.containers().length, 1);
+  assert.equal(box.claim?.card, CARD_A);
+  assert.equal(fact(box, "GPU"), "card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB: CUDA's driver did not initialise in it: it returned 802");
+  const next = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.equal(next.claim?.card, CARD_A, "the card is not left out");
 });
 
 test("071 unit 11: devices named by index whose cards could not be read still take shared boxes, by device, with no CUDA variables and no check; a whole card is refused on them", async () => {
