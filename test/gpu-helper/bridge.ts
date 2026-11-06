@@ -5,8 +5,7 @@ import { parseTags } from "../../src/backends/proxmox/api.ts";
 import type { GpuPart } from "../../src/backends/types.ts";
 import { FAKE_TOKEN, FakeProxmox, asProxmoxStoresDescription, type FakeGuest } from "../fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, lxcConfig, testContext } from "../helpers.ts";
-import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, boxLabels, cardLines, heldCopyLabels, helperVersion, type GuestSpec } from "./node.ts";
-import { WHOLE_CARDS_FROM, atLeast } from "../../src/backends/proxmox-lxc/gpu-helper.ts";
+import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, boxLabels, cardLines, heldCopyLabels, type GuestSpec } from "./node.ts";
 
 const made: ProxmoxLxcBackend[] = [];
 after(async () => {
@@ -20,8 +19,7 @@ export class Bridge {
   answering = true;
 
   constructor(options: { readonly helperVersion?: string } = {}) {
-    const version = options.helperVersion ?? (atLeast(helperVersion(), WHOLE_CARDS_FROM) ? undefined : WHOLE_CARDS_FROM.join("."));
-    this.node = new FakeNode({ writes: "off", ...(version ? { helperVersion: version } : {}) });
+    this.node = new FakeNode({ writes: "off", ...(options.helperVersion ? { helperVersion: options.helperVersion } : {}) });
     this.proxmox.addTemplate(9000);
     this.proxmox.addTemplate(9001, { cores: "4", memory: "8192" });
     this.proxmox.guests.set(REPORT_VMID, { vmid: REPORT_VMID, type: "qemu", name: "bb-box-gpu-memory", status: "stopped", template: false, config: { name: "bb-box-gpu-memory", description: "" } });

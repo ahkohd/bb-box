@@ -3301,9 +3301,33 @@ write check, the restore's early refusal, `bb box gpu mark`, the agent's
 words). Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node suite,
 3,787 tests, 3,492 passed, 0 failed, 295 skipped; vitest, 469 passed.
 
+### After unit 8b went in first
+
+Unit 8b merged and was deployed before this unit (main `3dbc76bd`), and the
+lead upgraded the node's helper to 0.4.3 with its step B: the preview would
+write no guest, no guest changed and the helper wrote none, and production's
+doctor passes the helper on 0.4.3. This branch is rebased onto that main. The
+only conflict was at the end of this file, where both sections are kept, unit
+8b's first.
+
+- The test bridges no longer run the helper under the version 0.4.3: it is
+  0.4.3 in this tree. A test that needs an older one still asks for it.
+- The node steps no longer upgrade the helper first; they check that it is
+  0.4.3. Step 0 takes the `u5-check.sh` baseline. Step H prints the helper's
+  writes to guests outside the lent VMIDs for the record, as production's own
+  GPU boxes are made and released during the gate, and `u5-compare.sh` judges
+  production's GPU guests, allowing the lent VMIDs and the guests production's
+  bb-box changed. A yield of a guest outside the lent VMIDs still fails step H:
+  production asks for no whole card, so none of its guests yields.
+
+On a `linux` box in `node:26-bookworm` as root, on the rebased branch: `tsc`
+clean; the node suite, 3,800 tests, 3,505 passed, 0 failed, 295 skipped;
+vitest, 469 passed. Each block of the node steps passes `bash -n`, and step H's
+two journal filters were run on sample lines.
+
 ### Still open
 
 - When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
   warm guest of that kind must still be shared (section 3): today spares and
   warm guests take the kind's default, which is never whole.
-- The live gate, after unit 8b's upgrade of the node's helper.
+- The live gate, on the node's helper 0.4.3.
