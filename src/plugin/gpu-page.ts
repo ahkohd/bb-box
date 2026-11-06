@@ -235,6 +235,11 @@ export function gpuProgramsWords(processes: readonly { readonly name: string; re
   return `: ${listed} ${processes.length === 1 ? "has" : "have"} the GPU open`;
 }
 
+export function countsAsThisBox(box: Pick<BoxView, "form" | "backendLabel" | "claim" | "facts">, card: { readonly index: number; readonly uuid?: string | null }): boolean {
+  if (dockerGpuBox(box)) return true;
+  return monitorCard([card], cardIdentity(box)) !== null;
+}
+
 export function monitorCard<T extends { readonly index: number; readonly uuid?: string | null }>(cards: readonly T[], identity: CardIdentity): T | null {
   const wanted = bareCardUuid(identity.uuid);
   const readable = cards.filter((card) => bareCardUuid(card.uuid));

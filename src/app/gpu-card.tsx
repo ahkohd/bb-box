@@ -123,9 +123,19 @@ function memoryParts(card: MonitorGpu | null): { mine: number | null; other: num
 }
 
 function Memory({ card, waiting }: { card: MonitorGpu | null; waiting: string | null }) {
+  if (waiting) {
+    return (
+      <div className="min-h-[4.5rem]" data-gpu-memory>
+        <div className="flex min-h-4 items-baseline justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">Memory on the card</span>
+          <span className="text-foreground">{waiting}</span>
+        </div>
+      </div>
+    );
+  }
   const parts = memoryParts(card);
   const known = parts.total !== null && parts.used !== null;
-  const value = waiting ?? (known ? `${bytesWords(parts.used!)} of ${bytesWords(parts.total!)} used` : "Not read");
+  const value = known ? `${bytesWords(parts.used!)} of ${bytesWords(parts.total!)} used` : "Not read";
   const legend: readonly [string, number | null, string][] = parts.mine === null && parts.other === null
     ? [
         ["Used", parts.used, "bg-foreground"],
@@ -246,10 +256,12 @@ export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView;
       <div className="space-y-3 px-4 py-3">
         <Memory card={shown.memoryWaiting ? null : shown.card} waiting={shown.memoryWaiting} />
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Card use</dt>
-            <dd className="tabular-nums text-foreground">{use === null ? "–" : `${Math.round(use)}%`}</dd>
-          </div>
+          {use !== null ? (
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Card use</dt>
+              <dd className="tabular-nums text-foreground">{Math.round(use)}%</dd>
+            </div>
+          ) : null}
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Boxes holding it</dt>
             <dd className="tabular-nums text-foreground">{holding}</dd>

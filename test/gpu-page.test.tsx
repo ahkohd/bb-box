@@ -5,6 +5,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { BoxPageState, Contract, MonitorReach, MonitorSnapshot } from "../src/plugin/contract.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
+import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 import { rowLine, rowWords } from "../src/app/row-line.ts";
 import { HOLDS_NO_CARD, USERSPACE_UPDATE_REFUSAL } from "../src/plugin/gpu-page.ts";
 
@@ -80,10 +81,10 @@ function snapshot(): MonitorSnapshot {
 const read: MonitorReach = { is: "read", machineId: "host_amber", why: null };
 const stoppedReach: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function handlers(page: BoxPageState): PluginRpcTestHandlers<Contract> {
+function handlers(page: BoxPageState, reading: MonitorSnapshot = snapshot()): PluginRpcTestHandlers<Contract> {
   return {
     boxPage: () => page,
-    "monitor.machine": () => snapshot(),
+    "monitor.machine": () => reading,
     "monitor.history": () => null,
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     resize: () => ({ box: null, from: null, to: null, plan: null, changed: false, machine: false, needsRestart: false, presets: [], largest: null, error: null }),
@@ -124,11 +125,12 @@ const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
   forgetLive();
+  forgetMonitorReadings();
 });
 
-function open(state: BoxPageState) {
+function open(state: BoxPageState, reading?: MonitorSnapshot) {
   const [panel] = app.navPanels;
-  return renderSlot(panel!, { subPath: `box/${BOX}` }, { rpc: handlers(state), pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "Train the model" }) } } });
+  return renderSlot(panel!, { subPath: `box/${BOX}` }, { rpc: handlers(state, reading), pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "Train the model" }) } } });
 }
 
 test("071 unit 14: a stopped shared row says it holds no card while stopped", () => {
@@ -194,6 +196,8 @@ test("071 unit 14: a stopped shared box's words, and each notice", async () => {
   expect(card.textContent).toContain("holds no place on the card");
   expect(card.textContent).toContain("None now.");
   expect(card.textContent).toContain("Not read while it is stopped.");
+  expect(card.textContent).not.toContain("Card use");
+  expect(card.textContent).not.toContain("Used");
   cleanup();
 
   const wrong = "card 1, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it listed no card, not its card aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -211,4 +215,36 @@ test("071 unit 14: a stopped shared box's words, and each notice", async () => {
   expect(dialog.textContent).toContain("over 570.86");
   fireEvent.click(within(dialog).getByRole("button", { name: "Update and restart" }));
   expect(dialog.textContent).toContain(USERSPACE_UPDATE_REFUSAL);
+});
+
+test("071 unit 14: the activity tiles and the GPU card agree on this box's use of a card", async () => {
+  const GiB = 1024 ** 3;
+  const reading = snapshot();
+  reading.gpus = {
+    cards: [
+      { index: 0, uuid: "11111111-1111-1111-1111-111111111111", name: "NVIDIA RTX 4090", usagePercent: 90, memoryUsedBytes: 20 * GiB, memoryTotalBytes: 24 * GiB, temperatureC: 70, powerWatts: 200, powerLimitWatts: 450, shared: true, ownMemoryBytes: 0, ownProcesses: 0 },
+      { index: 1, uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", name: "NVIDIA RTX 4090", usagePercent: 40, memoryUsedBytes: 6 * GiB, memoryTotalBytes: 24 * GiB, temperatureC: 55, powerWatts: 80, powerLimitWatts: 450, shared: true, ownMemoryBytes: 2 * GiB, ownProcesses: 1 },
+    ],
+    processes: [{ pid: 3310, name: "python3", card: 1, memoryBytes: 2 * GiB }],
+  };
+  const docker = open(page(boxView({ form: "Docker", backendLabel: "Docker on devpc", docker: true })), reading);
+  const other = await docker.findByRole("region", { name: "GPU 0, whole card" });
+  const held = await docker.findByRole("region", { name: "GPU 1, whole card" });
+  const card = await docker.findByRole("region", { name: "GPU card" });
+  expect(other.textContent).toContain("This box: 0 B of 20 GiB");
+  expect(other.textContent).not.toContain("18 GiB");
+  expect(held.textContent).toContain("This box: 2 GiB of 6 GiB");
+  expect(card.textContent).toContain("This box");
+  expect(card.textContent).toContain("2 GiB");
+  expect(card.textContent).not.toContain("This box: 18 GiB");
+  expect(card.textContent).not.toContain("20 GiB");
+  cleanup();
+  forgetLive();
+
+  const lxc = open(page(boxView()), reading);
+  const otherCard = await lxc.findByRole("region", { name: "GPU 0, whole card" });
+  expect(otherCard.textContent).not.toContain("This box:");
+  expect(otherCard.textContent).toContain("20 of 24 GiB");
+  expect((await lxc.findByRole("region", { name: "GPU 1, whole card" })).textContent).toContain("This box: 2 GiB of 6 GiB");
+  expect((await lxc.findByRole("region", { name: "GPU card" })).textContent).toContain("2 GiB");
 });

@@ -7,6 +7,7 @@ import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep,
 import type { GpuCard } from "../monitor/snapshot.ts";
 import { MOST_CARDS } from "../monitor/nvidia.ts";
 import type { BoxView } from "../plugin/views.ts";
+import { countsAsThisBox } from "../plugin/gpu-page.ts";
 import { STALL_LIMITS } from "../monitor/health.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { useRevealOnLoad } from "./monitor/use-reveal-on-load.ts";
@@ -103,10 +104,10 @@ function TileIcon({ icon, color }: { icon: IconData; color: string }) {
 function Tile({ label, name = label, icon, pill, value, unit, foot, loading, sample, children }: { label: string; name?: string; icon: ReactNode; pill?: ReactNode; value: ReactNode; unit?: string; foot: ReactNode; loading: boolean; sample: string; children?: ReactNode }) {
   return (
     <section aria-label={name} className="min-w-0 space-y-1.5 px-4 py-3">
-      <div className="flex min-h-5 items-center justify-between gap-2 text-xs">
-        <span className="flex min-w-0 items-center gap-1.5 text-foreground">
+      <div className="flex min-h-5 flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
+        <span className="flex shrink-0 items-center gap-1.5 text-foreground">
           {icon}
-          <span className="truncate">{label}</span>
+          <span>{label}</span>
         </span>
         {loading ? null : pill}
       </div>
@@ -114,7 +115,7 @@ function Tile({ label, name = label, icon, pill, value, unit, foot, loading, sam
         <span className="text-xl tabular-nums text-foreground">{loading ? <LoadingText sample="00" /> : value}</span>
         <span className="text-xs text-muted-foreground">{loading ? " " : unit}</span>
       </p>
-      <p className="truncate text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>{loading ? <LoadingText sample={sample} /> : foot}</p>
+      <p className="break-words text-xs text-subtle-foreground" data-reveal={loading ? undefined : ""}>{loading ? <LoadingText sample={sample} /> : foot}</p>
       {children}
     </section>
   );
@@ -147,10 +148,10 @@ function splitWords(words: string): { value: string; unit: string } {
   return { value, unit: unit.join(" ") };
 }
 
-const TILE_COLUMNS: Readonly<Record<number, string>> = { 4: "lg:grid-cols-4", 5: "lg:grid-cols-5", 6: "lg:grid-cols-6" };
+const TILE_COLUMNS: Readonly<Record<number, string>> = { 4: "lg:grid-cols-4" };
 
 function tileColumns(tiles: number): string {
-  return TILE_COLUMNS[tiles] ?? "lg:grid-cols-4";
+  return TILE_COLUMNS[Math.min(tiles, 4)] ?? "lg:grid-cols-4";
 }
 
 function cardColour(card: number): string {
@@ -178,15 +179,15 @@ function SharedPill({ words }: { words: string }) {
   );
 }
 
-function CardTile({ card, cards, slot, read }: { card: GpuCard | null; cards: number; slot: number; read: boolean }) {
+function CardTile({ card, cards, slot, read, own }: { card: GpuCard | null; cards: number; slot: number; read: boolean; own: boolean }) {
   const label = cardName({ index: slot }, cards);
   if (!card) return <Tile label={label} icon={<TileIcon icon={GpuIcon} color={cardColour(slot)} />} loading={!read} sample="8 of 24 GiB · 120 W" value="–" unit="not read" foot="No reading of this card this time" />;
   const shared = card.shared ? sharedCardWords(card, cards, bytesWords) : null;
   const pill = shared ? <SharedPill words={shared} /> : card.temperatureC === null ? null : <Pill tone={card.temperatureC >= 95 ? "bad" : card.temperatureC >= 85 ? "warn" : "neutral"}>{Math.round(card.temperatureC)}°C</Pill>;
-  return <Tile label={label} name={cardLabel(card, cards)} icon={<TileIcon icon={GpuIcon} color={cardColour(slot)} />} pill={pill} loading={false} sample="" value={wholePercent(card.usagePercent)} unit={shared ? "% whole card" : "%"} foot={cardFoot(card, bytesWords)} />;
+  return <Tile label={label} name={cardLabel(card, cards)} icon={<TileIcon icon={GpuIcon} color={cardColour(slot)} />} pill={pill} loading={false} sample="" value={wholePercent(card.usagePercent)} unit={shared ? "% whole card" : "%"} foot={cardFoot(card, bytesWords, own)} />;
 }
 
-function NowTiles({ snapshot, expectedCards = 0 }: { snapshot: MonitorSnapshot | null; expectedCards?: number }) {
+function NowTiles({ snapshot, expectedCards = 0, box = null }: { snapshot: MonitorSnapshot | null; expectedCards?: number; box?: Pick<BoxView, "form" | "backendLabel" | "claim" | "facts"> | null }) {
   const loading = !snapshot;
   const cpu = snapshot?.cpu;
   const memory = snapshot?.memory;
@@ -207,9 +208,10 @@ function NowTiles({ snapshot, expectedCards = 0 }: { snapshot: MonitorSnapshot |
       <Tile label="Disk" icon={<TileIcon icon={HardDriveIcon} color={CHART_COLOURS.down} />} pill={disk ? <Pill>{bytesWords(disk.totalBytes)}</Pill> : null} loading={loading} sample="12 GiB used · 40%" value={free?.value ?? "–"} unit={free ? `${free.unit} free` : "not read"} foot={disk ? `${bytesWords(disk.usedBytes)} used · ${Math.round(disk.usagePercent)}%` : "Its disk could not be read."} />
       <Tile label="Network" icon={<TileIcon icon={ArrowDataTransferVerticalIcon} color={CHART_COLOURS.down} />} pill={network ? <Pill>{network.interface}</Pill> : null} loading={loading} sample="10 KB/s up" value={down?.value ?? "–"} unit={down ? `${down.unit} down` : network ? "measuring" : "not read"} foot={network ? (network.txBytesPerSecond === null ? "Measuring…" : `${rateWords(network.txBytesPerSecond)} up`) : "Its network could not be read."} />
       {gpu ? <Tile label="GPU" icon={<TileIcon icon={GpuIcon} color={CHART_COLOURS.gpu} />} loading={false} sample="" value={wholePercent(gpu.gpuPercent)} unit="%" foot={[cpuState(gpu.gpuPercent), gpu.gpuTempC === null ? null : `${Math.round(gpu.gpuTempC)}°C`].filter(Boolean).join(" · ") || "Read"} /> : null}
-      {slots.map((slot) => (
-        <CardTile key={slot} card={cards.find((card) => card.index === slot) ?? null} cards={slots.length} slot={slot} read={!loading} />
-      ))}
+      {slots.map((slot) => {
+        const card = cards.find((item) => item.index === slot) ?? null;
+        return <CardTile key={slot} card={card} cards={slots.length} slot={slot} read={!loading} own={!box || !card || countsAsThisBox(box, card)} />;
+      })}
     </TileGrid>
     </div>
   );
@@ -258,8 +260,8 @@ function SlotTiles({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   );
 }
 
-function TilesNow({ snapshot, shared, expectedCards }: { snapshot: MonitorSnapshot | null; shared: boolean; expectedCards: number }) {
-  return shared || snapshot?.slot ? <SlotTiles snapshot={snapshot} /> : <NowTiles snapshot={snapshot} expectedCards={expectedCards} />;
+function TilesNow({ snapshot, shared, expectedCards, box = null }: { snapshot: MonitorSnapshot | null; shared: boolean; expectedCards: number; box?: Pick<BoxView, "form" | "backendLabel" | "claim" | "facts"> | null }) {
+  return shared || snapshot?.slot ? <SlotTiles snapshot={snapshot} /> : <NowTiles snapshot={snapshot} expectedCards={expectedCards} box={box} />;
 }
 
 function TilesSayWhy({ shared, expectedCards, children }: { shared: boolean; expectedCards: number; children: ReactNode }) {
@@ -387,15 +389,15 @@ function ChartsBody<Key extends string>({
   ];
   return (
     <div className="space-y-4 px-4 pb-3 pt-3" onFocus={onFocus} onBlur={onBlur} data-held={held ? "" : undefined} data-charts>
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 sm:flex-nowrap">
+      <div className="space-y-1">
         <div className="-ml-2 flex flex-wrap items-center gap-1" role="group" aria-label="Lines shown">
           {lines.map((line) => (
             <LegendChip key={line.key} line={line} off={hidden.has(line.key)} onToggle={() => onToggle(line.key)} />
           ))}
         </div>
-        <span className="min-w-0 truncate text-xs text-subtle-foreground max-sm:w-full sm:text-right" data-chart-words>
+        <p className="text-xs text-subtle-foreground" data-chart-words>
           {words}
-        </span>
+        </p>
       </div>
       <div className="space-y-1.5">
         <HistoryChart {...usage} series={lines.filter((line) => !hidden.has(line.key))} ceiling={100} height={CHART_HEIGHT} axis={["100%", "50%", "0%"]} reserveTicks />
@@ -904,7 +906,7 @@ function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { 
             {errorWords} Showing data from {minuteClock(Date.parse(snapshot.timestamp))}.
           </p>
         ) : null}
-        {unanswered ? <TilesSayWhy shared={shared} expectedCards={cards}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} expectedCards={cards} />}
+        {unanswered ? <TilesSayWhy shared={shared} expectedCards={cards}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} expectedCards={cards} box={box} />}
         {range !== "live" ? <HistoryCharts key={range} box={box} range={range} expectedCards={cards} /> : snapshot ? <Charts snapshot={snapshot} share={share} expectedCards={cards} lines={lines} /> : <LiveFrame shared={shared} expectedCards={cards} words={unanswered ? "Not read" : "Reading…"} lines={lines} />}
       </ActivityCard>
       <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `bb-box cannot list ${box.name}'s processes now.` : null} gpu={cards > 0 || Boolean(snapshot?.gpus)} />

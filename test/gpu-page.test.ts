@@ -11,6 +11,7 @@ import {
   holdsNoCardWhileStopped,
   HOLDS_NO_CARD,
   monitorCard,
+  countsAsThisBox,
   otherCheckNotice,
   readCardFact,
   userspaceNotice,
@@ -187,4 +188,15 @@ test("071 unit 14: the card's last line says what a claim means, and a reading p
   assert.equal(gpuProgramsWords([{ name: "python3", pid: 3310 }]), ": python3 (3310) has the GPU open");
   assert.equal(gpuProgramsWords([]), "");
   assert.deepEqual(gpuFactLines(box({ facts: [{ label: "GPU", value: "GPU-0a1b" }] }), []), { first: "Shared", second: "GPU-0a1b" });
+});
+
+test("071 unit 14: a Docker box counts its measured use on every card, and any other box only the card it holds", () => {
+  const other = { index: 0, uuid: "11111111-1111-1111-1111-111111111111" };
+  const held = { index: 1, uuid: CARD };
+  const lxc = box();
+  assert.equal(countsAsThisBox(lxc, held), true);
+  assert.equal(countsAsThisBox(lxc, other), false);
+  const docker = box({ form: "Docker", backendLabel: "Docker on devpc" });
+  assert.equal(countsAsThisBox(docker, held), true);
+  assert.equal(countsAsThisBox(docker, other), true);
 });

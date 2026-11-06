@@ -31,8 +31,8 @@ export function powerWords(card: Pick<GpuCard, "powerWatts" | "powerLimitWatts">
   return card.powerLimitWatts === null ? draw : `${draw} of ${wattsWords(card.powerLimitWatts)}`;
 }
 
-export function cardFoot(card: GpuCard, bytes: BytesWords): string {
-  if (card.shared) {
+export function cardFoot(card: GpuCard, bytes: BytesWords, own = true): string {
+  if (card.shared && own) {
     const used = card.memoryUsedBytes === null ? null : bytes(card.memoryUsedBytes);
     if (card.ownMemoryBytes === null) return used ? `Whole card: ${used} used` : "Whole card";
     return used ? `This box: ${bytes(card.ownMemoryBytes)} of ${used}` : `This box: ${bytes(card.ownMemoryBytes)}`;
