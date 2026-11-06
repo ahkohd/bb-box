@@ -127,7 +127,7 @@ or without (`#privileged` in
 container can open every card on the host. A GPU desktop's start script
 points Xorg at the one placed (#283). GPU desktops on Docker have not been
 tested on a host with a card
-([setup/docker/README.md](../../setup/docker/README.md#gpu-desktops)).
+([setup/docker/README.md](../../setup/docker/README.md#gpu-boxes)).
 
 **The New box form** shows a GPU menu, None or 1 GPU, only for a desktop
 whose system has both a GPU desktop and a CPU one

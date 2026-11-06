@@ -3925,6 +3925,14 @@ test("071 unit 11: box_resize refuses, for each audience and changing nothing, a
     agentMessage: `Not resized: Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
   });
   assert.deepEqual(world.backend.resized, []);
+  world.general = { ...world.general, wholeCards: true };
+  world.backend.resizeWays = { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "no", share: "live", move: "no" } };
+  await assert.rejects(world.boxes.resize(THREAD, plain.name, { gpu: "shared" }, {}), { code: "unsupported", message: `Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Make a new box with the GPU it needs.` }, "a plan with no GPU part changes no GPU, whatever the backend's Resizing says");
+  cards.resizeWays = { cores: "live", memory: "live", disk: "no", shrinks: true };
+  const asked = cards.asked.length;
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), { code: "unsupported", message: `Fake host cannot change the GPU of its linux boxes, so box ${box.name} keeps its GPU. Make a new box with the GPU it needs.` });
+  assert.equal(cards.asked.length, asked, "a backend whose Resizing has no GPU part is not asked to plan one");
+  assert.deepEqual(world.backend.resized, []);
 });
 
 test("071 unit 11: box_list's resize line says a box's GPU switches between shared and whole live and cannot be added, removed or moved, where its backend says so", () => {

@@ -211,6 +211,11 @@ test("071 unit 11: shared to whole and back are live on Docker: the plan says so
   const fixed = await backend.planResize(other, "linux", { ...SMALL, gpu: "none" }, [], signal());
   assert.equal(fixed.gpu?.way, "no");
   assert.match(fixed.gpu!.words, /^GPU: shared → none · Cannot change on Docker\. A container's devices are fixed when it is made, so lone-pine cannot lose card 0\. Make a new box with the GPU it needs\.$/);
+  assert.deepEqual(fixed.gpu!.refusal, {
+    person: "Lone-pine cannot lose card 0 on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.",
+    agent: "Not resized: lone-pine cannot lose card 0 on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.",
+  });
+  await assert.rejects(backend.resize(other, "linux", { ...SMALL, gpu: "none" }, { restart: true }, signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^Not resized: lone-pine cannot lose card 0 on Docker/.test(error.agentMessage ?? ""));
   const plain = await backend.acquire(identity("linux", "none"), null, hooks(), signal());
   assert.equal((await backend.planResize(plain, "linux", { ...SMALL, gpu: "shared" }, [], signal())).gpu?.way, "no");
   const theirs = make("other-install");

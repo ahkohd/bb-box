@@ -3331,3 +3331,208 @@ two journal filters were run on sample lines.
   warm guest of that kind must still be shared (section 3): today spares and
   warm guests take the kind's default, which is never whole.
 - The live gate, on the node's helper 0.4.3.
+
+## Unit 11: GPU boxes on Docker
+
+Built on main `4948d8a2`, on branch `u71-11`. Section 7's Docker part:
+servers with a GPU, whole as placement, the share switch, CUDA pointed at
+the box's card in every route, and the words about privileged boxes. No
+helper or node change. The gate runs on a test BB from this branch, on the
+owner's Windows PC's Docker in WSL with its one card, before the merge, so
+nothing here is offered until it passes.
+
+### What it does
+
+- **Kinds.** With GPU boxes on (`gpu-desktops`), Docker's `linux` offers gpu
+  none, shared and, where `general.wholeCards` is on, whole; `linux-desktop`
+  shared and whole. With it off, neither offers a GPU, as before.
+- **The cards.** bb-box reads each card's index, UUID, model, total and free
+  memory with `nvidia-smi` in a short-lived container given the cards (no
+  network, not privileged, `--pull never`), kept 15 s for a placement and
+  60 s for `box_list`. A card is known by its UUID; the CDI device a box gets
+  is the one the toolkit names for it, by UUID or index.
+- **WSL.** The toolkit's spec in WSL has one device, `nvidia.com/gpu=all`, as
+  every card is `/dev/dxg`. Where the daemon lists only that, every card is
+  given through it, and the box's card is the UUID bb-box placed it on.
+- **Placement**, under the backend's placement lock, as acquires were
+  already ordered. A box being made holds its card, with the memory it
+  needs reserved, from its placement until docker lists it. Every bb-box
+  container on the host holds the card its labels name, running or
+  stopped, of any install, as a container's devices are fixed. Shared: a card
+  no box holds whole, with fewer boxes than boxes per card
+  (`desktops-per-gpu`), and 1,024 MiB free for a server or 384 MiB for a
+  desktop when last read, less what boxes being made need; then the fewest
+  boxes, the most free, the lowest index. Whole: a card no other box holds,
+  of any install, with that memory free (a card whose memory could not be
+  read takes no whole box); then the least used, the most free, the lowest
+  index. A card a box lately failed to see is left out for 10 minutes.
+- **Refusals** name each card's boxes, for the person with their threads'
+  titles (looked up for 2 s at most) and for an agent by box name, offering
+  its own boxes on those cards, another GPU part or the user; another
+  install's boxes are "<name> of another install". No card listed, or none
+  read, says so with the toolkit's fix.
+- **The container.** A GPU box gets `--device <its card's CDI name>`,
+  `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` set to `GPU-<UUID>`,
+  `NVIDIA_DRIVER_CAPABILITIES=all`, and the labels `bbbox.gpu`,
+  `bbbox.gpu-card` and `bbbox.gpu-part` (the part it was made with). A
+  desktop still gets `BBBOX_GPU=1`, and `BBBOX_GPU_ID` when privileged: the
+  card's UUID where its CDI name is `all`.
+- **Every route.** The container's environment reaches `docker exec`:
+  `box_run`, the box page's terminal and BB's daemon with what it starts.
+  After the box is ready, bb-box writes the two variables into
+  `/etc/environment` as root, keeping its other lines, which the command
+  prelude, login shells and PAM (`sudo -i`, `su -l`) read. So a service
+  started from a clean environment gets them too. bb-box's images are not
+  changed, so a test BB can use production's images on the owner's host.
+- **The check after start**, after an acquire and after each start of a box
+  made by this unit: `nvidia-smi` lists the card, `cuInit` works, and CUDA's
+  device 0 has the card's UUID (`cuDeviceGetUuid`, no context, no memory). A
+  fresh box whose CUDA picks another card, or none, or whose `nvidia-smi`
+  lists none, is removed, the acquire refused for each audience, and the card
+  left out for 10 minutes. Other failures keep the box and its GPU fact says
+  what the check found. A started box cannot move on Docker, so its fact
+  says what the check found.
+- **The words.** A GPU box's facts: "GPU: card 0, shared, <model>, 32 GiB.
+  Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed."
+  Every box on a host whose boxes are privileged, GPU or none, and every GPU
+  box where the cards are one device, has a `Cards` fact, which `box_status`
+  and `box_acquire`'s answer show: "On <host>, every box with Docker in it
+  can open every card, with a GPU or without. None and Whole card are what
+  bb-box places, not what a box can reach." `box_list` adds it after the
+  cards, and the resize words and the doctor say it too.
+- **The share switch.** `box_resize gpu` and `bb box resize --gpu` (and
+  `bb box machines resize --gpu`) take none, shared or whole; the tool's and
+  the CLI's whole is hidden while whole cards are off, as unit 8 does.
+  Docker's `Resizing.gpu` is add `no`, share `live`, move `no`. Shared to whole
+  is live where no other box holds the card, of any install, and refused
+  naming them otherwise ("on Docker a box cannot move to another card");
+  whole to shared is live. The plan is made again under the placement lock
+  when carried out. The part is this install's, in the backend's storage
+  with a generation that goes up at each switch; the claim on the guest and
+  the GPU fact follow it, and the record's `gpu` changes. A GPU added or
+  removed is refused, with words for each audience. A backend whose
+  `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
+  change.
+- **The doctor.** `docker.gpus` lists the cards with their memory when read,
+  the boxes per card, whether they are one device, and the reach words; it
+  warns, naming them, when another install's GPU boxes are on the host, as it
+  sees only the part they were made with. `gpu.<card>.whole` fails a whole
+  card with another box on it; `gpu.<card>.limit` (new) warns of a card over
+  its limit, naming its boxes.
+- `setup/docker/README.md` has a "GPU boxes" section in place of "GPU
+  desktops".
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root with `--init`, as CI runs
+them:
+
+- `tsc` clean. The node suite: 3,820 tests, 3,398 passed, 112 failed, 310
+  skipped; vitest, 469 passed. On main `4948d8a2` in the same container: 3,800
+  tests, 3,378 passed, 112 failed, 310 skipped. The 112 are the same tests on
+  both, by name: identity reset scripts that find none of the container's
+  eth interfaces, and the snapshot, fork and keep tests built on them, the
+  Android image check and `setup-mac.sh`; none is a GPU or Docker test.
+  Without `--init`, `test/gpu-setup.test.ts` hangs on unreaped processes, on
+  main too.
+- `test/docker-gpus.test.ts`, 17 tests, against the fake docker, which now
+  lists cards in a probe container and, in a box given them, answers
+  `nvidia-smi` and CUDA's device by `CUDA_VISIBLE_DEVICES`: the kinds' parts;
+  a shared server's device, labels, environment, `/etc/environment`, claim,
+  facts and probe; a box with no GPU, privileged and not; WSL's one device;
+  boxes per card with stopped boxes, boxes being made and another install's;
+  the memory a server and a desktop need, and an unread card; whole
+  placement, its refusals for each audience and whole cards off; two whole
+  acquires at once, one container made; the share switch, its refusal and
+  the fixed devices; a box whose CUDA picks another card; a start after a
+  switch; `box_list`'s room; the doctor; the probe's parser; placement's
+  order; the check's judge; the environment script on a file.
+- `test/boxes.test.ts`, 3 tests: `box_resize gpu` live, recorded with its
+  claim, and left out keeps the GPU; refusals for each audience of a GPU a
+  backend cannot add or remove, a whole card it refuses, whole while whole
+  cards are off, and a GPU change where the backend's `Resizing` or its plan
+  has no GPU part; the resize line's words. `test/plugin.test.ts`:
+  `box_resize`'s `gpu` and the CLI's `--gpu` offer no whole card while whole
+  cards are off. `test/docker.test.ts`: today's GPU desktops' tests, now with
+  the new words.
+- 26 reverts, each rule on its own, each failing its tests, by a harness
+  that patches the rule out, runs its tests and puts it back. Two of them,
+  `box_resize`'s two GPU guards, first passed, as each covered the other;
+  a test for each on its own was added, and both then failed.
+
+### The rehearsal on a box with a fake card
+
+On a `linux` box with Docker 29.1.3, the real path with a card that is not
+there: `bbbox/linux:1` built from `setup/docker/build.sh linux`; a CDI spec in
+`/etc/cdi` written as WSL's is, with only `nvidia.com/gpu=all`, giving two
+fake cards, a fake `nvidia-smi` and a fake `libcuda.so.1` (C, honouring
+`CUDA_VISIBLE_DEVICES`). Docker listed the device as soon as the file was
+written, with no restart. A fresh `npx bb-app@0.48.1` in the box, with no
+account, bb-box installed from this branch by the gate's script, against the
+box's own Docker:
+
+| Step | Result |
+| --- | --- |
+| The doctor | "GPUs: 2 NVIDIA cards as CDI devices (card 0, NVIDIA GeForce RTX 5090 (fake), 32 GiB, 31000 MiB free when read; card 1, ...), up to 4 boxes each. Docker gives them as one device, nvidia.com/gpu=all, as in WSL. On <box>, every box with Docker in it can open every card, ..." |
+| `bb box acquire linux --gpu none` | Ready in 0.4 s, privileged, no device request, "Cards: On <box>, every box with Docker in it can open every card, with a GPU or without. ..." |
+| `--gpu shared` | Ready in 0.7 s with "gpu 52 ms, card check 38 ms"; "GPU: card 0, shared, NVIDIA GeForce RTX 5090 (fake), 32 GiB. Run nvidia-smi -i GPU-…a to see it; every card on the host is listed." Docker keeps the device in `DeviceRequests` (`cdi`, `nvidia.com/gpu=all`); both variables in the container's environment and in `/etc/environment` |
+| `bb box run` (as `box_run`) | `cuda-card.py load`: `result=0 devices=1 device0=GPU-…a`, a context and 64 MiB |
+| The box page's terminal command, on a PTY | The login shell had `CUDA_VISIBLE_DEVICES=GPU-…a`, and CUDA picked card 0 |
+| A service from `sudo -i` with the variables removed | Ran detached and picked card 0; a login from `env -i` had the variable, from `/etc/environment` through PAM |
+| `CUDA_VISIBLE_DEVICES` set to another UUID | `result=100 devices=0` |
+| `--gpu whole --check`, then the switch | Live in 55 ms; "GPU: card 0, whole, ..."; the doctor's "GPU 0 whole: Card 0 is <box>'s whole card, with no other box on it." |
+| Another `--gpu shared` | On card 1, as card 0 was whole |
+| `--gpu none --check` | Refused: "cannot lose card 0 on Docker" |
+| Back to shared | Live in 54 ms |
+
+The rehearsal found three faults in the gate's steps, fixed there: CDI
+devices are in `HostConfig.DeviceRequests`, not `Devices`; `pgrep -f` matched
+its own shell; and a terminal's input must wait for the shell. It also found
+that the sweep releases the boxes of a thread the test BB does not know,
+within two sweeps, so the gate's script makes a real project and thread.
+
+### Deviations from the note
+
+- Settings stay as units 7 and 8 left them: `gpu-desktops` (now worded "GPU
+  boxes"), `desktops-per-gpu` (now "Boxes per card", counting every
+  install's boxes on the card, as Docker counted desktops), `general.wholeCards`
+  for whole, and 1,024 MiB a constant. The key renames are unit 15's.
+- Resize's GPU part in core is built here for the share switch only, as unit
+  9 has not been built: `ResizePlan.gpu` is a `GpuResize` with the words and,
+  where refused, a refusal for each audience, not section 8's `GpuChange`
+  with `installs`. Unit 9 extends it for Proxmox LXC.
+- On WSL every GPU box gets every card, as the spec has one device; the words
+  say so even where boxes are not privileged.
+- A fresh box that fails its check is refused and its card left out, not made
+  again on another card: a container's card is fixed when it is made, and
+  making it again belongs to the registry's retry. The gate's host has one card.
+- Readings come from the probe container, not from a host report or a box,
+  with their age in `box_list`. A placement reads the cards again when its
+  reading is over 15 s old, which adds about a second to a GPU box's acquire.
+- Today's GPU desktops made before this unit are counted on their cards as
+  shared, and their starts run no check, as before.
+- `linux-desktop` with gpu none is not offered on Docker: that is
+  `linux-desktop-cpu`.
+
+### The gate
+
+The gate's steps are in the report to the lead, with the scripts they use:
+read-only checks on the host first (the card, the driver in WSL, Docker's
+CDI and runtimes, the toolkit, bb-box's images and containers there); then
+the smallest setup that gives Docker in that distro CDI devices for the card
+(NVIDIA's toolkit from the distro's own package and `nvidia-ctk cdi generate
+--mode=wsl` into `/etc/cdi`, with no Docker setting changed and nothing
+restarted), with the way back; then a test BB in a box, whose Docker backend
+reaches the host's Docker through a unix socket the lead forwards over SSH
+from the host, and the gate's steps on it. Every step that uses the card
+first reads it card-wide and stops when it is over 10 per cent busy or has
+over 2 GiB in use; one test GPU box at a time; one CUDA load, 64 MiB for
+about a second.
+
+It has not run yet.
+
+### Still open
+
+- The gate on a real card.
+- A switch made by one install is not seen by another on the same host; the
+  doctor warns where two installs have GPU boxes there.

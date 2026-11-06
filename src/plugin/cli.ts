@@ -36,7 +36,6 @@ const resizeOptions = {
   cores: { type: "integer", min: 1, max: 1024, description: "Cores. Left out, the box keeps its own." },
   "memory-gib": { type: "integer", min: 1, max: 65536, description: "Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own." },
   "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, which only grows. Left out, the box keeps its own." },
-  gpu: { type: "string", description: "The box's GPU: shared, or whole where whole cards are on. Left out, the GPU stays as it is. On Docker shared and whole switch live, and a GPU cannot be added, removed or moved." },
   restart: { type: "boolean", description: "Allow a restart, which ends everything running in the box, where a part needs one." },
   check: { type: "boolean", description: "Only say what would change, how, and whether there is room." },
   force: { type: "boolean", description: "Restart it even while threads are working on it, which ends their work." },
@@ -201,6 +200,19 @@ async function resizeWords(app: BbBox, answer: Awaited<ReturnType<typeof resizeB
   return `${resizeText(answer, checked)}${machine ? `\n${machine}` : ""}`;
 }
 
+function resizeGpuOption(app: BbBox) {
+  return {
+    gpu: {
+      type: "string",
+      get description() {
+        return wholeCardsOn(app)
+          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. On Docker shared and whole switch live, and a GPU cannot be added, removed or moved."
+          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.";
+      },
+    },
+  } as const;
+}
+
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
   bb.cli.register(
@@ -317,7 +329,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         resize: cliCommand({
           summary: "Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: boxPositional,
-          options: { ...threadOption, ...resizeOptions },
+          options: { ...threadOption, ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }, ctx) =>
             guard("Resizing the box", async () => {
               const threadId = threadOf(options.thread, ctx);
@@ -359,7 +371,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         "machines resize": cliCommand({
           summary: "Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
-          options: resizeOptions,
+          options: { ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }) =>
             guard("Resizing the machine", async () => out(await resizeWords(app, await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
         }),

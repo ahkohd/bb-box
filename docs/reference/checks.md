@@ -135,6 +135,8 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 
 | ID | Name | What it checks |
 | --- | --- | --- |
+| `gpu.<gpu>.whole` | GPU &lt;gpu> whole | A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071). |
+| `gpu.<gpu>.limit` | GPU &lt;gpu> boxes | A card has no more boxes than the boxes per card. It warns, naming the boxes over the limit, which keep running while no new box goes on the card (071). |
 | `docker.cli` | docker CLI | The docker CLI runs on BB's server. |
 | `docker.daemon` | Docker daemon | The Docker host answers, runs Linux containers, and its architecture. |
 | `docker.attach` | Attached output | On a Windows machine, a Docker host at tcp://127.0.0.1, or a BB machine whose Docker there is, returns an attached command's output. WSL's localhost forwarder does not: docker run and docker exec print nothing and exit 0. For a BB machine, set machine-docker-host to wsl://&lt;distro>. |
@@ -145,7 +147,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.lxcfs` | Memory and CPUs a box sees | The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken. |
 | `docker.network` | Network &lt;network> | bb-box's network for its boxes, made by bb-box. |
 | `docker.privileged` | Docker in boxes | Whether boxes are privileged, so they can run Docker inside. |
-| `docker.gpus` | GPUs | The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops. |
+| `docker.gpus` | GPUs | The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; and another install's GPU boxes on the host (071). |
 | `docker.capacity` | Room on &lt;host> | Room on the host for a Linux box at its default size. |
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
 | `image.<image>` | Image &lt;image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |

@@ -1314,7 +1314,11 @@ export class DockerBackend implements Backend {
     if (from === "none" || to === "none") {
       const change = from === "none" ? `gain a card` : `lose ${named}`;
       const words = `GPU: ${from} → ${to} · Cannot change on Docker. A container's devices are fixed when it is made, so ${name} cannot ${change}. Make a new box with the GPU it needs.`;
-      return { from, to, way: "no", card: placement, others: [], words, refusal: null };
+      const refusal: GpuRefusal = {
+        person: `${capitalise(name)} cannot ${change} on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.`,
+        agent: `Not resized: ${name} cannot ${change} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+      };
+      return { from, to, way: "no", card: placement, others: [], words, refusal };
     }
     if (to === "whole" && !this.#wholeOn()) return { from, to, way: "no", card: placement, others: [], words: WHOLE_CARDS_OFF.person, refusal: WHOLE_CARDS_OFF };
     const reach = reachWords(host, this.#privileged(kind), cards.oneDeviceForEveryCard);
@@ -1348,7 +1352,7 @@ export class DockerBackend implements Backend {
       const from = sizeOf(found);
       const state = await this.#state(signal);
       const gpu = to.gpu === undefined ? null : await this.#planGpu(state, found, kind, to.gpu, signal);
-      if (gpu?.refusal) throw new BackendError("no_capacity", gpu.refusal.person, gpu.refusal.agent);
+      if (gpu?.refusal) throw new BackendError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
       if (gpu && gpu.way !== "live") throw new BackendError("unsupported", gpu.words);
       const pinTo = async (again: boolean) => {
         const host = await this.#cpusToPinTo(state.info, to.cores, signal, again);

@@ -182,7 +182,7 @@ Resize a thread's box: its cores, memory or disk, where its backend can, live or
 
 ```text
 Usage:
-  bb box resize <box> [--thread <value>] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force]
+  bb box resize <box> [--thread <value>] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force] [--gpu <value>]
 
 Arguments:
   <box>  The box's name or ID. (required)
@@ -196,6 +196,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.
   --help, -h                   Show this help and exit
 ```
 
@@ -247,7 +248,7 @@ Resize one of your machines: its cores, memory or disk, where its backend can, l
 
 ```text
 Usage:
-  bb box machines resize <machine> [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force]
+  bb box machines resize <machine> [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force] [--gpu <value>]
 
 Arguments:
   <machine>  The machine's name or ID, from bb box machines. (required)
@@ -260,6 +261,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.
   --help, -h                   Show this help and exit
 ```
 
