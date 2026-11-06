@@ -47,6 +47,7 @@ export interface BackendOptions {
   readonly storage?: MemoryStorage;
   readonly readyTimeoutMs?: number;
   readonly titles?: Readonly<Record<string, string>>;
+  readonly wholeCards?: boolean;
 }
 
 let bridges = 0;
@@ -162,6 +163,7 @@ export class ClaimsBridge {
       ...shipped,
       kind: (id: string) => (options.kindsOff?.includes(id) ? { ...shipped.kind(id), enabled: false } : shipped.kind(id)),
       ...(titles ? { threadTitle: async (threadId: string) => titles[threadId] ?? null } : {}),
+      wholeCards: () => options.wholeCards ?? true,
     };
     const backend = new ProxmoxLxcBackend(config, context, {
       fetch: this.proxmox.fetch,

@@ -210,8 +210,8 @@ function holdsPlace(holder: HelperHolder): boolean {
   return holder.running || holder.part === "whole" || !holder.managed;
 }
 
-export function yieldsToWhole(holder: HelperHolder): boolean {
-  return !holder.running && holder.part === "shared" && holder.managed;
+export function yieldsToWhole(holder: HelperHolder, input: Pick<WholeInput, "installId" | "ownPool">): boolean {
+  return !holder.running && holder.part === "shared" && holder.managed && holder.install === input.installId && input.ownPool.has(holder.vmid);
 }
 
 interface CardLoadInFull extends CardLoad {
@@ -286,6 +286,7 @@ export function placeShared(input: PlaceInput): Placed {
 
 export interface WholeInput extends PlaceInput {
   readonly retirable: ReadonlySet<number>;
+  readonly ownPool: ReadonlySet<number>;
 }
 
 export function placeWhole(input: WholeInput): PlacedWhole {
@@ -296,7 +297,7 @@ export function placeWhole(input: WholeInput): PlacedWhole {
     if (!input.candidates.has(card.uuid)) continue;
     const load = loadOf(card, input);
     loads.push(publicLoad(load));
-    const blocking = load.holders.filter((holder) => !yieldsToWhole(holder) && !input.retirable.has(holder.vmid));
+    const blocking = load.holders.filter((holder) => !yieldsToWhole(holder, input) && !input.retirable.has(holder.vmid));
     const waiting = input.outstanding.find((request) => request.marker.card === card.uuid);
     const unsettled = unsettledOn(input, card);
     const memory = input.memory.get(card.uuid);
@@ -313,7 +314,7 @@ export function placeWhole(input: WholeInput): PlacedWhole {
         load: publicLoad(load),
         usedMiB: memory.totalMiB - memory.freeMiB,
         retire: [...new Set(load.holders.filter((holder) => input.retirable.has(holder.vmid)).map((holder) => holder.vmid))],
-        yielding: [...new Set(load.holders.filter(yieldsToWhole).map((holder) => holder.vmid))],
+        yielding: [...new Set(load.holders.filter((holder) => yieldsToWhole(holder, input)).map((holder) => holder.vmid))],
       });
     }
   }

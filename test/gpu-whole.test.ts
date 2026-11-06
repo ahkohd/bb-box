@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BackendError, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { CardReservations, placeShared, placeWhole, type PlaceInput } from "../src/backends/proxmox-lxc/gpu-claims.ts";
+import { CardReservations, placeShared, placeWhole, reservationsOn, type PlaceInput } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { answerTo, parseHelperLines, type HelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
@@ -9,6 +9,8 @@ import { cardLines, marker } from "./gpu-helper/node.ts";
 import { gpuPartsText } from "../src/plugin/tools.ts";
 import { Backends } from "../src/backends/index.ts";
 import { MemoryStorage } from "./helpers.ts";
+import { emptyDocument, generalConfig, readDraft } from "../src/core/document.ts";
+import { OPTIONS } from "../src/plugin/config-edits.ts";
 import type { KindView } from "../src/plugin/views.ts";
 
 const A = CARD_A.uuid;
@@ -65,7 +67,7 @@ const report = [
   "ledger entries 0",
 ];
 
-function rules(holders: readonly string[] = [], more: Partial<PlaceInput> & { readonly retirable?: ReadonlySet<number> } = {}) {
+function rules(holders: readonly string[] = [], more: Partial<PlaceInput> & { readonly retirable?: ReadonlySet<number>; readonly ownPool?: ReadonlySet<number> } = {}) {
   const parsed = lines([...report, ...holders].join("\n"));
   return {
     lines: parsed,
@@ -82,6 +84,7 @@ function rules(holders: readonly string[] = [], more: Partial<PlaceInput> & { re
     vmid: null,
     outstanding: [],
     retirable: new Set<number>(),
+    ownPool: new Set<number>(),
     ...more,
   };
 }
@@ -97,9 +100,11 @@ test("071 unit 8: the whole-card rules: stopped shared boxes the helper manages 
   assert.ok(free.is === "placed" && free.card.uuid === A, "card 0 has the least memory in use");
   const preferred = placeWhole(rules([], { prefer: B }));
   assert.ok(preferred.is === "placed" && preferred.card.uuid === B, "a box's last card first, where it is free");
-  const yielding = placeWhole(rules([`holder ${A} 11 shared stopped install test managed`, `holder ${A} 12 shared stopped install other managed`]));
+  const yielding = placeWhole(rules([`holder ${A} 11 shared stopped install test managed`], { ownPool: new Set([11]) }));
   assert.ok(yielding.is === "placed" && yielding.card.uuid === A);
-  assert.deepEqual(yielding.yielding, [11, 12], "stopped shared boxes the helper manages, of any install, yield");
+  assert.deepEqual(yielding.yielding, [11], "this install's own stopped shared boxes yield");
+  assert.deepEqual(said(placeWhole(rules([`holder ${A} 11 shared stopped install test managed`, `holder ${A} 12 shared stopped install other managed`], { ownPool: new Set([11]), candidates: new Set([A]) }))), ["card 0 has CT 12 holding it while stopped"], "another install's never yields");
+  assert.deepEqual(said(placeWhole(rules([`holder ${A} 13 shared stopped install test managed`], { candidates: new Set([A]) }))), ["card 0 has CT 13 holding it while stopped"], "nor this install's outside its pool");
   const blocked = placeWhole(
     rules([
       `holder ${A} 21 shared running install test managed`,
@@ -371,4 +376,144 @@ test("071 unit 8: each backend's context gives the threads' titles BB has, for t
   assert.equal(await titles.context("proxmox-lxc").threadTitle?.("thr_other"), null);
   const bare = new Backends({ storage: new MemoryStorage(), installId: "i8", logError: () => {} });
   assert.equal(bare.context("proxmox-lxc").threadTitle, undefined);
+});
+
+test("071 unit 8, lead: whole cards are off unless the install turns them on: no offer, room or acquire has them, and the words say so to each audience", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ wholeCards: false });
+  for (const kind of backend.kinds().filter((each) => each.id === "linux" || each.id === "linux-desktop")) assert.ok(!kind.gpuParts?.includes("whole"), kind.id);
+  const room = await backend.gpuRoom("linux");
+  assert.deepEqual(room.parts, ["none", "shared"]);
+  assert.equal(room.wholeOff, true);
+  assert.ok(room.cards?.every((card) => !card.freeForWhole));
+  const linux = { desktop: false, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared"], gpuRoom: { ...room, at: 1_000 } }] } as unknown as KindView;
+  assert.match(gpuPartsText(linux, 1_000), /: none or shared; ask with gpu shared \(.*\)\. Whole cards are off on this install: ask the user if a box needs a card to itself\.$/);
+  const refused = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
+  assert.equal(refused.message, "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.");
+  assert.equal(refused.agentMessage, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  const before = clones(bridge);
+  await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && error.agentMessage === refused.agentMessage);
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
+  assert.equal(clones(bridge), before);
+  assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, [])).ok, true, "shared is as before");
+});
+
+test("071 unit 8, Astra 2: a whole card never yields another install's guest or one outside this install's pool; only this install's own stopped shared boxes yield", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const theirs = { ...box("linux-desktop", "shared", "thr_theirs"), name: "their-desktop" };
+  bridge.desktop(7065, CARD_A, theirs, SECOND_INSTALL, { marker: marker("shared", CARD_A, 1), pool: SECOND_POOL });
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().some((line) => line.startsWith(`holder ${A} 7065 shared stopped install ${SECOND_INSTALL} managed`)), bridge.node.reportLines().join("\n"));
+  const made = await backend.acquire(box("linux", "whole"), null, hooks(), signal());
+  assert.equal(made.claim?.card, B, "the card another install's stopped box holds is not taken, though it has the least memory in use");
+  bridge.pass();
+  assert.deepEqual(bridge.lines(7065), cardLines(CARD_A, "desktop"), "the other install's guest keeps its lines");
+  await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), /card 0 has CT 7065 of another install holding it while stopped/);
+  const elsewhere = { ...box("linux-desktop", "shared", "thr_whole"), name: "other-pool" };
+  bridge.desktop(7066, CARD_B, elsewhere, INSTALL, { marker: marker("shared", CARD_B, 1), pool: SECOND_POOL });
+  await backend.release(made, releasing);
+  bridge.pass();
+  await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), /card 1 has CT 7066 holding it while stopped/);
+  bridge.pass();
+  assert.deepEqual(bridge.lines(7066), cardLines(CARD_B, "desktop"), "this install's guest in another pool keeps its lines");
+  assert.deepEqual(bridge.node.guestWrites().filter((write) => / (7065|7066) /.test(` ${write} `)), [], "the helper wrote neither guest");
+});
+
+test("071 unit 8, Astra 1 and Fable 3: whole is refused before any path that does not go through the helper: a template's, an image's and a resumed acquire's", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  assert.equal((await backend.capacity("linux-desktop", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, [])).ok, true);
+  bridge.timerReport();
+  const before = clones(bridge);
+  const refusal = /pve cannot give a box a whole card now: it has no GPU helper to give a box a card/;
+  await assert.rejects(backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()), refusal);
+  await assert.rejects(backend.acquire({ ...box("linux-desktop", "whole"), from: "9001" }, null, hooks(), signal()), refusal);
+  await assert.rejects(backend.acquire({ ...box("linux", "whole"), from: "9000" }, null, hooks(), signal()), /pve cannot give a box a whole card now/);
+  assert.equal(clones(bridge), before, "nothing was copied");
+  const resumed = box("linux-desktop", "whole");
+  bridge.plain(7012, resumed, INSTALL);
+  await assert.rejects(backend.acquire(resumed, { ref: "7012", host: "pve", address: null, size: null, data: { template: 9000, box: resumed.boxId } }, hooks(), signal()), refusal);
+  const left = bridge.proxmox.guests.get(7012);
+  assert.ok(!left || (left.status === "stopped" && !bridge.gpuTags(7012).length), "the resumed guest was neither started nor marked");
+  assert.ok(!bridge.node.reportLines().some((line) => /^holder \S+ 7012 /.test(line)), "nor given a card");
+});
+
+test("071 unit 8, Astra 4: a whole server whose start check finds no card is placed again as a whole box on the other card, where one is free", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend({ readyTimeoutMs: 60_000 });
+  const whole = await backend.acquire(box("linux", "whole"), null, hooks(), signal());
+  const vmid = Number(whole.ref);
+  assert.equal(whole.claim?.card, A);
+  await backend.stop(whole);
+  bridge.pass();
+  bridge.seenInBox.set(vmid, { onCard: A, shows: "No devices were found" });
+  const started = await backend.start(whole, signal());
+  assert.deepEqual(started && "claim" in started ? started.claim : null, { card: B, part: "whole", generation: 2, answer: "granted" });
+  assert.deepEqual(bridge.lines(vmid), cardLines(CARD_B, "server"));
+  assert.equal(bridge.proxmox.guests.get(vmid)!.status, "running");
+});
+
+test("071 unit 8, Fable 5: a card the start gate keeps whole names the box it is starting", async () => {
+  const bridge = new ClaimsBridge();
+  const backend = bridge.backend();
+  const owl = box("linux-desktop", "whole", "thr_whole", "starting-owl");
+  runningElsewhere(bridge, 7067, CARD_A);
+  bridge.desktop(7011, CARD_A, owl, INSTALL, { marker: marker("whole", CARD_A, 1) });
+  bridge.pass();
+  let seen: string | null = null;
+  bridge.proxmox.intercept = (call) => {
+    if (seen === null && call.method === "PUT" && call.path.endsWith("/lxc/7011/config") && (call.params.tags ?? "").includes(`gpu.whole.${B}.g2`)) {
+      const reservation = reservationsOn(`${bridge.url.replace(/\/+$/, "")}#pve`).live(parseHelperLines(""), Date.now()).find((each) => each.card === B);
+      seen = reservation?.making ? `${reservation.making.name} ${reservation.making.starting ? "starting" : "making"}` : "unnamed";
+    }
+    return undefined;
+  };
+  await backend.start(bridge.stoppedGuest(7011, owl, 9001), signal());
+  assert.equal(seen, "starting-owl starting");
+  assert.equal(blockWords({ is: "reserved-whole", card: lines(report.join("\n")).cards[1]!, making: { name: "starting-owl", threadId: "thr_whole", starting: true } }, byVmid, PERSON), "card 1 is kept whole for starting-owl, which bb-box is starting");
+});
+
+test("071 unit 8, Astra 6, Astra 7 and Fable 4: box_list gives desktops their cards too, whose whole card each is and which are free for a whole card, by the acquire's own placement, so a card a mismatch closes is not free", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  await backend.acquire(box("linux-desktop", "whole", "thr_job", "quiet-elm"), null, hooks(), signal());
+  bridge.pass();
+  const desktop = await backend.gpuRoom("linux-desktop");
+  assert.deepEqual(desktop.parts, ["shared", "whole"]);
+  assert.deepEqual(desktop.cards?.map((card) => [card.index, card.whole, card.wholeBy, card.freeForWhole]), [
+    [0, true, "quiet-elm", false],
+    [1, false, null, true],
+  ]);
+  assert.equal(desktop.neededMiB, 384);
+  assert.ok(desktop.readings.length > 0, "the readings stay");
+  const mismatched = { ...box("linux-desktop", "shared", "thr_m"), name: "on-wrong-lines" };
+  bridge.desktop(7013, CARD_B, mismatched, INSTALL, { marker: marker("shared", CARD_B, 1) });
+  bridge.pass();
+  const guest = bridge.proxmox.guests.get(7013)!;
+  for (const key of Object.keys(guest.config)) if (/^dev\d+$/.test(key)) delete guest.config[key];
+  Object.assign(guest.config, Object.fromEntries(cardLines(CARD_A, "desktop").map((line, index) => [`dev${index}`, line])));
+  guest.status = "running";
+  bridge.proxmox.statusPass();
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().some((line) => line.startsWith("mismatch 7013 ")), bridge.node.reportLines().join("\n"));
+  const closed = await backend.gpuRoom("linux");
+  assert.equal(closed.cards?.find((card) => card.index === 1)?.freeForWhole, false, "a card a mismatch closes is not free for a whole card");
+  await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), /card 1 takes no new box while a box there is on another card's lines/);
+});
+
+test("071 unit 8, lead: general.wholeCards is a boolean, off unless set, and bb box option lists it", () => {
+  const read = (general: unknown) => readDraft({ schema: emptyDocument().schema, revision: 0, backends: [], kinds: {}, general }, []);
+  const on = read({ wholeCards: true });
+  assert.deepEqual(on.problems, []);
+  assert.equal(generalConfig(on.document).wholeCards, true);
+  assert.equal(generalConfig(read({}).document).wholeCards, false, "off unless set");
+  assert.deepEqual(read({ wholeCards: "yes" }).problems.map((problem) => [problem.path, problem.message]), [["general.wholeCards", "wholeCards is true or false."]]);
+  const option = OPTIONS.find((each) => each.name === "general.wholeCards");
+  assert.deepEqual(option && { type: option.type, default: option.default }, { type: { kind: "boolean" }, default: false });
 });

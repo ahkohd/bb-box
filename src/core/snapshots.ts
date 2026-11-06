@@ -30,7 +30,7 @@ import {
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
-import { gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
+import { WHOLE_CARDS_OFF_FOR_FORK, gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
 import { currentKindId } from "../backends/kinds.ts";
 import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
@@ -102,6 +102,7 @@ export interface SnapshotBoxes {
   machineBack(box: BoxRecord): boolean;
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
+  wholeCards?(): Promise<boolean>;
 }
 
 export interface ThreadOnTheBox {
@@ -2616,6 +2617,7 @@ export class Snapshots {
     const kind = source?.kind ?? target.box.kind;
     const offer = this.offerFor(backend, kind);
     if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity || (heldCopy && !backend.copyPlan)) throw new BoxError("unsupported", `${backend.label} does not fork ${kind} boxes.`);
+    if (input.gpu === "whole" && !(await this.#deps.boxes.wholeCards?.())) throw new BoxError("unsupported", caller.is === "agent" ? WHOLE_CARDS_OFF_FOR_FORK.agent : WHOLE_CARDS_OFF_FOR_FORK.person, WHOLE_CARDS_OFF_FOR_FORK.agent);
     const gpuRefused = input.gpu === "shared" || input.gpu === "whole" ? forkGpuRefused(backend, kind) : null;
     if (gpuRefused) throw new BoxError("unsupported", gpuRefused);
     const safeFrom = offer.forkSafeFrom ?? 1;

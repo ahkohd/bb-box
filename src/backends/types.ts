@@ -491,6 +491,7 @@ export interface GpuRoom {
   readonly limit?: number | null;
   readonly at?: number | null;
   readonly neededMiB?: number;
+  readonly wholeOff?: boolean;
 }
 
 export interface Limit {
@@ -1296,6 +1297,7 @@ export interface BackendContext {
   warmShortfalls(short: readonly WarmShortfall[]): void;
   logError(operation: string, error: unknown): void;
   threadTitle?(threadId: string): Promise<string | null>;
+  wholeCards?(): boolean;
   /** Says what the backend did by itself, as removing what a run left, for bb-box's log. */
   log?(message: string): void;
   /**

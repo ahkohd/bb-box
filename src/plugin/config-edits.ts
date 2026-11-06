@@ -1,6 +1,6 @@
 import { PluginCliError } from "@get-bb/plugin-sdk";
 import type { FieldValue } from "../backends/types.ts";
-import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, MONITOR_REFRESH_SECONDS, SNAPSHOT_DEFAULTS, SNAPSHOT_LIMITS, isCents, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
+import { GENERAL_DEFAULTS, MONITOR_DEFAULTS, WHOLE_CARDS_BY_DEFAULT, MONITOR_REFRESH_SECONDS, SNAPSHOT_DEFAULTS, SNAPSHOT_LIMITS, isCents, sizeChanges, type BackendConfig, type ConfigDocument, type HostConfig, type KindConfig, type SecretState } from "../core/document.ts";
 import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange } from "../core/sizes.ts";
 import { DEFAULT_TAILNET_TAGS } from "../core/tailnet.ts";
 import type { FieldView } from "./configuration.ts";
@@ -425,6 +425,7 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "general.nightlyImages", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.nightlyImages, help: "Whether bb-box rebuilds the standard images that are due at 03:00 each night." },
   { name: "general.identityResetBackends", type: { kind: "tags" }, default: "", help: "The backends whose new Linux and macOS boxes get an identity marker, so that a copy of one resets its identity (070), comma-separated backend IDs. None by default." },
   { name: "general.testDevice", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.testDevice, help: "Advanced: whether Linux and macOS boxes offer the test device in place of a phone." },
+  { name: "general.wholeCards", type: { kind: "boolean" }, default: WHOLE_CARDS_BY_DEFAULT, help: "Whether a Linux box or desktop may have a whole card, a GPU to itself, where its backend can give one. Off by default." },
   { name: "general.encoderLedger", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.encoderLedger, help: "Advanced: whether each Mac's video encoder is shared out fairly between its iOS streams." },
   { name: "general.iosEncoder", type: { kind: "choice", values: ["auto", "hardware", "software"] }, default: GENERAL_DEFAULTS.iosEncoder, help: "Advanced: how an ios box's device video is encoded." },
   { name: "general.tailnet.mode", type: { kind: "choice", values: ["off", "oauth"] }, default: "off", help: "oauth joins the machines bb-box rents to your tailnet with a Tailscale OAuth client; off joins none." },

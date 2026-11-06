@@ -7132,6 +7132,11 @@ test("071 unit 8: box_acquire takes gpu whole and box_fork too; the provider's r
   const { harness, app, world, tool } = await start(undefined, { kinds: [linux, FAKE_KINDS[1]!] });
   t.after(() => harness.lifecycle.dispose());
   new FakeSnapshots().attach(world.backend!, Date.now);
+  const off = text(await tool("box_acquire", { kind: "linux", gpu: "whole" }));
+  assert.equal(off, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.", "whole cards are off until the install turns them on");
+  const before = app.configuration.exported();
+  const turned = await app.configuration.apply({ ...before, general: { ...before.general, wholeCards: true } }, before.revision);
+  assert.ok(turned.ok, JSON.stringify(turned.ok ? null : turned));
   const backend = world.backend! as unknown as { capacity: Backend["capacity"] };
   const capacity = backend.capacity.bind(backend);
   const asked: (string | undefined)[] = [];

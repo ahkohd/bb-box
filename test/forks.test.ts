@@ -70,10 +70,10 @@ function withLease(root: string, clientId: string): void {
   writeFileSync(join(root, "run/systemd/netif/leases/2"), `# This is private data. Do not parse.\nADDRESS=10.0.0.5\nCLIENTID=${clientId}\n`);
 }
 
-function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?: boolean } = {}): Forks {
+function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?: boolean; readonly wholeCards?: boolean } = {}): Forks {
   const source = identityGuest();
   withIdentity(source.root);
-  const state = world({ identityTool: source.tool, identityRoot: source.root, forkWaitMs: options.forkWaitMs ?? 300, ...(options.markersOn === false ? { markersOn: false } : {}) });
+  const state = world({ identityTool: source.tool, identityRoot: source.root, forkWaitMs: options.forkWaitMs ?? 300, ...(options.markersOn === false ? { markersOn: false } : {}), ...(options.wholeCards !== undefined ? { wholeCards: options.wholeCards } : {}) });
   withIdentitySource(state, "eth");
   const macs = new Map<string, string>();
   const roots = new Map<string, string>();
@@ -715,6 +715,23 @@ test("071 unit 8: a fork's room refused by its provider reaches an agent in the 
   assert.deepEqual(asked, [THREAD]);
   const person = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box), { gpu: "whole" }));
   assert.equal((person as BoxError).agentMessage, null, "the person's refusal carries no agent's words");
+});
+
+test("071 unit 8, lead: a fork with a whole card is refused while whole cards are off, before the take and before any record, in words for each audience", async () => {
+  const forks = forkWorld({ wholeCards: false });
+  const { state } = forks;
+  const box = await readyBox(state);
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const records = state.store.records().length;
+  const live = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { gpu: "whole" }));
+  assert.equal(live.code, "unsupported");
+  assert.equal(live.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn whole cards on with bb box option set general.wholeCards=true. bb-box copied nothing.");
+  assert.equal((live as BoxError).agentMessage, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+  assert.equal(state.store.records().length, records, "nothing was taken");
+  assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's record was made");
+  await state.snapshots.take(agent, box, standing(box), { name: "set up" });
+  const ofSnapshot = await rejection(state.snapshots.checkFork(agent, box, standing(box), "set up", { gpu: "whole" }));
+  assert.equal(ofSnapshot.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
 });
 
 test("070 unit 7 re-review: a fork's guest is disarmed before each attempt to delete it, when the fork fails and at each sweep after", async () => {

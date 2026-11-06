@@ -14,7 +14,7 @@ import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { proxmoxQemuDriver } from "./proxmox-qemu/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
-import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
+import { GENERAL_DEFAULTS, WHOLE_CARDS_BY_DEFAULT, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import { encoderKey } from "../core/encoder-ledger.ts";
 import type { Backend, BackendContext, BackendDriver, EncoderAccess, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
@@ -342,6 +342,7 @@ export class Backends {
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
       enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
+      wholeCards: () => this.#document?.general.wholeCards ?? WHOLE_CARDS_BY_DEFAULT,
       tailnet: () => this.tailnet(),
       ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
       ...(this.#threadTitle ? { threadTitle: this.#threadTitle } : {}),

@@ -5,6 +5,7 @@ import type { Refusal } from "./gpu-servers.ts";
 export interface BoxMaking {
   readonly name: string;
   readonly threadId: string;
+  readonly starting?: boolean;
 }
 
 export type CardBlock =
@@ -91,7 +92,7 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `${card} is ${holder.name}'s whole card${audience.to === "person" ? threadWords(holder.threadId, namer) : ""}`;
     }
     case "reserved-whole":
-      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is making`;
+      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${block.making?.starting ? "starting" : "making"}`;
     case "unsettled":
       return `${card} waits for ${inWords(block.vmids.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${block.vmids.length === 1 ? "it" : "each"} may hold the card`;
     case "limit": {
@@ -102,8 +103,15 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `the GPU helper has not answered CT ${block.vmid}'s request g${block.generation} on ${card}`;
     case "held":
       return heldWords(card, block.holders, namer, audience);
-    case "placing":
-      return `bb-box is placing ${inWords(block.making.map((making) => makingWords(making, namer, audience)))} on ${card}`;
+    case "placing": {
+      const starting = block.making.filter((making) => making?.starting);
+      const placing = block.making.filter((making) => !making?.starting);
+      const said = [
+        ...(placing.length ? [`bb-box is placing ${inWords(placing.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+        ...(starting.length ? [`bb-box is starting ${inWords(starting.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+      ];
+      return said.join(", and ");
+    }
     case "memory":
       return `${card} has ${block.freeMiB} MiB free when last read, less than the ${block.needMiB} MiB a new ${block.what} needs`;
     case "memory-unknown":

@@ -94,7 +94,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -1249,6 +1249,7 @@ export class Boxes {
     const gpuAsked = input.gpu !== undefined;
     const gpuFor = (kind: BoxKind) => gpuOnOffer(kind, askedGpu, gpuAsked);
     const forAgent = who.is === "agent";
+    if (askedGpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", forAgent ? WHOLE_CARDS_OFF.agent : WHOLE_CARDS_OFF.person, WHOLE_CARDS_OFF.agent);
     // The named providers are the only ones tried, in acquire order (044).
     const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
     const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
@@ -1399,6 +1400,10 @@ export class Boxes {
     return box;
   }
 
+  async wholeCards(): Promise<boolean> {
+    return (await this.#deps.general()).wholeCards ?? false;
+  }
+
   async admitFork(request: ForkAdmission): Promise<void> {
     await this.#forkRoom(request);
     this.#forkPlace(request, await this.list(request.threadId), await this.#deps.general());
@@ -1415,6 +1420,7 @@ export class Boxes {
     if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
     const size = request.size ?? defaultSize(kindSizes(kind.id, (await this.#deps.general()).sizes));
     const gpu = request.gpu ?? "none";
+    if (gpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", WHOLE_CARDS_OFF_FOR_FORK.person, WHOLE_CARDS_OFF_FOR_FORK.agent);
     const room = await backend.capacity(kind.id, withGpu(size, gpu), await this.#pending(backend.id), undefined, { threadId: request.threadId });
     if (!room.ok) {
       const said = (words: string | null | undefined) => forkCapacityWords(`${backend.label} has no room for the fork: ${words ?? "it did not say why"}`, gpu);

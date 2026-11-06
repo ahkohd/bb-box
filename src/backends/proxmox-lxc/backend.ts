@@ -42,7 +42,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Gue
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { forkCapacityWords, forkRefusalWords } from "../../core/snapshot-refusals.ts";
-import { offersGpuPart } from "../../core/gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, gpuPartsOffered, offersGpuPart } from "../../core/gpu.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
 import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
@@ -95,6 +95,7 @@ import {
   type DoctorReport,
   type GpuMarkRequest,
   type GpuMarking,
+  type CardRoom,
   type GpuRoom,
   type Guest,
   type GuestFact,
@@ -167,6 +168,7 @@ import {
   placementRefusal,
   reasonSentence,
   threadsNamed,
+  type BoxMaking,
   type CardBlock,
   type CardNamer,
   type Holder,
@@ -1479,6 +1481,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.clearForkGpu(box.boxId);
     const desktop = currentKindId(box.kind) === "linux-desktop";
     if (gpu !== "none" && !desktop) throw new BackendError("unsupported", `A fork of a ${box.kind} box takes gpu none. Fork it with gpu none. bb-box copied nothing.`);
+    if (gpu === "whole" && !this.#wholeOn()) throw new BackendError("unsupported", WHOLE_CARDS_OFF_FOR_FORK.person, WHOLE_CARDS_OFF_FOR_FORK.agent);
     if (gpu === "none") {
       if (desktop) this.#forkGpu.set(box.boxId, { part: "none", card: null, reservation: null, node: "" });
       return;
@@ -1844,6 +1847,7 @@ export class ProxmoxLxcBackend implements Backend {
       await hooks.claim(this.#guest(api.node, id, acquiring.template, box.boxId, null, null, acquiring.build));
     };
     try {
+      if (gpuPart === "whole" && !this.#wholeOn()) throw refusedWith("unsupported", WHOLE_CARDS_OFF);
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
         resumed = true;
@@ -1894,6 +1898,7 @@ export class ProxmoxLxcBackend implements Backend {
             const guests = await api.listPool(this.#config.proxmox.pool, signal);
             const image = box.from ? Number(box.from) : null;
             const view = withCard || offer.flavour === "desktop" ? await this.#cardsView(api, signal) : NO_CARDS;
+            if (gpuPart === "whole") await this.#wholeOnTheNode(api, view, signal);
             if (image !== null) {
               acquiring.template = image;
               if (withCard && offer.flavour === "linux") {
@@ -1944,6 +1949,7 @@ export class ProxmoxLxcBackend implements Backend {
             placed = await step("place", () => this.#placeServer(api, making, refusedCards, new Set(failed.keys()), signal, template, "the template this box was cloned from", cardPart));
           } else if (kept === "place") {
             const view = await this.#cardsView(api, signal);
+            if (gpuPart === "whole") await this.#wholeOnTheNode(api, view, signal);
             if (view.is === "blocked") throw refusedWith("no_capacity", blockedRefusal(view, "Ask for gpu none, or ask the user."));
             if (view.is === "on") placed = await step("place", () => this.#placeImageDesktop(api, id, "The guest bb-box had made for this desktop", making, refusedCards, new Set(failed.keys()), signal, cardPart));
           } else if (kept === "strip") {
@@ -3159,10 +3165,15 @@ export class ProxmoxLxcBackend implements Backend {
     for (const { flavour, ...kind } of OFFERS) {
       const config = this.#config.flavours[flavour];
       if (!config.templates.length) continue;
-      const gpuParts = flavour === "desktop" ? { gpuParts: config.templates.some((template) => template.gpu === null) ? (["none", "shared", "whole"] as const) : (["shared", "whole"] as const) } : {};
+      const parts: readonly GpuPart[] | undefined = flavour === "desktop" ? (config.templates.some((template) => template.gpu === null) ? ["none", "shared", "whole"] : ["shared", "whole"]) : kind.gpuParts;
+      const gpuParts = parts ? { gpuParts: parts.filter((part) => part !== "whole" || this.#wholeOn()) } : {};
       offers.push({ kind: { ...kind, ...gpuParts }, flavour, config });
     }
     return offers;
+  }
+
+  #wholeOn(): boolean {
+    return this.#context.wholeCards?.() ?? false;
   }
 
   #warmServes(offer: Offer, gpu: GpuPart): boolean {
@@ -3889,17 +3900,44 @@ export class ProxmoxLxcBackend implements Backend {
    */
   async gpuRoom(kind: string): Promise<GpuRoom> {
     const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
-    if (offer?.flavour === "linux") return this.#serverRoom();
+    if (offer?.flavour === "linux") return this.#serverRoom(offer);
     if (!offer?.kind.capabilities.gpu) return { readings: [], fullUntil: null };
     const gpus = this.#gpuIds(offer, (await this.#hostGpus(GPU_REPORT_WAIT_MS)).report);
     const state = await this.#gpuState(gpus, GPU_REPORT_WAIT_MS);
-    return {
-      readings: gpus.flatMap((id) => {
-        const known = state.get(id);
-        return known ? [{ id, freeMiB: known.freeMiB, totalMiB: known.totalMiB, at: known.at, neededMiB: DESKTOP_GPU_MIB, source: known.source }] : [];
-      }),
-      fullUntil: this.#fullUntil(gpus, state),
-    };
+    const readings = gpus.flatMap((id) => {
+      const known = state.get(id);
+      return known ? [{ id, freeMiB: known.freeMiB, totalMiB: known.totalMiB, at: known.at, neededMiB: DESKTOP_GPU_MIB, source: known.source }] : [];
+    });
+    return { readings, fullUntil: this.#fullUntil(gpus, state), ...(await this.#desktopCards(offer)) };
+  }
+
+  async #desktopCards(offer: Offer): Promise<Partial<GpuRoom>> {
+    const api = await this.client();
+    const view = await this.#cardsView(api);
+    if (view.is !== "on") return {};
+    const guests = await api.listPool(this.#config.proxmox.pool);
+    const on = this.#onCards(view.notes, view.writes);
+    const cards = view.lines.cards.filter((card) => on.has(card.uuid) && this.#templatesByCard(offer, view.notes, view.writes).has(card.uuid));
+    if (!cards.length) return {};
+    const whole = (offer.kind.gpuParts ?? []).includes("whole") && (await this.#helperReady(api, view)) === null;
+    const parts = gpuPartsOffered(offer.kind).filter((part) => part !== "whole" || whole);
+    const free = async (card: HelperCard) => whole && (await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "whole", new Set([card.uuid]))).is === "placed";
+    return { parts, cards: await this.#cardRooms(view, guests, cards, free), host: api.node, limit: this.#config.desktop.perGpu, at: parseGpuReport(view.notes)?.at ?? null, neededMiB: DESKTOP_GPU_MIB, wholeOff: !this.#wholeOn() };
+  }
+
+  async #cardRooms(view: Extract<CardsView, { is: "on" }>, guests: readonly PoolGuest[], cards: readonly HelperCard[], free: (card: HelperCard) => Promise<boolean>): Promise<CardRoom[]> {
+    const api = await this.client();
+    const reservations = reservationsOn(this.#cardKey(api));
+    const reserved = reservations.live(view.lines, this.#now());
+    const gone = reservations.gone(view.lines, this.#now());
+    const namer = await this.#namer(guests, view.lines, [], false);
+    const rooms: CardRoom[] = [];
+    for (const card of cards) {
+      const load = loadOf(card, { lines: view.lines, memory: view.memory, installId: this.#context.installId, reserved, vmid: null, gone });
+      const wholeBy = load.whole ? holderWords(namer.guest(load.whole.vmid), namer, { to: "agent", threadId: null }) : null;
+      rooms.push({ index: card.index, boxes: load.boxes, whole: load.whole !== null, freeMiB: load.freeMiB, totalMiB: view.memory.get(card.uuid)?.totalMiB ?? null, wholeBy, freeForWhole: await free(card) });
+    }
+    return rooms;
   }
 
   async #nodeHasCards(api: Proxmox): Promise<boolean> {
@@ -3914,25 +3952,19 @@ export class ProxmoxLxcBackend implements Backend {
     return [...named, ...report.gpus.filter((gpu) => !named.some((id) => namesGpu(id, gpu))).map((gpu) => gpu.uuid)];
   }
 
-  async #serverRoom(): Promise<GpuRoom> {
+  async #serverRoom(offer: Offer): Promise<GpuRoom> {
     const api = await this.client();
     const view = await this.#cardsView(api);
     if (view.is === "none" && !(await this.#nodeHasCards(api))) return { readings: [], fullUntil: null };
     const ready = await this.#serverReady(api, view);
     if ("why" in ready || view.is !== "on") return { readings: [], fullUntil: null, parts: ["none"], withheld: "why" in ready ? `${api.node}: ${ready.why}` : null };
-    const reservations = reservationsOn(this.#cardKey(api));
-    const reserved = reservations.live(view.lines, this.#now());
-    const gone = reservations.gone(view.lines, this.#now());
     const guests = await api.listPool(this.#config.proxmox.pool);
-    const namer = await this.#namer(guests, view.lines, []);
-    const cards = view.lines.cards.map((card) => {
-      const load = loadOf(card, { lines: view.lines, memory: view.memory, installId: this.#context.installId, reserved, vmid: null, gone });
-      const wholeBy = load.whole ? holderWords(namer.guest(load.whole.vmid), namer, { to: "agent", threadId: null }) : null;
-      const freeForWhole = this.#placeOn(api, view, guests, new Set([card.uuid]), "whole", SERVER_GPU_MIB).is === "placed";
-      return { index: card.index, boxes: load.boxes, whole: load.whole !== null, freeMiB: load.freeMiB, totalMiB: view.memory.get(card.uuid)?.totalMiB ?? null, wholeBy, freeForWhole };
-    });
+    const parts = gpuPartsOffered(offer.kind);
+    const whole = parts.includes("whole");
+    const free = async (card: HelperCard) => whole && this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "whole", SERVER_GPU_MIB, new Set([card.uuid])).is === "placed";
+    const cards = await this.#cardRooms(view, guests, view.lines.cards, free);
     const at = parseGpuReport(view.notes)?.at ?? null;
-    return { readings: [], fullUntil: null, parts: ["none", "shared", "whole"], withheld: null, cards, host: api.node, limit: this.#config.desktop.perGpu, at, neededMiB: SERVER_GPU_MIB };
+    return { readings: [], fullUntil: null, parts, withheld: null, cards, host: api.node, limit: this.#config.desktop.perGpu, at, neededMiB: SERVER_GPU_MIB, wholeOff: !this.#wholeOn() };
   }
 
   #cardKey(api: Proxmox): string {
@@ -4027,6 +4059,7 @@ export class ProxmoxLxcBackend implements Backend {
     refused: ReadonlySet<string>,
     failed: ReadonlySet<string>,
     part: CardPart = "shared",
+    only: ReadonlySet<string> | null = null,
   ): Promise<Placed | PlacedWhole> {
     const skip = await this.#placing(offer, failed);
     const on = this.#onCards(view.notes, view.writes);
@@ -4050,7 +4083,7 @@ export class ProxmoxLxcBackend implements Backend {
     const avoided = this.#cardsAvoided(view.notes, skip);
     const open = [...byCard].filter(([card, templates]) => !refused.has(card) && !avoided.has(card) && templates.some((template) => template.gpu === null || !skip.has(template.gpu)));
     const lastResort = this.#cardsAvoided(view.notes, failed, false);
-    const candidates = new Set((open.length ? open : [...byCard].filter(([card]) => !refused.has(card) && !lastResort.has(card))).map(([card]) => card));
+    const candidates = new Set((open.length ? open : [...byCard].filter(([card]) => !refused.has(card) && !lastResort.has(card))).map(([card]) => card).filter((card) => !only || only.has(card)));
     return this.#placeOn(api, view, guests, candidates, part, DESKTOP_GPU_MIB);
   }
 
@@ -4083,7 +4116,7 @@ export class ProxmoxLxcBackend implements Backend {
     };
     if (part === "shared") return placeShared(input);
     const retirable = new Set(mine.filter((guest) => guest.tags.includes(WARM) && !this.#filling.has(guest.vmid)).map((guest) => guest.vmid));
-    return placeWhole({ ...input, limit: null, retirable });
+    return placeWhole({ ...input, limit: null, retirable, ownPool: new Set(mine.map((guest) => guest.vmid)) });
   }
 
   #holderOf(guests: readonly PoolGuest[], lines: HelperLines, vmid: number): Holder {
@@ -4168,7 +4201,11 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #wholeReady(api: Proxmox, signal?: AbortSignal): Promise<void> {
-    const ready = await this.#helperReady(api, await this.#cardsView(api, signal), signal);
+    await this.#wholeOnTheNode(api, await this.#cardsView(api, signal), signal);
+  }
+
+  async #wholeOnTheNode(api: Proxmox, view: CardsView, signal?: AbortSignal): Promise<void> {
+    const ready = await this.#helperReady(api, view, signal);
     if (ready) throw refusedWith("no_capacity", wholeRefusal(api.node, ready.why, ready.fix));
   }
 
@@ -4260,11 +4297,14 @@ export class ProxmoxLxcBackend implements Backend {
     notStartedWords = (why: string) => `Container ${vmid} was not started: ${why} It is stopped, with its disk as it was.`,
     leaving: ReadonlySet<string> = NO_GPUS,
   ): Promise<StartGate> {
-    const tags = parseTags((await this.#owned(api).read(vmid, owner, signal)).tags);
+    const config = await this.#owned(api).read(vmid, owner, signal);
+    const tags = parseTags(config.tags);
     const marker = claimMarkerOf(tags);
     const kind = tags.find((tag) => tag.startsWith(KIND_TAG))?.slice(KIND_TAG.length) ?? null;
     const server = kind !== null && flavourOf(currentKindId(kind)) === "linux";
     if (!marker || marker.part === "none") return UNGATED;
+    const threadTag = tags.find((tag) => tag.startsWith("thread."))?.slice("thread.".length) ?? null;
+    const starting: BoxMaking | null = typeof config.hostname === "string" && config.hostname && threadTag ? { name: config.hostname, threadId: threadTag, starting: true } : null;
     await this.#settled(api);
     const notStarted = (why: string, agentWhy = why) => new AudienceError(notStartedWords(why), notStartedWords(agentWhy));
     const { view, granted, answer } = await this.#answered(api, vmid, marker, signal);
@@ -4283,9 +4323,9 @@ export class ProxmoxLxcBackend implements Backend {
       if (!standing) throw unanswered();
       return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
     }
-    if (granted && marker.part === "whole") return gpu(claimOf(marker, "granted"));
+    if (granted && marker.part === "whole" && !leaving.has(marker.card ?? "")) return gpu(claimOf(marker, "granted"));
     if (!granted && answer.is !== "refused") throw unanswered();
-    if (!granted && standing?.part === "whole") return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
+    if (!granted && standing?.part === "whole" && !leaving.has(standing.card ?? "")) return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
     const key = this.#cardKey(api);
     const reservations = reservationsOn(key);
     const part = cardPartOf(marker.part);
@@ -4298,7 +4338,7 @@ export class ProxmoxLxcBackend implements Backend {
       const need = part === "whole" ? (server ? SERVER_GPU_MIB : DESKTOP_GPU_MIB) : 0;
       const placed = this.#placeOn(api, fresh, guests, candidates, part, need, vmid, standing?.card ?? claim?.card ?? marker.card);
       if (placed.is === "refused") return { refused: placed, guests, lines: fresh.lines } as const;
-      return { decided: { card: placed.card, lines: fresh.lines, notes: fresh.notes, retire: "retire" in placed ? placed.retire : [], reservation: reservations.add(placed.card.uuid, part, server ? SERVER_GPU_MIB : DESKTOP_GPU_MIB, null, vmid) } } as const;
+      return { decided: { card: placed.card, lines: fresh.lines, notes: fresh.notes, retire: "retire" in placed ? placed.retire : [], reservation: reservations.add(placed.card.uuid, part, server ? SERVER_GPU_MIB : DESKTOP_GPU_MIB, null, vmid, starting) } } as const;
     });
     if (outcome.refused) {
       const namer = await this.#namer(outcome.guests, outcome.lines, outcome.refused.reasons);
@@ -4329,6 +4369,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #choice(api: Proxmox, offer: Offer, guests: readonly PoolGuest[], pending: readonly Pending[], signal?: AbortSignal, gpu: GpuPart = gpuPartOf(offer, null), threadId: string | null = null): Promise<Choice> {
+    if (gpu === "whole" && !this.#wholeOn()) return refusedChoice(this.#leastUsed(offer.config.templates, guests), WHOLE_CARDS_OFF);
     if (offer.flavour === "linux" && gpu !== "none") return this.#serverChoice(api, offer, guests, signal, cardPartOf(gpu), threadId);
     if (offer.flavour === "desktop" && gpu === "none") {
       return offersGpuPart(offer.kind, "none") ? this.#noCardChoice(offer, guests, api.node) : this.#choose(forkOfDesktopWithNoCard(offer), guests, pending, api.node);

@@ -16,6 +16,8 @@ import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
+import { listWords } from "../core/device.ts";
+import { WHOLE_CARDS_OFF_IN_LIST } from "../core/gpu.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Chapter } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -358,8 +360,10 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
         });
         const read = room.at ? `, when read ${ago(now - room.at)}` : "";
         const needs = room.neededMiB ? `; a new box needs ${room.neededMiB} MiB free on its card` : "";
-        const parts = whole ? "none, shared or whole; ask with gpu shared or gpu whole" : "none or shared; ask with gpu shared";
+        const asks = room.parts.filter((part) => part !== "none").map((part) => `gpu ${part}`);
+        const parts = `${listWords(room.parts, "or")}; ask with ${asks.join(" or ")}`;
         words.push(` GPU${on}: ${parts} (${room.host ?? offer.name}: ${room.cards.length} ${room.cards.length === 1 ? "card" : "cards"}; ${cards.join("; ")}${read}${needs}).`);
+        if (room.wholeOff) words.push(` ${WHOLE_CARDS_OFF_IN_LIST}`);
       } else if (room?.parts && !room.parts.includes("shared") && room.withheld && offer.gpuParts?.includes("shared")) {
         words.push(` No GPU${on} now: ${room.withheld}.`);
       }

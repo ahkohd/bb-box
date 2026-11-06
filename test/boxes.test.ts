@@ -3750,6 +3750,7 @@ test("071 unit 7: a GPU no provider gives is refused before any box, never turne
 
 test("071 unit 8: box_acquire's gpu whole goes only to a provider that gives the kind a whole card, its record keeps the part, and the provider's room hears which thread asks", async () => {
   const world = setup({ id: "fake:plain" });
+  world.general = { ...world.general, wholeCards: true };
   const asked: (string | undefined)[] = [];
   class Hearing extends FakeBackend {
     override async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], _signal?: AbortSignal, asking?: CapacityAsking) {
@@ -3766,8 +3767,32 @@ test("071 unit 8: box_acquire's gpu whole goes only to a provider that gives the
   assert.deepEqual(asked, [THREAD]);
 });
 
+test("071 unit 8, lead: gpu whole is refused while whole cards are off on this install, before any provider is asked, in words for each audience", async () => {
+  const world = setup({ id: "fake:plain" });
+  const asked: string[] = [];
+  class Counting extends FakeBackend {
+    override async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[]) {
+      asked.push(kind);
+      return super.capacity(kind, size, pending);
+    }
+  }
+  world.backend = new Counting({ root: tempDir("gpu-whole-off"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
+    code: "unsupported",
+    message: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+  });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
+    message: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
+  });
+  assert.deepEqual(asked, [], "no provider was asked");
+  assert.deepEqual(await world.boxes.list(THREAD), []);
+  const shared = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  assert.equal(shared.size?.gpu, "shared", "a shared GPU is as before");
+});
+
 test("071 unit 8: a whole card no provider gives is refused before any box, and the words say a shared GPU is there", async () => {
   const world = setup({ id: "fake:plain" });
+  world.general = { ...world.general, wholeCards: true };
   world.backend = new FakeBackend({ root: tempDir("gpu-shared-whole"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
     code: "unsupported",
