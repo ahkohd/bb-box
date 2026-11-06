@@ -107,7 +107,8 @@ export const CHECKS = {
   },
   "proxmox.gpu-report": { name: "Host's GPU report", from: ["proxmox-lxc"], what: "The host's report of each GPU's memory, which the GPU helper, bb-box-gpu, or else bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU." },
   "gpu.<gpu>": { name: "GPU <gpu>", from: ["proxmox-lxc"], what: "A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs." },
-  "gpu.<gpu>.whole": { name: "GPU <gpu> whole", from: ["proxmox-lxc"], what: "A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071)." },
+  "gpu.<gpu>.whole": { name: "GPU <gpu> whole", from: ["proxmox-lxc", "docker"], what: "A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071)." },
+  "gpu.<gpu>.limit": { name: "GPU <gpu> boxes", from: ["docker"], what: "A card has no more boxes than the boxes per card. It warns, naming the boxes over the limit, which keep running while no new box goes on the card (071)." },
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: "bb-box's SSH key reads, and, where bb-box made it, its public key to install." },
 
   // Docker.
@@ -125,7 +126,7 @@ export const CHECKS = {
   "docker.lxcfs": { name: "Memory and CPUs a box sees", from: ["docker"], what: "The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken." },
   "docker.network": { name: "Network <network>", from: ["docker"], what: "bb-box's network for its boxes, made by bb-box." },
   "docker.privileged": { name: "Docker in boxes", from: ["docker"], what: "Whether boxes are privileged, so they can run Docker inside." },
-  "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops." },
+  "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; and another install's GPU boxes on the host (071)." },
   "docker.capacity": { name: "Room on <host>", from: ["docker"], what: "Room on the host for a Linux box at its default size." },
   "docker.sizes": { name: "Room for each kind", from: ["docker"], what: "The host holds a box of each kind at its default size." },
 

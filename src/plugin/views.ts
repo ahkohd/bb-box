@@ -660,9 +660,10 @@ export function gpuLine(box: BoxRecord): string | null {
   const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? null;
   if (!holdsCard(part)) return fact;
   const card = fact ?? part;
-  if (/: (nvidia-smi in it|CUDA's driver)/.test(card)) return `${card}. Ask the user${/NVIDIA userspace is/.test(card) ? " to update its NVIDIA userspace" : ""}.`;
+  if (/: (nvidia-smi in it|CUDA's driver|CUDA in it)/.test(card)) return `${card}. Ask the user${/NVIDIA userspace is/.test(card) ? " to update its NVIDIA userspace" : ""}.`;
   const userspace = box.nvidiaUserspace;
-  return `${card}. Run nvidia-smi to see it.${userspace && userspace !== "unknown" && userspace !== "none" ? ` NVIDIA's userspace in it: ${userspace}.` : ""}`;
+  const seeIt = box.guest?.facts?.find((candidate) => candidate.label === "GPU check")?.value ?? "Run nvidia-smi to see it";
+  return `${card}. ${seeIt}.${userspace && userspace !== "unknown" && userspace !== "none" ? ` NVIDIA's userspace in it: ${userspace}.` : ""}`;
 }
 
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
@@ -692,7 +693,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
   if (box.fork) lines.push(`Origin: ${forkedFromWords(box.fork)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
-  for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form" && fact.label !== "GPU") lines.push(`${fact.label}: ${fact.value}`);
+  for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form" && fact.label !== "GPU" && fact.label !== "GPU check") lines.push(`${fact.label}: ${fact.value}`);
   const gpu = gpuLine(box);
   if (gpu) lines.push(`GPU: ${gpu}`);
   if (control && capabilities.displays.length) lines.push(controlLine(control.owner, deviceDisplayOf(capabilities.displays) ? "device" : "desktop"));
@@ -978,24 +979,33 @@ function partText(part: { part: string; from: number | null; to: number }): stri
 }
 
 /** What box_resize did, or would do, in words (061). */
+function sizeWithGpu(size: ResizeAnswer["from"], gpuChanges: boolean): string {
+  return gpuChanges ? `${describeSize(size)}, GPU ${size.gpu}` : describeSize(size);
+}
+
 export function resizeText(answer: ResizeAnswer, checked: boolean): string {
-  const { box, from, to, plan } = answer;
-  if (!plan) return `Box ${box.name} is ${describeSize(from)} already, so nothing changed.`;
-  const ways = (way: "live" | "restart") => plan.parts.filter((part) => part.way === way).map(partText);
+  const { box, plan } = answer;
+  const gpu = plan?.gpu && answer.from.gpu !== answer.to.gpu ? plan.gpu : null;
+  const from = sizeWithGpu(answer.from, gpu !== null);
+  const to = sizeWithGpu(answer.to, gpu !== null);
+  if (!plan) return `Box ${box.name} is ${describeSize(answer.from)} already, so nothing changed.`;
+  const ways = (way: "live" | "restart") => [...plan.parts.filter((part) => part.way === way).map(partText), ...(gpu && gpu.way === way ? [`GPU ${gpu.from} to ${gpu.to}`] : [])];
   const live = ways("live");
   const restart = ways("restart");
   const lines: string[] = [];
   if (checked) {
-    lines.push(`Resizing box ${box.name} from ${describeSize(from)} to ${describeSize(to)} would change:`);
+    lines.push(`Resizing box ${box.name} from ${from} to ${to} would change:`);
     if (live.length) lines.push(`- live, while everything in it runs on: ${live.join("; ")}`);
     if (restart.length) lines.push(`- with a restart${plan.downSeconds !== null ? ` of about ${plan.downSeconds} s` : ""}, which ends everything running in it: ${restart.join("; ")}`);
+    if (gpu) lines.push(gpu.words);
     lines.push(plan.room.ok ? "Its host has room for it." : `Its host has no room for it: ${plan.room.message ?? "no reason given"}`);
     return lines.join("\n");
   }
   const took = box.resize?.ms != null ? ` in ${seconds(box.resize.ms)}` : "";
-  lines.push(`Resized box ${box.name} from ${describeSize(from)} to ${describeSize(to)}${took}.`);
+  lines.push(`Resized box ${box.name} from ${from} to ${to}${took}.`);
   if (live.length) lines.push(`Live, with everything in it still running: ${live.join("; ")}.`);
   if (restart.length) lines.push(`With a restart, which ended what was running in it: ${restart.join("; ")}.`);
+  if (gpu) lines.push(gpu.words);
   if (plan.parts.some((part) => part.part === "cores" && part.way === "live")) lines.push("New cores can take up to 15 s to show in the box.");
   return lines.join("\n");
 }

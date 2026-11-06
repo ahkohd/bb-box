@@ -158,4 +158,17 @@ export const WHOLE_CARDS_OFF_FOR_FORK = {
   agent: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.",
 } as const;
 
+export const WHOLE_CARDS_OFF_FOR_RESIZE = {
+  person: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn whole cards on with bb box option set general.wholeCards=true. bb-box changed nothing.",
+  agent: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
+} as const;
+
+export function gpuResizingWords(gpu: { readonly add: string; readonly share: string; readonly move: string } | null | undefined): string {
+  if (!gpu) return "";
+  const share = gpu.share === "live" ? "switches between shared and whole live" : gpu.share === "restart" ? "switches between shared and whole with a restart" : "keeps its share";
+  const fixed = [...(gpu.add === "no" ? ["added", "removed"] : []), ...(gpu.move === "no" ? ["moved to another card"] : [])];
+  const cannot = fixed.length <= 1 ? fixed.join("") : `${fixed.slice(0, -1).join(", ")} or ${fixed.at(-1)}`;
+  return ` A box's GPU ${share}${cannot ? `, and cannot be ${cannot}` : ""}.`;
+}
+
 export const WHOLE_CARDS_OFF_IN_LIST = "Whole cards are off on this install: ask the user if a box needs a card to itself.";

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { registeredTools } from "./purposes.ts";
-import { acquireParameters } from "./tools.ts";
+import { acquireParameters, resizeParameters } from "./tools.ts";
 import { forkParameters } from "./snapshot-tools.ts";
 
 type Parameters = Record<string, unknown>;
@@ -64,12 +64,13 @@ export function withoutWholeCards(): ReadonlyMap<string, Parameters> {
   return new Map([
     ["box_acquire", parametersOf(acquireParameters(false))],
     ["box_fork", parametersOf(forkParameters(false))],
+    ["box_resize", parametersOf(resizeParameters(false))],
   ]);
 }
 
 export function selectTools(bb: BbPluginApi, wholeCards: () => boolean, logError: (operation: string, error: unknown) => void, skills: readonly string[] | null = manifestSkills()): void {
   if (skills === null) {
-    logError("tool selection", new Error("bb-box could not read its skills' names, so it leaves BB's own tool selection in place, and box_acquire and box_fork advertise gpu whole while whole cards are off."));
+    logError("tool selection", new Error("bb-box could not read its skills' names, so it leaves BB's own tool selection in place, and box_acquire, box_fork and box_resize advertise gpu whole while whole cards are off."));
     return;
   }
   try {

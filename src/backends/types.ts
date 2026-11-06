@@ -293,7 +293,31 @@ export interface Resizing {
   readonly disk: ResizeWay;
   /** Cores and memory can go down as well as up, the same way. */
   readonly shrinks: boolean;
+  readonly gpu?: GpuResizing | null;
 }
+
+export interface GpuResizing {
+  readonly add: ResizeWay;
+  readonly share: ResizeWay;
+  readonly move: ResizeWay;
+}
+
+export interface GpuRefusal {
+  readonly person: string;
+  readonly agent: string;
+}
+
+export interface GpuResize {
+  readonly from: GpuPart;
+  readonly to: GpuPart;
+  readonly way: ResizeWay;
+  readonly card: CardPlacement | null;
+  readonly others: readonly { readonly name: string; readonly stopped: boolean }[];
+  readonly words: string;
+  readonly refusal: GpuRefusal | null;
+}
+
+export type ResizeTarget = MachineSize & { readonly gpu?: GpuPart };
 
 /** A part of a box's size a resize changes. */
 export type SizePart = "cores" | "memory" | "disk";
@@ -306,6 +330,7 @@ export interface ResizePlan {
   readonly room: Capacity;
   /** About how long a restart takes, in seconds, when a part needs one. */
   readonly downSeconds: number | null;
+  readonly gpu?: GpuResize | null;
 }
 
 /** The box a backend acquires for, as the registry knows it. */
@@ -492,6 +517,7 @@ export interface GpuRoom {
   readonly at?: number | null;
   readonly neededMiB?: number;
   readonly wholeOff?: boolean;
+  readonly reach?: string | null;
 }
 
 export interface Limit {
@@ -708,7 +734,7 @@ export interface Backend {
   planResize?(
     guest: Guest,
     kind: string,
-    to: MachineSize,
+    to: ResizeTarget,
     pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
   ): Promise<ResizePlan>;
@@ -720,7 +746,7 @@ export interface Backend {
    * box's. When a step fails, it puts back the parts it changed that can go
    * back before it throws. Only backends with `resizing`.
    */
-  resize?(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
+  resize?(guest: Guest, kind: string, to: ResizeTarget, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
   /**
    * Whether `stop` saves a guest of the kind with its running session, as a
    * hibernate or a suspend does, so that it holds no memory while stopped

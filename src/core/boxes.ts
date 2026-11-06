@@ -94,7 +94,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -281,6 +281,11 @@ else
   awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { print int((t - a) / 1024) }' /proc/meminfo
 fi`;
 
+function gpuFixedWords(box: BoxRecord): [string, string] {
+  const said = `${box.backendLabel} cannot change the GPU of its ${box.kind} boxes, so box ${box.name} keeps its GPU`;
+  return [`${said}. Make a new box with the GPU it needs.`, `Not resized: ${said}. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`];
+}
+
 /** "cores", "cores and memory", "cores, memory and disk". */
 export function partWords(parts: readonly SizePart[]): string {
   const words = parts.map((part) => part);
@@ -296,7 +301,7 @@ export function resizingWords(resizing: Resizing | null): string {
   const restart = all.filter((part) => way(part) === "restart");
   if (!live.length && !restart.length) return "Resize: no.";
   const said = [live.length ? `${partWords(live)} live` : "", restart.length ? `${partWords(restart)} with a restart` : ""].filter(Boolean).join("; ");
-  return `Resize: ${said}${resizing.disk !== "no" ? ", the disk only growing" : ""}.`;
+  return `Resize: ${said}${resizing.disk !== "no" ? ", the disk only growing" : ""}.${gpuResizingWords(resizing.gpu)}`;
 }
 
 /**
@@ -2967,7 +2972,7 @@ export class Boxes {
   async resize(
     threadId: string,
     ref: string,
-    request: SizeRequest,
+    request: SizeRequest & { readonly gpu?: GpuPart },
     options: {
       readonly restart?: boolean;
       readonly check?: boolean;
@@ -3001,7 +3006,7 @@ export class Boxes {
 
   async #resize(
     box: BoxRecord,
-    request: SizeRequest,
+    request: SizeRequest & { readonly gpu?: GpuPart },
     options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly who?: Actor; readonly signal?: AbortSignal },
   ): Promise<ResizeAnswer> {
     if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
@@ -3018,10 +3023,14 @@ export class Boxes {
       const from = withGpu(current.guest!.size ?? (await this.#size(current)), recordedGpu(current));
       const chosen = chooseResize(current.kind, sizes, from, request, current.device?.model ?? current.askedDevice ?? current.capabilities.device?.devices[0].model);
       if (!chosen.ok) throw new BoxError("invalid_size", chosen.message);
-      const to = withGpu(chosen.size, from.gpu);
+      const to = withGpu(chosen.size, request.gpu ?? from.gpu);
       if (sameSize(to, from)) return { box: current, from, to, plan: null, changed: false };
+      const gpuChanges = to.gpu !== from.gpu;
+      if (gpuChanges) await this.#gpuResizable(current, resizing, to.gpu);
+      const target = gpuChanges ? { ...machineSizeOf(to), gpu: to.gpu } : machineSizeOf(to);
+      const recordedTo: RecordedSize = gpuChanges ? target : withRecordedGpu(to, current.size);
       const pending = await this.#pending(current.backend, current.id);
-      const planned = await backend.planResize!(current.guest!, current.kind, machineSizeOf(to), pending, options.signal);
+      const planned = await backend.planResize!(current.guest!, current.kind, target, pending, options.signal);
       // How long this box's restart took before, where it has a figure, rather than the backend's guess.
       const measured = planned.downSeconds !== null ? restartSeconds(current, backend.keepsSession?.(current.kind) ?? false) : null;
       const plan = measured !== null ? { ...planned, downSeconds: measured } : planned;
@@ -3029,12 +3038,18 @@ export class Boxes {
       if (cannot.length) {
         throw new BoxError("unsupported", `${current.backendLabel} cannot change the ${partWords(cannot.map((part) => part.part))} of its ${current.kind} boxes. ${resizingWords(resizing)}`);
       }
+      if (gpuChanges) {
+        const gpu = plan.gpu;
+        if (!gpu) throw new BoxError("unsupported", ...gpuFixedWords(current));
+        if (gpu.refusal) throw new BoxError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
+        if (gpu.way === "no") throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} bb-box changed nothing.`);
+      }
       // A check says up front what the resize would refuse, a live shrink below use too: one short command in the box.
       const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
       if (shrinking && current.state === "ready") await this.#roomToShrink(current, to.memoryMiB, options.signal);
       if (options.check) return { box: current, from, to, plan, changed: false };
       if (!plan.room.ok) throw new BoxError("no_capacity", plan.room.message ?? `${current.backendLabel} has no room for box ${current.name} to grow.`, plan.room.agentMessage ?? null);
-      const restart = plan.parts.some((part) => part.way === "restart");
+      const restart = plan.parts.some((part) => part.way === "restart") || (gpuChanges && plan.gpu?.way === "restart");
       if (restart && !options.restart) {
         const parts = partWords(plan.parts.filter((part) => part.way === "restart").map((part) => part.part));
         const down = plan.downSeconds !== null ? `, for about ${plan.downSeconds} s` : "";
@@ -3045,18 +3060,18 @@ export class Boxes {
       }
       if (restart) await options.beforeRestart?.(current);
       const began = this.#now();
-      const record: ResizeRecord = { from: withRecordedGpu(from, current.size), to: withRecordedGpu(to, current.size), at: began, state: "resizing", ms: null, restart, error: null };
+      const record: ResizeRecord = { from: withRecordedGpu(from, current.size), to: recordedTo, at: began, state: "resizing", ms: null, restart, error: null };
       // A restart takes the box down: box_run waits while it starts again, as after a start.
       const running = current.state === "ready";
       await this.update(current, () => ({ resize: record, ...(restart && running ? { state: "starting" as const } : {}) }));
       const who = options.who ?? UNKNOWN_ACTOR;
       this.#event(current, "resize-asked", who, { words: `From ${describeSize(from)} to ${describeSize(to)}${restart ? ", with a restart" : ""}.` });
       try {
-        const guest = await backend.resize!(current.guest!, current.kind, machineSizeOf(to), { restart }, options.signal);
+        const guest = await backend.resize!(current.guest!, current.kind, target, { restart }, options.signal);
         this.#event(current, "resized", who, { parts: changedParts(from, guest.size ?? to), words: `From ${describeSize(from)} to ${describeSize(guest.size ?? to)}.` });
         const done = await this.update(current, (latest) => ({
           guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
-          size: withRecordedGpu(to, latest.size),
+          size: gpuChanges ? target : withRecordedGpu(to, latest.size),
           resize: { ...record, state: "done", ms: this.#now() - began },
           ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
         }));
@@ -3080,6 +3095,13 @@ export class Boxes {
         throw error;
       }
     }
+  }
+
+  async #gpuResizable(box: BoxRecord, resizing: Resizing, gpu: GpuPart): Promise<void> {
+    const chosen = chooseGpu(box.kind, gpu);
+    if (!chosen.ok) throw new BoxError("unsupported", chosen.message, `Not resized: ${chosen.message} bb-box changed nothing.`);
+    if (!resizing.gpu) throw new BoxError("unsupported", ...gpuFixedWords(box));
+    if (gpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", WHOLE_CARDS_OFF_FOR_RESIZE.person, WHOLE_CARDS_OFF_FOR_RESIZE.agent);
   }
 
   async #sizeNow(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<MachineSize | null> {

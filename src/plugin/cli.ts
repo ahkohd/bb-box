@@ -20,6 +20,7 @@ import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
 import { gpuCommands } from "./gpu-cli.ts";
+import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 
@@ -35,6 +36,7 @@ const resizeOptions = {
   cores: { type: "integer", min: 1, max: 1024, description: "Cores. Left out, the box keeps its own." },
   "memory-gib": { type: "integer", min: 1, max: 65536, description: "Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own." },
   "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, which only grows. Left out, the box keeps its own." },
+  gpu: { type: "string", description: "The box's GPU: shared, or whole where whole cards are on. Left out, the GPU stays as it is. On Docker shared and whole switch live, and a GPU cannot be added, removed or moved." },
   restart: { type: "boolean", description: "Allow a restart, which ends everything running in the box, where a part needs one." },
   check: { type: "boolean", description: "Only say what would change, how, and whether there is room." },
   force: { type: "boolean", description: "Restart it even while threads are working on it, which ends their work." },
@@ -178,9 +180,11 @@ async function resizeBox(
   app: BbBox,
   threadId: string,
   ref: string,
-  options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; restart?: boolean; check?: boolean; force?: boolean },
+  options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; gpu?: string; restart?: boolean; check?: boolean; force?: boolean },
 ) {
-  return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] }, {
+  const gpu = options.gpu === undefined ? undefined : String(options.gpu);
+  if (gpu !== undefined && !isGpuPart(gpu)) throw new BoxError("unsupported", `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}, not ${gpu}.`);
+  return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"], ...(gpu !== undefined ? { gpu } : {}) }, {
     restart: options.restart === true,
     check: options.check === true,
     by: "the CLI",

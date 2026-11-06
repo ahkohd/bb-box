@@ -34,6 +34,7 @@ export interface DockerConfig {
   readonly network: string;
   /** The most bb-box containers on the host, counting every install's. */
   readonly boxes: number;
+  readonly gpus: boolean;
   readonly desktopsPerGpu: number;
   readonly reserveMemoryMiB: number;
   readonly machineDockerHost: string | null;
@@ -112,16 +113,16 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [DOCKER_KEYS.gpuDesktops]: {
     type: "boolean",
-    label: "GPU desktops",
+    label: "GPU boxes",
     description:
-      "Offers Linux desktops on the host's NVIDIA GPUs. The NVIDIA Container Toolkit must list the GPUs as CDI devices (nvidia-ctk cdi generate).",
+      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them.",
     group: "boxes",
     default: false,
   },
   [DOCKER_KEYS.desktopsPerGpu]: {
     type: "number",
-    label: "Desktops per GPU",
-    description: "The most Linux desktops that share one GPU.",
+    label: "Boxes per card",
+    description: "The most boxes on one card, servers and desktops together, running or stopped, of every install that uses the host.",
     group: "advanced",
     default: DOCKER_DEFAULTS.desktopsPerGpu,
   },
@@ -219,12 +220,12 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const boxes = number(values, DOCKER_KEYS.boxes, DOCKER_DEFAULTS.boxes);
   if (!Number.isInteger(boxes) || boxes < 1) problem(DOCKER_KEYS.boxes, "Docker: the most boxes must be a whole number, at least 1.");
   const desktopsPerGpu = number(values, DOCKER_KEYS.desktopsPerGpu, DOCKER_DEFAULTS.desktopsPerGpu);
-  if (!Number.isInteger(desktopsPerGpu) || desktopsPerGpu < 1) problem(DOCKER_KEYS.desktopsPerGpu, "Docker: desktops per GPU must be a whole number, at least 1.");
+  if (!Number.isInteger(desktopsPerGpu) || desktopsPerGpu < 1) problem(DOCKER_KEYS.desktopsPerGpu, "Docker: boxes per card must be a whole number, at least 1.");
   const reserveMemoryMiB = number(values, DOCKER_KEYS.reserveMemoryMiB, DOCKER_DEFAULTS.reserveMemoryMiB);
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null } };
+  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, gpus: gpu, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null } };
 }
 
 export function machineDockerHost(backends: readonly { readonly type: string; readonly fields: Readonly<Record<string, unknown>> }[], hostId: string): string | null {

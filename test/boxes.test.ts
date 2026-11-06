@@ -7,13 +7,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { AudienceError, BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type CapacityAsking, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { AudienceError, BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type CapacityAsking, type GpuPart, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type ResizePlan, type ResizeTarget, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { BoxError, Boxes, OPERATOR, SPARES, errorForAgent, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type SpareSettling, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, errorForAgent, extraFeatures, machineName, resizingWords, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type SpareSettling, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
@@ -21,7 +21,7 @@ import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { failure, gpuRoomText, seenByAgent } from "../src/plugin/tools.ts";
-import { adminText, boxDetail, boxLine, boxView, gpuRooms, kindResizeText, kindViews, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
+import { adminText, boxDetail, boxLine, boxView, gpuRooms, kindResizeText, kindViews, resizeText, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 import { inSlot, placementData, placementOf, SHARED_IOS_BY_DEFAULT, type SlotPlacement } from "../src/core/device-host.ts";
@@ -3835,4 +3835,99 @@ test("071 unit 7, Astra 8 and Fable 4: a box whose acquire is refused keeps the 
   const start = new AudienceError("Container 7000 was not started: Release another desktop box.", "Container 7000 was not started: Start it again later, or ask the user.");
   const answered = failure(start, "Starting the box") as { readonly content: readonly { readonly text: string }[] };
   assert.equal(answered.content[0]!.text.split("\n")[0], "Starting the box failed: Container 7000 was not started: Start it again later, or ask the user.");
+});
+
+class SwitchingCards extends FakeBackend {
+  readonly asked: (GpuPart | undefined)[] = [];
+  wholeRefusal: { readonly person: string; readonly agent: string } | null = null;
+  readonly #parts = new Map<string, GpuPart>();
+
+  #partOf(guest: Guest): GpuPart {
+    return this.#parts.get(guest.ref) ?? guest.claim?.part ?? "none";
+  }
+
+  override async planResize(guest: Guest, kind: string, to: ResizeTarget): Promise<ResizePlan> {
+    this.asked.push(to.gpu);
+    const plan = await super.planResize(guest, kind, { cores: to.cores, memoryMiB: to.memoryMiB, diskGiB: to.diskGiB });
+    const from = this.#partOf(guest);
+    if (to.gpu === undefined || to.gpu === from) return plan;
+    const fixed = from === "none" || to.gpu === "none";
+    const refusal = fixed ? { person: `${guest.ref} cannot change its GPU here.`, agent: `Not resized: ${guest.ref} cannot change its GPU here. bb-box changed nothing.` } : to.gpu === "whole" ? this.wholeRefusal : null;
+    return { ...plan, gpu: { from, to: to.gpu, way: fixed ? "no" : "live", card: null, others: [], words: `GPU: ${from} → ${to.gpu} · Live.`, refusal } };
+  }
+
+  override async resize(guest: Guest, kind: string, to: ResizeTarget, options: { readonly restart: boolean }): Promise<Guest> {
+    const resized = await super.resize(guest, kind, { cores: to.cores, memoryMiB: to.memoryMiB, diskGiB: to.diskGiB }, options);
+    if (to.gpu === undefined || !guest.claim) return resized;
+    this.#parts.set(guest.ref, to.gpu);
+    return { ...resized, claim: { ...guest.claim, part: to.gpu, generation: guest.claim.generation + 1 } };
+  }
+}
+
+function switchingWorld(wholeCards: boolean) {
+  const world = setup({ id: "fake:plain" });
+  world.general = { ...world.general, wholeCards };
+  world.backend.resizeWays = { cores: "live", memory: "live", disk: "no", shrinks: true };
+  const linux = { ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] as const };
+  const cards = new SwitchingCards({ root: tempDir("gpu-switch"), storage: scopedStorage(world.kv, "backend/cards/"), id: "fake:cards", kinds: [linux], cards: GPU_CARDS, boxesPerCard: 4 });
+  cards.resizeWays = { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "no", share: "live", move: "no" } };
+  world.others.push(cards);
+  return { world, cards };
+}
+
+test("071 unit 11: box_resize's gpu switches shared and whole live where the backend can, records the part and the claim, and leaves the GPU as it is when left out", async () => {
+  const { world, cards } = switchingWorld(true);
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  assert.equal(box.backend, "fake:cards");
+  const checked = await world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { check: true });
+  assert.equal(checked.changed, false);
+  assert.equal(resizeText(checked, true), `Resizing box ${box.name} from 2 cores, 4 GiB memory, GPU shared to 2 cores, 4 GiB memory, GPU whole would change:\n- live, while everything in it runs on: GPU shared to whole\nGPU: shared → whole · Live.\nIts host has room for it.`);
+  const whole = await world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { by: "the tool" });
+  assert.equal(whole.changed, true);
+  assert.equal(whole.box.size?.gpu, "whole");
+  assert.deepEqual(whole.box.resize?.to, { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" });
+  assert.equal(whole.box.resize?.restart, false);
+  assert.equal(whole.box.guest?.claim?.part, "whole");
+  assert.equal(whole.box.guest?.claim?.generation, box.guest!.claim!.generation + 1);
+  assert.match(resizeText(whole, false), new RegExp(`^Resized box ${box.name} from 2 cores, 4 GiB memory, GPU shared to 2 cores, 4 GiB memory, GPU whole in \\S+ m?s\\.\\nLive, with everything in it still running: GPU shared to whole\\.\\nGPU: shared → whole · Live\\.$`));
+  const cores = await world.boxes.resize(THREAD, box.name, { cores: 4 }, {});
+  assert.equal(cores.box.size?.gpu, "whole", "a resize that leaves gpu out keeps the box's GPU");
+  assert.equal(cards.asked.at(-1), undefined, "and asks the backend for no GPU change");
+  const back = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, {});
+  assert.equal(back.box.size?.gpu, "shared");
+  assert.equal((await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, {})).changed, false);
+});
+
+test("071 unit 11: box_resize refuses, for each audience and changing nothing, a GPU the backend cannot add or remove, a whole card it refuses, whole while whole cards are off, and any GPU change on a backend that cannot change one", async () => {
+  const { world, cards } = switchingWorld(true);
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "none" }, {}), (error: unknown) => {
+    assert.ok(error instanceof BoxError && error.code === "unsupported");
+    assert.equal(error.message, `${box.guest!.ref} cannot change its GPU here.`);
+    assert.equal(error.agentMessage, `Not resized: ${box.guest!.ref} cannot change its GPU here. bb-box changed nothing.`);
+    return true;
+  });
+  cards.wholeRefusal = { person: "No card is free for it alone.", agent: "Not resized: no card is free for it alone. Keep the GPU shared, or ask the user. bb-box changed nothing." };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), { code: "no_capacity", message: "No card is free for it alone.", agentMessage: cards.wholeRefusal.agent });
+  assert.equal((await world.boxes.get(THREAD, box.name)).size?.gpu, "shared");
+  assert.ok(!(await world.boxes.get(THREAD, box.name)).resize, "no resize was recorded");
+  world.general = { ...world.general, wholeCards: false };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), {
+    code: "unsupported",
+    message: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn whole cards on with bb box option set general.wholeCards=true. bb-box changed nothing.",
+    agentMessage: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
+  });
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(plain.backend, "fake:plain");
+  await assert.rejects(world.boxes.resize(THREAD, plain.name, { gpu: "shared" }, {}), {
+    code: "unsupported",
+    message: `Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Make a new box with the GPU it needs.`,
+    agentMessage: `Not resized: Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+  });
+  assert.deepEqual(world.backend.resized, []);
+});
+
+test("071 unit 11: box_list's resize line says a box's GPU switches between shared and whole live and cannot be added, removed or moved, where its backend says so", () => {
+  assert.equal(resizingWords({ cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "no", share: "live", move: "no" } }), "Resize: cores and memory live. A box's GPU switches between shared and whole live, and cannot be added, removed or moved to another card.");
+  assert.equal(resizingWords({ cores: "live", memory: "live", disk: "no", shrinks: true }), "Resize: cores and memory live.");
 });

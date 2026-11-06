@@ -5,11 +5,12 @@ the machine that runs BB, another machine's over SSH, or a BB machine's,
 through BB. It is the quickest way to try bb-box, as it needs only Docker. It
 offers four kinds:
 
-- **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box;
+- **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box,
+  with a shared or whole GPU when GPU boxes are on;
 - **linux-desktop-cpu**: XFCE and Chrome, drawn by the CPU, with computer use
   through Cua Driver;
-- **linux-desktop**: the same desktop on one of the host's NVIDIA GPUs (off by
-  default);
+- **linux-desktop**: the same desktop on one of the host's NVIDIA cards,
+  shared or whole (off by default);
 - **linux-desktop-wayland-cpu**: Sway on Wayland, drawn by the CPU. X11-only
   apps do not run there. It is on Ubuntu 26.04 (the Dockerfile's
   `UBUNTU_WAYLAND`), whose Sway and wayvnc carry the box's own pointer
@@ -196,8 +197,8 @@ fields, press Check, then Save and turn on.
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
 | `wayland-desktop-image` | `bbbox/linux-desktop-wayland:1` | The image of linux-desktop-wayland-cpu boxes. Empty turns them off |
 | `privileged` | on | Each box is a privileged container with a Docker daemon of its own. Off, boxes have no Docker |
-| `gpu-desktops` | off | Offers linux-desktop boxes, on the GPUs the NVIDIA Container Toolkit lists |
-| `desktops-per-gpu` | 4 | The most linux-desktop boxes on one GPU |
+| `gpu-desktops` | off | GPU boxes: offers linux boxes with a GPU and linux-desktop boxes, on the cards the NVIDIA Container Toolkit lists |
+| `desktops-per-gpu` | 4 | Boxes per card: the most boxes on one card, servers and desktops, running or stopped, of every install |
 | `network` | `bbbox` | The network bb-box makes for its boxes, on which they reach the internet but not each other |
 | `boxes` | 10 | The most bb-box containers on the host, running or stopped, of every bb-box install that uses it |
 | `reserve-memory-mib` | 4096 | A new box is refused when the host would have less memory than this left, after the limits of the running boxes |
@@ -244,33 +245,57 @@ Then:
 - After 5 minutes with no containers running, Docker Desktop's Resource Saver
   pauses Docker, and the next call takes about 2.5 s.
 
-#### GPU desktops
+#### GPU boxes
 
-A linux-desktop box gets one NVIDIA GPU through the Container Device
-Interface (CDI). On the Docker host:
+A box with a GPU gets one NVIDIA card through the Container Device Interface
+(CDI): a linux box with a shared GPU or a whole card, and a linux-desktop. On
+the Docker host:
 
 1. Install the NVIDIA driver and the
    [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-2. Generate the toolkit's CDI spec, which names each GPU:
+2. Generate the toolkit's CDI spec, which names each card:
    `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`. Run it again
-   after each driver upgrade.
+   after each driver upgrade. In WSL the spec has one device for every card,
+   `nvidia.com/gpu=all`, and bb-box gives it to each box with a GPU.
 3. Docker Engine 28.2 and later read CDI specs by default. For an older one,
    set `"features": {"cdi": true}` in `/etc/docker/daemon.json` and restart
    Docker.
-4. Check that `docker info` lists the GPUs under Discovered Devices, then turn
-   on `gpu-desktops`.
+4. Check that `docker info` lists the cards under Discovered Devices, then turn
+   on `gpu-desktops`, GPU boxes.
 
-Each desktop gets the GPU with the fewest desktops. A desktop whose GPU
-cannot drive its display falls back to the CPU, and the reason is in the
-container's log. GPU desktops have not been tested on a Docker host with a
-GPU yet.
+bb-box reads each card's UUID, model and memory with `nvidia-smi` in a
+short-lived container given the cards, never loading them. A shared box goes
+to the card with the fewest boxes, then the most memory free, and needs 1,024
+MiB free on it for a server or 384 MiB for a desktop, when last read. A whole
+box goes to a card no box holds, of any install, where whole cards are on
+(`bb box option set general.wholeCards=true`). A stopped box keeps its card.
+
+bb-box sets `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` to the box's
+card in the container's environment and in `/etc/environment`, so CUDA in
+`box_run`, a terminal, `sudo -i` and a service started from either uses the
+box's card. They choose a card; they are not a fence: `nvidia-smi` lists
+every card the box can open, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"`
+shows its own.
+
+- **With Docker in boxes on**, every box is privileged and can open every
+  card, with a GPU or without. None and Whole card are where bb-box places
+  boxes, not what a box can reach.
+- **In WSL**, every box with a GPU has every card, as they are one device.
+- A container's devices are fixed when it is made, so a box's GPU cannot be
+  added, removed or moved to another card. Shared and whole switch live with
+  `box_resize gpu` or `bb box resize --gpu`; the switch is this install's,
+  and another install on the host sees the part a box was made with.
+- A desktop whose card cannot drive its display falls back to the CPU, and
+  the reason is in the container's log.
 
 ## Check it worked
 
 Run `bb box doctor`. It checks the `docker` CLI, the daemon, that Docker can
 limit a box's CPU and memory and pin it to its cores, whether boxes see
-their own memory through LXCFS, each image, the network, Docker in boxes, GPU
-desktops when they are on, and the room on the host. For each image it:
+their own memory through LXCFS, each image, the network, Docker in boxes, the
+cards when GPU boxes are on (each card's boxes, a whole card with another box
+on it, a card over its limit, and other installs' GPU boxes), and the room on
+the host. For each image it:
 
 - fails when the image keeps an older contract than bb-box needs;
 - warns when the image is more than 14 days old, has another build of BB's

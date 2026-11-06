@@ -47,6 +47,8 @@ export const LABELS = {
   created: "bbbox.created",
   /** The CDI device of a GPU desktop. */
   gpu: "bbbox.gpu",
+  gpuCard: "bbbox.gpu-card",
+  gpuPart: "bbbox.gpu-part",
   /** On an image setup/docker/build.sh made: its layout version, which its record's contract replaces (049). */
   imageVersion: "bbbox.image-version",
   /** On an image setup/docker/build.sh made: its record, /usr/share/bb-box/image.json, as JSON (049). */
@@ -85,6 +87,7 @@ export interface DockerInfo {
   readonly cpuset: boolean;
   /** NVIDIA GPUs the daemon lists as CDI devices, one name each, such as nvidia.com/gpu=0. */
   readonly gpus: readonly string[];
+  readonly allGpus: boolean;
 }
 
 export interface ContainerInfo {
@@ -133,6 +136,10 @@ export function gpusOf(devices: unknown): string[] {
   return (uuids.length ? uuids : ids).sort();
 }
 
+export function listsAllGpus(devices: unknown): boolean {
+  return (Array.isArray(devices) ? devices : []).map((device) => record(device)).some((device) => device.Source === "cdi" && device.ID === "nvidia.com/gpu=all");
+}
+
 export function parseInfo(text: string): DockerInfo {
   const info = record(JSON.parse(text));
   const security = Array.isArray(info.SecurityOptions) ? info.SecurityOptions.map(String) : [];
@@ -151,6 +158,7 @@ export function parseInfo(text: string): DockerInfo {
     memoryLimit: info.MemoryLimit !== false,
     cpuset: info.CPUSet !== false,
     gpus: gpusOf(info.DiscoveredDevices),
+    allGpus: listsAllGpus(info.DiscoveredDevices),
   };
 }
 
