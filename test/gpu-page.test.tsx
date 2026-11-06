@@ -71,8 +71,8 @@ function snapshot(): MonitorSnapshot {
     health: { status: "healthy", issues: [] },
     history: [],
     gpus: {
-      cards: [{ index: 0, name: "NVIDIA RTX 4090", usagePercent: 40, memoryUsedBytes: 6 * 1024 ** 3, memoryTotalBytes: 24 * 1024 ** 3, temperatureC: 55, powerWatts: 80, powerLimitWatts: 450, shared: true, ownMemoryBytes: 2 * 1024 ** 3, ownProcesses: 1 }],
-      processes: [{ pid: 3310, name: "python3", card: 0, memoryBytes: 2 * 1024 ** 3 }],
+      cards: [{ index: 1, uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", name: "NVIDIA RTX 4090", usagePercent: 40, memoryUsedBytes: 6 * 1024 ** 3, memoryTotalBytes: 24 * 1024 ** 3, temperatureC: 55, powerWatts: 80, powerLimitWatts: 450, shared: true, ownMemoryBytes: 2 * 1024 ** 3, ownProcesses: 1 }],
+      processes: [{ pid: 3310, name: "python3", card: 1, memoryBytes: 2 * 1024 ** 3 }],
     },
   };
 }
@@ -147,6 +147,8 @@ test("071 unit 14: the box page shows the GPU fact and card, and Change opens Re
   expect(card.textContent).toContain("Card 1 · NVIDIA RTX 4090 · 24 GiB");
   expect(card.textContent).toContain("lone-pine");
   await waitFor(() => expect(card.textContent).toContain("python3"));
+  expect(card.textContent).toContain("PID");
+  expect(card.textContent).not.toMatch(/Index/);
   expect(card.textContent).toContain("share its memory");
   expect(slot.getByRole("heading", { level: 1 }).textContent).toContain("GPU");
   expect(slot.getByRole("heading", { level: 1 }).textContent).not.toContain("Whole GPU");
@@ -154,6 +156,34 @@ test("071 unit 14: the box page shows the GPU fact and card, and Change opens Re
   const dialog = await screen.findByRole("alertdialog");
   expect(dialog.getAttribute("data-resize-at")).toBe("gpu");
   expect(dialog.textContent).toContain("Resize amber-fox");
+  expect(dialog.textContent).toContain("Changing the GPU comes later.");
+  const gpu = dialog.querySelector("[data-gpu-section]");
+  await waitFor(() => expect(document.activeElement).toBe(gpu));
+});
+
+test("071 unit 14: a box with no GPU keeps its facts when Docker reports every card", async () => {
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const slot = open(page(boxView({ gpu: false, gpuPart: "none", claim: null, form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "Cards", value: reach }] })));
+  const facts = await slot.findByRole("region", { name: "Facts" });
+  expect(facts.textContent).not.toContain("Cards");
+  expect(facts.textContent).not.toContain("every box");
+  expect(slot.queryByRole("region", { name: "GPU card" })).toBeNull();
+  expect(facts.textContent).toContain("4 cores, 8 GiB memory");
+});
+
+test("071 unit 14: a GPU box puts the every-card sentence on the card, and an unmatched reading is unavailable", async () => {
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const slot = open(page(boxView({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: "card 1, shared, NVIDIA RTX 4090, 24 GiB" }, { label: "Cards", value: reach }] })));
+  const facts = await slot.findByRole("region", { name: "Facts" });
+  expect(facts.textContent).not.toContain("every box");
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  expect(card.textContent).toContain(reach);
+  cleanup();
+  forgetLive();
+  const other = open(page(boxView({ claim: { card: "ffffffff-ffff-ffff-ffff-ffffffffffff", part: "shared", generation: 1, answer: "granted" } })));
+  const missed = await other.findByRole("region", { name: "GPU card" });
+  await waitFor(() => expect(missed.textContent).toContain("Unavailable."));
+  expect(missed.textContent).not.toContain("python3");
 });
 
 test("071 unit 14: a stopped shared box's words, and each notice", async () => {

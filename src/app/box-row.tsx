@@ -235,7 +235,7 @@ export function BoxRow({
               {osName(box.os)} {box.arch}
               {box.extras.length ? `, with ${box.extras.join(", ")}` : ""}
             </Detail>
-            {box.facts.map((fact) => (
+            {box.facts.filter((fact) => fact.label !== "Cards").map((fact) => (
               <Detail key={fact.label} label={fact.label}>
                 {fact.value}
               </Detail>

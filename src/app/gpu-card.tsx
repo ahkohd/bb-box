@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -6,16 +6,16 @@ import type { GpuCard as MonitorGpu, GpuProcess, GpuReading } from "../monitor/s
 import type { BoxPageState, MonitorReach } from "../plugin/contract.ts";
 import {
   cardHeading,
-  gpuFactValue,
+  cardIdentity,
+  everyCardLine,
   gpuFooter,
   gpuProgramsWords,
   holdsItsCard,
   monitorCard,
+  otherCheckNotice,
   partOf,
-  readCardFact,
   USERSPACE_UPDATE_REFUSAL,
   userspaceGap,
-  otherCheckNotice,
   userspaceNotice,
   wrongCardNotice,
   type GpuMate,
@@ -26,40 +26,31 @@ import { hostOf, type ThreadTitles } from "./box-words.ts";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
+import { PageNotice } from "./page-notice.tsx";
 
-function Notice({ tone, title, children, actions }: { tone: "bad" | "warn"; title: string; children: ReactNode; actions?: ReactNode }) {
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId} data-notice={tone} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
-      <h2 id={headingId} className={cn("text-sm font-normal", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
-        {title}
-      </h2>
-      <div className="mt-1 text-sm text-foreground">{children}</div>
-      {actions ? <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">{actions}</div> : null}
-    </section>
-  );
-}
-
-export function GpuNotices({ box, onUpdate }: { box: BoxView; onUpdate: () => void }) {
-  const wrong = wrongCardNotice(box);
+export function GpuNotices({ box, monitor, onUpdate }: { box: BoxView; monitor: MonitorReach; onUpdate: () => void }) {
+  const machineId = monitor.is === "read" ? monitor.machineId : null;
+  const reading = useMonitorSnapshot(machineId ?? "gpu-unread");
+  const seen = reading.snapshot?.gpus?.cards ?? [];
+  const wrong = wrongCardNotice(box, seen);
   const userspace = userspaceNotice(box);
-  const other = otherCheckNotice(box);
+  const other = otherCheckNotice(box, seen);
   const gap = userspaceGap(box);
   if (!wrong && !userspace && !other) return null;
   return (
     <div className="space-y-3">
       {wrong ? (
-        <Notice tone="warn" title="On the wrong card">
+        <PageNotice tone="warn" title="On the wrong card">
           {wrong}
-        </Notice>
+        </PageNotice>
       ) : null}
       {other ? (
-        <Notice tone="warn" title="The card check failed">
+        <PageNotice tone="warn" title="The card check failed">
           {other}
-        </Notice>
+        </PageNotice>
       ) : null}
       {userspace ? (
-        <Notice
+        <PageNotice
           tone="warn"
           title="NVIDIA's userspace does not match the host's driver"
           actions={
@@ -71,7 +62,7 @@ export function GpuNotices({ box, onUpdate }: { box: BoxView; onUpdate: () => vo
           }
         >
           {userspace}
-        </Notice>
+        </PageNotice>
       ) : null}
     </div>
   );
@@ -90,8 +81,8 @@ export function UpdateUserspaceDialog({ box, titles, threads, monitor, onClose }
   const reading = useMonitorSnapshot(machineId ?? "gpu-unread");
   const [refused, setRefused] = useState<string | null>(null);
   if (!gap) return null;
-  const card = monitorCard(reading.snapshot?.gpus?.cards ?? [], readCardFact(gpuFactValue(box) ?? "")?.model ?? null);
-  const processes = (reading.snapshot?.gpus?.processes ?? []).filter((process) => card === null || process.card === card.index);
+  const card = monitorCard(reading.snapshot?.gpus?.cards ?? [], cardIdentity(box));
+  const processes = card ? (reading.snapshot?.gpus?.processes ?? []).filter((process) => process.card === card.index) : [];
   return (
     <AlertDialog open onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent className="shadow-none" data-userspace-update>
@@ -181,15 +172,22 @@ function Processes({ processes, waiting }: { processes: readonly GpuProcess[] | 
       {!waiting && processes === null ? <p className="text-xs text-subtle-foreground">bb-box could not read which processes use the card.</p> : null}
       {!waiting && processes !== null && !processes.length ? <p className="text-xs text-subtle-foreground">None now.</p> : null}
       {!waiting && processes?.length ? (
-        <ul className="space-y-0.5 text-xs">
-          {processes.map((process) => (
-            <li key={process.pid} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3">
-              <span className="truncate text-foreground">{process.name}</span>
-              <span className="tabular-nums text-muted-foreground">{process.pid}</span>
-              <span className="w-16 text-right tabular-nums text-foreground">{process.memoryBytes === null ? "–" : bytesWords(process.memoryBytes)}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="space-y-0.5 text-xs">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 text-muted-foreground">
+            <span>Name</span>
+            <span>PID</span>
+            <span className="w-16 text-right">Memory</span>
+          </div>
+          <ul className="space-y-0.5">
+            {processes.map((process) => (
+              <li key={process.pid} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3">
+                <span className="truncate text-foreground">{process.name}</span>
+                <span className="tabular-nums text-muted-foreground">{process.pid}</span>
+                <span className="w-16 text-right tabular-nums text-foreground">{process.memoryBytes === null ? "–" : bytesWords(process.memoryBytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
@@ -214,23 +212,23 @@ function memoryWaiting(reach: MonitorReach, box: BoxView): string {
 }
 
 function readingOf(reach: MonitorReach, snapshot: { readonly gpus?: GpuReading | null } | null, box: BoxView): { card: MonitorGpu | null; processes: readonly GpuProcess[] | null; memoryWaiting: string | null; processWaiting: string | null } {
-  const model = readCardFact(gpuFactValue(box) ?? "")?.model ?? null;
   if (reach.is !== "read") {
     const waiting = memoryWaiting(reach, box);
     return { card: null, processes: box.state === "stopped" ? [] : null, memoryWaiting: waiting, processWaiting: box.state === "stopped" ? null : waiting };
   }
   if (!snapshot) return { card: null, processes: null, memoryWaiting: "Reading the card…", processWaiting: "Reading the card…" };
-  const card = monitorCard(snapshot.gpus?.cards ?? [], model);
-  const processes = snapshot.gpus ? (snapshot.gpus.processes?.filter((process) => card === null || process.card === card.index) ?? null) : null;
+  const card = monitorCard(snapshot.gpus?.cards ?? [], cardIdentity(box));
+  if (!card) return { card: null, processes: null, memoryWaiting: "Unavailable.", processWaiting: "Unavailable." };
+  const processes = snapshot.gpus?.processes?.filter((process) => process.card === card.index) ?? null;
   return { card, processes, memoryWaiting: null, processWaiting: null };
 }
 
 export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView; mates: readonly GpuMate[]; monitor: MonitorReach; busy: boolean; onChange: () => void }) {
   const machineId = monitor.is === "read" ? monitor.machineId : null;
   const container = useMonitorSnapshot(machineId ?? "gpu-unread");
-  const read = readCardFact(gpuFactValue(box) ?? "");
   const part = partOf(box);
   const shown = readingOf(monitor, container.snapshot, box);
+  const reach = everyCardLine(box);
   const use = shown.card?.usagePercent ?? null;
   const holding = mates.length + (holdsItsCard(box) ? 1 : 0);
   const host = hostOf(box.backendLabel);
@@ -247,7 +245,7 @@ export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView;
       </div>
       <div className="space-y-3 px-4 py-3">
         <Memory card={shown.memoryWaiting ? null : shown.card} waiting={shown.memoryWaiting} />
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Card use</dt>
             <dd className="tabular-nums text-foreground">{use === null ? "–" : `${Math.round(use)}%`}</dd>
@@ -255,10 +253,6 @@ export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView;
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Boxes holding it</dt>
             <dd className="tabular-nums text-foreground">{holding}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Index{host ? ` on ${host}` : ""}</dt>
-            <dd className="tabular-nums text-foreground">{read ? read.index : "–"}</dd>
           </div>
         </dl>
         <Processes processes={shown.processWaiting ? null : shown.processes} waiting={shown.processWaiting} />
@@ -277,6 +271,7 @@ export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView;
           </div>
         ) : null}
         <p className="min-h-4 text-xs leading-snug text-subtle-foreground">{gpuFooter(box, host)}</p>
+        {reach ? <p className="min-h-4 break-words text-xs leading-snug text-subtle-foreground">{reach}</p> : null}
       </div>
     </section>
   );

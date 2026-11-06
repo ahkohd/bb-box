@@ -22,6 +22,7 @@ import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { Activity } from "./activity.tsx";
 import { GpuCard, GpuNotices, UpdateUserspaceDialog } from "./gpu-card.tsx";
+import { PageNotice } from "./page-notice.tsx";
 import { gpuFactLines } from "../plugin/gpu-page.ts";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
 import { snapshotWhen } from "./snapshot-words.ts";
@@ -323,19 +324,6 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
   );
 }
 
-function PageNotice({ tone, title, children, actions }: { tone: "bad" | "warn"; title: string; children?: ReactNode; actions?: ReactNode }) {
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId} data-notice={tone} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
-      <h2 id={headingId} className={cn("text-sm font-normal", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
-        {title}
-      </h2>
-      {children ? <div className="mt-1 text-sm text-foreground">{children}</div> : null}
-      {actions ? <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">{actions}</div> : null}
-    </section>
-  );
-}
-
 function SmallButton({ words, onClick, danger = false, disabled = false, why }: { words: string; onClick: () => void; danger?: boolean; disabled?: boolean; why?: string | null }) {
   const whyId = useId();
   return (
@@ -610,7 +598,6 @@ function Facts({ box, mates, now }: { box: BoxView; mates: BoxPageState["gpuMate
   const host = hostWords(box);
   const control = controlFact(box);
   const gpu = gpuFactLines(box, mates ?? []);
-  const cards = factOf(box, /^Cards$/);
   return (
     <section aria-label="Facts" className="overflow-hidden rounded-lg border border-border bg-card">
       <dl className="-mb-px -mr-px grid grid-cols-2 lg:grid-cols-4 [&>*]:border-b [&>*]:border-r [&>*]:border-border">
@@ -621,7 +608,6 @@ function Facts({ box, mates, now }: { box: BoxView; mates: BoxPageState["gpuMate
             {gpu.first}
           </Fact>
         ) : null}
-        {cards ? <Fact label="Cards">{cards}</Fact> : null}
         <Fact label="Runs on" second={gone ? "Backend not in settings" : driverOf(box.backendLabel)}>
           <span className={cn(gone && "text-muted-foreground")}>
             {formWords(box)}
@@ -846,7 +832,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
       <Notices page={page} box={box} now={now} actions={actions} announce={setAnnounced} />
-      <GpuNotices box={box} onUpdate={() => setUpdatingUserspace(true)} />
+      <GpuNotices box={box} monitor={page.monitor} onUpdate={() => setUpdatingUserspace(true)} />
       {snapshotsShown ? <SnapshotNotices box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
       <p aria-live="polite" data-announcer className="sr-only">
         {announced}

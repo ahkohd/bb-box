@@ -320,7 +320,17 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
 
   return (
     <AlertDialog open onOpenChange={(next) => !next && close()}>
-      <AlertDialogContent className="max-h-[90vh] overflow-y-auto" data-resize-at={at}>
+      <AlertDialogContent
+        className="max-h-[90vh] overflow-y-auto shadow-none"
+        data-resize-at={at}
+        onOpenAutoFocus={(event) => {
+          if (at !== "gpu") return;
+          const gpu = (event.currentTarget as HTMLElement).querySelector<HTMLElement>("[data-gpu-section]");
+          if (!gpu) return;
+          event.preventDefault();
+          gpu.focus();
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
@@ -364,6 +374,13 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
               ) : null}
               {choice === CUSTOM && largest ? <LargestLine kind={box.kind} largest={largest} asked={askedParts(fields, ways)} onFollow={onClose} /> : null}
             </FormSection>
+
+            {box.gpu ? (
+              <section data-gpu-section tabIndex={-1} aria-label="GPU" className="space-y-3 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                <h3 className="text-xs text-foreground">GPU</h3>
+                <p className="text-xs leading-snug text-muted-foreground">Changing the GPU comes later.</p>
+              </section>
+            ) : null}
 
             <FormSection title="What changes">
               {plan ? (

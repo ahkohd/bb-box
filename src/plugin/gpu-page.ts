@@ -9,11 +9,21 @@ export interface GpuMate {
 }
 
 export interface ReadCard {
-  readonly index: number;
+  readonly index: number | null;
   readonly part: "shared" | "whole";
   readonly model: string | null;
   readonly memory: string | null;
   readonly why: string | null;
+}
+
+export interface CardIdentity {
+  readonly uuid: string | null;
+  readonly index: number | null;
+}
+
+export interface NamedCard {
+  readonly uuid: string;
+  readonly index: number | null;
 }
 
 export interface GpuFactLines {
@@ -78,16 +88,61 @@ export function gpuFactValue(box: Pick<BoxView, "facts">): string | null {
   return box.facts.find((fact) => fact.label === "GPU")?.value ?? null;
 }
 
+export function bareCardUuid(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = /^(?:GPU-)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(value.trim());
+  return match ? match[1]!.toLowerCase() : null;
+}
+
 export function readCardFact(value: string): ReadCard | null {
   const colon = value.indexOf(": ");
   const head = colon === -1 ? value : value.slice(0, colon);
   const why = colon === -1 ? null : value.slice(colon + 2);
-  const match = /^card (\d+), (shared|whole)(?:, (.*))?$/.exec(head);
+  const match = /^(?:card (\d+)|a card), (shared|whole)(?:, (.*))?$/.exec(head);
   if (!match) return null;
   const rest = match[3] ?? "";
   const memory = /^(.*?), (\d+ GiB)$/.exec(rest);
   const model = (memory ? memory[1] : rest).trim();
-  return { index: Number(match[1]), part: match[2] as "shared" | "whole", model: model || null, memory: memory ? memory[2]! : null, why };
+  return { index: match[1] === undefined ? null : Number(match[1]), part: match[2] as "shared" | "whole", model: model || null, memory: memory ? memory[2]! : null, why };
+}
+
+function cardWord(index: number | null): string {
+  return index === null ? "Its card" : `Card ${index}`;
+}
+
+export function cardIdentity(box: Pick<BoxView, "claim" | "facts">): CardIdentity {
+  const read = readCardFact(gpuFactValue(box) ?? "");
+  return { uuid: bareCardUuid(box.claim?.card ?? null), index: read?.index ?? null };
+}
+
+export function cardNames(box: Pick<BoxView, "claim" | "facts">, seen: readonly { readonly uuid?: string | null; readonly index: number }[] = []): NamedCard[] {
+  const identity = cardIdentity(box);
+  const names = new Map<string, number | null>();
+  const keep = (uuid: string | null, index: number | null) => {
+    if (!uuid) return;
+    const known = names.get(uuid);
+    if (known === undefined || (known === null && index !== null)) names.set(uuid, index);
+  };
+  keep(identity.uuid, identity.index);
+  for (const card of seen) keep(bareCardUuid(card.uuid), card.index);
+  return [...names].map(([uuid, index]) => ({ uuid, index }));
+}
+
+export function nameCardsIn(why: string, named: readonly NamedCard[]): string {
+  const byUuid = new Map(named.map((card) => [card.uuid, card.index]));
+  const said = why.replace(/GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (found) => {
+    const key = bareCardUuid(found);
+    if (!key || !byUuid.has(key)) return "a card";
+    const index = byUuid.get(key);
+    return index === null || index === undefined ? "its card" : `card ${index}`;
+  });
+  return said.replace(/its card its card/g, "its card").replace(/card card (\d+)/g, "card $1");
+}
+
+export function everyCardLine(box: Pick<BoxView, "gpu" | "facts">): string | null {
+  if (!box.gpu) return null;
+  const words = box.facts.find((fact) => fact.label === "Cards")?.value ?? null;
+  return words;
 }
 
 function namesOf(mates: readonly Pick<GpuMate, "name">[]): string {
@@ -101,14 +156,13 @@ export function gpuFactLines(box: CardBox, mates: readonly Pick<GpuMate, "name">
   const part = partOf(box);
   const read = readCardFact(gpuFactValue(box) ?? "");
   if (box.state === "stopped" && part === "shared" && !dockerGpuBox(box)) {
-    const card = read ? `Card ${read.index}` : "Its card";
-    return { first: `${card} when it starts, if it has room`, second: null };
+    return { first: `${cardWord(read?.index ?? null)} when it starts, if it has room`, second: null };
   }
   if (!read) {
     const raw = gpuFactValue(box);
-    return { first: part === "whole" ? "Whole card" : "Shared", second: raw && !raw.startsWith("card ") ? raw : null };
+    return { first: part === "whole" ? "Whole card" : "Shared", second: raw && !/^(?:card \d+|a card),/.test(raw) ? raw : null };
   }
-  const first = `Card ${read.index}, ${part === "whole" ? "whole" : "shared"}`;
+  const first = `${cardWord(read.index)}, ${part === "whole" ? "whole" : "shared"}`;
   if (part === "shared" && mates.length) return { first, second: `with ${namesOf(mates)}` };
   const under = [read.model, read.memory].filter(Boolean).join(" · ");
   return { first, second: under || null };
@@ -145,24 +199,34 @@ function closed(why: string): string {
   return `${trimmed}.`;
 }
 
-export function wrongCardNotice(box: Pick<BoxView, "name" | "state" | "facts">): string | null {
+type NoticeBox = Pick<BoxView, "name" | "state" | "facts" | "form" | "backendLabel" | "claim">;
+type SeenCard = readonly { readonly uuid?: string | null; readonly index: number }[];
+
+function noticeWhy(box: NoticeBox, why: string, seen: SeenCard): string {
+  return closed(nameCardsIn(why, cardNames(box, seen)));
+}
+
+function wrongCardWhy(why: string): boolean {
+  return /not its card/.test(why) || /CUDA in it (picks|found no card)/.test(why) || /listed (no card|cards? )/.test(why);
+}
+
+export function wrongCardNotice(box: NoticeBox, seen: SeenCard = []): string | null {
   const read = readCardFact(gpuFactValue(box) ?? "");
   const why = read?.why ?? "";
-  if (!why || USERSPACE_GAP.test(why)) return null;
-  const wrong = /not its card/.test(why) || /CUDA in it (picks|found no card)/.test(why) || /listed (no card|cards? )/.test(why);
-  if (!wrong) return null;
-  const said = closed(why);
-  if (box.state === "stopped") return `${box.name} did not get card ${read!.index}: ${said} It is stopped, with its disk as it was. Start tries again.`;
+  if (!why || USERSPACE_GAP.test(why) || !wrongCardWhy(why)) return null;
+  const said = noticeWhy(box, why, seen);
+  if (box.state === "stopped") {
+    if (!dockerGpuBox(box)) return null;
+    return `${box.name}'s last start found it on the wrong card: ${said} A start checks again; its devices do not change.`;
+  }
   return `${box.name} is on the wrong card: ${said} Restart it to place it on its card again. bb-box does not stop it.`;
 }
 
-export function otherCheckNotice(box: Pick<BoxView, "name" | "facts">): string | null {
+export function otherCheckNotice(box: NoticeBox, seen: SeenCard = []): string | null {
   const read = readCardFact(gpuFactValue(box) ?? "");
   const why = read?.why ?? "";
-  if (!why || USERSPACE_GAP.test(why)) return null;
-  const wrong = /not its card/.test(why) || /CUDA in it (picks|found no card)/.test(why) || /listed (no card|cards? )/.test(why);
-  if (wrong) return null;
-  return `${box.name}'s card check: ${closed(why)}`;
+  if (!why || USERSPACE_GAP.test(why) || wrongCardWhy(why)) return null;
+  return `${box.name}'s card check: ${noticeWhy(box, why, seen)}`;
 }
 
 export function gpuProgramsWords(processes: readonly { readonly name: string; readonly pid: number }[]): string {
@@ -171,21 +235,19 @@ export function gpuProgramsWords(processes: readonly { readonly name: string; re
   return `: ${listed} ${processes.length === 1 ? "has" : "have"} the GPU open`;
 }
 
-export function monitorCard<T extends { readonly index: number; readonly name: string }>(cards: readonly T[], model: string | null): T | null {
-  if (!cards.length) return null;
-  if (cards.length === 1) return cards[0]!;
-  if (model) {
-    const named = cards.find((card) => card.name === model);
-    if (named) return named;
-  }
-  return cards[0]!;
+export function monitorCard<T extends { readonly index: number; readonly uuid?: string | null }>(cards: readonly T[], identity: CardIdentity): T | null {
+  const wanted = bareCardUuid(identity.uuid);
+  const readable = cards.filter((card) => bareCardUuid(card.uuid));
+  if (wanted && readable.length) return readable.find((card) => bareCardUuid(card.uuid) === wanted) ?? null;
+  if (identity.index !== null) return cards.find((card) => card.index === identity.index) ?? null;
+  return null;
 }
 
 export function cardHeading(box: CardBox): string {
   const read = readCardFact(gpuFactValue(box) ?? "");
   if (!read) {
     const raw = gpuFactValue(box);
-    return raw && !raw.startsWith("card ") ? raw : partOf(box) === "whole" ? "Whole card" : "Shared";
+    return raw && !/^(?:card \d+|a card),/.test(raw) ? raw : partOf(box) === "whole" ? "Whole card" : "Shared";
   }
-  return [`Card ${read.index}`, read.model, read.memory].filter(Boolean).join(" · ");
+  return [cardWord(read.index), read.model, read.memory].filter(Boolean).join(" · ");
 }

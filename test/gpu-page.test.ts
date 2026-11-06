@@ -69,6 +69,13 @@ test("071 unit 14: a card fact keeps the model when the model itself has commas"
   });
   assert.equal(readCardFact("card 1, shared: the check in it did not finish")?.why, "the check in it did not finish");
   assert.equal(readCardFact("GPU-0a1b"), null);
+  assert.deepEqual(readCardFact("a card, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it fails: its NVIDIA userspace is 570.86 and the host's driver 580.142"), {
+    index: null,
+    part: "shared",
+    model: "NVIDIA RTX 4090",
+    memory: "24 GiB",
+    why: "nvidia-smi in it fails: its NVIDIA userspace is 570.86 and the host's driver 580.142",
+  });
 });
 
 test("071 unit 14: the GPU fact names the card once, with the model or the other boxes", () => {
@@ -80,6 +87,8 @@ test("071 unit 14: the GPU fact names the card once, with the model or the other
   assert.deepEqual(gpuFactLines(box(), [mate]), { first: "Card 1, shared", second: "with lone-pine" });
   assert.deepEqual(gpuFactLines(box(), [mate, box({ id: "bxcalmreef01", name: "calm-reef" })]), { first: "Card 1, shared", second: "with lone-pine and calm-reef" });
   assert.deepEqual(gpuFactLines(box(), []), { first: "Card 1, shared", second: "NVIDIA RTX 4090 · 24 GiB" });
+  assert.deepEqual(gpuFactLines(box({ facts: [{ label: "GPU", value: "a card, shared, NVIDIA RTX 4090, 24 GiB" }] }), []), { first: "Its card, shared", second: "NVIDIA RTX 4090 · 24 GiB" });
+  assert.deepEqual(gpuFactLines(box({ state: "stopped", facts: [{ label: "GPU", value: "a card, shared" }] }), []), { first: "Its card when it starts, if it has room", second: null });
 });
 
 test("071 unit 14: a stopped shared box on Proxmox LXC holds no card, and one on Docker or a whole card keeps it", () => {
@@ -139,11 +148,22 @@ test("071 unit 14: notices name a wrong card, a userspace that does not match, a
   assert.match(wrongCardNotice(wrong) ?? "", /on the wrong card/);
   assert.match(wrongCardNotice(wrong) ?? "", /does not stop it/);
   assert.equal(userspaceNotice(wrong), null);
+  const unindexed = "a card, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it fails: its NVIDIA userspace is 570.86 and the host's driver 580.142";
+  assert.match(userspaceNotice(box({ facts: [{ label: "GPU", value: unindexed }] })) ?? "", /570\.86/);
+  assert.match(wrongCardNotice(wrong) ?? "", /card 1/);
+  assert.doesNotMatch(wrongCardNotice(wrong) ?? "", new RegExp(CARD));
   const missed = box({ state: "stopped", facts: [{ label: "GPU", value: "card 1, shared: nvidia-smi in it listed no card, not its card " + CARD }] });
-  assert.match(wrongCardNotice(missed) ?? "", /did not get card 1/);
-  assert.match(wrongCardNotice(missed) ?? "", /Start tries again/);
-  const picked = box({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: "card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB: CUDA in it picks GPU-other, not its card GPU-" + CARD }] });
+  assert.equal(wrongCardNotice(missed), null);
+  const missedDocker = box({ state: "stopped", form: "Docker", backendLabel: "Docker on devpc", facts: missed.facts });
+  assert.match(wrongCardNotice(missedDocker) ?? "", /last start found it on the wrong card/);
+  assert.match(wrongCardNotice(missedDocker) ?? "", /devices do not change/);
+  assert.doesNotMatch(wrongCardNotice(missedDocker) ?? "", /Start tries again/);
+  const picked = box({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: "card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB: CUDA in it picks GPU-11111111-1111-1111-1111-111111111111, not its card GPU-" + CARD }] });
   assert.match(wrongCardNotice(picked) ?? "", /on the wrong card/);
+  const named = wrongCardNotice(picked, [{ uuid: "11111111-1111-1111-1111-111111111111", index: 2 }]);
+  assert.match(named ?? "", /card 2/);
+  assert.doesNotMatch(named ?? "", /11111111/);
+  assert.doesNotMatch(named ?? "", new RegExp(CARD));
   const cuda = box({ facts: [{ label: "GPU", value: "card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB: CUDA's driver did not initialise in it: it returned 802" }] });
   assert.equal(wrongCardNotice(cuda), null);
   assert.match(otherCheckNotice(cuda) ?? "", /returned 802/);
@@ -154,12 +174,16 @@ test("071 unit 14: the card's last line says what a claim means, and a reading p
   assert.match(gpuFooter(box(), "pve"), /share its memory and its time/);
   assert.match(gpuFooter(box({ gpuPart: "whole", claim: { card: CARD, part: "whole", generation: 1, answer: "granted" } }), "pve"), /on Proxmox LXC a whole card is fenced/);
   assert.match(gpuFooter(box({ gpuPart: "whole", form: "Docker", backendLabel: "Docker on devpc", claim: { card: CARD, part: "whole", generation: 1, answer: "granted" } }), "devpc"), /not a fence/);
+  const same = "NVIDIA RTX 4090";
   const cards = [
-    { index: 0, name: "NVIDIA RTX 4090" },
-    { index: 1, name: "NVIDIA GeForce RTX 5090" },
+    { index: 0, uuid: "11111111-1111-1111-1111-111111111111", name: same },
+    { index: 1, uuid: CARD, name: same },
   ];
-  assert.equal(monitorCard(cards, "NVIDIA GeForce RTX 5090")?.index, 1);
-  assert.equal(monitorCard(cards.slice(0, 1), "something else")?.index, 0);
+  assert.equal(monitorCard(cards, { uuid: CARD, index: 1 })?.index, 1);
+  assert.equal(monitorCard(cards, { uuid: "ffffffff-ffff-ffff-ffff-ffffffffffff", index: 1 }), null);
+  assert.equal(monitorCard(cards.map(({ index, name }) => ({ index, name })), { uuid: CARD, index: 1 })?.index, 1);
+  assert.equal(monitorCard(cards, { uuid: null, index: null }), null);
+  assert.equal(monitorCard(cards.slice(0, 1), { uuid: null, index: null }), null);
   assert.equal(gpuProgramsWords([{ name: "python3", pid: 3310 }]), ": python3 (3310) has the GPU open");
   assert.equal(gpuProgramsWords([]), "");
   assert.deepEqual(gpuFactLines(box({ facts: [{ label: "GPU", value: "GPU-0a1b" }] }), []), { first: "Shared", second: "GPU-0a1b" });
