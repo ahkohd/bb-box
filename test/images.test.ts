@@ -177,6 +177,9 @@ test("an image warns when it has no record, is old, or has another BB app or oth
   const chrome = judgeImage(record(1, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "154.0.8037.92" }, REBUILD);
   assert.equal(chrome.status, "warn");
   assert.match(chrome.detail, /Its Chrome is 156\.0\.8078\.79, newer than this bb-box's pin 154\.0\.8037\.92/);
+  assert.equal(chrome.fix, "Update the pins first, or leave this image until the pins catch up.");
+  const alsoOld = judgeImage(record(15, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "154.0.8037.92" }, REBUILD);
+  assert.equal(alsoOld.fix, `Update the pins first, or leave this image until the pins catch up. ${REBUILD}`);
   assert.equal(judgeImage(record(1, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "156.0.8078.79" }, REBUILD).status, "ok");
 });
 
@@ -184,6 +187,13 @@ test("an image fails with an older contract, or NVIDIA's userspace other than th
   const contract = judgeImage(record(20, { contract: IMAGE_CONTRACT - 1 }), facts, REBUILD);
   assert.equal(contract.status, "fail");
   assert.match(contract.detail, new RegExp(`It keeps image contract ${IMAGE_CONTRACT - 1}, and this bb-box needs ${IMAGE_CONTRACT}, so its boxes may not work\\. It is 20 days old`));
+  const newerChrome = { ...facts, pinChrome: "154.0.8037.92" };
+  const failedAndNewer = judgeImage(record(1, { contract: IMAGE_CONTRACT - 1, tools: { chrome: "156.0.8078.79" } }), newerChrome, REBUILD);
+  assert.equal(failedAndNewer.status, "fail");
+  assert.match(failedAndNewer.detail, /Its Chrome is 156\.0\.8078\.79, newer than this bb-box's pin 154\.0\.8037\.92/);
+  assert.equal(failedAndNewer.fix, REBUILD, "a failure is rebuilt; the pin line is only for a warning");
+  const failedOldAndNewer = judgeImage(record(20, { contract: IMAGE_CONTRACT - 1, tools: { chrome: "156.0.8078.79" } }), newerChrome, REBUILD);
+  assert.equal(failedOldAndNewer.fix, REBUILD);
 
   const seen = new Date(NOW - 2 * DAY).toISOString();
   const nvidia = judgeImage(record(), { ...facts, hostNvidia: { version: "590.44.01", seen } }, REBUILD);

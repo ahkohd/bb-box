@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { ARCHIVE_WITHIN_MS, BoatTemplates, BuildLeftRunning, LEFT_BUILD_WHY, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, guestBuildFrom, guestStep, templateArchive, templateFingerprint, templateName, type Reached, type TemplateDeps, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { ARCHIVE_WITHIN_MS, BoatTemplates, BuildLeftRunning, FAILED_BUILD_RETRY_MS, LEFT_BUILD_WHY, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, guestBuildFrom, guestStep, templateArchive, templateFingerprint, templateName, type Reached, type TemplateDeps, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
@@ -558,6 +558,187 @@ test("a trial fork left by a reload is checked again by the next bb-box, which r
     assert.equal(trial.state, "deleted");
     assert.equal(template.name, templateName("linux", "ready"));
     assert.equal(world.guestOf(template.id).runs("customize").length, 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a failed trial leaves a template another instance recorded, named ready, or is still checking", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  const mode: { current: "record" | "ready" | "trial" } = { current: "record" };
+  world.answerTrials(async (sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    const templateId = world.fake.sandboxes.get(sandbox)?.labels[LABELS.template];
+    const template = templateId ? world.fake.sandboxes.get(templateId) : undefined;
+    assert.ok(template);
+    if (mode.current === "record") await world.storage.set("template/linux", { kind: "linux", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null });
+    if (mode.current === "ready") template.name = templateName("linux", "ready");
+    if (mode.current === "trial") world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", [LABELS.template]: template.id }, state: "ready" });
+    return { ...OK_RUN, exitCode: 1, stdout: "services                          FAIL ssh\n" };
+  });
+  const templates = new BoatTemplates(world.deps());
+  try {
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const recorded = world.templateSandboxes()[0]!;
+    assert.notEqual(recorded.state, "deleted", "a template another instance recorded stays");
+    assert.equal((await templates.record("linux"))?.sandbox, recorded.id);
+
+    mode.current = "ready";
+    await world.storage.delete("template/linux");
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const named = world.templateSandboxes().find((sandbox) => sandbox.name === templateName("linux", "ready"));
+    assert.ok(named && named.state !== "deleted", "a template already named ready stays");
+
+    mode.current = "trial";
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const held = world.templateSandboxes().filter((sandbox) => sandbox.state !== "deleted" && sandbox.name === templateName("linux", "checking"));
+    assert.equal(held.length, 1, "a template another instance is still trialing stays");
+    assert.equal([...world.fake.sandboxes.values()].filter((sandbox) => sandbox.labels[LABELS.role] === TRIAL_ROLE && sandbox.state === "ready").length, 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a trial retries its check once when the first Docker start cannot start its scope", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld();
+  let checks = 0;
+  world.answerTrials(async (_sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    checks += 1;
+    if (checks === 1) return { ...OK_RUN, exitCode: 1, stdout: 'first docker command                 FAIL unable to start unit "docker-abc123.scope" (properties [{Name:Description Value:bb-box}]): transaction is destructive\n' };
+    return null;
+  });
+  const templates = new BoatTemplates(world.deps());
+  try {
+    const record = await templates.build("linux", "test");
+    assert.equal(checks, 2);
+    assert.equal(world.fake.sandboxes.get(record.sandbox)?.name, templateName("linux", "ready"));
+    checks = 0;
+    world.answerTrials(async (_sandbox, script) => {
+      if (!script.startsWith("bb-box-check")) return null;
+      checks += 1;
+      return { ...OK_RUN, exitCode: 1, stderr: 'unable to start unit "docker-def456.scope" (properties [{Name:Description Value:bb-box}]): transaction is destructive' };
+    });
+    await world.storage.delete("template/linux-desktop-cpu");
+    await assert.rejects(templates.build("linux-desktop-cpu", "test"), /unable to start unit "docker-def456\.scope" \(properties \[\{Name:Description Value:bb-box\}\]\): transaction is destructive/);
+    assert.equal(checks, 2, "one retry, then the failure stands");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a follower that stops hearing the build leaves the sandbox when the build still holds its lock", { skip: GUEST_SKIP }, async () => {
+  let refused = 0;
+  const world = templateWorld({
+    holdSteps: true,
+    guestReady: (guest) => {
+      guest.beforeEachRun(async (script) => {
+        if (!script.includes("echo running=yes")) return;
+        if (!guest.ran.some((run) => run.stdout.startsWith("running=yes"))) return;
+        refused += 1;
+        if (refused > 30) return;
+        throw new Error("ssh closed");
+      });
+    },
+  });
+  try {
+    const templates = new BoatTemplates(world.deps());
+    const building = templates.build("linux", "a box needs it");
+    await until("the build holds its lock", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).ran.some((run) => run.stdout.startsWith("running=yes")));
+    const made = world.templateSandboxes()[0]!;
+    const guest = world.guestOf(made.id);
+    await assert.rejects(building, /stopped answering: ssh closed/);
+    assert.equal(refused, 31, "thirty misses, then one more read before deleting");
+    assert.match(guest.ran.at(-1)?.stdout ?? "", /^running=yes/, "that read shows the lock still held");
+    assert.equal(made.state, "ready", "the sandbox stays while another bb-box's build holds the lock");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a follower that cannot read the build again leaves it when the last progress it did read was still running", { skip: GUEST_SKIP }, async () => {
+  let refused = 0;
+  const world = templateWorld({
+    holdSteps: true,
+    guestReady: (guest) => {
+      guest.beforeEachRun(async (script) => {
+        if (!script.includes("echo running=yes")) return;
+        if (!guest.ran.some((run) => run.stdout.startsWith("running=yes"))) return;
+        refused += 1;
+        throw new Error("ssh closed");
+      });
+    },
+  });
+  try {
+    const templates = new BoatTemplates(world.deps());
+    const building = templates.build("linux", "a box needs it");
+    await until("the build holds its lock", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).ran.some((run) => run.stdout.startsWith("running=yes")));
+    const made = world.templateSandboxes()[0]!;
+    await assert.rejects(building, /stopped answering: ssh closed/);
+    assert.equal(refused, 31, "thirty misses, then the read before deleting fails too");
+    assert.equal(made.state, "ready", "the last progress that answered showed the build running, so the sandbox stays");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a follower that reaches its deadline leaves the sandbox when one more read shows the build still holds its lock", { skip: GUEST_SKIP }, async () => {
+  const world = templateWorld({ holdSteps: true });
+  let now = Date.now();
+  try {
+    const templates = new BoatTemplates(world.deps({
+      now: () => now,
+      sleep: async () => {
+        const guest = [...world.guests.values()][0];
+        now += guest?.ran.some((run) => run.stdout.startsWith("running=yes")) ? 111 * 60_000 : 15;
+      },
+    }));
+    const building = templates.build("linux", "a box needs it");
+    await until("the build holds its lock", () => world.templateSandboxes().length === 1 && world.guestOf(world.templateSandboxes()[0]!.id).ran.some((run) => run.stdout.startsWith("running=yes")));
+    const made = world.templateSandboxes()[0]!;
+    await assert.rejects(building, /did not end within 110 minutes/);
+    assert.equal(made.state, "ready", "the deadline's last read shows the lock still held");
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a kept build the last failure left is not due again until that failure is old", { skip: GUEST_SKIP }, async () => {
+  let now = Date.now();
+  const world = templateWorld();
+  world.answerTrials(async (sandbox, script) => {
+    if (!script.startsWith("bb-box-check")) return null;
+    const templateId = world.fake.sandboxes.get(sandbox)?.labels[LABELS.template];
+    world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TRIAL_ROLE, [LABELS.kind]: "linux", [LABELS.template]: templateId! }, state: "ready" });
+    return { ...OK_RUN, exitCode: 1, stdout: "services                          FAIL ssh\n" };
+  });
+  const templates = new BoatTemplates(world.deps({ now: () => now }));
+  try {
+    await assert.rejects(templates.build("linux", "test"), /failed its check/);
+    const kept = world.templateSandboxes().find((sandbox) => sandbox.state !== "deleted");
+    assert.ok(kept);
+    assert.equal(kept.name, templateName("linux", "checking"));
+    assert.equal((await templates.failedBuild("linux"))?.sandbox, kept.id);
+    assert.deepEqual(await templates.due(), [], "the upkeep does not check again inside the other instance's trial");
+    await world.storage.set("template-failed/linux", { at: now, why: "a different sandbox", sandbox: "bx_other" });
+    assert.deepEqual(await templates.due(), [{ kind: "linux", why: LEFT_BUILD_WHY }], "a failure that left another sandbox does not cover this one");
+    await world.storage.set("template-failed/linux", { at: now, why: "this sandbox", sandbox: kept.id });
+    now += FAILED_BUILD_RETRY_MS;
+    assert.deepEqual(await templates.due(), [{ kind: "linux", why: LEFT_BUILD_WHY }]);
+  } finally {
+    world.dispose();
+  }
+});
+
+test("a left Android build whose licence was cleared is not due, and following it leaves the sandbox and records no failure", async () => {
+  const world = templateWorld();
+  try {
+    const made = world.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, name: templateName("android", "building"), state: "ready" });
+    const templates = new BoatTemplates(world.deps({ androidLicence: () => null }));
+    assert.deepEqual(await templates.due(), []);
+    await assert.rejects(templates.build("android", LEFT_BUILD_WHY), (error: unknown) => error instanceof BuildLeftRunning && error.message.includes(made.id) && /licence is not accepted/.test(error.message));
+    assert.equal(made.state, "ready");
+    assert.equal(await templates.failedBuild("android"), null);
   } finally {
     world.dispose();
   }
