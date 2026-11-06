@@ -384,7 +384,7 @@ export function judgeImage(
   }
   const problems = [...failures, ...warnings];
   const pinFirst = "Update the pins first, or leave this image until the pins catch up.";
-  const fix = !problems.length ? null : chromeNewerThanPin && problems.length === 1 ? pinFirst : chromeNewerThanPin ? `${pinFirst} ${rebuild}` : rebuild;
+  const fix = !problems.length ? null : failures.length ? rebuild : chromeNewerThanPin && warnings.length === 1 ? pinFirst : chromeNewerThanPin ? `${pinFirst} ${rebuild}` : rebuild;
   return {
     status: failures.length ? "fail" : warnings.length ? "warn" : "ok",
     detail: [describeImage(record, now), ...problems].join(" "),

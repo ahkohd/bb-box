@@ -109,6 +109,7 @@ export interface TemplateRecord {
 export interface FailedBuild {
   readonly at: number;
   readonly why: string;
+  readonly sandbox?: string;
 }
 
 interface RetiredTemplate {
@@ -298,15 +299,19 @@ export function failedChecks(output: string): string[] {
   return output.split("\n").filter((line) => /\bFAIL\b/.test(line) && !CHECKS_BOAT_ANSWERS_FOR.some((check) => check.test(line)));
 }
 
+const DOCKER_SCOPE_DID_NOT_START = /unable to start unit "?docker-[^\s"]+\.scope"?/i;
+
 function dockerUnitDidNotStart(check: RunResult): boolean {
   if (check.exitCode === 0 && !failedChecks(check.stdout).length) return false;
-  return /unable to start unit docker-\S+\.scope/i.test(`${check.stdout}\n${check.stderr}`);
+  return DOCKER_SCOPE_DID_NOT_START.test(`${check.stdout}\n${check.stderr}`);
 }
 
 export class BoatTemplates {
   readonly #deps: TemplateDeps;
   readonly #building = new Map<BoatKind, Promise<TemplateRecord>>();
   readonly #buildSandboxes = new Set<string>();
+  readonly #buildWasRunning = new Map<string, boolean>();
+  readonly #failureLeft = new Map<BoatKind, string>();
   #disposed = false;
 
   constructor(deps: TemplateDeps) {
@@ -413,8 +418,11 @@ export class BoatTemplates {
     const left = await this.#leftBuilds(signal);
     for (const kind of Object.keys(TEMPLATE_STEP) as BoatKind[]) {
       if (this.#building.has(kind)) continue;
-      if (left.some((sandbox) => sandbox.labels[this.#deps.labelKeys.kind] === kind)) {
+      const pending = left.find((sandbox) => sandbox.labels[this.#deps.labelKeys.kind] === kind);
+      if (pending) {
         if (TEMPLATE_STEP[kind] === "android" && !this.#deps.androidLicence?.()) continue;
+        const failed = await this.failedBuild(kind);
+        if (failed?.sandbox === pending.id && (await this.failedLately(kind))) continue;
         due.unshift({ kind, why: LEFT_BUILD_WHY });
         continue;
       }
@@ -455,7 +463,11 @@ export class BoatTemplates {
           return record;
         })
         .catch(async (error: unknown) => {
-          if (!this.#leaving(error)) await this.#deps.storage.set(`${FAILED}${kind}`, { at: this.#deps.now(), why: (error instanceof Error ? error.message : String(error)).slice(0, 600) });
+          if (!this.#leaving(error)) {
+            const sandbox = this.#failureLeft.get(kind);
+            await this.#deps.storage.set(`${FAILED}${kind}`, { at: this.#deps.now(), why: (error instanceof Error ? error.message : String(error)).slice(0, 600), ...(sandbox ? { sandbox } : {}) });
+          }
+          this.#failureLeft.delete(kind);
           throw error;
         })
         .finally(() => this.#building.delete(kind));
@@ -467,6 +479,7 @@ export class BoatTemplates {
 
   async #build(kind: BoatKind, why: string): Promise<TemplateRecord> {
     const { api, now, log } = this.#deps;
+    this.#failureLeft.delete(kind);
     const started = now();
     const key = this.key();
     const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
@@ -495,7 +508,8 @@ export class BoatTemplates {
       return record;
     } catch (error) {
       if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`bb-box is stopping, so it leaves boat's template build ${made.id} to the bb-box that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
-      if (!(await this.#templateStays(made.id, kind))) {
+      if (await this.#templateStays(made.id, kind)) this.#failureLeft.set(kind, made.id);
+      else {
         await this.#deps.forget(made.id);
         await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       }
@@ -619,7 +633,21 @@ export class BoatTemplates {
     if (sandbox?.name === templateName(kind, "ready")) return true;
     const labels = this.#deps.labelKeys;
     const trials = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: id }).catch(() => []);
-    return trials.some((trial) => (isRunning(trial.state) || isStarting(trial.state)) && !this.#buildSandboxes.has(trial.id));
+    if (trials.some((trial) => (isRunning(trial.state) || isStarting(trial.state)) && !this.#buildSandboxes.has(trial.id))) return true;
+    return this.#buildStillHoldsItsLock(id);
+  }
+
+  async #progress(id: string): Promise<{ readonly build: GuestBuild | null; readonly complaint: string }> {
+    const progress: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string } = await (await this.#deps.reach(id, "user"))
+      .run(`sudo -n sh -c ${quote(progressScript())}`, { timeoutMs: 30_000 })
+      .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: error instanceof Error ? error.message : String(error) }));
+    return { build: progress.exitCode === 0 ? guestBuildFrom(progress.stdout) : null, complaint: (progress.stderr.trim() || progress.stdout.trim()).slice(-300) };
+  }
+
+  async #buildStillHoldsItsLock(id: string): Promise<boolean> {
+    const again = (await this.#progress(id)).build;
+    if (again?.running) return true;
+    return again === null && this.#buildWasRunning.get(id) === true;
   }
 
   async #desktopUp(sandbox: string, deadline: number): Promise<void> {
@@ -670,6 +698,7 @@ export class BoatTemplates {
     let unanswered = 0;
     let said = "";
     let stagedHere = false;
+    this.#buildWasRunning.delete(id);
     for (;;) {
       this.#stillHere();
       if (now() > deadline) throw new Error(`boat's ${kind} template build did not end within ${Math.round(GUEST_SCRIPTS_WITHIN_MS / 60_000)} minutes.`);
@@ -677,15 +706,16 @@ export class BoatTemplates {
         await this.#deps.api.extend(id, BUILD_TTL_SECONDS).catch(() => undefined);
         renewed = now();
       }
-      const progress: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string } = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(progressScript())}`, { timeoutMs: 30_000 }).catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: error instanceof Error ? error.message : String(error) }));
-      const build = progress.exitCode === 0 ? guestBuildFrom(progress.stdout) : null;
+      const progress = await this.#progress(id);
+      const build = progress.build;
       if (!build) {
         unanswered += 1;
-        if (unanswered >= 30) throw new Error(`boat's ${kind} template build stopped answering: ${(progress.stderr.trim() || progress.stdout.trim()).slice(-300)}`);
+        if (unanswered >= 30) throw new Error(`boat's ${kind} template build stopped answering: ${progress.complaint}`);
         await sleep(BUILD_POLL_MS);
         continue;
       }
       unanswered = 0;
+      this.#buildWasRunning.set(id, build.running);
       const step = build.tail.filter((line) => /^\d\d:\d\d:\d\d {2}/.test(line)).pop();
       if (step && step !== said) log(`boat: ${kind} template: ${(said = step).slice(10)}`);
       const next = guestStep(build);
