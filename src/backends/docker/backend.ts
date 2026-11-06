@@ -291,6 +291,7 @@ interface HostState {
   readonly info: DockerInfo;
   /** Every bb-box container on the host, of every install. */
   readonly containers: readonly ContainerInfo[];
+  readonly placing: readonly Placing[];
 }
 
 function message(error: unknown): string {
@@ -603,6 +604,7 @@ export class DockerBackend implements Backend {
     spares: true,
   };
   #share: DaemonShare<Placing> | null = null;
+  readonly #reservedIn = new Map<string, DaemonShare<Placing>>();
   #joined = false;
   #hostCpus: { readonly at: number; readonly cpus: CpuList } | null = null;
   #daemonCpus: CpuList | null = null;
@@ -804,7 +806,7 @@ export class DockerBackend implements Backend {
         hosts: [{ host: this.#host, ok: false, limits: [] }],
       };
     }
-    const placed = this.#placingOnThisDaemon();
+    const placed = state.placing;
     const unplaced: Unplaced = {
       count: Math.max(0, pending.length - placed.length),
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
@@ -919,7 +921,7 @@ export class DockerBackend implements Backend {
   }
 
   async #holders(state: HostState, cards: CardsOnHost): Promise<CardHolder[]> {
-    const placing = new Map(this.#placingOnThisDaemon().map((each) => [each.name, each]));
+    const placing = new Map(state.placing.map((each) => [each.name, each]));
     const held = await Promise.all(
       state.containers.map(async (container): Promise<CardHolder | null> => {
         if (container.labels[LABELS.imageBox] || placing.has(container.name)) return null;
@@ -985,8 +987,29 @@ export class DockerBackend implements Backend {
   async #state(signal?: AbortSignal): Promise<HostState> {
     const [info, containers] = await Promise.all([this.#cli.info(signal), this.#cli.list({ [LABELS.backend]: "docker" }, signal)]);
     this.#info = info;
-    this.#shareOf(info);
-    return { info, containers };
+    const share = this.#shareOf(info);
+    return { info, containers, placing: await this.#placingOnDaemon(share, info, signal) };
+  }
+
+  async #placingOnDaemon(share: DaemonShare<Placing>, info: DockerInfo, signal?: AbortSignal): Promise<Placing[]> {
+    const here = daemonKey(info, this.#daemonFallback);
+    const owners = new Map<string, Promise<string | null>>();
+    const ownerDaemon = (backendId: string): Promise<string | null> => {
+      let read = owners.get(backendId);
+      if (!read) {
+        const owner = share.backends.get(backendId);
+        read = owner ? owner.daemonNow(signal).catch(() => null) : Promise.resolve(null);
+        owners.set(backendId, read);
+      }
+      return read;
+    };
+    const entries = [...share.placing.values()];
+    const counted = await Promise.all(entries.map(async (each) => ((await ownerDaemon(each.backendId)) ?? here) === here));
+    return entries.filter((_, index) => counted[index]);
+  }
+
+  async #daemonRead(signal?: AbortSignal): Promise<string> {
+    return daemonKey(await this.#cli.info(signal), this.#daemonFallback);
   }
 
   #shareOf(info: DockerInfo): DaemonShare<Placing> {
@@ -1008,7 +1031,7 @@ export class DockerBackend implements Backend {
 
   #join(): void {
     if (!this.#share || this.#joined) return;
-    joinDaemon(this.#share, this.id, () => this.#context.on?.() ?? true, () => this.#daemonNow());
+    joinDaemon(this.#share, this.id, { on: () => this.#context.on?.() ?? true, daemon: () => this.#daemonNow(), daemonNow: (signal) => this.#daemonRead(signal) });
     this.#joined = true;
   }
 
@@ -1019,13 +1042,17 @@ export class DockerBackend implements Backend {
     return this.#shareOf(info);
   }
 
-  get #placing(): Map<string, Placing> {
-    return this.#share?.placing ?? new Map();
+  #reserve(boxId: string, placing: Placing): void {
+    const share = this.#share;
+    if (!share) return;
+    this.#unreserve(boxId);
+    share.placing.set(boxId, placing);
+    this.#reservedIn.set(boxId, share);
   }
 
-  #placingOnThisDaemon(): Placing[] {
-    const here = this.#daemonNow();
-    return [...this.#placing.values()].filter((each) => each.backendId === this.id || this.#share?.backends.get(each.backendId)?.daemon() === here);
+  #unreserve(boxId: string): void {
+    this.#reservedIn.get(boxId)?.placing.delete(boxId);
+    this.#reservedIn.delete(boxId);
   }
 
   get #avoided(): Map<string, number> {
@@ -1062,7 +1089,7 @@ export class DockerBackend implements Backend {
     const listed = new Set(containers.map((container) => container.name));
     const active = containers.filter((container) => ACTIVE.has(container.status));
     const holding = new Set(active.map((container) => container.name));
-    const placing = this.#placingOnThisDaemon();
+    const placing = state.placing;
     const unlisted = placing.filter((other) => !listed.has(other.name));
     const guests = containers.length + unlisted.length + unplaced.count;
     const memoryUsed =
@@ -1115,7 +1142,7 @@ export class DockerBackend implements Backend {
     const running = new Set(state.containers.filter((container) => ACTIVE.has(container.status)).map((container) => container.name));
     return [
       ...state.containers.filter((container) => running.has(container.name) && container.name !== name && container.cpus).map((container) => container.cpus!),
-      ...this.#placingOnThisDaemon().filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
+      ...state.placing.filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
     ];
   }
 
@@ -1186,7 +1213,7 @@ export class DockerBackend implements Backend {
   /** Checks room and counts the box against the host, one acquire at a time. */
   #place(box: BoxIdentity, signal: AbortSignal): Promise<PlacedBox> {
     return this.#underPlacement(async () => {
-      this.#placing.delete(box.boxId);
+      this.#unreserve(box.boxId);
       const state = await this.#state(signal);
       const room = this.#room(state, box.kind, box.size);
       if (room.why !== null) throw new BackendError("no_capacity", this.#full(box.kind, room.why));
@@ -1203,7 +1230,7 @@ export class DockerBackend implements Backend {
       }
       const name = containerName(box.boxId);
       const cpus = await this.#allot(state, name, box.size.cores, signal);
-      this.#placing.set(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus));
+      this.#reserve(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus));
       return { host: room.capacity.host, gpu: card?.device ?? null, card, part, cpus };
     });
   }
@@ -1216,7 +1243,7 @@ export class DockerBackend implements Backend {
     return this.#underPlacement(async () => {
       const name = containerName(box.boxId);
       const cpus = await this.#allot(await this.#state(signal), name, box.size.cores, signal, again);
-      this.#placing.set(box.boxId, this.#placingOf(box, gpu, card, part, cpus));
+      this.#reserve(box.boxId, this.#placingOf(box, gpu, card, part, cpus));
       if (again) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto the host's CPUs as they are now", error));
       return cpus;
     });
@@ -1230,7 +1257,7 @@ export class DockerBackend implements Backend {
     const mine = running.filter((container) => container.labels[LABELS.install] === this.#context.installId);
     const held = [
       ...running.filter((container) => !mine.includes(container)).map((container) => container.cpus!),
-      ...this.#placingOnThisDaemon().filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
+      ...state.placing.filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
     ];
     const moves = movesOntoFreeCpus(await this.#cpusOfHost(state.info, signal), mine.map((container) => ({ id: container.id, cpus: container.cpus! })), held);
     for (const move of moves) {
@@ -1330,7 +1357,7 @@ export class DockerBackend implements Backend {
       await this.#remove(name, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       throw error;
     } finally {
-      this.#placing.delete(box.boxId);
+      this.#unreserve(box.boxId);
     }
   }
 

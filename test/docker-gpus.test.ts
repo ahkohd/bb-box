@@ -516,6 +516,68 @@ test("071 unit 11: a box one clone is making counts against that clone's room al
   await pending;
 });
 
+test("071 unit 11: Astra's round 6: after a rename, another backend on the daemon still counts a pending whole card, judged by its owner's daemon read now", async () => {
+  const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], name: "before-rename" });
+  const config = dockerConfig({ "gpu-desktops": true });
+  const sharedStorage = new MemoryStorage();
+  const make = (id: string) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), sharedStorage, wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const a = make("docker:a");
+  const b = make("docker:b");
+  let resume!: () => void;
+  let paused!: () => void;
+  const claimed = new Promise<void>((resolve) => (paused = resolve));
+  const resumed = new Promise<void>((resolve) => (resume = resolve));
+  let held = false;
+  const pending = a.acquire(identity("linux", "whole", "thr_abc123", "pending-whole"), null, { ...hooks(), claim: async () => { if (held) return; held = true; paused(); await resumed; } }, signal());
+  try {
+    await claimed;
+    assert.equal((await b.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, false);
+    fake.set({ name: "after-rename" });
+    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "second-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/);
+    await a.dispose();
+    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "third-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/, "a reservation whose owner cannot be asked still counts");
+  } finally {
+    resume();
+  }
+  await pending;
+  await a.dispose();
+  await b.dispose();
+  assert.equal(fake.containers().length, 1, "a whole card has one box");
+});
+
+test("071 unit 11: Astra's round 6: a reconfigure while a box with no GPU is being made keeps its reservation for the new instance and drops it when the acquire ends", async () => {
+  const fake = fakeDockerHost();
+  const driver = { ...dockerDriver, create: (config: DockerConfig, context: BackendContext) => new DockerBackend(config, context, { binary: fake.binary, readyTimeoutMs: 2_000 }) };
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {}, drivers: [driver] });
+  const document = (boxes: number): ConfigDocument => ({ schema: 1, revision: boxes, backends: [{ id: "docker", type: "docker", enabled: true, fields: { boxes } }], kinds: {}, general: {} });
+  try {
+    await backends.configure(document(2), {});
+    const old = backends.get("docker")!;
+    let resume!: () => void;
+    let paused!: () => void;
+    const claimed = new Promise<void>((resolve) => (paused = resolve));
+    const resumed = new Promise<void>((resolve) => (resume = resolve));
+    let held = false;
+    const pending = old.acquire(identity("linux", "none", "thr_abc123", "pending-cpu"), null, { ...hooks(), claim: async () => { if (held) return; held = true; paused(); await resumed; } }, signal());
+    try {
+      await claimed;
+      await backends.configure(document(1), {});
+      const fresh = backends.get("docker")!;
+      assert.notEqual(fresh, old);
+      assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, false, "the new instance counts the box the old one is making");
+    } finally {
+      resume();
+    }
+    const box = await pending;
+    const fresh = backends.get("docker")!;
+    await fresh.release(box, { resetting: async () => {}, timing: () => {} }, signal());
+    assert.equal(fake.containers().length, 0);
+    assert.equal((await fresh.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true, "the acquire dropped its reservation from the share it made it in");
+  } finally {
+    await backends.dispose();
+  }
+});
+
 test("071 unit 11: after a rename, a backend still counts its own pending whole card, though a settings check's instance of it last read the old name", async () => {
   const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], name: "before-rename" });
   const config = dockerConfig({ "gpu-desktops": true });

@@ -3433,7 +3433,12 @@ offered before it.
   the cards left out: a settings check's instance of a backend and the live
   one order their placements on one lock, and a rename of the host keeps it.
   Cloned hosts that kept one engine ID share it too, which only makes them
-  place one at a time; their cards have different UUIDs. Every backend of
+  place one at a time; their cards have different UUIDs. A box being made
+  counts on the daemon the backend making it reads at that moment, and on
+  every daemon of its engine ID when that backend cannot be asked. Each
+  acquire drops its reservation from the share it made it in, and a new
+  instance of a backend joins the share its engine ID has, so a reconfigure
+  keeps the boxes being made. Every backend of
   the install that reaches the daemon, on or off, reads a box's switched
   part from one record. Two backends are on one daemon when its engine ID,
   name and Docker root from `docker info` are all the same. A backend counts
@@ -3893,6 +3898,50 @@ skipped, the 112 the same environment's failures, by name, as on main
 
 The gate's results stand: it ran one daemon, whose share and record are the
 same under either key.
+
+### After the sixth review
+
+Astra said no-go, with two medium findings:
+
+- after a rename while one backend was making a whole box, another backend
+  on the daemon compared its new name with the first backend's name as last
+  read, the old one, so it did not count the pending box and put a shared
+  box on its card
+- a reconfigure while a box was being made cleared the old instance's
+  share, so its acquire dropped its reservation from an empty one, and the
+  box was counted for ever, boxes with no GPU too
+
+The lead decided the fixes:
+
+- Whose daemon a reservation counts on is read from its owner at that
+  moment: when bb-box reads the host, as for every placement under the lock,
+  it asks each backend with a reservation for its daemon now. When the
+  owner cannot be asked, as once it is gone, or does not answer, the
+  reservation counts. A name never drops one.
+- An acquire keeps the share it reserved in and drops its reservation from
+  that share. A new instance of a backend already joins the share its engine
+  ID has, so a reconfigure keeps the boxes being made, and a test now holds
+  it to that.
+
+The builder's rule of the last round that a backend always counts its own
+reservations is now part of the first: its own read says its daemon.
+
+Astra's two reproductions are tests: after a rename, the other backend
+refuses a shared box with "card 0 is kept whole for pending-whole, which
+bb-box is making", and still does once the first backend is disposed; a
+reconfigure while a box with no GPU is being made leaves the new instance
+counting it, and once the acquire ends and the box is released, the host
+has room again. Every earlier sequence still runs. Each of 5 rules has a
+revert that fails it, on a box, and the 66 earlier reverts ran again, 1
+changed to the new call and 2 of the last round's replaced by these, each
+failing its tests. Then, on a `linux` box in `node:26-bookworm` as root with
+`--init`: `tsc` clean; the node suite, 3,843 tests, 3,421 passed, 112
+failed, 310 skipped, the 112 the same environment's failures, by name, as on
+main (`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 40 tests.
+
+The gate's results stand: it ran one backend, whose reservations count on
+its daemon as before.
 
 ### Still open
 

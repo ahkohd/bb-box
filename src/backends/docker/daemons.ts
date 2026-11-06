@@ -2,6 +2,7 @@ export interface DaemonMember {
   readonly instances: number;
   readonly on: () => boolean;
   readonly daemon: () => string;
+  readonly daemonNow: (signal?: AbortSignal) => Promise<string>;
 }
 
 export interface DaemonShare<Placing> {
@@ -37,8 +38,8 @@ export function daemonShare<Placing>(daemon: string): DaemonShare<Placing> {
   return share as DaemonShare<Placing>;
 }
 
-export function joinDaemon(share: DaemonShare<unknown>, backendId: string, on: () => boolean, daemon: () => string): void {
-  share.backends.set(backendId, { instances: (share.backends.get(backendId)?.instances ?? 0) + 1, on, daemon });
+export function joinDaemon(share: DaemonShare<unknown>, backendId: string, member: Omit<DaemonMember, "instances">): void {
+  share.backends.set(backendId, { instances: (share.backends.get(backendId)?.instances ?? 0) + 1, ...member });
 }
 
 export function leaveDaemon(share: DaemonShare<unknown>, backendId: string): void {
