@@ -140,7 +140,7 @@ export class FakeNode {
   #cards: FakeCard[] = [];
   #boot = "boot-1";
 
-  readonly #helper: string;
+  #helper: string;
 
   constructor(options: { readonly cards?: readonly FakeCard[]; readonly writes?: "on" | "off" | null; readonly pools?: readonly string[]; readonly pveContainer?: string; readonly ledger?: boolean; readonly helperVersion?: string } = {}) {
     for (const dir of ["etc/pve/nodes/pve/lxc", "etc/pve/nodes/pve/qemu-server", "etc/bb-box", "var/lib", "run/fake-pve/running", "bin", "sys/module/nvidia", "proc/sys/kernel/random", "dev/dri/by-path"]) {
@@ -409,6 +409,10 @@ export class FakeNode {
 
   #env(extra: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
     return { PATH: `${join(this.root, "bin")}:/usr/bin:/bin`, PERL5LIB: FAKE_PVE, BBBOX_GPU_ROOT: this.root, ...extra };
+  }
+
+  runHelperAs(version: string): void {
+    this.#helper = helperAs(version, join(this.root, "bb-box-gpu-as-released"));
   }
 
   run(args: readonly string[] = ["--once"], env: Readonly<Record<string, string>> = {}): Run {

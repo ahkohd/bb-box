@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type CopyHooks, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CardReservations, placeShared, placeWhole, reservationsOn, type PlaceInput } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { answerTo, parseHelperLines, type HelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
-import { CARD_A, CARD_B, ClaimsBridge, INSTALL, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
+import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
+import { heldCopyDescription, heldCopyTags } from "../src/backends/proxmox/copies.ts";
+import { parseTags } from "../src/backends/proxmox/api.ts";
 import { cardLines, marker } from "./gpu-helper/node.ts";
 import { gpuPartsText, gpuRoomText } from "../src/plugin/tools.ts";
 import { Backends } from "../src/backends/index.ts";
@@ -584,4 +586,146 @@ test("071 unit 8, round 3, Astra 1: with helper 0.4.2, a whole server whose star
   assert.equal(arrived, false, "no whole claim was asked on another card");
   assert.equal(bridge.proxmox.guests.get(7014)!.status, "stopped");
   assert.ok(!bridge.gpuTags(7014).some((tag) => tag.includes(B)), "its marker names no other card");
+});
+
+const copyHooks: CopyHooks = { claimed: async () => {}, submitting: async () => {}, task: async () => {} };
+const HELPER_0_4_2 = "its GPU helper is bb-box-gpu 0.4.2, and a whole card needs 0.4.3 or later, which takes a card only from this install's own stopped boxes";
+const UPGRADE = "Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu 0.4.3 or later, as root on pve.";
+
+function wholeMarkersWritten(bridge: ClaimsBridge): string[] {
+  const written: string[] = [];
+  bridge.proxmox.intercept = (call) => {
+    const vmid = /\/lxc\/(\d+)\/config$/.exec(call.path)?.[1];
+    if (call.method !== "PUT" || vmid === undefined) return undefined;
+    const before = parseTags(bridge.proxmox.guests.get(Number(vmid))?.config.tags);
+    for (const tag of parseTags(call.params.tags)) if (tag.startsWith("gpu.whole.") && !before.includes(tag)) written.push(`CT ${vmid}: ${tag}`);
+    return undefined;
+  };
+  return written;
+}
+
+function heldCopyOf(bridge: ClaimsBridge, vmid: number, of: BoxIdentity): Guest {
+  const label = { box: of.boxId, snapshot: "snreviewcopy", kept: null };
+  const template = bridge.proxmox.guests.get(9001)!;
+  bridge.proxmox.guests.set(vmid, {
+    vmid,
+    name: "review-copy",
+    pool: POOL,
+    status: "stopped",
+    template: true,
+    config: { ...template.config, template: "1", hostname: "review-copy", description: heldCopyDescription(INSTALL, label), tags: heldCopyTags(INSTALL, label, Date.now(), 9001).join(";"), rootfs: `local-lvm:vm-${vmid}-disk-0,size=8G` },
+  });
+  bridge.proxmox.statusPass();
+  return { ref: String(vmid), host: "pve", address: null, size: null, data: { template: 9001, box: of.boxId } };
+}
+
+function refusedForOldHelper(error: unknown): true {
+  assert.ok(error instanceof BackendError && error.code === "no_capacity", String(error));
+  assert.ok(error.message.includes(`pve cannot give a box a whole card now, as ${HELPER_0_4_2}. ${UPGRADE}`), error.message);
+  assert.ok(error.agentMessage?.endsWith(`pve cannot give a box a whole card now, as ${HELPER_0_4_2}. Ask the user.`), error.agentMessage ?? "");
+  return true;
+}
+
+for (const route of ["return", "adopt"] as const) {
+  test(`071 unit 8, round 4, Astra's reproduction: a whole box's restore that ${route === "return" ? "gives its claim back to its guest" : "gives its claim to a new guest"} is refused before it clears the claim, and no write asks helper 0.4.2 for the card whole, so another install's stopped box that took the card keeps its lines`, async () => {
+    const bridge = new ClaimsBridge({ helperVersion: "0.4.3" });
+    const backend = bridge.backend();
+    const original = box("linux-desktop", "whole", "thr_review", "original-whole");
+    const guest = await backend.acquire(original, null, hooks(), signal());
+    assert.equal(guest.claim?.card, A);
+    bridge.node.runHelperAs("0.4.2");
+    bridge.pass();
+    assert.ok(bridge.node.reportLines().some((line) => line.startsWith("helper bb-box-gpu 0.4.2 ")));
+    const held = (await backend.readGpuClaim(guest, signal()))!;
+    await assert.rejects(backend.holdGpuCard(guest, held, signal()), (error: unknown) => {
+      assert.ok(error instanceof BackendError && error.code === "no_capacity", String(error));
+      const said = `Card 0 is the box's whole card, which a restore asks the host's GPU helper for again: pve cannot give a box a whole card now, as ${HELPER_0_4_2}.`;
+      assert.equal(error.message, `${said} ${UPGRADE}`);
+      assert.equal(error.agentMessage, `${said} Ask the user.`);
+      return true;
+    });
+    assert.ok(bridge.node.reportLines().includes(`claim ${guest.ref} g${held.generation} granted whole ${A}`), "the refused restore left the box's claim as it was");
+    await backend.powerOff(guest, signal());
+    await backend.releaseGpuClaim(guest, signal());
+    assert.deepEqual(bridge.lines(Number(guest.ref)), []);
+    bridge.desktop(7065, CARD_A, box("linux-desktop", "shared", "thr_theirs", "foreign-stopped"), SECOND_INSTALL, { marker: marker("shared", CARD_A, 1), pool: SECOND_POOL });
+    bridge.pass();
+    assert.deepEqual(bridge.lines(7065), cardLines(CARD_A, "desktop"));
+    assert.ok(bridge.node.reportLines().includes(`claim 7065 g1 granted shared ${A}`));
+    const written = wholeMarkersWritten(bridge);
+    let given = guest;
+    const handoff =
+      route === "adopt"
+        ? async () => {
+            given = await backend.adoptCopy(heldCopyOf(bridge, 7045, original), original, { macs: {}, smbios: null }, copyHooks, signal());
+            await backend.armAdopted(given, held, true, signal());
+          }
+        : () => backend.armReturned(guest, held, true, signal());
+    await assert.rejects(handoff(), (error: unknown) => {
+      refusedForOldHelper(error);
+      assert.match((error as Error).message, new RegExp(`^bb-box did not write gpu\\.whole\\.${A}\\.g\\d+ on CT ${given.ref}, which would ask the host's GPU helper for a whole card: `));
+      return true;
+    });
+    bridge.pass();
+    assert.deepEqual(written, []);
+    assert.deepEqual(bridge.lines(7065), cardLines(CARD_A, "desktop"), "the other install's box keeps its lines");
+    assert.ok(bridge.node.reportLines().includes(`claim 7065 g1 granted shared ${A}`));
+    assert.ok(!bridge.gpuTags(Number(given.ref)).some((tag) => tag.startsWith("gpu.whole.")));
+  });
+}
+
+test("071 unit 8, round 4, Astra: with helper 0.4.2, no caller writes a whole marker: acquires, a fork's placement and its copy, a start that places its box again, a restore's held card, a rollback's kept claim, a claim given back and a swap's given claim", async () => {
+  const bridge = new ClaimsBridge({ helperVersion: "0.4.3" });
+  withUserspace(bridge);
+  const backend = bridge.backend({ readyTimeoutMs: 60_000 });
+  const whole = box("linux-desktop", "whole", "thr_whole", "whole-owl");
+  const made = await backend.acquire(whole, null, hooks(), signal());
+  assert.deepEqual([made.claim?.part, made.claim?.card], ["whole", A]);
+  const source = box("linux-desktop", "shared", "thr_whole", "fork-source");
+  bridge.desktop(7040, CARD_B, source, INSTALL, { marker: marker("shared", CARD_B, 1) });
+  const lost = box("linux-desktop", "whole", "thr_whole", "lost-owl");
+  bridge.desktop(7010, CARD_A, lost, INSTALL, { marker: marker("whole", CARD_A, 1) });
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().includes(`claim 7010 g1 refused whole-taken ${A} ${made.ref}`), bridge.node.reportLines().join("\n"));
+  const fork = box("linux-desktop", "whole", "thr_fork", "whole-fork");
+  await backend.placeForkGpu(fork, "whole", signal());
+  const held = (await backend.readGpuClaim(made, signal()))!;
+  bridge.node.runHelperAs("0.4.2");
+  bridge.pass();
+  const written = wholeMarkersWritten(bridge);
+  const refused: string[] = [];
+  const each = async (caller: string, run: () => Promise<unknown>) => {
+    const error = await run().then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    assert.ok(error instanceof Error, `${caller} was not refused`);
+    assert.ok(error.message.includes(HELPER_0_4_2), `${caller}: ${error.message}`);
+    refused.push(caller);
+  };
+  await each("a server's acquire", () => backend.acquire(box("linux", "whole"), null, hooks(), signal()));
+  await each("a desktop's acquire", () => backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()));
+  await each("a fork's placement", () => backend.placeForkGpu(box("linux-desktop", "whole", "thr_fork"), "whole", signal()));
+  await each("a fork's copy", () => backend.forkSnapshot({ id: "swhole", ref: "snap", guest: bridge.stoppedGuest(7040, source, 9001), from: "held-copy" }, fork, null, hooks(), signal()));
+  await each("a start that places its box again", () => backend.start(bridge.stoppedGuest(7010, lost, 9001), signal()));
+  await each("a restore's held card", () => backend.holdGpuCard(made, held, signal()));
+  await backend.powerOff(made, signal());
+  await backend.releaseGpuClaim(made, signal());
+  await each("a rollback's kept claim", () => backend.keepGpuClaim(made, held, signal()));
+  await each("a claim given back", () => backend.armReturned(made, held, true, signal()));
+  await each("a swap's given claim", async () => backend.armAdopted(await backend.adoptCopy(heldCopyOf(bridge, 7045, whole), whole, { macs: {}, smbios: null }, copyHooks, signal()), held, true, signal()));
+  bridge.pass();
+  assert.deepEqual(refused, [
+    "a server's acquire",
+    "a desktop's acquire",
+    "a fork's placement",
+    "a fork's copy",
+    "a start that places its box again",
+    "a restore's held card",
+    "a rollback's kept claim",
+    "a claim given back",
+    "a swap's given claim",
+  ]);
+  assert.deepEqual(written, [], "no caller wrote a whole marker");
+  assert.ok(!bridge.node.reportLines().some((line) => /^ledger \d+ .* claim g\d+ whole \S+ granted$/.test(line)), bridge.node.reportLines().join("\n"));
 });

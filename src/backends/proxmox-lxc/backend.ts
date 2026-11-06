@@ -131,7 +131,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { currentKindId } from "../kinds.ts";
-import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, WHOLE_CARDS_FROM, atLeast, judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { GPU_HELPER_CLOCK_AHEAD_MS, GPU_HELPER_FRESH_MS, STOPS_ONLY_UNTESTED_FROM, atLeast, judgeGpuHelper, parseGpuHelper, tooOldForWhole } from "./gpu-helper.ts";
 import { isOurGuest, lookAtEach, markGpus, type MarkingSetup } from "./gpu-mark.ts";
 import { answerTo, cardName, claimMarkerOf, deviceSetOf, gpuDeviceLines, judgeGpuMigration, linesDiffer, linesFor, markerOf, markerTag, NO_HELPER_LINES, parseHelperLines, pendingDeviceChange, rawGpuLines, reportedDriver, withGpuTagsOf, withMarker, type ClaimMarker, type HelperCard, type HelperLines, type HelperPower, type LedgerClaim, type MarkAnswer } from "./gpu-marking.ts";
 import {
@@ -661,6 +661,13 @@ function startsAtBoot(config: Readonly<Record<string, unknown>>): boolean {
 
 function carriesNoCard(config: Readonly<Record<string, unknown>>): boolean {
   return (claimMarkerOf(parseTags(config.tags))?.part ?? "none") === "none" && !gpuDeviceLines(config).length;
+}
+
+function wholeClaimAskedBy(before: Readonly<Record<string, unknown>>, settings: GuestSettings): ClaimMarker | null {
+  if (!settings.tags) return null;
+  const asked = claimMarkerOf(settings.tags);
+  if (asked?.part !== "whole") return null;
+  return parseTags(before.tags).includes(markerTag(asked)) ? null : asked;
 }
 
 const POWER_ON_THE_NODE_FROM = [0, 4, 0];
@@ -1386,6 +1393,7 @@ export class ProxmoxLxcBackend implements Backend {
     const view = await this.#cardsView(api, signal);
     if (view.is === "none") return;
     if (view.is === "blocked") throw new BackendError("no_capacity", blockedWords(view));
+    if (held.part === "whole") this.#refuseWholeRestoreOfOldHelper(api.node, view, held.card);
     await this.#settled(api);
     const key = this.#cardKey(api);
     const vmid = this.#vmid(guest);
@@ -1398,6 +1406,15 @@ export class ProxmoxLxcBackend implements Backend {
       return reservationsOn(key).add(held.card!, held.part, DESKTOP_GPU_MIB, box, null);
     });
     this.#pins.set(box, { ...pin, reservation });
+  }
+
+  #refuseWholeRestoreOfOldHelper(node: string, view: Extract<CardsView, { is: "on" }>, card: string): void {
+    const tooOld = tooOldForWhole(node, parseGpuHelper(view.notes)?.version ?? null);
+    if (!tooOld) return;
+    const listed = view.lines.cards.find((each) => each.uuid === card);
+    const named = listed ? cardName(listed) : `card ${card}`;
+    const said = `${named.charAt(0).toUpperCase()}${named.slice(1)} is the box's whole card, which a restore asks the host's GPU helper for again: ${node} cannot give a box a whole card now, as ${tooOld.why}.`;
+    throw new BackendError("no_capacity", `${said} ${tooOld.fix}`, `${said} Ask the user.`);
   }
 
   dropGpuCard(boxId: string): void {
@@ -2933,11 +2950,26 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   #owned(api: Proxmox): OwnedGuests {
-    return new OwnedGuests(api, (vmid, words) => this.#sighted(vmid, words), {
-      helperFor: (vmid, config, action, signal) => this.#powerHelper(api, vmid, config, action, signal),
-      ask: (vmid, action, owner, helper, signal) => this.#askPower(api, vmid, action, owner, helper, signal),
-      acted: (vmid, action) => (action === "start" || action === "delete" ? this.#dropUnstarted(api, vmid) : Promise.resolve()),
-    });
+    return new OwnedGuests(
+      api,
+      (vmid, words) => this.#sighted(vmid, words),
+      {
+        helperFor: (vmid, config, action, signal) => this.#powerHelper(api, vmid, config, action, signal),
+        ask: (vmid, action, owner, helper, signal) => this.#askPower(api, vmid, action, owner, helper, signal),
+        acted: (vmid, action) => (action === "start" || action === "delete" ? this.#dropUnstarted(api, vmid) : Promise.resolve()),
+      },
+      { beforeWrite: (vmid, config, settings, signal) => this.#refuseWholeClaimOfOldHelper(api, vmid, config, settings, signal) },
+    );
+  }
+
+  async #refuseWholeClaimOfOldHelper(api: Proxmox, vmid: number, before: Readonly<Record<string, unknown>>, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
+    const asked = wholeClaimAskedBy(before, settings);
+    if (!asked) return;
+    const vm = await api.vmNotes(GPU_REPORT_VM, signal);
+    const tooOld = tooOldForWhole(api.node, vm ? (parseGpuHelper(vm.notes)?.version ?? null) : null);
+    if (!tooOld) return;
+    const said = `bb-box did not write ${markerTag(asked)} on CT ${vmid}, which would ask the host's GPU helper for a whole card: ${api.node} cannot give a box a whole card now, as ${tooOld.why}.`;
+    throw new BackendError("no_capacity", `${said} ${tooOld.fix}`, `${said} Ask the user.`);
   }
 
   #sighted(vmid: number, words: string): void {
@@ -4214,13 +4246,7 @@ export class ProxmoxLxcBackend implements Backend {
   async #wholeHelperReady(api: Proxmox, view: CardsView, signal?: AbortSignal): Promise<{ readonly why: string; readonly fix: string } | null> {
     const ready = await this.#helperReady(api, view, signal);
     if (ready || view.is !== "on") return ready ?? { why: "it has no GPU helper to give a box a card", fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}.` };
-    const version = parseGpuHelper(view.notes)?.version ?? null;
-    if (atLeast(version, WHOLE_CARDS_FROM)) return null;
-    const from = WHOLE_CARDS_FROM.join(".");
-    return {
-      why: `its GPU helper is bb-box-gpu ${version ?? "of an unknown version"}, and a whole card needs ${from} or later, which takes a card only from this install's own stopped boxes`,
-      fix: `Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu ${from} or later, as root on ${api.node}.`,
-    };
+    return tooOldForWhole(api.node, parseGpuHelper(view.notes)?.version ?? null);
   }
 
   async #retireForWhole(api: Proxmox, placement: Pick<NewPlacement, "card" | "retire">, signal?: AbortSignal): Promise<void> {

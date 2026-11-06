@@ -3268,6 +3268,39 @@ Merge order: this unit can merge and deploy at any time, as whole cards stay
 off and need 0.4.3. Unit 8b then upgrades the node's helper; then the gate on
 the test BB; then the owner turns `general.wholeCards` on.
 
+### After the fourth review
+
+Astra said no-go, with one high: a restore's handoff, which gives a whole
+box's claim back to its guest or to a new guest after the restore cleared it,
+asked the helper for the card whole without the version check, so with 0.4.2
+another install's stopped box that took the card meanwhile lost its lines. It
+was the third whole path found without the check, so the check is no longer
+on each path:
+
+| Where | What it does now |
+| --- | --- |
+| Every config write bb-box makes to a guest | A write whose tags carry a whole marker the guest does not have yet, which asks the helper for a whole card, reads the node's helper version first and is refused, with nothing written, below 0.4.3. Every path that asks for a whole card writes through it: acquires, forks, starts, a rollback's kept claim, a claim given back and a swap's given claim |
+| A restore, by rollback or by swap | A box whose card is whole is refused before it stops and before its claim is cleared, with words for each audience, while the helper is below 0.4.3. The restore's refusal now gives an agent its own words, as the backend's were dropped before |
+| `bb box gpu mark` | A guest whose box's record says a whole card is refused, with the upgrade it needs, and its tags are not written, below 0.4.3 |
+
+The checks on the acquire, fork placement and start paths stay, as they refuse
+before anything is copied or reserved, with each path's own words.
+
+Tests: Astra's reproduction, for both handoffs, now finds the restore refused
+before its claim is cleared, and the handoff refused with nothing written, so
+the other install's box keeps its lines. A second test asks for a whole card
+through every caller with 0.4.2 (two acquires, a fork's placement and its copy,
+a start that places its box again, a restore's held card, a rollback's kept
+claim, a claim given back and a swap's given claim) and finds each refused and
+no whole marker written. With the write check reverted, a fork placed before
+the helper went back to 0.4.2 wrote its whole marker: a fourth path the check
+now covers.
+
+Each rule has a test that failed with it reverted, on a box: 4 reverts (the
+write check, the restore's early refusal, `bb box gpu mark`, the agent's
+words). Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node suite,
+3,787 tests, 3,492 passed, 0 failed, 295 skipped; vitest, 469 passed.
+
 ### Still open
 
 - When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a

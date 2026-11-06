@@ -190,6 +190,24 @@ test("071 unit 6, Astra 2: a restore whose box's card has no room for it now is 
   assert.equal((await current(state, box)).restoring ?? null, null);
 });
 
+test("071 unit 8, round 4: a restore the backend refuses before the stop, as the box's whole card cannot be asked for whole again, says why to each audience, and changes nothing", async () => {
+  const { state, cards, box, snapshot } = await onCardB();
+  const backend = state.backend as unknown as Backend;
+  const person = "Card 1 is the box's whole card, which a restore asks the host's GPU helper for again: pve cannot give a box a whole card now, as its GPU helper is bb-box-gpu 0.4.2. Upgrade the helper.";
+  const agent = "Card 1 is the box's whole card, which a restore asks the host's GPU helper for again: pve cannot give a box a whole card now, as its GPU helper is bb-box-gpu 0.4.2. Ask the user.";
+  backend.holdGpuCard = async (guest: Guest) => {
+    cards.events.push(`hold ${guest.ref}`);
+    throw new BackendError("no_capacity", person, agent);
+  };
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), snapshot));
+  assert.equal(refused.code, "no_capacity");
+  assert.equal(refused.message, `bb-box did not restore box ${box.name}: ${person} bb-box changed nothing.`);
+  assert.equal(refused.agentMessage, `bb-box did not restore box ${box.name}: ${agent} bb-box changed nothing.`);
+  assert.deepEqual(cards.events, [`hold ${box.guest!.ref}`], "nothing was stopped, cleared or kept");
+  assert.equal(cards.claims.get(box.guest!.ref)?.card, CARD_B);
+  assert.equal((await current(state, box)).state, "ready");
+});
+
 test("071 unit 6, Fable 5: a restart between the rollback and the re-tag, and one at claim-kept, finish on the box's own card; a card taken meanwhile leaves the box stopped, never moved", async () => {
   {
     const { state, cards, box, snapshot } = await onCardB();

@@ -137,15 +137,21 @@ export interface NodePower {
   acted(vmid: number, action: PowerAction): Promise<void>;
 }
 
+export interface ConfigWriteCheck {
+  beforeWrite(vmid: number, config: Config, settings: GuestSettings, signal?: AbortSignal): Promise<void>;
+}
+
 export class OwnedGuests {
   readonly #api: Proxmox;
   readonly #seen: Sighting;
   readonly #power: NodePower | null;
+  readonly #check: ConfigWriteCheck | null;
 
-  constructor(api: Proxmox, seen: Sighting = () => {}, power: NodePower | null = null) {
+  constructor(api: Proxmox, seen: Sighting = () => {}, power: NodePower | null = null, check: ConfigWriteCheck | null = null) {
     this.#api = api;
     this.#seen = seen;
     this.#power = power;
+    this.#check = check;
   }
 
   async #helperFor(vmid: number, config: Config, action: PowerAction, signal?: AbortSignal): Promise<string | null> {
@@ -199,6 +205,7 @@ export class OwnedGuests {
   async writeOn(vmid: number, owner: GuestOwner, config: Config, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
     if (!owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
     if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not write it.`);
+    await this.#check?.beforeWrite(vmid, config, settings, signal);
     await this.#api.configure(vmid, { ...settings, digest: config.digest }, signal);
   }
 

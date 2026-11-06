@@ -26,6 +26,7 @@ import {
   type TaskKind,
   type TaskOutcome,
   type TaskRef,
+  agentMessageOf,
   startedGuest,
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
@@ -3282,8 +3283,10 @@ export class Snapshots {
     } catch (error) {
       if (signal.aborted) throw error;
       const words = sentence(message(error));
+      const agentWords = agentMessageOf(error);
       await this.#neverBegan(context, box, `bb-box did not restore box ${box.name}: ${words}`);
-      throw new BoxError(error instanceof BackendError && error.code === "no_capacity" ? "no_capacity" : "unreachable", `bb-box did not restore box ${box.name}: ${words} bb-box changed nothing.`);
+      const refused = (said: string) => `bb-box did not restore box ${box.name}: ${said} bb-box changed nothing.`;
+      throw new BoxError(error instanceof BackendError && error.code === "no_capacity" ? "no_capacity" : "unreachable", refused(words), agentWords === null ? null : refused(sentence(agentWords)));
     }
   }
 

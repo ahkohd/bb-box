@@ -156,6 +156,24 @@ test("a box whose record says a whole card, alone on it, is marked whole, and th
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
 
+test("071 unit 8, round 4: with helper 0.4.2, bb box gpu mark asks no whole claim: a box whose record says a whole card, alone on it, is refused with the upgrade it needs, and its tags are not written", async () => {
+  const bridge = new Bridge({ helperVersion: "0.4.2" });
+  bridge.guest(7040, desktop("bx7040", "long-job", CARD_B, { running: true }));
+  bridge.guest(7041, desktop("bx7041", "sharer", CARD_A));
+  bridge.helper();
+  const marking = await bridge.backend().markGpus(request({ parts: [["bx7040", "whole"], ["bx7041", "shared"]] }));
+  assert.deepEqual(marking.guests.map((guest) => [guest.vmid, guest.outcome, guest.why]), [
+    [
+      7040,
+      "refused",
+      "Its box's record says a whole card, which bb box gpu mark does not ask for now: its GPU helper is bb-box-gpu 0.4.2, and a whole card needs 0.4.3 or later, which takes a card only from this install's own stopped boxes. Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu 0.4.3 or later, as root on pve.",
+    ],
+    [7041, "marked", null],
+  ]);
+  assert.ok(!bridge.tags(7040).some((tag) => tag.startsWith("gpu.")), "no marker was written on the whole box's guest");
+  assert.deepEqual(bridge.tags(7041).filter((tag) => tag.startsWith("gpu.")), [marker("shared", CARD_A, 1)]);
+});
+
 test("--undo clears each claim through the helper, then takes the shared and whole markers off, and only those, keeping every other tag; --check says so first; a second undo changes nothing (071 unit 5)", async () => {
   const bridge = new Bridge();
   today(bridge);
@@ -352,7 +370,7 @@ test("the marking rules on their own: the marker's grammar, a guest's device set
     "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file",
   ]);
   const eligibility = { installId: INSTALL, madeAndRemovedByBbBox: () => false };
-  const context: MarkContext = { ...eligibility, cards, holders: [], ledger: new Map(), answers: [], boxNamedBy: new Map() };
+  const context: MarkContext = { ...eligibility, cards, holders: [], ledger: new Map(), answers: [], boxNamedBy: new Map(), wholeTooOld: null };
   const look = (config: Record<string, unknown>, pending: GuestLook["pending"] = []): GuestLook => ({ vmid: 1, config: { description: `bb-box x\ninstall ${INSTALL}\nkind linux-desktop`, tags: `bb-box;install.${INSTALL}`, unprivileged: "1", ...config }, pending });
   assert.deepEqual(planMark({ look: look({ lxc: [["lxc.cgroup2.devices.allow", "c 195:1 rwm"]] }), recordedPart: null }, context), { is: "refused", why: "It has raw lines for GPU devices (lxc.cgroup2.devices.allow: c 195:1 rwm), which the helper does not manage.", card: null });
   assert.deepEqual(planUnmark(look({ tags: `bb-box;install.${INSTALL};gpu.shared.${A}.g3`, lock: "backup" }), eligibility, new Map()), { is: "refused", why: "It is locked (backup). Run bb box gpu mark --undo again once the lock is gone.", card: null });
