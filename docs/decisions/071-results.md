@@ -3337,9 +3337,10 @@ two journal filters were run on sample lines.
 Built on main `4948d8a2`, on branch `u71-11`. Section 7's Docker part:
 servers with a GPU, whole as placement, the share switch, CUDA pointed at
 the box's card in every route, and the words about privileged boxes. No
-helper or node change. The gate runs on a test BB from this branch, on the
-owner's Windows PC's Docker in WSL with its one card, before the merge, so
-nothing here is offered until it passes.
+helper or node change. The gate ran on a test BB from this branch, on the
+owner's Windows PC's Docker in WSL with its one card, before the merge, and
+passed on 6 November 2026 (see [the gate](#the-gate)); nothing here was
+offered before it.
 
 ### What it does
 
@@ -3561,23 +3562,63 @@ its own on this box and passed again; it fails on main the same way.
 
 ### The gate
 
-The gate's steps are in the report to the lead, with the scripts they use:
-read-only checks on the host first (the card, the driver in WSL, Docker's
-CDI and runtimes, the toolkit, bb-box's images and containers there); then
-the smallest setup that gives Docker in that distro CDI devices for the card
-(NVIDIA's toolkit from the distro's own package and `nvidia-ctk cdi generate
---mode=wsl` into `/etc/cdi`, with no Docker setting changed and nothing
-restarted), with the way back; then a test BB in a box, whose Docker backend
-reaches the host's Docker through a unix socket the lead forwards over SSH
-from the host, and the gate's steps on it. Every step that uses the card
-first reads it card-wide and stops when it is over 10 per cent busy or has
-over 2 GiB in use; one test GPU box at a time; one CUDA load, 64 MiB for
-about a second.
+Run by the lead on 6 November 2026 (UTC) on the owner's Windows PC, <host>,
+with one NVIDIA GeForce RTX 5090 (32 GiB), the driver 610.88 in Windows, and
+Docker 29.8.1 in an Arch Linux distribution in WSL, the WSL2 kernel 6.6.87.2.
+Nothing reached the host but the lead. Every step that used the card first
+read it card-wide and went on only under 10 per cent busy and 2 GiB in use;
+one test GPU box at a time; one CUDA load.
 
-It has not run yet.
+**Read-only checks and setup (A and B, 06:32 to 06:33).** The card had 0 per
+cent busy and 1,126 MiB in use, Windows' own. WSL had `/dev/dxg`, NVIDIA's
+`libcuda`, NVML, `libdxcore` and `nvidia-smi`, one driver store folder of
+NVIDIA's that the toolkit chose, and one card. Docker read CDI specs from
+`/etc/cdi` and `/var/run/cdi`, listed no devices, ran `runc` by default with
+the owner's `nvidia` runtime registered, and was not rootless. NVIDIA's
+Container Toolkit 1.20.0 was already installed, so nothing was installed.
+`nvidia-ctk cdi generate --mode=wsl --output=/etc/cdi/nvidia.yaml` wrote one
+device, `nvidia.com/gpu=all`, and `docker info` listed it at once, with no
+restart. A probe container as bb-box makes it, given that device, had
+`/usr/bin/nvidia-smi`, `/dev/dxg` and `python3`, and listed the card with
+its memory. The spec stays: production's Docker GPU boxes there need it once
+this unit merges.
+
+**The test BB.** It ran in the same WSL distribution, as root: `npx
+bb-app@0.48.1` with no account, as a transient systemd unit, listening on
+127.0.0.1 only, with bb-box from a tarball of `dd6f4370` (without `docs/` and
+`site/`), enrolment and nightly images off, whole cards on, and a Docker
+backend on the distribution's own Docker socket, network `bbbox-gate`, GPU
+boxes on and no desktop images, so nothing left the host. It used the
+images production's bb-box had built there that day, and built none. Every
+box was made, run, resized and released through the test BB's CLI, `bb box
+...`, and its terminal through the box page's own WebSocket route; Docker
+was only read. The scripts are in the report to the lead; each wrote all it
+did to a file, and each ended "done".
+
+| Step (UTC) | Evidence |
+| --- | --- |
+| Stand-up (15:57) | The doctor: "1 NVIDIA card as CDI devices (card 0, NVIDIA GeForce RTX 5090, 32 GiB, 31244 MiB free when read), up to 4 boxes each. Docker gives them as one device, nvidia.com/gpu=all, as in WSL. On <host>, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach." The test BB listened on 127.0.0.1 alone |
+| C3 (15:59) | The doctor as above, and no other backend of the test install on the daemon. `bb box kinds --json`: `linux` offers gpu none, shared and whole; card 0 with no box, 31,244 MiB free, free for a whole card; 1,024 MiB needed; the reach words on every kind offered |
+| D0 | The card 0 per cent busy, 944 MiB in use. No bb-box container on the daemon, of any install |
+| D1, a privileged box with no GPU | `bb box acquire linux --gpu none`, ready in 1.8 s: its status has the Cards line and no GPU line; Docker shows it privileged with no device request and no card label. Through `bb box run`, as root in the box, `/dev/dxg` (`crw-rw-rw-`) opened; no `libcuda` and no `CUDA_VISIBLE_DEVICES`: it can open the card, as the words say, though bb-box gave it none |
+| D2, a shared server | `bb box acquire linux --gpu shared`, ready in 3.0 s, with "gpu 0.3 s, card check 0.5 s": claim the card's UUID, shared, generation 1, granted. Status: "GPU: card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB. Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed." and the Cards line. Docker: privileged, a `cdi` request for `nvidia.com/gpu=all`, labels with the card and `shared`, and `CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES` and `BBBOX_GPU_CARD` set to the card. In it, `/etc/environment` had both variables, `nvidia-smi -L` listed the card, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"` named it |
+| D3, `box_run`'s route, the one load | `cuda-card.py load` through `bb box run`: CUDA's device 0 the card's UUID, one device, and "64 MiB allocated, set and freed on device 0, result 0", in 1.1 s. The card read four times a second, card-wide: 944 MiB in use before (median of 13), 946 at most during (12), 944 after. The 2 MiB is WSL's card-wide reading of a CUDA context and a 64 MiB load, which CUDA reported made, set and freed: under WSL that figure does not follow a box's allocation as it does on Linux. The load was under 1 GiB and 60 s either way |
+| D4, a terminal | The box page's terminal route, a WebSocket to the test BB, the box user's login shell: both variables the card's, and CUDA's device 0 the card |
+| D5, a service | Started detached through `sudo -i` from an environment without the variables, so only `/etc/environment`, through PAM, could give them: CUDA's device 0 the card, and the process ended. A login from an empty environment had `CUDA_VISIBLE_DEVICES` set to the card |
+| D6 | With `CUDA_VISIBLE_DEVICES` naming another UUID, CUDA returned 100 with no device: the variable picks the card |
+| D7, whole and the switch | The check: "GPU: shared → whole card 0 · Live", with the reach words. The switch, live in 0.8 s: "GPU: card 0, whole, ...". A shared acquire was refused before any container: "No card on <host> can take a shared GPU now: card 0 is <box>'s whole card (in thread ...)". `--gpu none --check` refused: "cannot lose card 0 on Docker: a container's devices are fixed when it is made". The doctor: "GPU 0 whole: Card 0 is <box>'s whole card, with no other box on it." Back to shared, live in 0.8 s |
+| D8 (16:00) | The test box released; the daemon's bb-box containers the same as at D0, none; none of the test install's left; the card 0 per cent busy, 944 MiB in use |
+| Clean-up (16:00) | No test container left; the unit stopped and nothing answering on its port; `bbbox-gate` and the test BB's folder removed; `/etc/cdi/nvidia.yaml` kept |
+
+The doctor also warned, as for any Docker host without it, that the host has
+no LXCFS, and that no nightly image rebuild had run on the test BB, whose
+nightly images were off.
+
+What the gate did not cover: more than one card (the tests cover placement
+across cards and WSL's one device for several); a desktop with a GPU, as
+Xorg cannot draw on `/dev/dxg`; and switches seen by another install.
 
 ### Still open
 
-- The gate on a real card.
 - A switch made by one install is not seen by another on the same host; the
   doctor warns where two installs have GPU boxes there.
