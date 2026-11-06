@@ -586,6 +586,21 @@ export class Proxmox {
       }));
   }
 
+  async taskLog(upid: string, signal?: AbortSignal): Promise<string[]> {
+    const node = upid.split(":")[1] || this.node;
+    const data = await this.#request<unknown[]>("GET", `/nodes/${enc(node)}/tasks/${enc(upid)}/log`, { start: 0, limit: 50 }, signal);
+    return (data ?? []).flatMap((line) => {
+      if (typeof line === "string") return [line];
+      if (line && typeof line === "object" && "t" in line && typeof line.t === "string") return [line.t];
+      return [];
+    });
+  }
+
+  async stopTask(upid: string, signal?: AbortSignal): Promise<void> {
+    const node = upid.split(":")[1] || this.node;
+    await this.#request("DELETE", `/nodes/${enc(node)}/tasks/${enc(upid)}`, undefined, signal);
+  }
+
   async taskStatus(upid: string, signal?: AbortSignal): Promise<{ readonly running: boolean; readonly exit: string | null } | null> {
     const node = upid.split(":")[1] || this.node;
     try {

@@ -38,6 +38,8 @@ export function hostSetupScript(input: { serverName: string; joinsTailnet: boole
   }
   lines.push(
     "command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh",
+    "systemctl stop docker.socket docker.service || true",
+    "rm -f /var/lib/docker/engine-id",
     "systemctl enable --now docker",
     ...LXCFS_SETUP,
     metadataRule(),

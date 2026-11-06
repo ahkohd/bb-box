@@ -34,7 +34,7 @@ import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
-import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
+import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
@@ -421,6 +421,15 @@ interface TemplateInfo {
 /** A box the registry is acquiring here, which capacity counts as coming. */
 type Pending = { readonly kind: string; readonly size: MachineSize };
 
+function forkWrites(api: Proxmox): ForkWrites {
+  return {
+    config: (vmid, signal) => api.config(vmid, signal),
+    setNetwork: (vmid, settings, signal) => api.setNetwork(vmid, settings, signal),
+    destroy: (vmid, signal) => api.destroy(vmid, signal),
+    unlock: (vmid, signal) => api.configure(vmid, { delete: ["lock"] }, signal),
+  };
+}
+
 /** A warm VM that a claim can take, with the template, build and size it was filled with. */
 interface WarmVm {
   readonly guest: PoolGuest;
@@ -649,7 +658,7 @@ export class ProxmoxQemuBackend implements Backend {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
       await this.#fullClone(api, from, vmid, copyName(vmid), heldCopyDescription(this.#context.installId, label), disk ? storageOfVolume(config[disk]) : null, hooks, signal, undefined, sizeOf(config)?.diskGiB ?? null);
-      await disarm(api, vmid, signal);
+      await disarm(forkWrites(api), vmid, signal);
       await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false }, signal);
       return copy;
     } finally {
@@ -682,7 +691,7 @@ export class ProxmoxQemuBackend implements Backend {
     const madeFor = `bb-box install ${this.#context.installId} box ${label.box} held copy of snapshot ${label.snapshot}`;
     if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy bb-box made of snapshot ${label.snapshot}, so bb-box does not label it as one.`);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
-    await disarm(api, vmid, signal);
+    await disarm(forkWrites(api), vmid, signal);
     await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false, delete: ["protection"] }, signal);
     return { ...copy, size: sizeOf(await api.config(vmid, signal)) };
   }
@@ -814,8 +823,10 @@ export class ProxmoxQemuBackend implements Backend {
           );
         },
         sizeOf,
-        writes: (api) => api,
+        writes: (api) => forkWrites(api),
         logError: (operation, error) => this.#context.logError(operation, error),
+        inRange: (vmid) => this.#inRange(vmid),
+        visible: (api, signal) => api.visibleGuests(signal),
       },
       ref,
       box,
@@ -830,11 +841,11 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
-    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal), writes: (api) => api }, guest, arming, signal);
+    return armFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), ownConfig: (api, each, signal) => this.#ownConfig(api, each, signal), writes: (api) => forkWrites(api) }, guest, arming, signal);
   }
 
   disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
-    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId, writes: (api) => api }, guest, signal);
+    return disarmFork({ client: () => this.client(), vmid: (each) => this.#vmid(each), installId: this.#context.installId, writes: (api) => forkWrites(api) }, guest, signal);
   }
 
   async retireGuest(guest: Guest, box: BoxIdentity, signal?: AbortSignal): Promise<Guest> {

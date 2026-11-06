@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { cloneTaskProves } from "../src/backends/proxmox/forks.ts";
 import { ProxmoxQemuBackend, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { parseQemuPart } from "../src/backends/proxmox-qemu/config.ts";
 import { BackendError, type AcquireHooks, type Guest, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
@@ -16,7 +17,7 @@ after(async () => {
 
 const SNAPSHOT = "sn7kq2m6xa4pdq";
 
-function world() {
+function world(sleep: QemuBackendOptions["sleep"] = async () => {}) {
   const ssh = fakeSsh();
   for (let last = 150; last <= 159; last++) ssh.windows(`192.0.2.${last}`);
   const proxmox = new FakeProxmox();
@@ -42,7 +43,7 @@ function world() {
   });
   assert.ok(parsed.ok, JSON.stringify(parsed));
   const context = testContext(new MemoryStorage(), "test", { id: "proxmox-qemu" });
-  const options: QemuBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
+  const options: QemuBackendOptions = { fetch: proxmox.fetch, sleep, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
   const backend = new ProxmoxQemuBackend(parsed.config, context, options);
   made.push(backend);
   return { ssh, proxmox, backend, context };
@@ -222,4 +223,73 @@ test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed fi
   assert.match(config.tags ?? "", /box\.bxforkedvmaaaa/);
   const refused = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { ...forked, kind: "windows-desktop" }, null, quiet, new AbortController().signal).catch((caught: unknown) => caught);
   assert.ok(refused instanceof BackendError);
+});
+
+test("a clone task proves a guest only from its own log line, the VMID range and the pool", () => {
+  const upid = "UPID:pve:00001:00:00:qmclone:9000:bb-box@pve!plugin:";
+  const log = ["creating a clone of VM 9000 with ID 9701"];
+  const proof = { upid, source: 9000, target: 9701, log, inRange: true, pool: null as string | null, ourPool: "bbbox" };
+  assert.equal(cloneTaskProves(proof), true);
+  assert.equal(cloneTaskProves({ ...proof, pool: "bbbox" }), true);
+  assert.equal(cloneTaskProves({ ...proof, pool: "elsewhere" }), false);
+  assert.equal(cloneTaskProves({ ...proof, inRange: false }), false);
+  assert.equal(cloneTaskProves({ ...proof, log: [] }), false);
+  assert.equal(cloneTaskProves({ ...proof, target: 9702 }), false);
+  assert.equal(cloneTaskProves({ ...proof, upid: undefined }), false);
+  assert.equal(cloneTaskProves({ ...proof, upid: "UPID:pve:00001:00:00:qmstart:9000:bb-box@pve!plugin:" }), false);
+  assert.equal(cloneTaskProves({ ...proof, upid: "UPID:pve:00001:00:00:vzclone:100:bb-box@pve!plugin:", source: 100, log: ["creating a clone of container 100 with ID 9701"] }), true);
+});
+
+function forkedIdentity() {
+  return { boxId: "bxforkedvmaaaa", threadId: "thr_abc123", name: "brisk-lark", kind: "linux", createdAt: 1_790_000_100_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" as const } };
+}
+
+async function cancelledFork(change?: (proxmox: FakeProxmox) => void): Promise<{ left: { vmid: number; config: Record<string, string> }[]; disarmed: boolean }> {
+  const fork = new AbortController();
+  let watch = false;
+  const state = world(async (_ms, signal) => {
+    if (watch && signal === fork.signal) {
+      fork.abort();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+  });
+  state.proxmox.describeCloneWhenTheTaskEnds = true;
+  state.proxmox.taskPolls = 4;
+  change?.(state.proxmox);
+  const { guest } = await linuxBox(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: "bxlinuxvmaaaaa", memory: false }, tasks().hooks);
+  watch = true;
+  const before = new Set(state.proxmox.guests.keys());
+  const cloneAt = state.proxmox.calls.length;
+  await assert.rejects(state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, forkedIdentity(), null, quiet, fork.signal), (error: unknown) => error instanceof Error && error.name === "AbortError");
+  const after = state.proxmox.calls.slice(cloneAt);
+  return {
+    left: [...state.proxmox.guests.values()].filter((each) => !before.has(each.vmid)).map((each) => ({ vmid: each.vmid, config: each.config })),
+    disarmed: after.some((call) => call.method === "PUT" && call.params.onboot === "0"),
+  };
+}
+
+test("a cancelled VM fork whose notes do not name this box yet is disarmed and deleted when its clone task names the VMID", async () => {
+  const { left, disarmed } = await cancelledFork();
+  assert.deepEqual(left, []);
+  assert.equal(disarmed, true);
+});
+
+test("a cancelled VM fork is left when the clone task names another VMID, names none yet, or the guest is already in another pool", async () => {
+  const wrongId = await cancelledFork((proxmox) => {
+    proxmox.cloneTargetInLog = 1;
+  });
+  assert.equal(wrongId.left.length, 1);
+  assert.equal(wrongId.left[0]!.config.description, undefined);
+  assert.equal(wrongId.disarmed, false);
+  const noLine = await cancelledFork((proxmox) => {
+    proxmox.omitCloneLog = true;
+  });
+  assert.equal(noLine.left.length, 1);
+  assert.equal(noLine.disarmed, false);
+  const otherPool = await cancelledFork((proxmox) => {
+    proxmox.poolWhileCloneRuns = "elsewhere";
+  });
+  assert.equal(otherPool.left.length, 1);
+  assert.equal(otherPool.disarmed, false);
 });

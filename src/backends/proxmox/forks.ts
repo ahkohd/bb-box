@@ -8,6 +8,7 @@ export interface ForkWrites {
   config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>>;
   setNetwork(vmid: number, settings: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<void>;
   destroy(vmid: number, signal?: AbortSignal): Promise<void>;
+  unlock(vmid: number, signal?: AbortSignal): Promise<void>;
 }
 
 export interface ForkGuests {
@@ -26,6 +27,8 @@ export interface ForkGuests {
   sizeOf(config: Record<string, unknown>): MachineSize | null;
   writes(api: Proxmox, box: string | null, made: boolean): ForkWrites;
   logError(operation: string, error: unknown): void;
+  inRange(vmid: number): boolean;
+  visible(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly vmid: number; readonly pool: string | null }[]>;
 }
 
 function proxmoxWords(error: ProxmoxError): string {
@@ -100,6 +103,56 @@ export async function armFork(guests: Pick<ForkGuests, "client" | "vmid" | "ownC
   await writes.setNetwork(vmid, nets, signal);
 }
 
+const CLONE_LINE = /creating a clone of (?:container|VM) (\d+) with ID (\d+)/;
+const CLONE_PROOF_MS = 15_000;
+
+export function cloneTaskProves(proof: {
+  readonly upid: string | undefined;
+  readonly source: number;
+  readonly target: number;
+  readonly log: readonly string[];
+  readonly inRange: boolean;
+  readonly pool: string | null;
+  readonly ourPool: string;
+}): boolean {
+  if (!proof.upid || !proof.inRange) return false;
+  if (proof.pool !== null && proof.pool !== proof.ourPool) return false;
+  const parts = proof.upid.split(":");
+  const type = parts[5];
+  const id = Number(parts[6]);
+  if ((type !== "qmclone" && type !== "vzclone") || id !== proof.source) return false;
+  return proof.log.some((line) => {
+    const found = CLONE_LINE.exec(line.trim());
+    return found !== null && Number(found[1]) === proof.source && Number(found[2]) === proof.target;
+  });
+}
+
+async function stopCloneTask(api: Proxmox, upid: string | undefined): Promise<void> {
+  if (!upid) return;
+  const reading = AbortSignal.timeout(CLONE_PROOF_MS);
+  const status = await api.taskStatus(upid, reading).catch(() => null);
+  if (!status?.running) return;
+  await api.stopTask(upid, reading).catch(() => undefined);
+}
+
+async function unlockClone(writes: ForkWrites, vmid: number): Promise<void> {
+  const reading = AbortSignal.timeout(CLONE_PROOF_MS);
+  const config = await writes.config(vmid, reading).catch(() => null);
+  if (config?.lock !== "clone") return;
+  await writes.unlock(vmid, reading).catch(() => undefined);
+}
+
+async function cloneLeftByOurTask(guests: ForkGuests, api: Proxmox, source: number, vmid: number, upid: string | undefined): Promise<boolean> {
+  if (!upid) return false;
+  const reading = AbortSignal.timeout(CLONE_PROOF_MS);
+  const [log, visible] = await Promise.all([
+    api.taskLog(upid, reading).catch(() => [] as string[]),
+    guests.visible(api, reading).catch(() => [] as { vmid: number; pool: string | null }[]),
+  ]);
+  const pool = visible.find((guest) => guest.vmid === vmid)?.pool ?? null;
+  return cloneTaskProves({ upid, source, target: vmid, log, inRange: guests.inRange(vmid), pool, ourPool: guests.pool });
+}
+
 export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
   const api = await guests.client();
   if (previous) await dropHalfMadeFork(guests, api, previous, box, signal);
@@ -110,11 +163,11 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
   const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
   const build = typeof ref.guest.data?.build === "string" ? ref.guest.data.build : null;
   const vmid = await guests.claimVmid(api, signal);
+  let upid: string | undefined;
   try {
     const guest = guests.guest(api.node, vmid, template, box.boxId, build);
     await hooks.claim(guest);
     const began = performance.now();
-    let upid: string;
     try {
       upid = await api.startFullClone({ source: from, vmid, hostname: box.name, pool: guests.pool, storage: disk ? storageOfVolume(source[disk]) : null, description: describe(box, guests.installId), ...(fromCopy ? {} : { snapshot: ref.ref }) }, signal);
     } catch (error) {
@@ -122,6 +175,7 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
       throw error;
     }
     try {
+      if (!upid) throw new Error(`Proxmox did not start the copy of guest ${from}.`);
       await api.waitTask(upid, signal, cloneWaitMs(guests.sizeOf(source)?.diskGiB ?? null));
     } catch (error) {
       if (error instanceof ProxmoxError && error.method === "TASK" && error.status === 500) throw new Error(`Proxmox's copy of snapshot ${ref.ref} of guest ${from} failed: ${proxmoxWords(error)}`);
@@ -135,9 +189,12 @@ export async function forkByFullClone(guests: ForkGuests, ref: SnapshotRef, box:
     return { ...guest, size: guests.sizeOf(await api.config(vmid, signal)) };
   } catch (error) {
     const made = await configOrNull(api, vmid).catch(() => null);
-    if (madeFor(made, box.boxId, guests.installId)) {
+    const ours = madeFor(made, box.boxId, guests.installId) || (await cloneLeftByOurTask(guests, api, from, vmid, upid));
+    if (ours) {
+      await stopCloneTask(api, upid);
       await guests.forget(vmid);
       const writes = guests.writes(api, box.boxId, true);
+      await unlockClone(writes, vmid);
       const { lockOutlasted } = await disarmBeforeDelete(guests, writes, vmid, "a fork that failed");
       if (lockOutlasted) guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, new Error("Proxmox still holds its lock, so bb-box neither disarmed nor deleted it yet."));
       else await writes.destroy(vmid).catch((cause) => guests.logError(`delete guest ${vmid}, a fork that failed; bb-box tries again`, cause));

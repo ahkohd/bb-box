@@ -10759,12 +10759,15 @@ test("a thread's card shows a spinner while it works and nothing when idle, a ro
     vi.useRealTimers();
   }
   cleanup();
+  forgetLive();
   const idle = server([box()], { entries: () => ({ thread: { id: THREAD, title: "Fix the sign-in flow", running: false, activeAt: now - 3 * 60 * MIN - 60_000 } }) });
   const quiet = boxesPage(idle.handlers);
   await quiet.findByRole("link", { name: "calm-otter" });
-  const quietCard = quiet.getByRole("region", { name: "Fix the sign-in flow" });
-  expect(within(quietCard).queryByRole("img", { name: "Working" })).toBeNull();
-  expect(quietCard.textContent).not.toMatch(/Idle|Working/);
+  await waitFor(() => {
+    const quietCard = quiet.getByRole("region", { name: "Fix the sign-in flow" });
+    expect(within(quietCard).queryByRole("img", { name: "Working" })).toBeNull();
+    expect(quietCard.textContent).not.toMatch(/Idle|Working/);
+  });
 });
 
 test("Last active sorts the boxes used most recently first, and boxes nobody used for days last (069 unit 4)", () => {

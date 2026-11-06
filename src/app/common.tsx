@@ -54,6 +54,15 @@ export function useNow(active: boolean, everyMs = 100): number {
  */
 /** The last value loaded for each key, so a tab that remounts starts from what it showed and does not go blank while it refetches (037). */
 const remembered = new Map<string, unknown>();
+const liveGeneration = new Map<string, number>();
+
+function liveGenerationOf(key: string): number {
+  return liveGeneration.get(key) ?? 0;
+}
+
+function retireLive(key: string): void {
+  liveGeneration.set(key, liveGenerationOf(key) + 1);
+}
 
 /** The value last loaded under `key`, if any, as a view other than its own may want it before loading its own. */
 export function rememberedLive<T>(key: string): T | undefined {
@@ -67,6 +76,7 @@ export function forgetLive(): void {
 
 interface LiveRun {
   readonly key: string;
+  readonly generation: number;
   again: boolean;
   done: Promise<void>;
 }
@@ -80,22 +90,25 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback((): Promise<void> => {
     const current = running.current;
-    if (current && current.key === key) {
+    if (current && current.key === key && current.generation === liveGenerationOf(key)) {
       current.again = true;
       return current.done;
     }
-    const run: LiveRun = { key, again: false, done: Promise.resolve() };
+    const run: LiveRun = { key, generation: liveGenerationOf(key), again: false, done: Promise.resolve() };
     const loadUntilCurrent = async () => {
       do {
         run.again = false;
         const mine = ++sequence.current;
+        const generation = liveGenerationOf(key);
         try {
           const next = await latest.current.load();
+          if (liveGenerationOf(key) !== generation) return;
           if (mine !== sequence.current) continue;
           remembered.set(key, next);
           setValue(next);
           setError(null);
         } catch (caught) {
+          if (liveGenerationOf(key) !== generation) return;
           if (mine === sequence.current) setError(message(caught));
         }
       } while (run.again && running.current === run);
@@ -110,6 +123,7 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
     setValue(remembered.has(key) ? (remembered.get(key) as T) : null);
     setError(null);
     void refresh();
+    return () => retireLive(key);
   }, [key, refresh]);
   useRealtime("changed", (payload) => {
     if (latest.current.relevant(payload)) void refresh();
