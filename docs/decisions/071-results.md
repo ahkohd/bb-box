@@ -2972,6 +2972,48 @@ On a `linux` box, in `node:26-bookworm` as root:
 - Merged with unit 8's branch: `tsc` clean, the node suite 3,787 tests, 3,492
   passed, 0 failed, 295 skipped.
 
+### After the review
+
+Astra said no-go, with one high: the check under the yielding guest's config
+lock compared it with the requester as the pass had scanned it, so a
+requester changed in between, under its own lock, to another install or
+moved to another pool, still had the yield carried out, and its own request
+was then left as changed. Now:
+
+- The helper takes the requester's config lock first, reads it again, and
+  checks it is the guest it scanned (box, install, kind, pool and GPU tags,
+  so its marker and generation), before any yield. It holds that lock through
+  every yield and its own write, so its config cannot change meanwhile.
+- Each yielding guest is checked against that fresh requester under its own
+  lock, as before.
+- Pool membership, which Proxmox keeps outside a guest's config, is read
+  again before each write: before a yielding guest's, for it and the
+  requester, and before the requester's own. A change leaves the request for
+  the next pass and writes nothing more.
+
+Four tests, with the fake Proxmox changing a guest when a lock is taken or a
+config written: the requester changed to another install when its lock is
+taken; another actor's change to the requester while the yielding guest's
+lock is held, which now cannot take the requester's lock; the requester moved
+to another pool while the yielding guest's lock is held; and moved after the
+yielding guest's write, before its own. Each fails with its part of the fix
+reverted, on a box. A yield already written when the requester moves away
+stays written, and the yielded box is placed again at its next start, as any
+yielded box is.
+
+Fable said go, with lows: the same race from the other side, fixed above;
+`test/gpu-setup.test.ts`'s upgrade across a protocol change waited for the
+first install's start call, which its calls still held, so on a slow runner
+it marked a guest while the old helper answered; it now forgets the calls
+before the upgrade. That test had failed once under load in unit 8's runs.
+Its node-step lows are in the steps: the way back is archived from `02a54581`
+and checked to be 0.4.2 before it runs, and step B reads the journal from
+just after its baseline, leaving the guests to `u5-compare.sh`.
+
+Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node
+suite, 3,759 tests, 3,464 passed, 0 failed, 295 skipped; vitest, 469 passed;
+`shellcheck -x setup-gpu.sh` clean.
+
 ### The node steps
 
 Upgrade the node's helper to 0.4.3 with this release's `setup-gpu.sh`, after

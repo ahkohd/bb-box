@@ -1016,6 +1016,64 @@ test("071 unit 5, Astra 1: after waiting for a guest's config lock, the helper w
   assert.deepEqual(node.guestWrites(), [], "nothing was written");
 });
 
+function fakeLog(node: FakeNode, name: string): string[] {
+  const path = node.file(`run/fake-pve/${name}`);
+  return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : [];
+}
+
+test("071 unit 8b, review: a whole request whose requester changed install under its own lock before the yield yields nothing: the stopped shared box keeps its lines and nothing is granted", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(840, { box: "bx840", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "server") });
+  ran(node);
+  node.guest(841, { box: "bx841", marker: marker("whole", CARD_A, 1) });
+  const moved = node.file("swap-841.conf");
+  writeFileSync(moved, configOf(node, { ...boxLabels("bx841", "whole-841", "linux", "zz99"), marker: marker("whole", CARD_A, 1) }));
+  ran(node, ["--once"], { FAKE_PVE_SWAP_ON_LOCK: `lxc 841=${moved}` });
+  assert.deepEqual(node.lines(840), cardLines(CARD_A, "server"), "the stopped shared box keeps its lines");
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 840 g1 yielded")), claims(node).join("\n"));
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 841 g1 granted")));
+  assert.deepEqual(node.lines(841), []);
+});
+
+test("071 unit 8b, review: while the helper yields a card, the requester is held under its own config lock, so another actor cannot change it in between; the yield and the grant agree", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(850, { box: "bx850", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "server") });
+  ran(node);
+  node.guest(851, { box: "bx851", marker: marker("whole", CARD_A, 1) });
+  const other = node.file("change-851.conf");
+  writeFileSync(other, configOf(node, { ...boxLabels("bx851", "whole-851", "linux", "zz99"), marker: marker("whole", CARD_A, 1) }));
+  ran(node, ["--once"], { FAKE_PVE_CHANGE_ON_LOCK: `lxc 850=lxc 851=${other}` });
+  assert.deepEqual(fakeLog(node, "changes.log"), ["lxc 851 blocked"], "the change to the requester could not take its lock");
+  assert.ok(claims(node).includes(`claim 850 g1 yielded ${A} 851`));
+  assert.ok(claims(node).includes(`claim 851 g1 granted whole ${A}`));
+  assert.deepEqual(node.lines(851), cardLines(CARD_A, "server"));
+  assert.match(node.text(851), /install 4kq7|install\.4kq7/, "the requester is the install that asked");
+});
+
+test("071 unit 8b, review: a requester moved to another pool while the helper holds the yielding box's lock gets no yield and no grant", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(860, { box: "bx860", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "server") });
+  ran(node);
+  node.guest(861, { box: "bx861", marker: marker("whole", CARD_B, 1) });
+  ran(node, ["--once"], { FAKE_PVE_POOL_ON_LOCK: "lxc 860=861:elsewhere" });
+  assert.deepEqual(fakeLog(node, "pools.log"), ["861 elsewhere"], "the requester was moved while the yielder's lock was held");
+  assert.deepEqual(node.lines(860), cardLines(CARD_B, "server"), "the stopped shared box keeps its lines");
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 860 g1 yielded")), claims(node).join("\n"));
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 861 g1 granted")));
+  assert.deepEqual(node.lines(861), []);
+});
+
+test("071 unit 8b, review: a requester moved to another pool after a box yielded to it, and before its own write, is not written or granted", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(870, { box: "bx870", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "server") });
+  ran(node);
+  node.guest(871, { box: "bx871", marker: marker("whole", CARD_B, 1) });
+  ran(node, ["--once"], { FAKE_PVE_POOL_ON_WRITE: "lxc 870=871:elsewhere" });
+  assert.deepEqual(fakeLog(node, "pools.log"), ["871 elsewhere"], "the requester was moved once the yielding box was written");
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 871 g1 granted")), claims(node).join("\n"));
+  assert.deepEqual(node.lines(871), [], "the requester is not written");
+});
+
 test("071 unit 5, Astra 3: a guest whose config cannot be read blocks every decision on the cards it may hold, is named, and fails the preview", () => {
   const node = new FakeNode({ writes: "on" });
   node.guest(2520, { box: "bx2520", kind: "linux-desktop", lines: cardLines(CARD_A, "desktop"), running: true });

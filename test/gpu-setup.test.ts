@@ -955,6 +955,7 @@ hosted("a rollback that fails part way under set -e leaves the timer writing the
 hosted("a failed upgrade across a protocol change puts back the ledger the helper before kept, keeps the newer one beside, and the helper put back reports healthy (Opus 2, Astra 3)", async (host) => {
   const before = releaseWith("0.4.3-quick-heartbeat", [QUICK_HEARTBEAT]);
   assert.equal(host.setup([], {}, before).status, 0);
+  host.forgetCalls();
   const guests = host.guests();
   const broken = releaseWith("0.5.0-protocol-2-broken", [...versioned("0.5.0", 2), WRITES_NO_REPORT]);
   const running = host.setupLater([], {}, broken);
