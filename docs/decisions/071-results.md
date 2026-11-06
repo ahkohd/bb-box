@@ -2925,3 +2925,56 @@ at once.
   alone, in place of the per-card templates.
 - Whether `linux-desktop-cpu` should move to the GPU desktop template now
   (above).
+
+## Unit 8b: bb-box-gpu 0.4.3, whole claims yield only the asking install's own boxes
+
+Built on main `02a54581`, on branch `u71-8b`, as the lead decided after unit
+8's reviews: a whole claim never takes the lines out of another install's
+guest. Before, the helper yielded every stopped shared box it managed on the
+card, of any install. bb-box from unit 8 already places a whole box only on a
+card where no other install's guest stands, but between its placement and the
+helper's answer another install's guest can come to stand stopped on the card,
+as when its clone of a per-card template is granted and not yet started.
+0.4.3 closes that: the authority refuses rather than yields.
+
+### What it does
+
+- A whole request yields only stopped shared boxes with a granted claim, not
+  locked and with no pending device change, as before, and now also of the
+  requesting guest's own install and pool. Any other guest with the card's
+  lines blocks it, and the request is refused `card-held`, naming it; that
+  guest's config is not written.
+- The same rule holds for the check under each yielding guest's config lock,
+  and for which guest a lost ledger's rebuild names when it refuses a whole
+  claim; the rebuild's outcome does not change, as a whole box there loses its
+  claim to any other guest on its card.
+- Version 0.4.3, protocol 1, so `setup-gpu.sh --writes on` and the upgrade's
+  preview need this release's helper. `setup-gpu.sh` itself is unchanged: an
+  upgrade is running this release's `setup-gpu.sh`, which installs 0.4.3,
+  runs its preview with writes on, and keeps the config and the ledger.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root:
+
+- `test/gpu-helper.test.ts` gains a test: another install's stopped shared
+  box, and this install's in another pool, keep their lines and the whole
+  claims are refused; this install's own box in its pool still yields. With
+  the rule reverted, that test fails. A unit 6 test that took a claim away
+  with another install's whole claim now takes it with this install's own.
+  The setup tests' release-relative versions move up one, as unit 6's did,
+  and the doctor's tests that read the real helper say 0.4.3.
+- The GPU and Proxmox LXC test files: 325 tests, 324 passed, 0 failed, 1
+  skipped. `tsc` clean. The node suite: 3,755 tests, 3,459 passed, 1 failed,
+  295 skipped; the failure was a `computer_act` timing test in
+  `test/plugin.test.ts`, which this unit does not touch, and the file passed
+  on a second run. vitest: 469 passed. `shellcheck -x setup-gpu.sh`: clean.
+- Merged with unit 8's branch: `tsc` clean, the node suite 3,787 tests, 3,492
+  passed, 0 failed, 295 skipped.
+
+### The node steps
+
+Upgrade the node's helper to 0.4.3 with this release's `setup-gpu.sh`, after
+its preview, with writes on as before, and check that no guest changed: in
+the report to the lead. Whole cards stay off (`general.wholeCards`) until 0.4.3
+is on the node and the owner turns them on.

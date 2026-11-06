@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.2';
+use constant VERSION => '0.4.3';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -868,11 +868,17 @@ sub whole_holder {
     return undef;
 }
 
+sub same_install_and_pool {
+    my ($guest, $to) = @_;
+    return defined $guest->{install} && defined $to->{install} && $guest->{install} eq $to->{install}
+        && defined $guest->{pool} && defined $to->{pool} && $guest->{pool} eq $to->{pool};
+}
+
 sub yields_card {
-    my ($ctx, $guest) = @_;
+    my ($ctx, $guest, $to) = @_;
     my $claim = claim_of($ctx, $guest->{vmid});
     return !$guest->{running} && !$guest->{ineligible} && !$guest->{malformed} && $claim && $claim->{part} eq 'shared'
-        && !$guest->{lock} && !$guest->{pending_devices};
+        && !$guest->{lock} && !$guest->{pending_devices} && same_install_and_pool($guest, $to);
 }
 
 sub unsettle {
@@ -931,7 +937,7 @@ sub whole_blockers {
     for my $vmid (sort { $a <=> $b } keys %$guests) {
         my $guest = $guests->{$vmid};
         next if $vmid == $requester || $guest->{holds_nothing} || !$guest->{named}{$uuid};
-        return ($vmid) unless yields_card($ctx, $guest);
+        return ($vmid) unless yields_card($ctx, $guest, $guests->{$requester});
         push @yielders, $guest;
     }
     return (undef, @yielders);
@@ -1032,7 +1038,7 @@ sub yield_card {
         my ($conf, $running) = @_;
         my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
         return undef unless same_guest($yielder, $fresh);
-        return 'refused' unless yields_card($ctx, $fresh);
+        return 'refused' unless yields_card($ctx, $fresh, $to);
         return 'yielded' unless $fresh->{named}{ $marker->{card} };
         $ctx->{would_pending} = would_signature($vmid, $why, $fresh, []);
         if ($ctx->{writes}) {
@@ -1427,7 +1433,7 @@ sub settle_whole_conflicts {
         }
         my %whole = map { $_ => 1 } @{ $wholes{$uuid} };
         my @others = grep { !$whole{$_} && !$guests->{$_}{holds_nothing} && $guests->{$_}{named}{$uuid} } sort { $a <=> $b } keys %$guests;
-        my @yielding = grep { yields_card($ctx, $guests->{$_}) } @others;
+        my @yielding = grep { yields_card($ctx, $guests->{$_}, $guests->{$keeper}) } @others;
         my %yielding = map { $_ => 1 } @yielding;
         my ($standing) = grep { !$yielding{$_} } @others;
         if (!$keeper_stands || defined $standing) {

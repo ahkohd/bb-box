@@ -553,7 +553,7 @@ test("071 unit 5, Opus 3, go review 4 N4 and go review 5 F1: a helper on a pve-c
   const doctor = (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-helper");
   assert.equal(doctor?.status, "fail");
   assert.match(doctor?.detail ?? "", /was not tested on pve-container 6\.1\.15, so it changes no guest's lines, and only stops a GPU desktop or a guest with a GPU marker/);
-  assert.match(doctor?.fix ?? "", /^Install a bb-box-gpu release newer than 0\.4\.2 that was tested on pve-container 6\.1\.15: run host\/setup-gpu\.sh from that BB Box release, as root on pve\.$/);
+  assert.match(doctor?.fix ?? "", /^Install a bb-box-gpu release newer than 0\.4\.3 that was tested on pve-container 6\.1\.15: run host\/setup-gpu\.sh from that BB Box release, as root on pve\.$/);
 });
 
 test("071 unit 5, Astra 5: stopping a box bb-box has just made gives up its card's reservation at once, so a stopped shared box holds no place", async () => {

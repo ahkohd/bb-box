@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { reportedDriver } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { heldCopyDescription, heldCopyTags } from "../src/backends/proxmox/copies.ts";
 import type { AcquireHooks, BoxIdentity, CopyHooks, GpuHandoff, Guest } from "../src/backends/types.ts";
-import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
+import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL } from "./gpu-helper/claims-bridge.ts";
 import { REPORT_VMID, marker, type FakeCard } from "./gpu-helper/node.ts";
 
 const A = CARD_A.uuid;
@@ -143,7 +143,7 @@ test("071 unit 6, Astra 2: a restore holds the box's card while the box is stopp
   third.pass();
   const keptGuest = third.stoppedGuest(7040, kept, 9002);
   await pinned.holdGpuCard(keptGuest, (await pinned.readGpuClaim(keptGuest, signal()))!, signal());
-  third.desktop(7055, CARD_B, box(), SECOND_INSTALL, { marker: marker("whole", CARD_B, 1) });
+  third.desktop(7055, CARD_B, box(), INSTALL, { marker: marker("whole", CARD_B, 1) });
   third.pass();
   await assert.rejects(pinned.start(keptGuest, signal()), /^Error: Container 7040 was not started: .* It is stopped, with its disk as it was\.$/);
   assert.equal(third.proxmox.guests.get(7040)!.status, "stopped");

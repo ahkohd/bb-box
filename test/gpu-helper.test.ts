@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseGpuReport } from "../src/backends/proxmox-lxc/backend.ts";
-import { CARD_A, CARD_B, FakeNode, INSTALL, REPORT_VMID, boxLabels, cardLines, exited, heldCopyLabels, helperConstant, marker, otherKeys, pciOf, type FakeCard, type GuestSpec } from "./gpu-helper/node.ts";
+import { CARD_A, CARD_B, FakeNode, INSTALL, POOL, REPORT_VMID, boxLabels, cardLines, exited, heldCopyLabels, helperConstant, marker, otherKeys, pciOf, type FakeCard, type GuestSpec } from "./gpu-helper/node.ts";
 
 const FAKETIME = ["/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1", "/usr/lib/aarch64-linux-gnu/faketime/libfaketime.so.1", "/usr/lib/faketime/libfaketime.so.1"].find((path) => existsSync(path));
 
@@ -127,10 +127,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.4\.2, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.4\.3, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.2 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.3 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -301,6 +301,33 @@ test("whole: refused while another guest has the card's devices or holds it whol
   ran(node);
   assert.ok(claims(node).includes(`claim 806 g1 refused card-held ${B} 805`), "a running shared box does not yield");
   assert.deepEqual(node.lines(805), cardLines(CARD_B, "server"));
+});
+
+test("071 unit 8b: a whole claim yields only the asking install's own stopped shared boxes in its own pool; another install's, or this install's in another pool, keeps its lines, and the claim is refused", () => {
+  const node = new FakeNode({ writes: "on", pools: [POOL, "team"] });
+  node.guest(820, { box: "bx820", install: "9zz2", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "server") });
+  node.guest(822, { box: "bx822", pool: "team", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "server") });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 820 g1 granted shared ${A}`) && claims(node).includes(`claim 822 g1 granted shared ${B}`), claims(node).join("\n"));
+  const before = snapshot(node, [820, 822]);
+  node.guest(821, { box: "bx821", marker: marker("whole", CARD_A, 1) });
+  node.guest(823, { box: "bx823", marker: marker("whole", CARD_B, 1) });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 821 g1 refused card-held ${A} 820`), "another install's stopped shared box blocks the card");
+  assert.ok(claims(node).includes(`claim 823 g1 refused card-held ${B} 822`), "this install's stopped shared box in another pool blocks the card");
+  assertUnchanged(node, before);
+  assert.ok(!claims(node).some((line) => / yielded /.test(line)), "nothing yielded");
+  assert.deepEqual(node.lines(821), []);
+  assert.deepEqual(node.lines(823), []);
+
+  node.remove(822);
+  node.guest(824, { box: "bx824", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "server") });
+  ran(node);
+  node.guest(825, { box: "bx825", marker: marker("whole", CARD_B, 1) });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 824 g1 yielded ${B} 825`), "this install's own stopped shared box in its pool still yields");
+  assert.ok(claims(node).includes(`claim 825 g1 granted whole ${B}`));
+  assert.deepEqual(node.lines(824), []);
 });
 
 test("a lost ledger is rebuilt from the guests: matching guests are granted; a stopped copy, a guest whose lines do not match and a whole box whose card a stopped box still has are refused and keep their lines, and bb-box's next request decides them (re-review R3)", () => {
@@ -475,7 +502,7 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.4.2 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.4.3 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -930,7 +957,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.2 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.3 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
