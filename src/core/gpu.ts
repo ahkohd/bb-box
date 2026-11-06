@@ -1,5 +1,5 @@
 import { currentKindId } from "../backends/kinds.ts";
-import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type GpuPart, type KindCapabilities, type MachineSize } from "../backends/types.ts";
+import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type CardPlacement, type GpuPart, type GpuRefusal, type GpuResize, type KindCapabilities, type MachineSize } from "../backends/types.ts";
 
 export type NvidiaUserspace = "none" | "unknown" | `${number}.${string}`;
 
@@ -165,10 +165,45 @@ export const WHOLE_CARDS_OFF_FOR_RESIZE = {
 
 export function gpuResizingWords(gpu: { readonly add: string; readonly share: string; readonly move: string } | null | undefined): string {
   if (!gpu) return "";
-  const share = gpu.share === "live" ? "switches between shared and whole live" : gpu.share === "restart" ? "switches between shared and whole with a restart" : "keeps its share";
-  const fixed = [...(gpu.add === "no" ? ["added", "removed"] : []), ...(gpu.move === "no" ? ["moved to another card"] : [])];
-  const cannot = fixed.length <= 1 ? fixed.join("") : `${fixed.slice(0, -1).join(", ")} or ${fixed.at(-1)}`;
-  return ` A box's GPU ${share}${cannot ? `, and cannot be ${cannot}` : ""}.`;
+  const share = gpu.share === "live" ? "switches between shared and whole live" : gpu.share === "restart" ? "switches between shared and whole with a restart" : null;
+  const changes = (way: string) => [...(gpu.add === way ? ["added", "removed"] : []), ...(gpu.move === way ? ["moved to another card"] : [])];
+  const either = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items.at(-1)}`);
+  const restarted = changes("restart");
+  const fixed = changes("no");
+  const clauses = [...(share ? [share] : []), ...(restarted.length ? [`is ${either(restarted)} with a restart`] : []), ...(fixed.length ? [`cannot be ${either(fixed)}`] : [])];
+  if (!share && !restarted.length) clauses.unshift("keeps its share");
+  return ` A box's GPU ${clauses.join(", and ")}.`;
+}
+
+function planCard(card: CardPlacement | null): string {
+  return card ? `card ${card.index}` : "its card";
+}
+
+export function gpuPlanSummary(plan: GpuResize): string {
+  const to = planCard(plan.toCard);
+  const from = planCard(plan.fromCard);
+  if (plan.stopped) {
+    if (plan.to === "none") return "would lose its card while stopped";
+    if (plan.to === "whole") return `would take ${to} whole while stopped`;
+    return plan.from === "none" ? "would get a shared GPU from its next start" : `would open ${from} to other boxes while stopped`;
+  }
+  if (plan.way === "live") return plan.to === "whole" ? `could change to a whole card live, on ${to}` : `could open ${from} to other boxes live`;
+  if (plan.to === "none") return `would lose ${from} with a restart`;
+  if (plan.from === "none") return `would get ${to}${plan.to === "whole" ? " whole" : ""} with a restart`;
+  return `would move to ${to} with a restart`;
+}
+
+export function sameGpuPlan(agreed: GpuResize, now: GpuResize): boolean {
+  return agreed.from === now.from && agreed.to === now.to && agreed.way === now.way && agreed.stopped === now.stopped && (agreed.toCard?.card ?? null) === (now.toCard?.card ?? null);
+}
+
+export function gpuPlanChangedWords(name: string, agreed: GpuResize, now: GpuResize, because: GpuRefusal | null): GpuRefusal {
+  const said = (reason: string | null) => `when you checked, ${name} ${gpuPlanSummary(agreed)}; now ${reason ? `${reason}, so it` : "it"} ${gpuPlanSummary(now)}`;
+  const restart = now.way === "restart";
+  return {
+    person: `Not resized: ${said(because?.person ?? null)}. ${restart ? "Resize it again with the restart" : "Resize it again"} to do that, or keep its GPU as it is. bb-box changed nothing.`,
+    agent: `Not resized: ${said(because?.agent ?? null)}. ${restart ? "Call box_resize with restart true" : "Call box_resize again"} to do that, or ask the user. bb-box changed nothing.`,
+  };
 }
 
 export const WHOLE_CARDS_OFF_IN_LIST = "Whole cards are off on this install: ask the user if a box needs a card to itself.";

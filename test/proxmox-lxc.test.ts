@@ -2220,7 +2220,8 @@ test("a GPU desktop shows as video only where its image encodes with NVENC, and 
 
 test("a container resizes live in every part, with room for what it grows by, and its disk only grows (061)", async () => {
   const { backend, proxmox } = setup();
-  assert.deepEqual(backend.resizing("linux"), { cores: "live", memory: "live", disk: "live", shrinks: true });
+  assert.deepEqual(backend.resizing("linux"), { cores: "live", memory: "live", disk: "live", shrinks: true, gpu: { add: "restart", share: "no", move: "no" } });
+  assert.deepEqual(setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.resizing("linux-desktop-cpu"), { cores: "live", memory: "live", disk: "live", shrinks: true });
   assert.equal(backend.resizing("macos"), null);
   const guest = await backend.acquire(identity("linux"), null, hooks().value, signal());
   const vmid = Number(guest.ref);

@@ -1561,36 +1561,49 @@ export class DockerBackend implements Backend {
     const known = card ? (cards.cards.find((each) => each.uuid === card) ?? null) : null;
     const placement = known ? placementOf(known) : null;
     const named = card ? cardName(known ?? { index: null, uuid: card }) : null;
+    const change = (way: GpuResize["way"], words: string, refusal: GpuRefusal | null, others: GpuResize["others"] = []): GpuResize => ({
+      from,
+      to,
+      way,
+      card: placement,
+      fromCard: placement,
+      toCard: to === "none" ? null : placement,
+      stopped: found.status !== "running",
+      installs: null,
+      others,
+      words,
+      refusal,
+    });
     if (from === "none" || to === "none") {
-      const change = from === "none" ? `gain a card` : `lose ${named}`;
-      const words = `GPU: ${from} → ${to} · Cannot change on Docker. A container's devices are fixed when it is made, so ${name} cannot ${change}. Make a new box with the GPU it needs.`;
+      const fixed = from === "none" ? `gain a card` : `lose ${named}`;
+      const words = `GPU: ${from} → ${to} · Cannot change on Docker. A container's devices are fixed when it is made, so ${name} cannot ${fixed}. Make a new box with the GPU it needs.`;
       const refusal: GpuRefusal = {
-        person: `${capitalise(name)} cannot ${change} on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.`,
-        agent: `Not resized: ${name} cannot ${change} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+        person: `${capitalise(name)} cannot ${fixed} on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.`,
+        agent: `Not resized: ${name} cannot ${fixed} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
       };
-      return { from, to, way: "no", card: placement, others: [], words, refusal };
+      return change("no", words, refusal);
     }
-    if (to === "whole" && !this.#wholeOn()) return { from, to, way: "no", card: placement, others: [], words: WHOLE_CARDS_OFF_FOR_RESIZE.person, refusal: WHOLE_CARDS_OFF_FOR_RESIZE };
+    if (to === "whole" && !this.#wholeOn()) return change("no", WHOLE_CARDS_OFF_FOR_RESIZE.person, WHOLE_CARDS_OFF_FOR_RESIZE);
     const shared = this.#sharedDaemonRefusal(to);
     if (shared) {
       const refusal = { person: shared.person, agent: shared.agent.replace(/^Not made: /, "Not resized: ") };
-      return { from, to, way: "live", card: placement, others: [], words: refusal.person, refusal };
+      return change("live", refusal.person, refusal);
     }
     if (to === "whole" && known && !known.uuidKnown) {
       const refusal: GpuRefusal = {
         person: `No card is free for ${name} alone: bb-box could not read ${named}, so it cannot tell what uses it. Keep the GPU shared, or run bb box doctor.`,
         agent: `Not resized: no card is free for ${name} alone: bb-box could not read ${named}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
       };
-      return { from, to, way: "live", card: placement, others: [], words: refusal.person, refusal };
+      return change("live", refusal.person, refusal);
     }
     const reach = reachWords(host, this.#privileged(kind), cards.oneDeviceForEveryCard);
     const tail = reach ? ` ${reach}` : "";
     if (to === "shared") {
       const words = `GPU: whole ${named} → shared · Live. ${capitalise(named!)} opens to other boxes, up to ${this.#config.desktopsPerGpu}. They share its memory and its time. Nothing in ${name} stops.${tail}`;
-      return { from, to, way: "live", card: placement, others: [], words, refusal: null };
+      return change("live", words, null);
     }
     const holders = (await this.#holders(state, cards)).filter((holder) => holder.card === card && holder.container !== found.name);
-    const others = holders.map((holder) => ({ name: holder.name, stopped: holder.state === "stopped" }));
+    const others = holders.map((holder) => ({ box: null, name: holder.name, stopped: holder.state === "stopped" }));
     if (holders.length) {
       const titles = await this.#titles([...new Set(holders.flatMap((holder) => (holder.threadId ? [holder.threadId] : [])))]);
       const list = (audience: "person" | "agent") => holders.map((holder) => `${holderName(holder, titles, audience === "person" ? { to: "person" } : { to: "agent", threadId: null })}${holder.state === "stopped" ? " (stopped)" : holder.state === "making" ? " (being made)" : ""}`);
@@ -1599,10 +1612,10 @@ export class DockerBackend implements Backend {
         person: `No card is free for ${name} alone. ${on("person")}. Release ${holders.length === 1 ? "it" : "one of them"}, or keep the GPU shared.`,
         agent: `Not resized: no card is free for ${name} alone. ${on("agent")}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
       };
-      return { from, to, way: "live", card: placement, others, words: refusal.person, refusal };
+      return change("live", refusal.person, refusal, others);
     }
     const words = `GPU: shared → whole ${named} · Live. ${capitalise(named!)} becomes ${name}'s alone: no other box is placed on it while ${name} holds it. Nothing in ${name} stops.${tail}`;
-    return { from, to, way: "live", card: placement, others: [], words, refusal: null };
+    return change("live", words, null);
   }
 
   /** Changes a container's CPUs and memory, swap with it, as `docker update` does at once, running or stopped (061). */

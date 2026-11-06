@@ -2268,6 +2268,7 @@ same guest.
 | `powerOff`, `stop` | a box's guest | stop | box |
 | `release` | a box's guest | delete | box |
 | `resize` | a box's guest | cores, memory, disk | box |
+| `#growForGpu`, `#sizeForGpu`, `#askForGpu`, `#claimBack`, `#restartForGpu` | a box's guest whose GPU a resize changes (unit 9) | its disk, cores and memory, its marker, a stop; `#claimBack` asks for its claim before the resize again when the new one was not granted; the start goes through `start` | box |
 | `hold`, `#retag`, `relabel` | a warm guest a box takes, a box's guest | name, memory, description, labels | warm guest of this install, then box |
 | `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
@@ -4390,3 +4391,214 @@ storage under `u71-14-shots/`.
   the guest cannot split other boxes from use outside bb-box.
 - A whole card was not made live. Its fact, badge and last line are in the
   tests. The two live boxes were the shared pair the fact's "with" line needs.
+
+## Unit 9: Resize with a GPU on Proxmox LXC
+
+Built on main `07b96c95`, on branch `u71-9`. Section 8 on Proxmox LXC: the
+share switch live, adding, removing and moving a GPU with a restart, stopped
+boxes, the plan made again when it is carried out, and `box_resize gpu`. It
+extends unit 11's core contract for Resize's GPU part rather than adding
+another. No helper change: bb-box-gpu 0.4.3 already grants a change of part
+on a running guest with no write, when its lines are the card's already, and
+refuses any device change on a running guest.
+
+### What it does
+
+- **What Proxmox LXC can resize.** `linux` and `linux-desktop` offers with a
+  GPU part resize it: `add` and `move` with a restart, `share` live. While
+  whole cards are off on the install, `share` and `move` are `no`, as no box
+  then switches to whole or moves to a card of its own. `box_list` says
+  "A box's GPU switches between shared and whole live, and is added, removed
+  or moved to another card with a restart."
+- **The plan.** `planResize` reads the box's marker, its claim in the
+  helper's ledger, whether it runs, and the cards, and gives section 8's row,
+  for a running box and a stopped one, in its words:
+  - none → shared or whole: a restart onto the card the acquire's placement
+    would give it, servers and desktops each by their own rule;
+  - shared → whole: live where no other guest holds its card but this
+    install's own stopped shared boxes in its pool, which yield and are
+    named; a restart onto a free card where others run on its card; refused
+    with names where none is free;
+  - whole → shared: live;
+  - shared or whole → none: a restart without its card;
+  - a stopped box: the change is made now and nothing starts, "While
+    stopped". To none, its lines go now; to whole, its card is claimed now;
+    to shared from whole, its claim opens the card; none → shared, its
+    marker goes on the card with the fewest boxes that no guest holds whole,
+    whatever the boxes per card, as a stopped shared box holds no place, and
+    its next start places it, that card first.
+
+  A restart's cores and memory are restart parts of the same plan, made
+  while the box is stopped: one restart. The plan's GPU part, unit 11's
+  `GpuResize`, gains `fromCard`, `toCard`, `stopped`, `installs` (null until
+  unit 10), each other box's ID in `others`, and `changedSinceAgreed`.
+- **Refusals, for each audience.** No helper, writes off, an untested
+  pve-container, a helper below 0.4.3 for whole, whole cards off, a guest with
+  a card's lines and no marker ("Run bb box gpu mark"), adding a GPU to a box
+  without NVIDIA's userspace for the host's driver (unit 10 installs it; a
+  stopped box is judged by its template's record, else "Start it first"), and
+  no card with room or free, naming each card's boxes as unit 8 does:
+
+  > No card is free for amber-fox alone. Card 0 has lone-pine (in thread
+  > "Train the model") running. Card 1 has CT 7063 of another install
+  > running. Release one of them, or keep the GPU shared.
+
+  > Not resized: no card is free for amber-fox alone. Card 0 has lone-pine
+  > running; card 1 has CT 7063 of another install running. Keep the GPU
+  > shared, or ask the user. bb-box changed nothing.
+
+- **Carrying it out**, under the card lock: the plan is made again from a
+  fresh report and pool, and compared with the plan the caller agreed to.
+  Only if they match, and a restart is allowed where one is needed, does
+  bb-box drop the box's old reservations, reserve the new card (whole, or
+  shared for a running box) and go on.
+  - A live switch, or a stopped box's change: the new marker, on the
+    config's digest; the helper's answer within 10 s. A grant changes the
+    claim; a running box's card is checked once more for its GPU fact.
+  - A restart: the disk grows first, live; then the stop through the helper;
+    cores and memory; the new marker; the answer; the start through the
+    start gate, with the check after start that unit 7 has. The old card is
+    given up only when the helper grants the new claim.
+  - When the new claim is not granted, the box is left stopped with its
+    disk: its cores and memory go back, its old claim is asked for again, and
+    its GPU is as it was, in words. When it is granted and the start fails,
+    the box is left stopped, with its disk and the claim the helper holds
+    for it now, and says so. Both reach the box's record as a
+    `ResizeLeftStopped` error: the record is stopped, with that claim and GPU
+    part, and the resize failed.
+- **The plan made again** (section 8, section 11's table). A check remembers
+  its GPU plan for the box, in bb-box's memory. A resize of the same box to
+  the same GPU part compares its plan now with that one: changed (another
+  way, another card, the box started or stopped), it is refused, saying what
+  changed and why, and whether `restart: true` is now needed; the plan it was
+  told is then what it agrees to, so its next call goes ahead on it. With no
+  check, the plan made at the start of the call is what it agreed to. The
+  backend makes the plan again under the card lock and refuses the same way
+  if it changed meanwhile.
+
+  > Not resized: when you checked, quiet-elm could change to a whole card
+  > live, on card 0; now card 0 has CT 7064 of another install running, so it
+  > would move to card 1 with a restart. Call box_resize with restart true to
+  > do that, or ask the user. bb-box changed nothing.
+
+  > Not resized: when you checked, amber-fox would get card 0 with a restart;
+  > now card 0 has 1 of this install's boxes, the most a card may have
+  > (tidy-glade), so it would get card 1 with a restart. Call box_resize with
+  > restart true to do that, or ask the user. bb-box changed nothing.
+
+- **The start gate**, unit 5's, now asks a standing claim of none again when
+  the box's marker asks for a card the helper refused, and starts the box
+  with no card. Before, it placed the box on a card by its marker. A resize
+  whose new claim was refused, and whose old claim could not be asked back,
+  as with the guest locked, left such a marker.
+- **Core.** A GPU restart refused without `restart: true` names the GPU and
+  gives an agent its own words. A resize whose restart left the box stopped
+  is recorded as stopped, on every backend, rather than ready and then
+  "stopped without bb-box's request".
+- **The tools and the CLI.** `box_resize`'s and `bb box resize --gpu`'s words
+  say what each change does on Proxmox LXC and Docker, that a stopped box
+  stays stopped, and that a plan changed since its check is refused.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root with `--init`, as CI runs
+them:
+
+- `tsc` clean. The node suite, on the commit: 3,869 tests, 3,447 passed, 112
+  failed, 310 skipped; vitest, 470 passed, and in one run of three 469, the
+  thread card's spinner test, which units 6 and 8 found flaky. On main
+  `07b96c95` in the same container, its tree without `docs/`, `site/` and
+  `skills/`: 3,774 tests, 121 failed. Every test that fails on the branch
+  fails on main too, by name: identity reset scripts that find the node
+  kernel's GRE and ERSPAN interfaces in every namespace of the container, and
+  the snapshot, fork and keep tests built on them, as unit 11 recorded.
+- `test/gpu-resize.test.ts`, against the real helper 0.4.3 on unit 2's fake
+  node through unit 5's bridge: each row of section 8, running and stopped;
+  cores and GPU in one restart, one stop and one start in the helper's power
+  log; a live switch with no power action and the box's lines unchanged; a
+  stopped shared box yielding to a live switch, named in the words; a move
+  to a free card naming who runs on the box's card; the refusal with names
+  for each audience; the plan made again, for a live switch that now needs a
+  move and for an added card another box took; a restart whose claim the
+  helper does not answer, left stopped with its cores and old claim; a
+  restart granted whose start the helper refuses, left stopped with its new
+  claim; refusals with writes off, no helper, an unmarked guest, no
+  userspace and whole cards off; a desktop to none and back; a resize to
+  whole racing an acquire, four times; a stopped box at every card's limit;
+  the start gate's standing none claim.
+- `test/boxes.test.ts`: the GPU restart refused without `restart: true` and
+  made with it, cores and GPU together; the plan made again from a check,
+  and again when it changed once more after it was told; a box left stopped
+  by its resize, with no stop recorded as unasked; a stopped box's GPU
+  changed while it stays stopped, in words that say so.
+- Each rule was reverted on its own on the box, by a harness that patches
+  it out, runs its tests and puts it back, and its tests failed: 31
+  reverts, 20 in the backend, 3 in its words, 6 in core, one in the resize
+  answer's words and one in `box_list`'s. Three passed at first (the
+  reservation a restart holds, the plan told being what is agreed to next,
+  and the record's stopped state); each got a test of its own, and then
+  failed.
+- The node steps' 22 blocks pass `bash -n`.
+
+### The node steps
+
+The gate runs on a test BB from this branch, before the merge, on the lent
+VMIDs and the test pool, through the lead: the steps are in the report to
+the lead. Both cards are held by guests outside bb-box, so no card can be
+free and no whole claim granted. The steps run every row of section 8 that
+needs no free card, running and stopped: none to shared through an agent,
+asked again first as the card its check named was taken, then made with its
+cores in one restart (Q); shared to whole and none to whole refused with
+names, for each audience (R2); shared to none (R3); a stopped box's changes
+(S); a restart whose new claim is never granted, by a lock the lead puts on
+the test guest as it stops (F1), and one whose start fails after the grant,
+by a lock once the claim is granted (F2), each left stopped with its disk.
+The live switch with a process that counts on the card, the move to a free
+card, and the rows that need a whole box wait for a free card.
+
+### Deviations from the note
+
+- While whole cards are off, `resizing` gives `share` and `move` as `no`,
+  as no box can switch to whole or move to a card of its own. Section 8's
+  table has them `live` and `restart` on a node with the helper.
+- What the caller agreed to is the plan of its last check of that box for
+  the same change, kept in bb-box's memory: a restart of bb-box forgets it,
+  and then the plan made at the start of the call is what it agreed to.
+  With no check, that plan is too, and only a change between it and the
+  plan made again under the card lock is asked again.
+- A stopped box's change is `live`, with `stopped` true, and its words say
+  "While stopped": it needs no restart, and starts nothing.
+- None to shared on a stopped box puts its marker on a card now, the one
+  with the fewest boxes that no guest holds whole, whatever the boxes per
+  card, and the helper writes that card's lines into it. It holds no place
+  until it starts, and its start places it as any stopped shared box's
+  does, that card first. Section 8 has it placed only when it starts; a
+  marker with a card is what the start gate places from.
+- Adding a GPU to a box without NVIDIA's userspace for the host's driver is
+  refused, as section 16 has it until unit 10. A stopped box is judged by
+  its template's record, and is asked to start first where that has none.
+- The words name a card by its index and memory, not its model: the
+  helper's report gives no model. They do not name the processes that have
+  the GPU open: that is the Monitor's, for units 13 and 14.
+- The person's words for a plan that changed are words, not a dialog with
+  the new plan: the dialog is unit 13's.
+- The start gate asks a standing claim of none again for a box whose marker
+  asks for a card the helper refused (above). Unit 5's gate did so only for
+  a shared or whole claim.
+- A resize whose restart left the box stopped is recorded as stopped on
+  every backend, not only Proxmox LXC.
+- Docker's plan is not compared with what the caller agreed to: its plan is
+  live or refused, and never changes card, so the plan made again under its
+  lock refuses where it changed.
+
+### Still open
+
+- L, M and W of the gate, which need a free card: the live switch with a
+  process that counts on the card, a move to a free card, and the rows that
+  need a whole box. As for unit 8's G1, G3 and G5, the node's development
+  container holds both cards; they run on a node where a card is free,
+  before whole cards are turned on there. Until then whole cards stay off,
+  so production offers only adding and removing a shared GPU, whose rows the
+  steps here drive.
+- The Resize dialog with the GPU, and the move confirmation naming the
+  programs with the GPU open: unit 13.

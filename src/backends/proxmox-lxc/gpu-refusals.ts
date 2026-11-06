@@ -6,6 +6,11 @@ export interface BoxMaking {
   readonly name: string;
   readonly threadId: string;
   readonly starting?: boolean;
+  readonly resizing?: boolean;
+}
+
+function doingWords(making: BoxMaking | null): string {
+  return making?.resizing ? "resizing" : making?.starting ? "starting" : "making";
 }
 
 export type CardBlock =
@@ -92,7 +97,7 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `${card} is ${holder.name}'s whole card${audience.to === "person" ? threadWords(holder.threadId, namer) : ""}`;
     }
     case "reserved-whole":
-      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${block.making?.starting ? "starting" : "making"}`;
+      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${doingWords(block.making)}`;
     case "unsettled":
       return `${card} waits for ${inWords(block.vmids.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${block.vmids.length === 1 ? "it" : "each"} may hold the card`;
     case "limit": {
@@ -104,11 +109,13 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
     case "held":
       return heldWords(card, block.holders, namer, audience);
     case "placing": {
-      const starting = block.making.filter((making) => making?.starting);
-      const placing = block.making.filter((making) => !making?.starting);
+      const resizing = block.making.filter((making) => making?.resizing);
+      const starting = block.making.filter((making) => making?.starting && !making.resizing);
+      const placing = block.making.filter((making) => !making?.starting && !making?.resizing);
       const said = [
         ...(placing.length ? [`bb-box is placing ${inWords(placing.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
         ...(starting.length ? [`bb-box is starting ${inWords(starting.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+        ...(resizing.length ? [`bb-box is changing the GPU of ${inWords(resizing.map((making) => makingWords(making, namer, audience)))} to ${card}`] : []),
       ];
       return said.join(", and ");
     }

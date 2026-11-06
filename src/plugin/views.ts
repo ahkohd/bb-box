@@ -1052,9 +1052,10 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
   const live = ways("live");
   const restart = ways("restart");
   const lines: string[] = [];
+  const stopped = gpu?.stopped === true;
   if (checked) {
     lines.push(`Resizing box ${box.name} from ${from} to ${to} would change:`);
-    if (live.length) lines.push(`- live, while everything in it runs on: ${live.join("; ")}`);
+    if (live.length) lines.push(stopped ? `- now, while it stays stopped: ${live.join("; ")}` : `- live, while everything in it runs on: ${live.join("; ")}`);
     if (restart.length) lines.push(`- with a restart${plan.downSeconds !== null ? ` of about ${plan.downSeconds} s` : ""}, which ends everything running in it: ${restart.join("; ")}`);
     if (gpu) lines.push(gpu.words);
     lines.push(plan.room.ok ? "Its host has room for it." : `Its host has no room for it: ${plan.room.message ?? "no reason given"}`);
@@ -1062,7 +1063,7 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
   }
   const took = box.resize?.ms != null ? ` in ${seconds(box.resize.ms)}` : "";
   lines.push(`Resized box ${box.name} from ${from} to ${to}${took}.`);
-  if (live.length) lines.push(`Live, with everything in it still running: ${live.join("; ")}.`);
+  if (live.length) lines.push(stopped ? `While it stayed stopped: ${live.join("; ")}.` : `Live, with everything in it still running: ${live.join("; ")}.`);
   if (restart.length) lines.push(`With a restart, which ended what was running in it: ${restart.join("; ")}.`);
   if (gpu) lines.push(gpu.words);
   if (plan.parts.some((part) => part.part === "cores" && part.way === "live")) lines.push("New cores can take up to 15 s to show in the box.");

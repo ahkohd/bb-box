@@ -206,8 +206,8 @@ function resizeGpuOption(app: BbBox) {
       type: "string",
       get description() {
         return wholeCardsOn(app)
-          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. On Docker shared and whole switch live, and a GPU cannot be added, removed or moved."
-          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.";
+          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; on Proxmox LXC adding a GPU, removing it or moving to another card needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed."
+          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.";
       },
     },
   } as const;
@@ -328,7 +328,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         resize: cliCommand({
-          summary: "Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
+          summary: "Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: boxPositional,
           options: { ...threadOption, ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }, ctx) =>
@@ -370,7 +370,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "machines resize": cliCommand({
-          summary: "Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
+          summary: "Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
           options: { ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }) =>

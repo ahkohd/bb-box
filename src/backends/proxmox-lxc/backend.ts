@@ -42,7 +42,8 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Gue
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { forkCapacityWords, forkRefusalWords } from "../../core/snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, gpuPartsOffered, offersGpuPart } from "../../core/gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, gpuPartsOffered, gpuPlanChangedWords, holdsCard, offersGpuPart, sameGpuPlan } from "../../core/gpu.ts";
+import { GPU_RESTART_SECONDS, helperNotReadyRefusal, noSharedCardRefusal, noWholeCardRefusal, placementOf, plannedChange, unmarkedRefusal, userspaceRefusal, type OtherOnCard, type PlanBox } from "./gpu-resize.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
 import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
@@ -88,8 +89,14 @@ import {
   type BoxTransports,
   type Capacity,
   type CapacityAsking,
+  type CardPlacement,
+  type GpuResize,
+  type ResizeOptions,
   type ResizePlan,
+  type ResizeTarget,
+  type ResizeWay,
   type Resizing,
+  ResizeLeftStopped,
   type CommandCapability,
   type ComputerUse,
   type DoctorCheck,
@@ -603,6 +610,47 @@ const NO_GPUS: ReadonlySet<string> = new Set();
 const NO_CARDS: CardsView = { is: "none" };
 
 type CardPart = "shared" | "whole";
+
+const USERSPACE_COMMAND = "cat /usr/share/bb-box/nvidia-version 2>/dev/null || true";
+
+interface GpuFacts {
+  readonly vmid: number;
+  readonly box: PlanBox;
+  readonly boxId: string | null;
+  readonly kind: string;
+  readonly marker: ClaimMarker | null;
+  readonly unmarked: boolean;
+  readonly template: number | null;
+}
+
+type GpuDecision =
+  | { readonly is: "refused"; readonly refusal: Refusal; readonly way: ResizeWay }
+  | { readonly is: "blocked"; readonly part: CardPart; readonly blocks: readonly CardBlock[]; readonly way: ResizeWay }
+  | { readonly is: "same"; readonly fromCard: HelperCard | null }
+  | { readonly is: "none"; readonly fromCard: HelperCard | null; readonly way: ResizeWay }
+  | {
+      readonly is: "place";
+      readonly part: CardPart;
+      readonly card: HelperCard;
+      readonly fromCard: HelperCard | null;
+      readonly way: ResizeWay;
+      readonly yielding: readonly number[];
+      readonly retire: readonly number[];
+      readonly fromBlocks: readonly CardBlock[];
+    };
+
+function byCardIndex(blocks: readonly CardBlock[]): CardBlock[] {
+  const index = (block: CardBlock) => (block.is === "said" ? -1 : (block.card.index ?? 0));
+  return [...blocks].sort((a, b) => index(a) - index(b));
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function uncapitalise(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
 
 interface Making {
   readonly boxId: string;
@@ -2321,11 +2369,20 @@ export class ProxmoxLxcBackend implements Backend {
    * spreads its guests' CPUs, up to about 10 s later.
    */
   resizing(kind: string): Resizing | null {
-    return this.#offers().some((offer) => offer.kind.id === kind) ? { cores: "live", memory: "live", disk: "live", shrinks: true } : null;
+    const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
+    if (!offer) return null;
+    const sizes = { cores: "live", memory: "live", disk: "live", shrinks: true } as const;
+    if (!this.#resizesGpu(offer)) return sizes;
+    const whole = this.#wholeOn();
+    return { ...sizes, gpu: { add: "restart", share: whole ? "live" : "no", move: whole ? "restart" : "no" } };
   }
 
-  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
-    this.#offer(kind);
+  #resizesGpu(offer: Offer): boolean {
+    return (offer.flavour === "linux" || offer.flavour === "desktop") && gpuPartsOffered(offer.kind).some(holdsCard);
+  }
+
+  async planResize(guest: Guest, kind: string, to: ResizeTarget, pending: readonly Pending[], signal?: AbortSignal, agreed: GpuResize | null = null): Promise<ResizePlan> {
+    const offer = this.#offer(kind);
     const api = await this.client();
     const config = await this.#ownConfig(api, guest, signal);
     const from = sizeOf(config);
@@ -2339,7 +2396,16 @@ export class ProxmoxLxcBackend implements Backend {
     if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "live" });
     const storage = String(config.rootfs ?? "").split(":")[0] || null;
     const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
-    return { parts, room, downSeconds: null };
+    if (to.gpu === undefined || !this.#resizesGpu(offer)) return { parts, room, downSeconds: null };
+    const facts = await this.#gpuFacts(api, guest, offer, config, signal);
+    const userspace = await this.#userspaceFor(api, facts, to.gpu, signal);
+    await this.#settled(api);
+    const view = await this.#cardsView(api, signal);
+    const guests = await api.listPool(this.#config.proxmox.pool, signal);
+    const decided = await this.#decideGpu(api, facts, offer, to.gpu, view, guests, userspace, signal);
+    const gpu = await this.#gpuChange(api, facts, offer, to.gpu, decided, view, guests, agreed);
+    if (gpu.way !== "restart" || gpu.refusal) return { parts, room, downSeconds: null, gpu };
+    return { parts: parts.map((part) => (part.part === "disk" ? part : { ...part, way: "restart" as const })), room, downSeconds: GPU_RESTART_SECONDS, gpu };
   }
 
   /**
@@ -2348,7 +2414,8 @@ export class ProxmoxLxcBackend implements Backend {
    * the disk, which cannot. When the disk fails, cores and memory go back
    * to what they were (061).
    */
-  async resize(guest: Guest, _kind: string, to: MachineSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: ResizeTarget, options: ResizeOptions, signal?: AbortSignal): Promise<Guest> {
+    if (to.gpu !== undefined) return this.#resizeGpu(guest, this.#offer(kind), { cores: to.cores, memoryMiB: to.memoryMiB, diskGiB: to.diskGiB, gpu: to.gpu }, options, signal);
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const from = sizeOf(await this.#ownConfig(api, guest, signal));
@@ -2370,6 +2437,370 @@ export class ProxmoxLxcBackend implements Backend {
       }
     }
     return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+  }
+
+  async #gpuFacts(api: Proxmox, guest: Guest, offer: Offer, config: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<GpuFacts> {
+    const vmid = this.#vmid(guest);
+    const tags = parseTags(config.tags);
+    const running = (await api.status(vmid, signal))?.status === "running";
+    const marker = claimMarkerOf(tags);
+    const recorded = typeof guest.data?.template === "number" ? guest.data.template : null;
+    return {
+      vmid,
+      box: {
+        name: typeof config.hostname === "string" && config.hostname ? config.hostname : `CT ${vmid}`,
+        desktop: offer.flavour === "desktop",
+        stopped: !running,
+        threadId: tags.find((tag) => tag.startsWith("thread."))?.slice("thread.".length) ?? null,
+      },
+      boxId: this.#boxData(guest),
+      kind: offer.kind.id,
+      marker,
+      unmarked: !marker && gpuDeviceLines(config).length > 0,
+      template: templateFromTags(tags) ?? recorded,
+    };
+  }
+
+  async #userspaceFor(api: Proxmox, facts: GpuFacts, to: GpuPart, signal?: AbortSignal): Promise<string | null> {
+    if (to === "none" || (facts.marker && facts.marker.part !== "none")) return null;
+    if (!facts.box.stopped) {
+      const result = await (await this.#command(facts.vmid)).run(USERSPACE_COMMAND, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return null;
+      });
+      const said = result?.exitCode === 0 ? result.stdout.trim() : "";
+      return /^\d+\.\S+$/.test(said) ? said : null;
+    }
+    if (facts.template === null) return null;
+    return api.config(facts.template, signal).then(templateUserspace, () => null);
+  }
+
+  #standingClaim(view: CardsView, vmid: number): LedgerClaim | null {
+    if (view.is !== "on") return null;
+    const claim = view.lines.ledger.get(vmid)?.claim ?? null;
+    return claim?.answer === "granted" && claim.part !== "none" && claim.card !== null && view.lines.cards.some((card) => card.uuid === claim.card) ? claim : null;
+  }
+
+  async #decideGpu(api: Proxmox, facts: GpuFacts, offer: Offer, to: GpuPart, view: CardsView, guests: readonly PoolGuest[], userspace: string | null, signal?: AbortSignal): Promise<GpuDecision> {
+    const from = facts.marker?.part ?? "none";
+    if (facts.unmarked) return { is: "refused", refusal: unmarkedRefusal(facts.box), way: "no" };
+    const ready = await this.#helperReady(api, view, signal);
+    if (ready || view.is !== "on") {
+      return { is: "refused", refusal: helperNotReadyRefusal(api.node, facts.box, ready?.why ?? "it has no GPU helper to give a box a card", ready?.fix ?? "Run bb box doctor."), way: "no" };
+    }
+    if (to === "whole") {
+      if (!this.#wholeOn()) return { is: "refused", refusal: WHOLE_CARDS_OFF_FOR_RESIZE, way: "no" };
+      const wholeNot = await this.#wholeHelperReady(api, view, signal);
+      if (wholeNot) return { is: "refused", refusal: helperNotReadyRefusal(api.node, facts.box, wholeNot.why, wholeNot.fix), way: "no" };
+    }
+    const standing = this.#standingClaim(view, facts.vmid);
+    const fromCard = from !== "none" && standing ? (view.lines.cards.find((card) => card.uuid === standing.card) ?? null) : null;
+    const changing: ResizeWay = facts.box.stopped ? "live" : "restart";
+    if (from === to && (to === "none" || (fromCard && standing?.part === to))) return { is: "same", fromCard };
+    if (to === "none") return { is: "none", fromCard, way: changing };
+    if (from === "none") {
+      const driver = reportedDriver(view.notes);
+      if (userspace === null || userspace !== driver) return { is: "refused", refusal: userspaceRefusal(facts.box, driver, userspace), way: "no" };
+    }
+    const need = facts.box.desktop ? DESKTOP_GPU_MIB : SERVER_GPU_MIB;
+    const candidates = this.#cardsFor(facts.kind, view);
+    const placedOn = (card: HelperCard, part: CardPart, way: ResizeWay, more: Partial<Extract<GpuDecision, { is: "place" }>> = {}): GpuDecision => ({ is: "place", part, card, fromCard, way, yielding: [], retire: [], fromBlocks: [], ...more });
+    if (to === "shared") {
+      if (from === "whole" && fromCard) return placedOn(fromCard, "shared", "live");
+      if (facts.box.stopped) {
+        const preferred = this.#placeOn(api, view, guests, candidates, "shared", 0, facts.vmid, facts.marker?.card ?? null, false);
+        return preferred.is === "placed" ? placedOn(preferred.card, "shared", "live") : { is: "blocked", part: "shared", blocks: preferred.reasons, way: "live" };
+      }
+      const placed = facts.box.desktop ? await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "shared") : this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "shared", need);
+      return placed.is === "placed" ? placedOn(placed.card, "shared", "restart") : { is: "blocked", part: "shared", blocks: placed.reasons, way: "restart" };
+    }
+    const elsewhere = async (only: ReadonlySet<string>) =>
+      facts.box.desktop ? this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "whole", only) : this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "whole", need, only);
+    if (fromCard) {
+      const own = this.#placeOn(api, view, guests, new Set([fromCard.uuid]), "whole", 0, facts.vmid, fromCard.uuid);
+      if (own.is === "placed") return placedOn(fromCard, "whole", "live", { yielding: "yielding" in own ? own.yielding : [], retire: "retire" in own ? own.retire : [] });
+      const others = await elsewhere(new Set([...candidates].filter((card) => card !== fromCard.uuid)));
+      if (others.is === "placed") return placedOn(others.card, "whole", changing, { yielding: "yielding" in others ? others.yielding : [], retire: "retire" in others ? others.retire : [], fromBlocks: own.reasons });
+      return { is: "blocked", part: "whole", blocks: byCardIndex([...own.reasons, ...others.reasons]), way: changing };
+    }
+    const placed = await elsewhere(candidates);
+    if (placed.is === "placed") return placedOn(placed.card, "whole", changing, { yielding: "yielding" in placed ? placed.yielding : [], retire: "retire" in placed ? placed.retire : [] });
+    return { is: "blocked", part: "whole", blocks: placed.reasons, way: changing };
+  }
+
+  #othersOn(card: string, facts: GpuFacts, view: Extract<CardsView, { is: "on" }>, guests: readonly PoolGuest[], namer: CardNamer, only: ReadonlySet<number> | null = null): OtherOnCard[] {
+    const holders = view.lines.holders.filter((holder) => holder.card === card && holder.vmid !== facts.vmid && (only ? only.has(holder.vmid) : holder.running || holder.part === "whole" || !holder.managed));
+    return [...new Map(holders.map((holder) => [holder.vmid, holder])).values()].map((holder) => {
+      const held = namer.guest(holder.vmid);
+      const tags = guests.find((guest) => guest.vmid === holder.vmid)?.tags ?? [];
+      const box = held.is === "box" ? (tags.find((tag) => tag.startsWith("box."))?.slice("box.".length) ?? null) : null;
+      return { box, name: held.is === "box" ? held.name : holderWords(held, namer, PERSON), stopped: !holder.running };
+    });
+  }
+
+  #shapeOf(facts: GpuFacts, to: GpuPart, decided: GpuDecision, view: CardsView): GpuResize | null {
+    if (view.is !== "on" || decided.is === "refused" || decided.is === "blocked") return null;
+    const from = facts.marker?.part ?? "none";
+    const fromCard = decided.fromCard ? placementOf(decided.fromCard, view.memory) : null;
+    if (decided.is === "same") return plannedChange({ box: facts.box, from, to, fromCard, toCard: to === "none" ? null : fromCard, way: "live", others: [], limit: null, fromHeldBy: null });
+    const toCard = decided.is === "place" ? placementOf(decided.card, view.memory) : null;
+    return plannedChange({ box: facts.box, from, to, fromCard, toCard, way: decided.way, others: [], limit: null, fromHeldBy: null });
+  }
+
+  async #gpuChange(api: Proxmox, facts: GpuFacts, offer: Offer, to: GpuPart, decided: GpuDecision, view: CardsView, guests: readonly PoolGuest[], agreed: GpuResize | null): Promise<GpuResize> {
+    const from = facts.marker?.part ?? "none";
+    const base = { box: facts.box, from, to, others: [], limit: this.#config.desktop.perGpu, fromHeldBy: null };
+    if (decided.is === "refused") return plannedChange({ ...base, fromCard: null, toCard: null, way: decided.way }, decided.refusal);
+    if (view.is !== "on") return plannedChange({ ...base, fromCard: null, toCard: null, way: "no" }, helperNotReadyRefusal(api.node, facts.box, "it has no GPU helper to give a box a card", "Run bb box doctor."));
+    const blocks = decided.is === "blocked" ? decided.blocks : decided.is === "place" ? decided.fromBlocks : [];
+    const namer = await this.#namer(guests, view.lines, blocks);
+    if (decided.is === "blocked") {
+      const refusal = decided.part === "whole" ? noWholeCardRefusal(facts.box, decided.blocks, namer, facts.box.threadId) : noSharedCardRefusal(api.node, facts.box, decided.blocks, namer, facts.box.threadId);
+      return plannedChange({ ...base, fromCard: null, toCard: null, way: decided.way }, refusal);
+    }
+    const fromCard = decided.fromCard ? placementOf(decided.fromCard, view.memory) : null;
+    let change: GpuResize;
+    if (decided.is === "same") {
+      const toCard = to === "none" ? null : fromCard;
+      change = { ...plannedChange({ ...base, fromCard, toCard, way: "live" }), words: `GPU: ${to}${toCard ? `, card ${toCard.index}` : ""} · Live. ${facts.box.name} has it already, so nothing changes.` };
+    } else if (decided.is === "none") {
+      change = plannedChange({ ...base, fromCard, toCard: null, way: decided.way });
+    } else {
+      const toCard = placementOf(decided.card, view.memory);
+      const live = decided.way === "live" && decided.part === "whole";
+      const others = live ? this.#othersOn(decided.card.uuid, facts, view, guests, namer, new Set(decided.yielding)) : this.#othersOn(decided.card.uuid, facts, view, guests, namer);
+      const fromHeldBy = decided.fromBlocks.length ? decided.fromBlocks.map((block) => blockWords(block, namer, PERSON)).join(", and ") : null;
+      change = plannedChange({ ...base, fromCard, toCard, way: decided.way, others, fromHeldBy });
+    }
+    if (!agreed || sameGpuPlan(agreed, change)) return change;
+    return { ...change, changedSinceAgreed: gpuPlanChangedWords(facts.box.name, agreed, change, await this.#changedBecause(api, facts, offer, agreed, view, guests)) };
+  }
+
+  async #changedBecause(api: Proxmox, facts: GpuFacts, offer: Offer, agreed: GpuResize, view: Extract<CardsView, { is: "on" }>, guests: readonly PoolGuest[]): Promise<Refusal | null> {
+    if (agreed.stopped !== facts.box.stopped) {
+      const said = `${facts.box.name} has ${facts.box.stopped ? "stopped" : "started"} since`;
+      return { person: said, agent: said };
+    }
+    const card = agreed.toCard ?? agreed.fromCard;
+    if (!card) return null;
+    if (!view.lines.cards.some((each) => each.uuid === card.card)) {
+      const said = `card ${card.index} is no longer listed by the GPU helper`;
+      return { person: said, agent: said };
+    }
+    const only = new Set([card.card]);
+    const need = facts.box.desktop ? DESKTOP_GPU_MIB : SERVER_GPU_MIB;
+    const own = agreed.fromCard?.card === card.card;
+    const placed =
+      agreed.to === "whole"
+        ? own
+          ? this.#placeOn(api, view, guests, only, "whole", 0, facts.vmid, card.card)
+          : facts.box.desktop
+            ? await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "whole", only)
+            : this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "whole", need, only)
+        : facts.box.stopped
+          ? this.#placeOn(api, view, guests, only, "shared", 0, facts.vmid, card.card, false)
+          : facts.box.desktop
+            ? await this.#placement(api, offer, view, guests, NO_GPUS, NO_GPUS, "shared", only)
+            : this.#serverPlacement(api, view, guests, NO_GPUS, NO_GPUS, "shared", need, only);
+    if (placed.is === "placed" || !placed.reasons.length) return null;
+    const namer = await this.#namer(guests, view.lines, placed.reasons);
+    const said = (audience: typeof PERSON | { readonly to: "agent"; readonly threadId: string | null }) => placed.reasons.map((block) => blockWords(block, namer, audience)).join(", and ");
+    return { person: said(PERSON), agent: said({ to: "agent", threadId: facts.box.threadId }) };
+  }
+
+  async #resizeGpu(guest: Guest, offer: Offer, to: MachineSize & { readonly gpu: GpuPart }, options: ResizeOptions, signal?: AbortSignal): Promise<Guest> {
+    if (!this.#resizesGpu(offer)) throw new BackendError("unsupported", `${this.label} cannot change the GPU of its ${offer.kind.id} boxes.`);
+    const api = await this.client();
+    const config = await this.#ownConfig(api, guest, signal);
+    const from = sizeOf(config);
+    if (!from) throw new Error(`Container ${this.#vmid(guest)} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    const facts = await this.#gpuFacts(api, guest, offer, config, signal);
+    const userspace = await this.#userspaceFor(api, facts, to.gpu, signal);
+    await this.#settled(api);
+    const key = this.#cardKey(api);
+    const reservations = reservationsOn(key);
+    const need = facts.box.desktop ? DESKTOP_GPU_MIB : SERVER_GPU_MIB;
+    const making: BoxMaking | null = facts.box.threadId ? { name: facts.box.name, threadId: facts.box.threadId, resizing: true } : null;
+    const decision = await underCardLock(key, async () => {
+      const view = await this.#cardsView(api, signal);
+      const guests = await api.listPool(this.#config.proxmox.pool, signal);
+      const decided = await this.#decideGpu(api, facts, offer, to.gpu, view, guests, userspace, signal);
+      const shape = this.#shapeOf(facts, to.gpu, decided, view);
+      const agreed = options.agreed ?? null;
+      const proceeds = shape !== null && (decided.is === "place" || decided.is === "none") && (!agreed || sameGpuPlan(agreed, shape)) && (shape.way !== "restart" || options.restart);
+      if (!proceeds) return { decided, view, guests, reservation: null };
+      if (!facts.box.stopped) reservations.dropGuest(facts.vmid);
+      const holds = decided.is === "place" && (decided.part === "whole" || !facts.box.stopped);
+      return { decided, view, guests, reservation: holds ? reservations.add(decided.card.uuid, decided.part, need, facts.boxId, facts.vmid, making) : null };
+    });
+    const { decided, view, guests } = decision;
+    let reservation = decision.reservation;
+    const change = await this.#gpuChange(api, facts, offer, to.gpu, decided, view, guests, options.agreed ?? null);
+    if (change.refusal) throw new BackendError(change.way === "no" ? "unsupported" : "no_capacity", change.refusal.person, change.refusal.agent);
+    if (change.changedSinceAgreed) throw new BackendError("no_capacity", change.changedSinceAgreed.person, change.changedSinceAgreed.agent);
+    if (change.way === "restart" && !options.restart) {
+      reservations.drop(reservation);
+      throw new BackendError("unsupported", `${change.words} It needs a restart, which the resize was not allowed. bb-box changed nothing.`, `Not resized: ${change.words} Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+    }
+    if (view.is !== "on" || decided.is === "refused" || decided.is === "blocked") throw new BackendError("no_capacity", change.words);
+    try {
+      if (decided.is === "place" && decided.retire.length) await this.#retireForWhole(api, { card: decided.card, retire: decided.retire }, signal);
+    } catch (error) {
+      reservations.drop(reservation);
+      throw error;
+    }
+    if (decided.is === "same") return { ...guest, size: from, ...this.#claimed(view.lines, facts.vmid) };
+    const marker: ClaimMarker =
+      decided.is === "none"
+        ? { part: "none", card: null, generation: nextGeneration(view.lines, facts.vmid, facts.marker?.generation ?? 0, this.#written.get(facts.vmid) ?? 0) }
+        : { part: decided.part, card: decided.card.uuid, generation: nextGeneration(view.lines, facts.vmid, facts.marker?.generation ?? 0, this.#written.get(facts.vmid) ?? 0) };
+    const standing = this.#standingClaim(view, facts.vmid);
+    try {
+      if (change.way === "restart") return await this.#restartForGpu(api, guest, facts, marker, standing, from, to, change, signal);
+      return await this.#changeGpuInPlace(api, guest, facts, marker, standing, from, to, signal);
+    } finally {
+      reservations.drop(reservation);
+      reservation = null;
+    }
+  }
+
+  #claimed(lines: HelperLines, vmid: number): { readonly claim: CardClaim | null } {
+    const claim = lines.ledger.get(vmid)?.claim ?? null;
+    return { claim: claim?.answer === "granted" && claim.part !== "none" ? { card: claim.card, part: claim.part, generation: claim.generation, answer: "granted" } : null };
+  }
+
+  async #growForGpu(api: Proxmox, vmid: number, owner: GuestOwner, from: MachineSize, to: MachineSize, signal?: AbortSignal): Promise<void> {
+    if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) await this.#owned(api).growRootDisk(vmid, owner, to.diskGiB, signal);
+  }
+
+  async #sizeForGpu(api: Proxmox, vmid: number, owner: GuestOwner, from: MachineSize, to: MachineSize, signal?: AbortSignal): Promise<() => Promise<void>> {
+    if (to.cores === from.cores && to.memoryMiB === from.memoryMiB) return async () => {};
+    await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB }, signal);
+    return async () => {
+      await this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+    };
+  }
+
+  async #askForGpu(api: Proxmox, vmid: number, owner: GuestOwner, marker: ClaimMarker, signal?: AbortSignal): Promise<MarkAnswer> {
+    await this.#writeMarker(api, vmid, marker, owner, signal);
+    return this.#askHelper(api, vmid, marker, signal);
+  }
+
+  async #claimBack(api: Proxmox, vmid: number, owner: GuestOwner, asked: ClaimMarker, standing: LedgerClaim | null, signal?: AbortSignal): Promise<void> {
+    const lines = (await this.#helperLines(api, signal).catch(() => null)) ?? NO_HELPER_LINES;
+    const back: ClaimMarker = { part: standing?.part ?? "none", card: standing?.card ?? null, generation: nextGeneration(lines, vmid, asked.generation, this.#written.get(vmid) ?? 0) };
+    const answer = await this.#askForGpu(api, vmid, owner, back, signal).catch((error: unknown): MarkAnswer => {
+      this.#context.logError("resize: ask for the GPU claim back", error);
+      return { is: "unanswered" };
+    });
+    if (answer.is !== "granted") this.#context.logError("resize: ask for the GPU claim back", new Error(`The GPU helper on ${api.node} did not grant CT ${vmid} its claim back as ${markerTag(back)}: ${"why" in answer ? answer.why : "no answer"}.`));
+  }
+
+  #notGranted(api: Proxmox, marker: ClaimMarker, answer: MarkAnswer): Refusal {
+    const card = marker.card ? (marker.part === "none" ? "no card" : `the card ${marker.card}`) : "no card";
+    if (answer.is === "refused") {
+      const said = `the host's GPU helper on ${api.node} refused ${card}, as ${answer.why}`;
+      return { person: said, agent: said };
+    }
+    const unsentenced = (words: string) => uncapitalise(words.replace(/ Run bb box doctor\.$/, "").replace(/\.$/, ""));
+    return { person: unsentenced(notAnsweredWords(api.node, answer)), agent: unsentenced(notAnsweredForAgent(api.node, answer)) };
+  }
+
+  async #factsWithCard(api: Proxmox, guest: Guest, vmid: number, claim: CardClaim | null, lines: HelperLines | null, checked: CardCheck | null, signal?: AbortSignal): Promise<readonly GuestFact[]> {
+    const card = claim && claim.part !== "none" && claim.card ? await this.#cardFact(api, claim.part, claim.card, checked, lines, signal) : null;
+    const others = (guest.facts ?? []).filter((fact) => fact.label !== "GPU");
+    return card ? [{ label: "GPU", value: card }, ...others] : others;
+  }
+
+  async #changeGpuInPlace(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, signal?: AbortSignal): Promise<Guest> {
+    const vmid = facts.vmid;
+    const owner = this.#boxOf(guest);
+    await this.#growForGpu(api, vmid, owner, from, to, signal);
+    const putBack = await this.#sizeForGpu(api, vmid, owner, from, to, signal);
+    const answer = await this.#askForGpu(api, vmid, owner, marker, signal);
+    if (answer.is !== "granted") {
+      await putBack();
+      await this.#claimBack(api, vmid, owner, marker, standing, signal);
+      const why = this.#notGranted(api, marker, answer);
+      throw new BackendError("no_capacity", `Not resized: ${why.person}. ${facts.box.name}'s GPU is as it was. Try again, or run bb box doctor.`, `Not resized: ${why.agent}. ${facts.box.name}'s GPU is as it was. Try again later, or ask the user.`);
+    }
+    const claim = marker.part === "none" ? null : claimOf(marker, "granted");
+    const lines = await this.#helperLines(api, signal).catch(() => null);
+    const checked = claim?.card && !facts.box.stopped ? await this.#readCard(api, vmid, claim.card, signal) : null;
+    return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to, claim, facts: await this.#factsWithCard(api, guest, vmid, claim, lines, checked, signal) };
+  }
+
+  async #restartForGpu(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, change: GpuResize, signal?: AbortSignal): Promise<Guest> {
+    const vmid = facts.vmid;
+    const owner = this.#boxOf(guest);
+    const name = facts.box.name;
+    const held = (part: GpuPart, card: CardPlacement | null) => (part === "none" ? "no GPU" : `${part === "whole" ? "a whole card" : "a shared GPU"}, ${card ? `card ${card.index}` : "its card"}`);
+    const before = held(change.from, change.fromCard);
+    await this.#growForGpu(api, vmid, owner, from, to, signal);
+    await this.#forget(vmid);
+    await this.#owned(api).stop(vmid, owner, signal);
+    this.#mismatches.delete(vmid);
+    const stoppedAs = async (claim: CardClaim | null, size: MachineSize | null): Promise<Guest> => ({ ...guest, size: size ?? guest.size, claim, facts: await this.#factsWithCard(api, guest, vmid, claim, null, null).catch(() => guest.facts ?? []) });
+    let putBack: () => Promise<void> = async () => {};
+    let answer: MarkAnswer;
+    try {
+      putBack = await this.#sizeForGpu(api, vmid, owner, from, to, signal);
+      answer = await this.#askForGpu(api, vmid, owner, marker, signal);
+    } catch (error) {
+      await putBack();
+      await this.#claimBack(api, vmid, owner, marker, standing, signal);
+      const said = message(error).replace(/\.$/, "");
+      const old = standing ? claimOf({ part: standing.part, card: standing.card, generation: standing.generation }, "granted") : null;
+      throw new ResizeLeftStopped(
+        `${capitalise(name)} is stopped, with its disk as it was: bb-box could not ask for its new GPU, as ${said}. Its GPU is as it was: ${before}. Start it to use it so, or resize it again.`,
+        `Not resized: ${name} is stopped, with its disk as it was: bb-box could not ask for its new GPU, as ${agentMessageOf(error)?.replace(/\.$/, "") ?? said}. Its GPU is as it was: ${before}. Start it with box_start, or ask the user.`,
+        await stoppedAs(old, from),
+        change.from,
+      );
+    }
+    if (answer.is !== "granted") {
+      await putBack();
+      await this.#claimBack(api, vmid, owner, marker, standing, signal);
+      const why = this.#notGranted(api, marker, answer);
+      const old = standing ? claimOf({ part: standing.part, card: standing.card, generation: standing.generation }, "granted") : null;
+      throw new ResizeLeftStopped(
+        `${capitalise(name)} is stopped, with its disk as it was: ${why.person}. Its GPU is as it was: ${before}. Start it to use it so, or resize it again.`,
+        `Not resized: ${name} is stopped, with its disk as it was: ${why.agent}. Its GPU is as it was: ${before}. Start it with box_start, or ask the user.`,
+        await stoppedAs(old, from),
+        change.from,
+      );
+    }
+    const claim = marker.part === "none" ? null : claimOf(marker, "granted");
+    const placedCard = (lines: HelperLines | null, card: string): CardPlacement | null => {
+      const listed = lines?.cards.find((each) => each.uuid === card);
+      return listed ? { card, index: listed.index ?? 0, model: "", memoryMiB: 0 } : null;
+    };
+    let started: Started | void;
+    try {
+      started = await this.start(guest, signal);
+    } catch (error) {
+      if ((await api.status(vmid).catch(() => null))?.status === "running") await this.#stopAndLetGo(api, vmid, owner, null, "stop a box that did not start after its GPU changed", signal);
+      const said = message(error).replace(/ Start tries again; bb box doctor has more\.$/, "");
+      const agentSaid = (agentMessageOf(error) ?? said).replace(new RegExp(` ${START_LATER.replace(/[.,]/g, "\\$&")}$`), "");
+      const stoppedWords = /It is stopped/.test(said) ? "" : " It is stopped, with its disk as it was.";
+      const holding = (await this.#helperLines(api).catch(() => null)) ?? null;
+      const holds = holding ? this.#claimed(holding, vmid).claim : claim;
+      const after = held(holds?.part ?? "none", holds?.card ? (placedCard(holding, holds.card) ?? change.toCard) : null);
+      throw new ResizeLeftStopped(
+        `${capitalise(name)} holds ${after} now, but did not start after its GPU changed: ${said}${stoppedWords} Start tries again; bb box doctor has more.`,
+        `Not resized as asked: ${name} holds ${after} now, but did not start after its GPU changed: ${agentSaid}${/It is stopped/.test(agentSaid) ? "" : " It is stopped, with its disk as it was."} Start it with box_start, or ask the user.`,
+        await stoppedAs(holds, sizeOf(await api.config(vmid).catch(() => ({}))) ?? to),
+        holds?.part ?? "none",
+      );
+    }
+    const now = started && "claim" in started && started.claim ? started.claim : claim;
+    const size = sizeOf(await api.config(vmid, signal)) ?? to;
+    const startedFacts = started && started.facts ? started.facts : null;
+    const factsNow = startedFacts && (now === null || startedFacts.some((fact) => fact.label === "GPU")) ? startedFacts : await this.#factsWithCard(api, startedFacts ? { ...guest, facts: startedFacts } : guest, vmid, now, null, null, signal);
+    return { ...guest, size, claim: now, facts: factsNow };
   }
 
   /** The guest's config, when the guest at its VMID is still the box's (018); BackendError("gone") otherwise. */
@@ -4170,6 +4601,7 @@ export class ProxmoxLxcBackend implements Backend {
     needMiB: number,
     vmid: number | null = null,
     prefer: string | null = null,
+    perCard = true,
   ): Placed | PlacedWhole {
     const reservations = reservationsOn(this.#cardKey(api));
     const install = installTag(this.#context.installId);
@@ -4180,7 +4612,7 @@ export class ProxmoxLxcBackend implements Backend {
       memory: view.memory,
       installId: this.#context.installId,
       reserved: reservations.live(view.lines, this.#now()),
-      limit: this.#config.desktop.perGpu,
+      limit: perCard ? this.#config.desktop.perGpu : null,
       needMiB,
       candidates,
       prefer,
@@ -4414,6 +4846,10 @@ export class ProxmoxLxcBackend implements Backend {
       }
     }
     if (!granted && standing?.part === "whole" && !leaving.has(standing.card ?? "")) return gpu(claimOf(await this.#askAgain(api, vmid, owner, marker.generation, standing, view.lines, notStarted, signal), "granted"));
+    if (!granted && claim?.answer === "granted" && claim.part === "none") {
+      await this.#askAgain(api, vmid, owner, marker.generation, { part: "none", card: null }, view.lines, notStarted, signal);
+      return UNGATED;
+    }
     const key = this.#cardKey(api);
     const reservations = reservationsOn(key);
     const outcome = await underCardLock(key, async () => {

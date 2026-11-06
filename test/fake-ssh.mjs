@@ -138,7 +138,7 @@ if (existsSync(join(root, "windows", host))) {
 }
 const powershell = join(root, "powershell", host);
 const shell = existsSync(powershell) ? [powershell] : ["-c"];
-const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`).replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`)];
+const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`).replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`).replaceAll("/usr/share/bb-box/nvidia-version", `${home}/usr/share/bb-box/nvidia-version`)];
 const result = spawnSync(binary, argv, {
   cwd: home,
   env: { PATH: `${join(home, "bin")}:${process.env.PATH}`, HOME: home, USER: target.split("@")[0] },

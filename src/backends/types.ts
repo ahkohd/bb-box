@@ -314,9 +314,19 @@ export interface GpuResize {
   readonly to: GpuPart;
   readonly way: ResizeWay;
   readonly card: CardPlacement | null;
-  readonly others: readonly { readonly name: string; readonly stopped: boolean }[];
+  readonly fromCard: CardPlacement | null;
+  readonly toCard: CardPlacement | null;
+  readonly stopped: boolean;
+  readonly installs: string | null;
+  readonly others: readonly { readonly box: string | null; readonly name: string; readonly stopped: boolean }[];
   readonly words: string;
   readonly refusal: GpuRefusal | null;
+  readonly changedSinceAgreed?: GpuRefusal | null;
+}
+
+export interface ResizeOptions {
+  readonly restart: boolean;
+  readonly agreed?: GpuResize | null;
 }
 
 export type ResizeTarget = MachineSize & { readonly gpu?: GpuPart };
@@ -603,6 +613,16 @@ export class BackendError extends Error {
   }
 }
 
+export class ResizeLeftStopped extends BackendError {
+  readonly guest: Guest;
+  readonly gpu: GpuPart;
+  constructor(message: string, agentMessage: string, guest: Guest, gpu: GpuPart) {
+    super("no_capacity", message, agentMessage);
+    this.guest = guest;
+    this.gpu = gpu;
+  }
+}
+
 export class AudienceError extends Error {
   readonly agentMessage: string;
   constructor(message: string, agentMessage: string) {
@@ -739,6 +759,7 @@ export interface Backend {
     to: ResizeTarget,
     pending: readonly { readonly kind: string; readonly size: MachineSize }[],
     signal?: AbortSignal,
+    agreed?: GpuResize | null,
   ): Promise<ResizePlan>;
   /**
    * Resizes `guest` to `to`, its disk with its file system, and returns the
@@ -748,7 +769,7 @@ export interface Backend {
    * box's. When a step fails, it puts back the parts it changed that can go
    * back before it throws. Only backends with `resizing`.
    */
-  resize?(guest: Guest, kind: string, to: ResizeTarget, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
+  resize?(guest: Guest, kind: string, to: ResizeTarget, options: ResizeOptions, signal?: AbortSignal): Promise<Guest>;
   /**
    * Whether `stop` saves a guest of the kind with its running session, as a
    * hibernate or a suspend does, so that it holds no memory while stopped
