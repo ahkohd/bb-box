@@ -613,13 +613,23 @@ export class BackendError extends Error {
   }
 }
 
-export class ResizeLeftStopped extends BackendError {
+export class ResizeHolds extends BackendError {
   readonly guest: Guest;
   readonly gpu: GpuPart;
   constructor(message: string, agentMessage: string, guest: Guest, gpu: GpuPart) {
     super("no_capacity", message, agentMessage);
     this.guest = guest;
     this.gpu = gpu;
+  }
+}
+
+export class ResizeLeftStopped extends ResizeHolds {}
+
+export class GpuPlanChanged extends BackendError {
+  readonly plan: GpuResize;
+  constructor(message: string, agentMessage: string, plan: GpuResize) {
+    super("no_capacity", message, agentMessage);
+    this.plan = plan;
   }
 }
 

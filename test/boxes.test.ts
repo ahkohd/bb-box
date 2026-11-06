@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { AudienceError, BackendError, DEVICE_DISPLAY, ResizeLeftStopped, type Backend, type GpuResize, type ResizeOptions, type BoxKind, type CapacityAsking, type GpuPart, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type ResizePlan, type ResizeTarget, type WithheldKind } from "../src/backends/types.ts";
+import { AudienceError, BackendError, DEVICE_DISPLAY, GpuPlanChanged, ResizeLeftStopped, type Backend, type GpuResize, type PowerState, type ResizeOptions, type BoxKind, type CapacityAsking, type GpuPart, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type ResizePlan, type ResizeTarget, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -32,7 +32,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell" | "sharedIosByDefault" | "spareSettled" | "spareClaimed" | "now"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "events" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell" | "sharedIosByDefault" | "spareSettled" | "spareClaimed" | "now"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -3946,6 +3946,10 @@ class RestartingCards extends FakeBackend {
   readonly restartsAsked: boolean[] = [];
   moveNow = false;
   moveTo = 1;
+  addTo = 0;
+  powerUnreadable = false;
+  stopsThenFails: { readonly error: Error; readonly abort?: AbortController; readonly thenUnreadable?: boolean; readonly running?: boolean } | null = null;
+  changesUnderLock: GpuResize | null = null;
   leaveStopped: { readonly gpu: GpuPart } | null = null;
   readonly #parts = new Map<string, GpuPart>();
 
@@ -3959,7 +3963,8 @@ class RestartingCards extends FakeBackend {
     const one = { card: `GPU-${this.moveTo}`, index: this.moveTo, model: "Fake RTX", memoryMiB: 24_576 };
     const fromCard = from === "none" ? null : zero;
     const moves = to === "whole" && this.moveNow && !stopped;
-    const toCard = to === "none" ? null : moves ? one : zero;
+    const added = { card: `GPU-${this.addTo}`, index: this.addTo, model: "Fake RTX", memoryMiB: 24_576 };
+    const toCard = to === "none" ? null : moves ? one : from === "none" ? added : zero;
     const way = stopped ? "live" : from === "none" || to === "none" || moves ? "restart" : "live";
     return { from, to, way, card: toCard ?? fromCard, fromCard, toCard, stopped, installs: null, others: [], words: `GPU: ${from} → ${to} · ${way === "live" ? "Live" : "Restart"}.`, refusal: null };
   }
@@ -3974,9 +3979,29 @@ class RestartingCards extends FakeBackend {
     return { ...plan, parts: restart ? plan.parts.map((part) => ({ ...part, way: "restart" as const })) : plan.parts, downSeconds: restart ? 15 : plan.downSeconds, gpu: { ...change, ...changed } };
   }
 
-  override async resize(guest: Guest, kind: string, to: ResizeTarget, options: ResizeOptions): Promise<Guest> {
+  override async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    signal?.throwIfAborted();
+    if (this.powerUnreadable) throw new Error("The host did not answer.");
+    return super.power(guest);
+  }
+
+  override async resize(guest: Guest, kind: string, to: ResizeTarget, options: ResizeOptions, signal?: AbortSignal): Promise<Guest> {
     this.agreedSeen.push(options.agreed ?? null);
     this.restartsAsked.push(options.restart);
+    const changed = this.changesUnderLock;
+    if (changed) {
+      this.changesUnderLock = null;
+      throw new GpuPlanChanged("The plan changed under the lock.", "Not resized: the plan changed under the lock. bb-box changed nothing.", changed);
+    }
+    const failing = this.stopsThenFails;
+    if (failing) {
+      this.stopsThenFails = null;
+      if (!failing.running) await this.stop!(guest);
+      if (failing.thenUnreadable) this.powerUnreadable = true;
+      failing.abort?.abort();
+      signal?.throwIfAborted();
+      throw failing.error;
+    }
     const resized = await super.resize(guest, kind, { cores: to.cores, memoryMiB: to.memoryMiB, diskGiB: to.diskGiB }, { restart: true });
     if (to.gpu === undefined) return resized;
     const claim = to.gpu === "none" ? null : { card: "GPU-0", part: to.gpu, generation: (guest.claim?.generation ?? 0) + 1, answer: "granted" as const };
@@ -3991,8 +4016,8 @@ class RestartingCards extends FakeBackend {
   }
 }
 
-function restartingWorld() {
-  const world = setup({ id: "fake:plain" });
+function restartingWorld(deps: Parameters<typeof setup>[1] = {}) {
+  const world = setup({ id: "fake:plain" }, deps);
   world.general = { ...world.general, wholeCards: true };
   const linux = { ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] as const };
   const cards = new RestartingCards({ root: tempDir("gpu-restart"), storage: scopedStorage(world.kv, "backend/restarting/"), id: "fake:restarting", kinds: [linux], cards: GPU_CARDS, boxesPerCard: 4 });
@@ -4003,7 +4028,9 @@ function restartingWorld() {
 }
 
 test("071 unit 9: a GPU change that needs a restart is refused without restart true, in words for each audience naming the GPU, and with it the GPU and the cores change in one restart; the record has the new GPU and claim", async () => {
-  const { world, cards } = restartingWorld();
+  const logs: string[] = [];
+  const events: { readonly kind: string; readonly words?: string | null }[] = [];
+  const { world, cards } = restartingWorld({ log: (line) => logs.push(line), events: { record: (event) => events.push(event), latest: () => null } });
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
   assert.equal(box.backend, "fake:restarting");
   await assert.rejects(world.boxes.resize(THREAD, box.name, { cores: 4, gpu: "shared" }, {}), (error: unknown) => {
@@ -4023,6 +4050,13 @@ test("071 unit 9: a GPU change that needs a restart is refused without restart t
   assert.deepEqual(cards.restartsAsked, [true]);
   assert.equal(cards.agreedSeen[0]?.way, "restart", "the call's own plan is what it agreed to, with no check");
   assert.match(resizeText(answer, false), /With a restart, which ended what was running in it: cores 2 to 4; GPU none to shared\./);
+  assert.ok(logs.some((line) => new RegExp(`^Resized box ${box.name} of thread ${THREAD} from 2 cores, 4 GiB memory, GPU none to 4 cores, 4 GiB memory, GPU shared, with a restart, as a caller asked, in \\d+ ms\\.$`).test(line)), logs.join("\n"));
+  assert.deepEqual(
+    events.filter((event) => event.kind === "resize-asked" || event.kind === "resized").map((event) => event.words),
+    ["From 2 cores, 4 GiB memory, GPU none to 4 cores, 4 GiB memory, GPU shared, with a restart.", "From 2 cores, 4 GiB memory, GPU none to 4 cores, 4 GiB memory, GPU shared."],
+  );
+  await world.boxes.resize(THREAD, box.name, { cores: 2 }, {});
+  assert.ok(logs.some((line) => line.startsWith(`Resized box ${box.name} of thread ${THREAD} from 4 cores, 4 GiB memory to 2 cores, 4 GiB memory, live`)), "a resize that leaves the GPU as it is names no GPU");
 });
 
 test("071 unit 9, the plan made again: a resize whose GPU plan changed since its check is refused, saying what changed and whether restart true is now needed; the plan it was told is then what it agreed to", async () => {
@@ -4084,4 +4118,83 @@ test("071 unit 9, section 8: a stopped box's GPU changes while it stays stopped,
   assert.equal(answer.box.resize?.restart, false);
   assert.deepEqual(cards.restartsAsked, [false]);
   assert.match(resizeText(answer, false), /\nWhile it stayed stopped: GPU shared to none\.\n/);
+});
+
+test("071 unit 9, review 3: the plan a check said is kept through a refusal for want of restart true, so a retry whose plan changed meanwhile is asked again", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  cards.addTo = 1;
+  const checked = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { check: true });
+  assert.equal(checked.plan?.gpu?.toCard?.index, 1);
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, {}), { code: "needs_restart" });
+  cards.addTo = 2;
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), (error: unknown) => {
+    assert.ok(error instanceof BoxError && error.code === "try_again");
+    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} would get card 1 with a restart; now it would get card 2 with a restart. Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+    return true;
+  });
+  assert.equal(cards.agreedSeen.length, 0, "nothing was carried out");
+  const done = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true });
+  assert.equal(done.box.size?.gpu, "shared");
+  assert.equal(cards.agreedSeen[0]?.toCard?.index, 2);
+});
+
+test("071 unit 9, review 4: the plan a check said survives a restart of bb-box, so a resize after it whose plan changed is asked again", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  const checked = await world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { check: true });
+  assert.equal(checked.plan?.gpu?.way, "live");
+  const boxes = world.restart();
+  cards.moveNow = true;
+  await assert.rejects(boxes.resize(THREAD, box.name, { gpu: "whole" }, { restart: true }), (error: unknown) => {
+    assert.ok(error instanceof BoxError && error.code === "try_again");
+    assert.match(error.agentMessage ?? "", /^Not resized: when you checked, .* could change to a whole card live, on card 0; now it would move to card 1 with a restart\./);
+    return true;
+  });
+  assert.equal(cards.agreedSeen.length, 0);
+});
+
+test("071 unit 9, review 5: a restart cancelled after it stopped the box is recorded as stopped, read with a signal of its own; an unreadable power state is never taken as running", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  const abort = new AbortController();
+  cards.stopsThenFails = { error: new Error("cut short"), abort };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true, signal: abort.signal }));
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped", "the box it stopped is recorded stopped, though the resize's signal was aborted");
+  await world.boxes.start(THREAD, box.name);
+  cards.stopsThenFails = { error: new Error("cut short"), thenUnreadable: true };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }));
+  cards.powerUnreadable = false;
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped", "a power state that cannot be read is not taken as running");
+  await world.boxes.start(THREAD, box.name);
+  const cancel = new AbortController();
+  cards.stopsThenFails = { error: new Error("cut short"), abort: cancel, running: true };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true, signal: cancel.signal }));
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready", "a box still running after a cancelled resize is read as running, with a signal of its own");
+});
+
+test("071 unit 9, review 3: a plan the backend found changed under its card lock is what the caller was told, and so what it agrees to next", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  cards.addTo = 1;
+  const checked = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { check: true });
+  cards.changesUnderLock = { ...checked.plan!.gpu!, toCard: { card: "GPU-2", index: 2, model: "Fake RTX", memoryMiB: 24_576 } };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), (error: unknown) => error instanceof GpuPlanChanged);
+  cards.addTo = 2;
+  const done = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true });
+  assert.equal(done.changed, true, "the plan it was told, card 2, is the plan now, so it goes ahead");
+  assert.equal(cards.agreedSeen.at(-1)?.toCard?.index, 2);
+});
+
+test("071 unit 9, Fable 5: a check is consumed once the backend's resize is called, so after a resize that failed the next call is compared with its own plan", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  cards.addTo = 1;
+  await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { check: true });
+  cards.stopsThenFails = { error: new Error("cut short") };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), /cut short/);
+  await world.boxes.start(THREAD, box.name);
+  cards.addTo = 2;
+  const done = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true });
+  assert.equal(done.changed, true, "the failed call consumed the check, so this one is not compared with it");
 });

@@ -130,8 +130,8 @@ export function noSharedCardRefusal(node: string, box: PlanBox, blocks: readonly
   const agent = cardsWords(blocks, namer, "agent", asking);
   const own = agentChoices(blocks, namer, asking, "keep it with no GPU");
   return {
-    person: `No card on ${node} can take a shared GPU for ${box.name} now${person.length ? `: ${inWords(person)}` : ""}. Release a box on a card, keep it with no GPU, or raise the boxes per card in BB Box's settings.`,
-    agent: `Not resized: no card on ${node} can take a shared GPU for ${box.name} now${agent.length ? `: ${inWords(agent)}` : ""}. ${own} bb-box changed nothing.`,
+    person: `No card on ${node} can take a shared GPU for ${box.name} now${person.length ? `: ${person.join("; ")}` : ""}. Release a box on a card, keep it with no GPU, or raise the boxes per card in BB Box's settings.`,
+    agent: `Not resized: no card on ${node} can take a shared GPU for ${box.name} now${agent.length ? `: ${agent.join("; ")}` : ""}. ${own} bb-box changed nothing.`,
   };
 }
 

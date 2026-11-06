@@ -235,17 +235,18 @@ function capitalised(text: string): string {
 
 export type ThreadTitles = ReadonlyMap<string, string | null>;
 
-function threadWords(threadId: string | null, titles: ThreadTitles): string {
+function threadWords(threadId: string | null, titles: ThreadTitles, inBrackets = false): string {
   if (threadId === null) return "";
-  if (threadId === SPARES) return " (a spare)";
-  if (threadId === OPERATOR) return " (your machine)";
+  if (threadId === SPARES) return inBrackets ? " as a spare" : " (a spare)";
+  if (threadId === OPERATOR) return inBrackets ? " as your machine" : " (your machine)";
   const title = titles.get(threadId) ?? null;
-  return title ? ` (in thread "${title}")` : "";
+  if (!title) return "";
+  return inBrackets ? ` in thread "${title}"` : ` (in thread "${title}")`;
 }
 
-export function holderName(holder: CardHolder, titles: ThreadTitles, audience: Audience): string {
+export function holderName(holder: CardHolder, titles: ThreadTitles, audience: Audience, inBrackets = false): string {
   if (holder.otherInstall) return `${holder.name} of another install`;
-  return audience.to === "person" ? `${holder.name}${threadWords(holder.threadId, titles)}` : holder.name;
+  return audience.to === "person" ? `${holder.name}${threadWords(holder.threadId, titles, inBrackets)}` : holder.name;
 }
 
 function holdersWords(card: string, holders: readonly CardHolder[], titles: ThreadTitles, audience: Audience): string {
@@ -268,7 +269,7 @@ export function blockWords(block: CardBlock, titles: ThreadTitles, audience: Aud
       if (block.holder.state === "making") return `${card} is kept whole for ${holderName(block.holder, titles, audience)}, which bb-box is making`;
       return block.holder.otherInstall ? `${card} is held whole by ${holderName(block.holder, titles, audience)}` : `${card} is ${block.holder.name}'s whole card${audience.to === "person" ? threadWords(block.holder.threadId, titles) : ""}`;
     case "limit": {
-      const names = block.holders.map((holder) => holderName(holder, titles, audience));
+      const names = block.holders.map((holder) => holderName(holder, titles, audience, true));
       const counting = block.count > block.holders.length ? ", counting boxes being made" : "";
       return `${card} has ${block.count} ${block.count === 1 ? "box" : "boxes"}${counting}, the most a card may have${names.length ? ` (${inWords(names)})` : ""}`;
     }

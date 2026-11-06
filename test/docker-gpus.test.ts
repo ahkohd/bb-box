@@ -9,7 +9,8 @@ import { Backends } from "../src/backends/index.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import type { DockerConfig } from "../src/backends/docker/config.ts";
 import type { ConfigDocument, GeneralConfig } from "../src/core/document.ts";
-import { cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
+import { blockWords, cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
+import { OPERATOR, SPARES } from "../src/core/boxes.ts";
 import { BackendError, type AcquireHooks, type BackendContext, type BoxIdentity, type MachineAccess, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
 import { cardReachText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
@@ -141,7 +142,7 @@ test("071 unit 11: shared boxes per card count stopped boxes, boxes being made a
   await backend.stop(mine, signal());
   const full = await backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal(), { threadId: "thr_abc123" });
   assert.equal(full.ok, false);
-  assert.equal(full.message, "No card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine (in thread \"Train the model\")). Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's Docker settings.");
+  assert.equal(full.message, "No card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine in thread \"Train the model\"). Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's Docker settings.");
   assert.equal(full.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Release one of your own boxes on card 0 (lone-pine), ask for gpu none, or ask the user. bb-box changed nothing.");
   const other = await backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal(), { threadId: "thr_other" });
   assert.equal(other.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Ask for gpu none, or ask the user. bb-box changed nothing.");
@@ -965,4 +966,15 @@ test("071 unit 11: the environment script points CUDA at the card in /etc/enviro
   run(null);
   assert.equal(readFileSync(file, "utf8"), `PATH="/usr/local/bin:/usr/bin"\nLANG=C.UTF-8\n`);
   assert.equal(reachWords("h", false, false), null);
+});
+
+test("071 unit 9, words: the boxes that fill a Docker card are named in one pair of brackets, a person's with their threads, never brackets within brackets", () => {
+  const card: DockerCard = { uuid: "1d2e3f40-1111-2222-3333-444455556666", uuidKnown: true, index: 0, model: "Fake RTX", totalMiB: 32_768, freeMiB: 30_000, device: "nvidia.com/gpu=0" };
+  const holder = (name: string, threadId: string | null, otherInstall = false): CardHolder => ({ card: card.uuid, part: "shared", name, threadId, otherInstall, state: "running", container: name, needMiB: 0 });
+  const holders = [holder("lone-pine", "thr_train"), holder("quiet-elm", SPARES), holder("amber-fox", OPERATOR), holder("calm-reef", null, true)];
+  const titles = new Map([["thr_train", "Train the model"]]);
+  const limit = { is: "limit" as const, card, holders, count: 4, limit: 4 };
+  assert.equal(blockWords(limit, titles, { to: "person" }), "card 0 has 4 boxes, the most a card may have (lone-pine in thread \"Train the model\", quiet-elm as a spare, amber-fox as your machine and calm-reef of another install)");
+  assert.equal(blockWords(limit, titles, { to: "agent", threadId: null }), "card 0 has 4 boxes, the most a card may have (lone-pine, quiet-elm, amber-fox and calm-reef of another install)");
+  assert.equal(blockWords({ is: "held", card, holders: [holders[0]!] }, titles, { to: "person" }), "card 0 has lone-pine (in thread \"Train the model\") running", "outside brackets a thread keeps its own");
 });

@@ -55,6 +55,8 @@ import {
   type SizePart,
   type Started,
   type StopReason,
+  GpuPlanChanged,
+  ResizeHolds,
   ResizeLeftStopped,
   desktopDisplays,
   startedGuest,
@@ -392,6 +394,10 @@ fi`;
 function gpuFixedWords(box: BoxRecord): [string, string] {
   const said = `${box.backendLabel} cannot change the GPU of its ${box.kind} boxes, so box ${box.name} keeps its GPU`;
   return [`${said}. Make a new box with the GPU it needs.`, `Not resized: ${said}. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`];
+}
+
+function sizeAndGpuWords(size: BoxSize, withGpuPart: boolean): string {
+  return withGpuPart ? `${describeSize(size)}, GPU ${size.gpu}` : describeSize(size);
 }
 
 /** "cores", "cores and memory", "cores, memory and disk". */
@@ -968,6 +974,8 @@ export function extraFeatures(box: Pick<BoxRecord, "requires" | "capabilities">)
 }
 
 const recordKey = (threadId: string, boxId: string) => `box/${threadId}/${boxId}`;
+const checkedGpuKey = (boxId: string) => `gpu-check/${boxId}`;
+const RECOVERY_READ_MS = 15_000;
 const indexKey = (boxId: string) => `index/${boxId}`;
 
 class Queue {
@@ -1021,7 +1029,6 @@ export class Boxes {
   #ending = new Set<string>();
   readonly #powerCheckedAt = new Map<string, number>();
   readonly #silentBackends = new Map<string, BackendSilence>();
-  readonly #checkedGpu = new Map<string, GpuResize>();
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -1080,6 +1087,7 @@ export class Boxes {
   async #forget(box: BoxRecord, how: "released" | "forgotten" = "released"): Promise<void> {
     await this.#deps.kv.delete(recordKey(box.threadId, box.id));
     await this.#deps.kv.delete(indexKey(box.id));
+    await this.#forgetGpuPlan(box.id);
     this.#deps.reach?.forget(box.id);
     this.#powerCheckedAt.delete(box.id);
     this.#deps.recorded?.(box, true);
@@ -3105,7 +3113,8 @@ export class Boxes {
       if (answer.changed) {
         const how = answer.box.resize?.restart ? "with a restart" : "live";
         const took = answer.box.resize?.ms ?? 0;
-        this.#deps.log?.(`Resized ${describeBox(box)} from ${describeSize(answer.from)} to ${describeSize(answer.to)}, ${how}, as ${by} asked, in ${took} ms.`);
+        const gpuChanged = answer.from.gpu !== answer.to.gpu;
+        this.#deps.log?.(`Resized ${describeBox(box)} from ${sizeAndGpuWords(answer.from, gpuChanged)} to ${sizeAndGpuWords(answer.to, gpuChanged)}, ${how}, as ${by} asked, in ${took} ms.`);
       }
       return answer;
     } catch (error) {
@@ -3143,7 +3152,7 @@ export class Boxes {
       const target = gpuChanges ? { ...machineSizeOf(to), gpu: to.gpu } : machineSizeOf(to);
       const recordedTo: RecordedSize = gpuChanges ? target : withRecordedGpu(to, current.size);
       const pending = await this.#pending(current.backend, current.id);
-      const checked = gpuChanges && !options.check ? this.#agreedGpu(current.id, from.gpu, to.gpu) : null;
+      const checked = gpuChanges && !options.check ? await this.#agreedGpu(current.id, from.gpu, to.gpu) : null;
       const planned = await backend.planResize!(current.guest!, current.kind, target, pending, options.signal, checked);
       // How long this box's restart took before, where it has a figure, rather than the backend's guess.
       const measured = planned.downSeconds !== null ? restartSeconds(current, backend.keepsSession?.(current.kind) ?? false) : null;
@@ -3158,10 +3167,10 @@ export class Boxes {
         if (gpu.refusal) throw new BoxError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
         if (gpu.way === "no") throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} bb-box changed nothing.`);
         if (gpu.changedSinceAgreed) {
-          this.#checkedGpu.set(current.id, gpu);
+          await this.#rememberGpuPlan(current.id, gpu);
           throw new BoxError(gpu.way === "restart" && !options.restart ? "needs_restart" : "try_again", gpu.changedSinceAgreed.person, gpu.changedSinceAgreed.agent);
         }
-        if (options.check) this.#checkedGpu.set(current.id, gpu);
+        if (options.check) await this.#rememberGpuPlan(current.id, gpu);
       }
       // A check says up front what the resize would refuse, a live shrink below use too: one short command in the box.
       const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
@@ -3184,16 +3193,17 @@ export class Boxes {
       const running = current.state === "ready";
       await this.update(current, () => ({ resize: record, ...(restart && running ? { state: "starting" as const } : {}) }));
       const who = options.who ?? UNKNOWN_ACTOR;
-      this.#event(current, "resize-asked", who, { words: `From ${describeSize(from)} to ${describeSize(to)}${restart ? ", with a restart" : ""}.` });
+      this.#event(current, "resize-asked", who, { words: `From ${sizeAndGpuWords(from, gpuChanges)} to ${sizeAndGpuWords(to, gpuChanges)}${restart ? ", with a restart" : ""}.` });
       try {
         const guest = await backend.resize!(current.guest!, current.kind, target, { restart, ...(gpuChanges ? { agreed: checked ?? plan.gpu ?? null } : {}) }, options.signal);
-        this.#event(current, "resized", who, { parts: changedParts(from, guest.size ?? to), words: `From ${describeSize(from)} to ${describeSize(guest.size ?? to)}.` });
+        this.#event(current, "resized", who, { parts: changedParts(from, guest.size ?? to), words: `From ${sizeAndGpuWords(from, gpuChanges)} to ${sizeAndGpuWords(withGpu(guest.size ?? to, to.gpu), gpuChanges)}.` });
         const done = await this.update(current, (latest) => ({
           guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
           size: gpuChanges ? target : withRecordedGpu(to, latest.size),
           resize: { ...record, state: "done", ms: this.#now() - began },
           ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
         }));
+        if (gpuChanges) await this.#forgetGpuPlan(current.id);
         // The restart ended BB's daemon, as a stop does (017).
         if (restart && done?.state === "ready" && done.enrol.state === "enrolled" && this.#deps.reconnect) {
           this.#waitFor(done.id, this.#deps.reconnect(done).catch((error) => this.#deps.logError("reconnect", error)));
@@ -3201,16 +3211,20 @@ export class Boxes {
         return { box: done ?? current, from, to, plan, changed: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const now = await this.#sizeNow(backend, current.guest!, options.signal);
-        const leftStopped = restart && running && (await backend.power(current.guest!, options.signal).catch(() => null)) === "stopped";
-        const held = error instanceof ResizeLeftStopped ? error : null;
+        const recovery = AbortSignal.timeout(RECOVERY_READ_MS);
+        if (error instanceof GpuPlanChanged) await this.#rememberGpuPlan(current.id, error.plan);
+        else if (gpuChanges) await this.#forgetGpuPlan(current.id);
+        const now = await this.#sizeNow(backend, current.guest!, recovery);
+        const power = restart && running ? await backend.power(current.guest!, recovery).catch(() => null) : null;
+        const runs = power === "running" && !(error instanceof ResizeLeftStopped);
+        const held = error instanceof ResizeHolds ? error : null;
         await this.update(current, (latest) => ({
           resize: { ...record, state: "failed", ms: this.#now() - began, error: message },
-          ...(restart && running && latest.state === "starting" ? { state: leftStopped ? ("stopped" as const) : ("ready" as const) } : {}),
+          ...(restart && running && latest.state === "starting" ? { state: runs ? ("ready" as const) : ("stopped" as const) } : {}),
           ...(now && latest.guest ? { guest: { ...latest.guest, size: now } } : {}),
           ...(held && latest.guest ? { guest: { ...latest.guest, ...held.guest, facts: held.guest.facts ?? latest.guest.facts, size: now ?? latest.guest.size }, size: { ...withRecordedGpu(now ?? latest.guest.size ?? from, latest.size), gpu: held.gpu } } : {}),
         }));
-        const observed = restart ? await this.#observedAfterFailure(current, options.signal, false) : null;
+        const observed = restart ? await this.#observedAfterFailure(current, recovery, false) : null;
         const parts = changedParts(from, now);
         const sizeWords = now ? (parts.length ? ` Its ${partWords(parts)} changed: it has ${describeSize(now)} now.` : " Nothing changed.") : " bb-box could not read its size after.";
         this.#event(current, "resize-failed", who, { words: `${sentence(describeError(error, "Resizing the box"))}${sizeWords}`, parts, observed });
@@ -3219,10 +3233,17 @@ export class Boxes {
     }
   }
 
-  #agreedGpu(boxId: string, from: GpuPart, to: GpuPart): GpuResize | null {
-    const checked = this.#checkedGpu.get(boxId) ?? null;
-    this.#checkedGpu.delete(boxId);
+  async #agreedGpu(boxId: string, from: GpuPart, to: GpuPart): Promise<GpuResize | null> {
+    const checked = (await this.#deps.kv.get<GpuResize>(checkedGpuKey(boxId))) ?? null;
     return checked && checked.from === from && checked.to === to ? checked : null;
+  }
+
+  async #rememberGpuPlan(boxId: string, plan: GpuResize): Promise<void> {
+    await this.#deps.kv.set(checkedGpuKey(boxId), plan);
+  }
+
+  async #forgetGpuPlan(boxId: string): Promise<void> {
+    await this.#deps.kv.delete(checkedGpuKey(boxId));
   }
 
   async #gpuResizable(box: BoxRecord, resizing: Resizing, gpu: GpuPart): Promise<void> {

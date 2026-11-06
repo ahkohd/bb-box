@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BackendError, ResizeLeftStopped, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ResizeTarget } from "../src/backends/types.ts";
+import { BackendError, GpuPlanChanged, ResizeHolds, ResizeLeftStopped, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ResizeTarget } from "../src/backends/types.ts";
 import type { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
 import { cardLines, marker } from "./gpu-helper/node.ts";
-import { resizingWords } from "../src/core/boxes.ts";
+import { OPERATOR, SPARES, resizingWords } from "../src/core/boxes.ts";
 import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
-import { reservationsOn } from "../src/backends/proxmox-lxc/gpu-claims.ts";
+import { reservationsOn, underCardLock } from "../src/backends/proxmox-lxc/gpu-claims.ts";
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 
 const A = CARD_A.uuid;
@@ -305,7 +305,7 @@ test("071 unit 9, section 8, the plan made again: a live switch that now needs a
   const before = bridge.configs();
   await assert.rejects(backend.resize(fox.guest, "linux", size("shared"), { restart: true, agreed: add.gpu! }, signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
-    assert.equal(error.agentMessage, "Not resized: no card on pve can take a shared GPU for amber-fox now: card 0 has 1 of this install's boxes, the most a card may have (quiet-elm) and card 1 has 1 of this install's boxes, the most a card may have (tidy-glade). Release one of your own boxes on card 0 (quiet-elm), keep it with no GPU, or ask the user. bb-box changed nothing.");
+    assert.equal(error.agentMessage, "Not resized: no card on pve can take a shared GPU for amber-fox now: card 0 has 1 of this install's boxes, the most a card may have (quiet-elm); card 1 has 1 of this install's boxes, the most a card may have (tidy-glade). Release one of your own boxes on card 0 (quiet-elm), keep it with no GPU, or ask the user. bb-box changed nothing.");
     return true;
   });
   assert.deepEqual(bridge.configs(), before, "a card taken meanwhile changes nothing");
@@ -314,7 +314,7 @@ test("071 unit 9, section 8, the plan made again: a live switch that now needs a
 test("071 unit 9 gate: a move whose card is taken meanwhile is asked again, naming who took it, and goes ahead on the card asked about once asked again", async () => {
   const bridge = new ClaimsBridge();
   withUserspace(bridge);
-  const backend = bridge.backend({ perGpu: 1 });
+  const backend = bridge.backend({ perGpu: 1, titles: { thr_other: "Other work" } });
   const fox = await server(bridge, backend, "none", "amber-fox");
   const add = await backend.planResize(fox.guest, "linux", size("shared"), [], signal());
   assert.equal(add.gpu?.toCard?.card, A);
@@ -325,7 +325,7 @@ test("071 unit 9 gate: a move whose card is taken meanwhile is asked again, nami
   await assert.rejects(backend.resize(fox.guest, "linux", size("shared"), { restart: true, agreed: add.gpu! }, signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.equal(error.agentMessage, "Not resized: when you checked, amber-fox would get card 0 with a restart; now card 0 has 1 of this install's boxes, the most a card may have (tidy-glade), so it would get card 1 with a restart. Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.");
-    assert.equal(error.message, "Not resized: when you checked, amber-fox would get card 0 with a restart; now card 0 has 1 of this install's boxes, the most a card may have (tidy-glade), so it would get card 1 with a restart. Resize it again with the restart to do that, or keep its GPU as it is. bb-box changed nothing.");
+    assert.equal(error.message, "Not resized: when you checked, amber-fox would get card 0 with a restart; now card 0 has 1 of this install's boxes, the most a card may have (tidy-glade in thread \"Other work\"), so it would get card 1 with a restart. Resize it again with the restart to do that, or keep its GPU as it is. bb-box changed nothing.");
     return true;
   });
   assert.deepEqual(bridge.configs(), configs);
@@ -350,7 +350,7 @@ test("071 unit 9 gate: a restart whose new claim the helper does not grant leave
     assert.ok(error instanceof ResizeLeftStopped, String(error));
     assert.equal(error.gpu, "none");
     assert.equal(error.guest.claim, null);
-    assert.equal(error.message, "Amber-fox is stopped, with its disk as it was: the host's GPU helper on pve did not answer within 10 s. Its GPU is as it was: no GPU. Start it to use it so, or resize it again.");
+    assert.match(error.message, /^Amber-fox is stopped, with its disk as it was: the host's GPU helper on pve did not answer within 10 s\. bb-box cannot tell yet whether the host's GPU helper on pve grants its request gpu\.none\.g\d+: until it answers, amber-fox holds no GPU, and its start waits for the answer\. Start it to use it so, or resize it again\.$/);
     assert.match(error.agentMessage ?? "", /^Not resized: amber-fox is stopped, with its disk as it was: .* Start it with box_start, or ask the user\.$/);
     return true;
   });
@@ -540,4 +540,185 @@ test("071 unit 9: a running box's restart for a card reserves it, as the box's o
   assert.equal(resized.claim?.card, A);
   const other = await backend.acquire(box("linux", "shared", "thr_meanwhile", "tidy-glade"), null, hooks(), signal());
   assert.equal(other.claim?.card, B);
+});
+
+test("071 unit 9: the boxes that fill a card are named in one pair of brackets, a person's with their threads, never brackets within brackets", () => {
+  const card = { uuid: A, index: 0, pci: "0000:21:00.0", minor: 1, drmCard: "card2", drmRender: "renderD129" };
+  const holders: Record<number, { readonly is: "box"; readonly name: string; readonly threadId: string | null }> = { 7001: { is: "box", name: "lone-pine", threadId: "thr_train" }, 7002: { is: "box", name: "quiet-elm", threadId: SPARES } };
+  const namer: CardNamer = { guest: (vmid) => holders[vmid]!, title: (threadId) => (threadId === "thr_train" ? "Train the model" : null) };
+  const block = { is: "limit" as const, card, own: 3, vmids: [7001, 7002], making: [{ name: "amber-fox", threadId: OPERATOR }] };
+  assert.equal(blockWords(block, namer, PERSON), "card 0 has 3 of this install's boxes, the most a card may have (lone-pine in thread \"Train the model\", quiet-elm as a spare and amber-fox as your machine)");
+  assert.equal(blockWords(block, namer, { to: "agent", threadId: null }), "card 0 has 3 of this install's boxes, the most a card may have (lone-pine, quiet-elm and amber-fox)");
+  assert.equal(blockWords({ is: "held", card, holders: [{ card: A, vmid: 7001, part: "shared", running: true, install: "4kq7", managed: true }] }, namer, PERSON), "card 0 has lone-pine (in thread \"Train the model\") running", "outside brackets a thread keeps its own");
+});
+
+function refused(text: string) {
+  return { ok: false, status: 500, statusText: text, text: async () => JSON.stringify({ data: null }) };
+}
+
+test("071 unit 9, review 1: the plan is made again under the card lock from the box as it is then, so a box stopped while the resize waited for the lock is asked again and is not started", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const fox = await server(bridge, backend, "shared", "amber-fox");
+  const plan = await backend.planResize(fox.guest, "linux", size("none"), [], signal());
+  assert.equal(plan.gpu?.way, "restart");
+  let release: (() => void) | null = null;
+  const held = underCardLock(`${bridge.url.replace(/\/+$/, "")}#pve`, () => new Promise<void>((resolve) => (release = resolve)));
+  const resizing = backend.resize(fox.guest, "linux", size("none"), { restart: true, agreed: plan.gpu! }, signal());
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  bridge.proxmox.guests.get(fox.vmid)!.status = "stopped";
+  bridge.pass();
+  assert.equal(bridge.node.isRunning(fox.vmid), false);
+  release!();
+  await held;
+  await assert.rejects(resizing, (error: unknown) => {
+    assert.ok(error instanceof GpuPlanChanged, String(error));
+    assert.equal(error.agentMessage, "Not resized: when you checked, amber-fox would lose card 0 with a restart; now amber-fox has stopped since, so it would lose its card while stopped. Call box_resize again to do that, or ask the user. bb-box changed nothing.");
+    assert.equal(error.plan.stopped, true, "the plan it says is the plan now");
+    return true;
+  });
+  assert.equal(bridge.node.isRunning(fox.vmid), false, "not started");
+  assert.deepEqual(bridge.gpuTags(fox.vmid), [marker("shared", CARD_A, 1)], "nothing written");
+});
+
+test("071 unit 9, review 2: an unanswered request is not taken as refused: when the helper grants it late and its claim cannot be asked back, the box reports the claim the helper holds", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  let watched: number | null = null;
+  const backend = bridge.backend({
+    onSleep: () => {
+      if (watched !== null && bridge.gpuTags(watched).some((tag) => tag.startsWith("gpu.shared."))) bridge.answering = false;
+    },
+  });
+  const fox = await server(bridge, backend, "none", "amber-fox");
+  watched = fox.vmid;
+  bridge.proxmox.intercept = (call) => {
+    if (call.method !== "PUT" || !call.path.endsWith(`/lxc/${fox.vmid}/config`) || !(call.params.tags ?? "").includes("gpu.none.")) return undefined;
+    watched = null;
+    bridge.answering = true;
+    bridge.pass();
+    return refused("CT is locked (backup)");
+  };
+  await assert.rejects(backend.resize(fox.guest, "linux", size("shared"), { restart: true }, signal()), (error: unknown) => {
+    assert.ok(error instanceof ResizeLeftStopped, String(error));
+    assert.equal(error.gpu, "shared");
+    assert.deepEqual(error.guest.claim, { card: A, part: "shared", generation: 1, answer: "granted" });
+    assert.match(error.message, /^Amber-fox is stopped, with its disk as it was: the host's GPU helper on pve did not answer within 10 s\. It holds a shared GPU, card 0 now\. /);
+    return true;
+  });
+  bridge.proxmox.intercept = undefined;
+  assert.deepEqual(bridge.lines(fox.vmid), cardLines(CARD_A, "server"), "the helper wrote the card it granted");
+});
+
+test("071 unit 9, review 6: a change in place whose marker cannot be written puts back the cores it changed and keeps its claim", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const elm = await server(bridge, backend, "shared", "quiet-elm");
+  bridge.proxmox.intercept = (call) => (call.method === "PUT" && call.path.endsWith(`/lxc/${elm.vmid}/config`) && (call.params.tags ?? "").includes("gpu.whole.") ? refused("CT is locked (backup)") : undefined);
+  await assert.rejects(backend.resize(elm.guest, "linux", size("whole", 4), { restart: false }, signal()), (error: unknown) => {
+    assert.ok(error instanceof ResizeHolds && !(error instanceof ResizeLeftStopped), String(error));
+    assert.equal(error.gpu, "shared");
+    assert.equal(error.guest.claim?.part, "shared");
+    assert.match(error.message, /^Not resized: bb-box could not ask for its new GPU, as .*\. Its GPU is as it was: a shared GPU, card 0\. Try again, or run bb box doctor\.$/);
+    return true;
+  });
+  bridge.proxmox.intercept = undefined;
+  assert.equal(bridge.proxmox.guests.get(elm.vmid)!.config.cores, "2", "its cores put back");
+  assert.ok(bridge.node.isRunning(elm.vmid));
+  assert.ok(bridge.gpuTags(elm.vmid)[0]?.startsWith(`gpu.shared.${A}.`), bridge.gpuTags(elm.vmid).join(" "));
+});
+
+test("071 unit 9, Fable 1: a failed change asks back the marker the box had, its card and part with a fresh generation, even where its claim yielded", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  let watched: number | null = null;
+  const backend = bridge.backend({
+    perGpu: 4,
+    onSleep: () => {
+      if (watched !== null && bridge.gpuTags(watched).some((tag) => tag.startsWith("gpu.none."))) bridge.answering = false;
+    },
+  });
+  anotherInstallRunning(bridge, 7069, CARD_B);
+  const owl = await server(bridge, backend, "shared", "swift-owl");
+  assert.equal(owl.guest.claim?.card, A);
+  await stopped(bridge, backend, owl.guest);
+  await backend.acquire(box("linux", "whole", "thr_job", "whole-job"), null, hooks(), signal());
+  bridge.pass();
+  assert.ok(bridge.node.reportLines().some((line) => line.startsWith(`claim ${owl.vmid} g1 yielded ${A}`)), bridge.node.reportLines().join("\n"));
+  watched = owl.vmid;
+  await assert.rejects(backend.resize(owl.guest, "linux", size("none"), { restart: false }, signal()), (error: unknown) => error instanceof ResizeHolds);
+  watched = null;
+  const tags = bridge.gpuTags(owl.vmid);
+  assert.equal(tags.length, 1);
+  assert.match(tags[0]!, new RegExp(`^gpu\\.shared\\.${A}\\.g([3-9]|\\d{2,})$`), "it asks back its shared card, not none");
+});
+
+test("071 unit 9, Fable 2: when a refused marker cannot be asked back on a box the helper holds no claim for, the box reports the marker as it stands, which its next start places", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  let watched: number | null = null;
+  const backend = bridge.backend({
+    onSleep: () => {
+      if (watched === null || !bridge.gpuTags(watched).some((tag) => tag.startsWith("gpu.shared."))) return;
+      bridge.proxmox.guests.get(watched)!.config.lock = "backup";
+      watched = null;
+    },
+  });
+  const fox = await server(bridge, backend, "none", "amber-fox");
+  assert.deepEqual(bridge.gpuTags(fox.vmid), []);
+  watched = fox.vmid;
+  bridge.proxmox.intercept = (call) => (call.method === "PUT" && call.path.endsWith(`/lxc/${fox.vmid}/config`) && (call.params.tags ?? "").includes("gpu.none.") ? refused("CT is locked (backup)") : undefined);
+  await assert.rejects(backend.resize(fox.guest, "linux", size("shared"), { restart: true }, signal()), (error: unknown) => {
+    assert.ok(error instanceof ResizeLeftStopped, String(error));
+    assert.equal(error.gpu, "shared");
+    assert.deepEqual(error.guest.claim, { card: A, part: "shared", generation: 1, answer: "refused" });
+    assert.match(error.message, /Its marker still asks for a shared GPU, card 0, which the host's GPU helper refused, and the helper holds no claim for it, so its next start places it on a card with room for that, or does not start it\./);
+    return true;
+  });
+  bridge.proxmox.intercept = undefined;
+  delete bridge.proxmox.guests.get(fox.vmid)!.config.lock;
+  bridge.pass();
+  const started = await backend.start(fox.guest, signal());
+  assert.equal(started && "claim" in started ? started.claim?.part : undefined, "shared", "its start does what the record says");
+});
+
+test("071 unit 9, Fable 3: a resize to the GPU part the box's marker already holds still changes its cores", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const backend = bridge.backend();
+  const elm = await server(bridge, backend, "shared", "quiet-elm");
+  const resized = await backend.resize(elm.guest, "linux", size("shared", 4), { restart: false }, signal());
+  assert.equal(resized.size?.cores, 4);
+  assert.equal(bridge.proxmox.guests.get(elm.vmid)!.config.cores, "4");
+  assert.equal(resized.claim?.part, "shared");
+});
+
+test("071 unit 9, Fable 4: the disk grows only once the new claim is granted, so a restart left stopped has its disk as it was, and a granted one grows it", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  let watched: number | null = null;
+  const backend = bridge.backend({
+    onSleep: () => {
+      if (watched !== null && bridge.gpuTags(watched).some((tag) => tag.startsWith("gpu.shared."))) bridge.answering = false;
+    },
+  });
+  const fox = await server(bridge, backend, "none", "amber-fox");
+  const disk = bridge.proxmox.guests.get(fox.vmid)!.config.rootfs;
+  watched = fox.vmid;
+  await assert.rejects(backend.resize(fox.guest, "linux", { ...size("shared"), diskGiB: 16 }, { restart: true }, signal()), (error: unknown) => {
+    assert.ok(error instanceof ResizeLeftStopped, String(error));
+    assert.equal(error.guest.size?.diskGiB, Number(/size=(\d+)G/.exec(disk ?? "")?.[1]));
+    return true;
+  });
+  watched = null;
+  bridge.answering = true;
+  bridge.pass();
+  assert.equal(bridge.proxmox.guests.get(fox.vmid)!.config.rootfs, disk, "the disk did not grow");
+  await backend.start(fox.guest, signal());
+  bridge.pass();
+  const grown = await backend.resize(fox.guest, "linux", { ...size("shared"), diskGiB: 16 }, { restart: true }, signal());
+  assert.equal(grown.size?.diskGiB, 16);
+  assert.equal(grown.claim?.part, "shared");
 });
