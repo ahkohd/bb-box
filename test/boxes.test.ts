@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { AudienceError, BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { AudienceError, BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type CapacityAsking, type Guest, type MachineSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -3746,6 +3746,62 @@ test("071 unit 7: a GPU no provider gives is refused before any box, never turne
   await assert.rejects(desktops.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop", gpu: "none", who: AGENT }), {
     message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. bb-box changed nothing.",
   });
+});
+
+test("071 unit 8: box_acquire's gpu whole goes only to a provider that gives the kind a whole card, its record keeps the part, and the provider's room hears which thread asks", async () => {
+  const world = setup({ id: "fake:plain" });
+  world.general = { ...world.general, wholeCards: true };
+  const asked: (string | undefined)[] = [];
+  class Hearing extends FakeBackend {
+    override async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], _signal?: AbortSignal, asking?: CapacityAsking) {
+      asked.push(asking?.threadId);
+      return super.capacity(kind, size, pending);
+    }
+  }
+  world.others.push(new FakeBackend({ root: tempDir("gpu-shared-only"), storage: scopedStorage(world.kv, "backend/shared/"), id: "fake:shared", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS }));
+  world.others.push(new Hearing({ root: tempDir("gpu-whole"), storage: scopedStorage(world.kv, "backend/whole/"), id: "fake:whole", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS }));
+  const made = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }));
+  assert.equal(made.backend, "fake:whole", "a provider that gives only a shared GPU is passed over");
+  assert.equal(made.size?.gpu, "whole");
+  assert.equal(made.guest?.claim?.part, "whole");
+  assert.deepEqual(asked, [THREAD]);
+});
+
+test("071 unit 8, lead: gpu whole is refused while whole cards are off on this install, before any provider is asked, in words for each audience", async () => {
+  const world = setup({ id: "fake:plain" });
+  const asked: string[] = [];
+  class Counting extends FakeBackend {
+    override async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[]) {
+      asked.push(kind);
+      return super.capacity(kind, size, pending);
+    }
+  }
+  world.backend = new Counting({ root: tempDir("gpu-whole-off"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
+    code: "unsupported",
+    message: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+  });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
+    message: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
+  });
+  assert.deepEqual(asked, [], "no provider was asked");
+  assert.deepEqual(await world.boxes.list(THREAD), []);
+  const shared = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }));
+  assert.equal(shared.size?.gpu, "shared", "a shared GPU is as before");
+});
+
+test("071 unit 8: a whole card no provider gives is refused before any box, and the words say a shared GPU is there", async () => {
+  const world = setup({ id: "fake:plain" });
+  world.general = { ...world.general, wholeCards: true };
+  world.backend = new FakeBackend({ root: tempDir("gpu-shared-whole"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
+    code: "unsupported",
+    message: "Not made: no provider here gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+  });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
+    message: "No provider gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared.",
+  });
+  assert.deepEqual(await world.boxes.list(THREAD), []);
 });
 
 test("071 unit 7: a provider's own refusal reaches an agent in the words it gives an agent, and the person in theirs", async () => {

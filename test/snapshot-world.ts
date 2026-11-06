@@ -26,7 +26,7 @@ export const COMMAND: Caller = { is: "command" };
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 
-export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number; readonly backend?: (storage: BackendStorage) => Backend } = {}) {
+export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number; readonly wholeCards?: boolean; readonly backend?: (storage: BackendStorage) => Backend } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -93,7 +93,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     on: (): Backend[] => (state.active ? [state.backend] : []),
     kinds: () => (state.active ? state.backend.kinds().map((kind) => ({ kind, backend: state.backend as Backend })) : []),
   };
-  const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"] } as unknown as GeneralConfig;
+  const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"], wholeCards: options.wholeCards ?? true } as unknown as GeneralConfig;
   const build = () => {
     if (!options.backend) provider.attach(state.backend, now, root);
     provider.ledger = state.store;

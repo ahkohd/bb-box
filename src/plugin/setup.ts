@@ -39,6 +39,8 @@ import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDeviceTools } from "./device-tools.ts";
+import { selectTools } from "./tool-selection.ts";
+import { wholeCardsOn } from "./whole-cards.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
 import { sweepStaleTempFolders } from "../core/temp-folders.ts";
@@ -645,6 +647,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machines,
     images,
     bbUrl: () => bb.server.experimental_appUrl,
+    threadTitle: async (threadId) => {
+      const found = await bb.sdk.threads.get({ threadId }).catch(() => null);
+      return found?.title ?? found?.titleFallback ?? null;
+    },
     encoder: { load: (key) => ledger.load(key), vmStarting: (key, place) => ledger.vmStarting(key, place) },
   });
   // The files for every box (#455), once the boxes are there.
@@ -1932,6 +1938,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   registerSnapshotTools(bb, api);
   registerComputerTools(bb, api);
   registerDeviceTools(bb, api);
+  selectTools(bb, () => wholeCardsOn(api), logError);
   registerRpc(bb, api);
   registerCli(bb, api);
   reloadTimes.phase("the rest");

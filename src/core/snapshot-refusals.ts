@@ -5,7 +5,16 @@ export function capacityReason(words: string): string {
   return reason ? /[.!?]$/.test(reason) ? reason : `${reason}.` : "There is no room now.";
 }
 
+function forkInstead(gpu: GpuPart): string {
+  if (gpu === "none") return "Try again later, or ask the user.";
+  return gpu === "whole" ? "Fork it with gpu shared or none, or ask the user." : "Fork it with gpu none, or ask the user.";
+}
+
+export function forkRefusalWords(reason: string, gpu: GpuPart): string {
+  const sentence = reason.trim();
+  return `Not forked: ${/[.!?]$/.test(sentence) ? sentence : `${sentence}.`} ${forkInstead(gpu)} bb-box copied nothing.`;
+}
+
 export function forkCapacityWords(words: string, gpu: GpuPart): string {
-  const next = gpu === "none" ? "Try again later, or ask the user." : "Fork it with gpu none, or ask the user.";
-  return `Not forked: ${capacityReason(words)} ${next} bb-box copied nothing.`;
+  return forkRefusalWords(capacityReason(words), gpu);
 }

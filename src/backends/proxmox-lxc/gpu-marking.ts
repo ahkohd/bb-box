@@ -2,7 +2,7 @@ import { parseTags } from "../proxmox/api.ts";
 import { isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { installTag, isTemplate } from "../proxmox/owner.ts";
 import type { GpuPart } from "../types.ts";
-import type { GpuHelperVerdict } from "./gpu-helper.ts";
+import type { GpuHelperVerdict, HelperTooOld } from "./gpu-helper.ts";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const MARKER = new RegExp(`^gpu\\.(?:(none|release)|(shared|whole)\\.(${UUID}))\\.g([1-9][0-9]{0,8})$`);
@@ -376,6 +376,7 @@ export interface MarkContext extends Eligibility {
   readonly ledger: ReadonlyMap<number, LedgerEntry>;
   readonly answers: readonly HelperAnswer[];
   readonly boxNamedBy: ReadonlyMap<string, readonly number[]>;
+  readonly wholeTooOld: HelperTooOld | null;
 }
 
 export type MarkPlan =
@@ -482,6 +483,7 @@ export function planMark(guest: MarkCandidate, context: MarkContext): MarkPlan {
   const wholeHolder = otherClaims.find((entry) => entry.claim!.part === "whole") ?? context.holders.find((holder) => holder.card === card.uuid && holder.vmid !== look.vmid && holder.part === "whole");
   if (wholeHolder) return { is: "refused", why: `CT ${wholeHolder.vmid} holds ${cardName(card)} whole, so the helper would refuse it.`, card };
   if (part === "whole") {
+    if (context.wholeTooOld) return { is: "refused", why: `Its box's record says a whole card, which bb box gpu mark does not ask for now: ${context.wholeTooOld.why}. ${context.wholeTooOld.fix}`, card };
     const others = [...new Set(context.holders.filter((holder) => holder.card === card.uuid && holder.vmid !== look.vmid).map((holder) => holder.vmid))].map((vmid) => `CT ${vmid}`);
     if (others.length) return { is: "refused", why: `Its box's record says a whole card, but ${cardName(card)} is also held by ${inWords(others)}, so the helper would refuse it.`, card };
   }
@@ -553,7 +555,12 @@ export type MarkAnswer =
   | { readonly is: "would"; readonly why: string }
   | { readonly is: "unanswered" };
 
+const YIELDED_WORDS = "the GPU helper took its card's lines out while it was stopped, as another box claimed the card whole";
+
 export function answerTo(lines: HelperLines, vmid: number, marker: GpuMarker, fromLedger: boolean): MarkAnswer {
+  const yielded = lines.answers.some((each) => each.vmid === vmid && each.generation === marker.generation && each.is === "yielded");
+  const ledgerClaim = lines.ledger.get(vmid)?.claim ?? null;
+  if (yielded || (fromLedger && ledgerClaim?.answer === "yielded" && ledgerClaim.generation === marker.generation)) return { is: "refused", why: YIELDED_WORDS };
   const answer = lines.answers.find((each) => each.vmid === vmid && each.generation === marker.generation);
   if (answer?.is === "refused") return { is: "refused", why: refusalWords(answer.reason, answer.detail) };
   if (answer?.is === "granted" && answer.part === marker.part && answer.card === marker.card) return { is: "granted" };

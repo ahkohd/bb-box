@@ -50,6 +50,8 @@ export function parseGpuHelper(notes: string): GpuHelperState | null {
 
 export const STOPS_ONLY_UNTESTED_FROM = [0, 4, 1];
 
+export const WHOLE_CARDS_FROM = [0, 4, 3];
+
 export function atLeast(version: string | null, from: readonly number[]): boolean {
   if (!version) return false;
   const parts = version.split(".").map(Number);
@@ -58,6 +60,20 @@ export function atLeast(version: string | null, from: readonly number[]): boolea
     if (part !== from[at]) return part > from[at]!;
   }
   return true;
+}
+
+export interface HelperTooOld {
+  readonly why: string;
+  readonly fix: string;
+}
+
+export function tooOldForWhole(node: string, version: string | null): HelperTooOld | null {
+  if (atLeast(version, WHOLE_CARDS_FROM)) return null;
+  const from = WHOLE_CARDS_FROM.join(".");
+  return {
+    why: `its GPU helper is bb-box-gpu ${version ?? "of an unknown version"}, and a whole card needs ${from} or later, which takes a card only from this install's own stopped boxes`,
+    fix: `Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu ${from} or later, as root on ${node}.`,
+  };
 }
 
 export interface GpuHelperSeen {

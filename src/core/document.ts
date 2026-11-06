@@ -135,6 +135,12 @@ export interface GeneralSettings {
    */
   readonly testDevice?: boolean;
   /**
+   * Whether a Linux box or desktop on a backend that can give one may have a whole card: a GPU to itself, on which
+   * bb-box places no other box (071). Off, gpu whole is refused and not offered, and boxes that hold a card whole keep
+   * it until they are released. Off unless set.
+   */
+  readonly wholeCards?: boolean;
+  /**
    * Advanced: whether bb-box keeps the iOS devices it streams on each Mac within that Mac's video encoder (064), giving
    * room first to the person in control of a device, then recordings, other viewers and the agent's waits, and showing
    * the others at a lower resolution. Off, every stream of a shared ios box is capped at two thirds and nothing else is.
@@ -302,6 +308,8 @@ export interface Problem {
 
 export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" } as const;
 
+export const WHOLE_CARDS_BY_DEFAULT = false;
+
 export const MONITOR_DEFAULTS = { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true } as const;
 export const MONITOR_REFRESH_SECONDS = { least: 2, most: 60 } as const;
 
@@ -339,6 +347,8 @@ export interface GeneralConfig {
   readonly spares: Readonly<Record<string, number>>;
   /** The backends whose new Linux boxes get an identity marker (070). */
   readonly identityResetBackends?: readonly string[];
+  /** Whether boxes may have a whole card (071). */
+  readonly wholeCards?: boolean;
 }
 
 export function generalConfig(document: ConfigDocument): GeneralConfig {
@@ -352,6 +362,7 @@ export function generalConfig(document: ConfigDocument): GeneralConfig {
       Object.entries(document.kinds).flatMap(([kind, config]) => (config.spares && kindOn(document, kind) ? [[kind, config.spares]] : [])),
     ),
     identityResetBackends: document.general.identityResetBackends ?? [],
+    wholeCards: document.general.wholeCards ?? WHOLE_CARDS_BY_DEFAULT,
   };
 }
 
@@ -475,7 +486,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, wholeCards, encoderLedger, iosEncoder, tailnet and snapshots.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -503,6 +514,9 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "testDevice") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.testDevice", "testDevice is true or false.");
+        } else if (key === "wholeCards") {
+          if (typeof value === "boolean") general[key] = value;
+          else problem("general.wholeCards", "wholeCards is true or false.");
         } else if (key === "encoderLedger") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.encoderLedger", "encoderLedger is true or false.");
@@ -517,7 +531,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "snapshots") {
           const snapshots = readSnapshots(value, problem);
           if (snapshots) general[key] = snapshots;
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.`);
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, wholeCards, encoderLedger, iosEncoder, tailnet and snapshots.`);
       }
     }
   }

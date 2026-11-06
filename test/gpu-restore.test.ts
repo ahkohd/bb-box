@@ -190,6 +190,24 @@ test("071 unit 6, Astra 2: a restore whose box's card has no room for it now is 
   assert.equal((await current(state, box)).restoring ?? null, null);
 });
 
+test("071 unit 8, round 4: a restore the backend refuses before the stop, as the box's whole card cannot be asked for whole again, says why to each audience, and changes nothing", async () => {
+  const { state, cards, box, snapshot } = await onCardB();
+  const backend = state.backend as unknown as Backend;
+  const person = "Card 1 is the box's whole card, which a restore asks the host's GPU helper for again: pve cannot give a box a whole card now, as its GPU helper is bb-box-gpu 0.4.2. Upgrade the helper.";
+  const agent = "Card 1 is the box's whole card, which a restore asks the host's GPU helper for again: pve cannot give a box a whole card now, as its GPU helper is bb-box-gpu 0.4.2. Ask the user.";
+  backend.holdGpuCard = async (guest: Guest) => {
+    cards.events.push(`hold ${guest.ref}`);
+    throw new BackendError("no_capacity", person, agent);
+  };
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), snapshot));
+  assert.equal(refused.code, "no_capacity");
+  assert.equal(refused.message, `bb-box did not restore box ${box.name}: ${person} bb-box changed nothing.`);
+  assert.equal(refused.agentMessage, `bb-box did not restore box ${box.name}: ${agent} bb-box changed nothing.`);
+  assert.deepEqual(cards.events, [`hold ${box.guest!.ref}`], "nothing was stopped, cleared or kept");
+  assert.equal(cards.claims.get(box.guest!.ref)?.card, CARD_B);
+  assert.equal((await current(state, box)).state, "ready");
+});
+
 test("071 unit 6, Fable 5: a restart between the rollback and the re-tag, and one at claim-kept, finish on the box's own card; a card taken meanwhile leaves the box stopped, never moved", async () => {
   {
     const { state, cards, box, snapshot } = await onCardB();
@@ -324,9 +342,11 @@ test("071 unit 6, Fable 4: a fork with gpu shared of a box that is not a linux-d
   const records = state.store.records().length;
   const checked = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.equal(checked.code, "unsupported");
-  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may share a card now\. Fork it with gpu none\. bb-box copied nothing\.$/);
+  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now\. Fork it with gpu none\. bb-box copied nothing\.$/);
   const forked = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.match(forked.message, /a fork of a linux box takes gpu none/);
+  const whole = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "whole" }));
+  assert.equal(whole.message, "Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. bb-box copied nothing.", "a whole card is refused as a shared one is, for the kind, not as not offered");
   assert.equal(state.store.records().length, records);
   assert.equal(state.store.operations({ box: box.id, kind: "fork" }).length, 0);
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's box record was made");

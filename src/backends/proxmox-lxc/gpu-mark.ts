@@ -3,7 +3,7 @@ import { isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { NoLongerOurs, OwnedGuests, sameGuestOwner } from "./owned.ts";
 import { installTag, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 import type { GpuMarkAnswer, GpuMarkGuest, GpuMarkRequest, GpuMarking } from "../types.ts";
-import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
+import { judgeGpuHelper, parseGpuHelper, tooOldForWhole } from "./gpu-helper.ts";
 import {
   NO_HELPER_LINES,
   answerTo,
@@ -227,6 +227,7 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
       );
     }
   }
+  const wholeTooOld = tooOldForWhole(node, helper.version);
   const ours = (await api.listPool(setup.pool, signal)).filter((guest) => isOurGuest(guest, setup, node)).sort((a, b) => a.vmid - b.vmid);
   const looks = await lookAtEach(api, ours, signal);
   const boxNamedBy = boxesNamed(looks);
@@ -235,7 +236,7 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
     const named = new Map(boxNamedBy);
     for (const [key, vmids] of named) named.set(key, vmids.filter((vmid) => vmid !== look.vmid));
     if (box !== null) named.set(box, [...(named.get(box) ?? []), look.vmid]);
-    return { installId: setup.installId, madeAndRemovedByBbBox: setup.madeAndRemovedByBbBox, cards: lines.cards, holders: lines.holders, ledger: lines.ledger, answers: lines.answers, boxNamedBy: named };
+    return { installId: setup.installId, madeAndRemovedByBbBox: setup.madeAndRemovedByBbBox, cards: lines.cards, holders: lines.holders, ledger: lines.ledger, answers: lines.answers, boxNamedBy: named, wholeTooOld };
   };
   const plan = (look: GuestLook): Plan => {
     if (request.undo) return planUnmark(look, setup, lines.ledger);

@@ -2274,7 +2274,7 @@ same guest.
 | `adoptCopy`, `forkSnapshot`, `armAdopted`, `#armWithClaim` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
 | `releaseGpuClaim`, `armReturned`, `#armWithClaim` | a swap's old guest | its `gpu.none` marker with its start at boot off, in one write; its claim and start at boot back, once granted and checked, when the swap fails | box |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
-| `#fill`, `#topUp` | warm guests | cores and memory, labels and marker, start, retirement, delete | the warm guest of this install that bb-box made, by its description |
+| `#fill`, `#topUp`, `#retireForWhole` | warm guests | cores and memory, labels and marker, start, retirement, delete; `#retireForWhole` retires and deletes this install's warm desktops on a card it keeps whole for a box (unit 8) | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
 | `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
@@ -3020,3 +3020,314 @@ Upgrade the node's helper to 0.4.3 with this release's `setup-gpu.sh`, after
 its preview, with writes on as before, and check that no guest changed: in
 the report to the lead. Whole cards stay off (`general.wholeCards`) until 0.4.3
 is on the node and the owner turns them on.
+
+## Unit 8: whole cards on Proxmox LXC
+
+Built on main `4f5b5d18`, on branch `u71-8`. No helper change: bb-box-gpu
+0.4.2 already answers whole requests one at a time, refuses a whole claim on a
+card whose devices another guest has, and yields stopped shared boxes it
+manages (units 2 and 5). Whole cards are offered to the person, to agents and
+to forks of desktops only on an install whose `general.wholeCards` option is
+on, off by default, and only where the node's helper writes. The gate runs on
+a test BB from this branch with the option on, as section "Gated in unit N"
+says: no whole card is offered on production until two whole acquires at once
+leave one claim, and then not until the owner turns the option on.
+
+### What it does
+
+- **Placement for a whole card** (section 3, "Whole"). Under the card lock, a
+  whole box goes to a card that no other guest holds, running or stopped,
+  other than this install's own stopped shared boxes in its pool that hold a
+  claim in the helper's ledger, which yield, and this install's warm
+  desktops, which are retired; another install's guest and a guest that is
+  not bb-box's never yield to it; that is not held whole; on
+  which this install has no reservation, for a box being made, moved, forked
+  or started; on which no request of this install is unanswered and no guest
+  a lost ledger left unresolved may hold the card; and that has the memory a
+  new box needs free when last read (1,024 MiB for a server, 384 MiB for a
+  desktop), less what is reserved. A card whose free memory the report does
+  not give takes no whole box. Of those, the card with the least memory in
+  use, then the most free, then the lowest index; a box's last card first,
+  where it is free. Cards a box lately failed to see, or that a mismatch
+  closes, are left out as for shared boxes.
+- **A card kept whole takes no shared box.** A whole reservation closes its
+  card to every shared placement, servers, desktops, warm fills and the start
+  gate's, until the helper reports the whole box on it, from when the report's
+  `whole` holder line closes it.
+- **Acquire.** `linux` and `linux-desktop` with gpu whole take no warm guest
+  and no spare. They are cloned as a shared box is, the marker
+  `gpu.whole.<UUID>.g<N>` goes in the write that labels the guest, and the box
+  starts only on the helper's grant, with the check after start as unit 7
+  has it. A refusal from the helper, as when another install took the card
+  meanwhile, releases the guest and places the box once more, on another
+  card, then refuses with words.
+- **Warm desktops are retired, not counted.** A card held only by this
+  install's warm desktops and stopped shared boxes is free for a whole box.
+  Once the card is reserved, bb-box retires those warm desktops, under the
+  warm pool's lock so no claim takes one meanwhile, and deletes them before
+  anything is copied. A warm desktop a claim took meanwhile is a box, and the
+  helper's refusal of the whole claim follows. Another install's warm guests
+  block the card.
+- **Yielding.** The helper takes a yielding box's lines out, while it is
+  stopped, and answers it `yielded`. bb-box reads a yielded claim as no grant,
+  so the box's next start places it again: on another card with room, as
+  section 3 says, or not at all, with words.
+- **A stopped whole box keeps its card** (question 1's default). Its
+  `whole stopped` holder line closes the card to every other placement, and
+  its start asks for nothing new. A stopped whole box whose claim the helper
+  does not hold is placed again as a whole box, on its last card first, and is
+  never turned into a shared one.
+- **Refusals for each audience.** Each reason is kept per card and worded
+  twice. To the person, boxes are named with their threads' titles, from BB
+  ("card 0 has lone-pine (in thread "Train the model") running"), and the
+  words may say to release a box or ask for another part. To an agent, boxes
+  are named by box name only; the words offer another GPU part or asking the
+  user, and, where the agent's own thread has boxes on those cards, "Release
+  one of your own boxes on card 0 (lone-pine)". Guests of another install, and
+  guests that are not bb-box's, are named by VMID. Shared refusals, the start
+  gate's and a restore's now name boxes the same way, where they named VMIDs.
+  For a whole card:
+
+  > No card on pve is free for a whole card now: card 0 has lone-pine (in
+  > thread "Train the model") running and card 1 is quiet-elm's whole card
+  > (in thread "Long job"). Release a box on one of the cards, ask for gpu
+  > shared, or ask for gpu none.
+
+  > Not made: no card on pve is free for a whole card now: card 0 has
+  > lone-pine running and card 1 is quiet-elm's whole card. Ask for gpu
+  > shared, or ask the user. bb-box changed nothing.
+
+  Where the helper is missing, has writes off or was not tested on the
+  node's pve-container: "pve cannot give a box a whole card now: its GPU
+  helper has writes off, so it gives no box a card." with the fix for the
+  person, and "Ask for gpu shared, or ask the user." for an agent.
+- **The provider hears who asks.** `Backend.capacity` takes the asking
+  thread, which the registry passes for an acquire and a fork's admission, so
+  the room's agent words can name the thread's own boxes. The fork's
+  admission gives an agent the provider's agent words, where before it gave
+  the person's.
+- **Forks.** `box_fork`, `bb box snapshot fork` and the RPC take gpu whole
+  for a `linux-desktop`: the fork is placed and its card kept whole before
+  anything is copied, and refused before the copy otherwise: "Not forked: No
+  card on pve is free for a whole card now: ... Fork it with gpu shared or
+  none, or ask the user. bb-box copied nothing."
+- **The tools.** `box_acquire` and `bb box acquire --gpu` take none, shared or
+  whole. A provider that gives a kind a shared GPU and no whole card is passed
+  over for whole, and where none gives one: "No provider gives linux boxes a
+  whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask
+  for gpu shared." `box_list` says "none, shared or whole; ask with gpu shared
+  or gpu whole", with each card's whole holder by box name ("card 0 whole,
+  quiet-elm's") and "free for a whole card" on each card a whole box would
+  take now. `box_status` says "GPU: card 0, whole, <model>, 96 GiB".
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root, as CI runs them:
+
+- `tsc` clean. The node suite, on the commit: 3,765 tests, 3,470 passed, 0
+  failed, 295 skipped. vitest: 469 passed. In the run before it, on the tree
+  without the thread titles' wiring, `test/gpu-setup.test.ts`'s "a failed
+  upgrade across a protocol change ..." failed once, taking 17 s at a load of
+  about 18 on 8 cores; it passed alone, 45 of 45 in its file. This unit
+  changes neither the helper nor `setup-gpu.sh`.
+- `test/gpu-whole.test.ts`, 15 tests, against the real helper 0.4.2 on unit
+  2's fake node through unit 5's bridge: the rules alone; a card kept whole
+  closed to shared boxes; a whole server placed, marked in the write that
+  labels it, granted and started on its card; the gate's two whole acquires
+  at once, one made and one refused with one clone in all and one whole claim
+  on the node; refusals naming boxes for the person with threads and for an
+  agent by name, with and without its own boxes; a stopped shared box that
+  yields and then starts on the other card; a stopped whole box that keeps its
+  card; a whole desktop that takes no warm guest, though one fits, and retires
+  this install's warm desktop on its card; whole refused with writes off and
+  with no helper; a fork's whole card kept before the copy, and its refusal;
+  `box_list`'s room and words; a yielded claim read as no grant; a whole box
+  with no claim placed again whole; each backend's context giving threads'
+  titles from BB.
+- `test/boxes.test.ts`, `test/forks.test.ts`, `test/plugin.test.ts` and
+  `test/gpu-restore.test.ts`: gpu whole goes only to a provider that gives it,
+  and the room hears the asking thread; the words where a provider gives only
+  a shared GPU; a fork's admission gives an agent the provider's agent words;
+  `box_acquire` and `box_fork` take gpu whole; a server's whole fork is
+  refused for its kind. The earlier GPU tests now expect boxes' names in
+  their refusals.
+- Each rule was reverted on its own on the box, and its tests failed: 19
+  reverts. One more, a stopped whole box holding its place in a shared count,
+  is unit 5's rule and its revert failed nothing here, as a whole holder blocks
+  a card by its part; it is left out of the 19.
+- Each block of the node steps passes `bash -n`, and the report helpers they
+  use were run on a report in the helper's format.
+
+### The node steps
+
+The gate runs on a test BB from this branch, before the merge, on the lent
+VMIDs and the test pool, through the lead: steps 0 and A to H in the report to
+the lead. It needs one card that no guest outside the lent VMIDs holds,
+running or stopped: a whole claim there must not yield a production guest.
+
+### Deviations from the note
+
+- In place of section 12's "Whole cards" setting (unit 15), the general option
+  `general.wholeCards`, off unless set, turns whole cards on for the install.
+  Off, `gpu whole` is not in any offer or `box_list`, and `box_acquire`,
+  `box_fork` and the CLI refuse it before any provider is asked: "Not made:
+  whole cards are off on this install. Ask for gpu shared, or ask the user.
+  bb-box changed nothing." The person is told `bb box option set
+  general.wholeCards=true`. Unit 15's settings take it over.
+- Only this install's own stopped shared boxes yield to a whole card; the
+  note has every stopped shared box the helper manages yield. bb-box asks for
+  a whole card only where the node's helper is bb-box-gpu 0.4.3 or later
+  (unit 8b), which keeps that rule itself, under each yielding guest's config
+  lock, so another install's box that comes onto the card between bb-box's
+  placement and the helper's answer blocks the claim rather than yielding.
+  With 0.4.2 on the node, whole is refused even with `general.wholeCards` on.
+- Boxes per card is still the desktops per GPU setting, counting this
+  install's boxes; a whole box counts as one box on its card.
+- A fork with a GPU, shared or whole, is offered only for `linux-desktop`, as
+  in unit 6; a server's fork takes gpu none. The fork form keeps None and
+  Shared; whole is in `box_fork`, `bb box snapshot fork` and the RPC. The
+  forms are unit 13's.
+- The person's words name a box's thread by its title in brackets, as text,
+  not as a link: links come with the pages (units 13 and 14). A thread's
+  title is looked up for at most 2 s; a refusal of a restore, worded under the
+  card lock, names boxes without their threads.
+- "The least memory in use outside bb-box's boxes" is the card's memory in
+  use, total less free, as the report does not say whose it is. A card free
+  for a whole box runs no box of bb-box's but warm desktops, which are
+  retired.
+- A stopped whole box whose claim the helper does not hold is placed again as
+  a whole box, on its last card first. Section 3 has a stopped whole box keep
+  its card and does not say what happens once its claim is gone.
+- Resize to and from whole is unit 9's.
+
+### After the reviews
+
+Astra said no-go, with two highs; Fable go, with findings on the node steps
+and the deploy. The lead decided the fixes below. Each code fix has a test
+that failed with the fix reverted, on a box: 14 reverts.
+
+| Finding | Fix |
+| --- | --- |
+| Whole was offered at once on every install with a writing helper (Fable 2) | `general.wholeCards`, off by default, withholds whole from offers, `box_list`, `box_acquire` and `box_fork`, in the registry and in the backend, with words for each audience; `box_list` says "Whole cards are off on this install: ask the user if a box needs a card to itself." The test BB turns it on |
+| A whole placement could yield another install's stopped guest (Astra 2) | Only this install's stopped shared guests in its own pool, with a ledger claim, yield; any other guest on a card blocks it |
+| A whole desktop could take the per-card template, image or resumed path while the helper was not reporting, and run shared with no claim (Astra 1, Fable 3) | Whole is refused, with the whole words, before any of those paths, whenever the node's helper is missing, blocked, writing nothing or untested |
+| A whole server whose start check found no card was not moved (Astra 4) | The start gate leaves the card it is told to leave, for a whole box too, and places it again as whole on another card |
+| `box_list` gave desktops no cards, and "free for a whole card" ignored closed and avoided cards (Astra 6, 7, Fable 4) | Desktops get the same per-card room as servers; "free for a whole card" goes through the acquire's own placement, so a card a mismatch closes, or one a box lately failed to see, is not free |
+| A start's reservation was worded "a box, which bb-box is making" (Fable 5) | The start gate's reservation names the box, and its words say bb-box is starting it |
+| Node steps: one free card did not keep placement off the other; H passed on unreadable reads; G1's clone timing; G2 with an empty other card (Astra 2, 3, 5, Fable 1) | Step 0 needs exactly one free card and a held other one; step K checks both immediately before G1, G2 and G3 and stops otherwise; H reads Proxmox, the report and the journal, fails when any cannot be read, and fails on any write by the helper to a guest outside the lent VMIDs; G1 uses the node's evidence alone; G2 says why the other card has holders |
+
+Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node
+suite, 3,774 tests, 3,479 passed, 0 failed, 295 skipped; vitest, 468 of 469
+in the full run, the one failure the thread card's spinner test that unit 6
+found flaky, and 469 of 469 run again. `test/gpu-whole.test.ts` has 22
+tests. In an earlier run of the GPU, core and plugin files together, three
+timing tests in files this round does not change failed under load and passed
+alone. The node steps' 15 blocks pass `bash -n`, and step K was run on four
+sample reports: it passes with lent guests on the free card and production's
+on the other, and stops when the other card is empty, when a production guest
+is on the free card, and when the report cannot be read.
+
+### After the second reviews
+
+Astra said no-go, with one high; Fable go, with lows. The lead decided a
+server's fork has no GPU for now, as section 9 has it, and the fixes below.
+Each has a test that failed with it reverted, on a box: 8 reverts.
+
+| Finding | Fix |
+| --- | --- |
+| Whole accepted a node whose helper was 0.4.2, which yields another install's stopped box that comes onto the card after placement (Astra 1) | Whole needs the node's helper at bb-box-gpu 0.4.3 or later, unit 8b's, read from its report: below it, capacity, every acquire path, a fork and `box_list` refuse or leave out whole, with words for each audience, even with `general.wholeCards` on |
+| The tools' schemas and the CLI's help offered whole while whole cards were off (Astra 2, Fable low 2) | `box_acquire` and `box_fork` are registered with whole, and a selection of the plugin's tools for each agent session (`bb.agents.configure`) narrows their `gpu` to none or shared while the option is off; it takes the plugin's skills from its manifest, and leaves BB's own selection in place, saying so in the log, if it cannot read them. `bb box acquire` and `bb box snapshot fork` read the option when they print their help and check `--gpu` |
+| Step K could pass after a failed read (Astra 3) | Each block reads the report once, fails when it cannot, and takes every card and holder from that one text, each in an assignment of its own that fails when it finds nothing |
+| G2 did not check S1's card (Fable low 1) | G2 checks S1 is on the free card from step 0, and stops otherwise |
+| `box_list` named whole cards in every list at deploy (Fable low 3) | "Whole cards are off" is said only where the node's helper could give one |
+| A desktop's `box_list` had two lines for the same cards, the second saying "ask with gpu shared" while none had room (Fable low 4) | A desktop with cards has the cards line alone, and while no card has room for a desktop, the "no GPU has room" line alone |
+
+The tests run the real helper; until unit 8b's 0.4.3 is in this tree, the
+bridge runs it under the version 0.4.3, so its whole cards can be tested,
+and one test runs it as 0.4.2 to see whole refused. Then, on a `linux` box in
+`node:26-bookworm` as root: `tsc` clean; the node suite, 3,778 tests, 3,483
+passed, 0 failed, 295 skipped; vitest, 469 passed. Merged with unit 8b's
+branch: the node suite, 3,787 tests, 0 failed. Step K was run on five sample
+reports, a failed read and a card the report leaves out among them.
+
+### After the third review
+
+Astra said no-go, with one high, one medium and one low:
+
+| Finding | Fix |
+| --- | --- |
+| The start gate's new whole claim, for a whole server moved after its check found no card, skipped the helper's version, so with 0.4.2 it took another install's stopped box's card that came onto the chosen card (high) | Before any new whole claim, a move to another card or a standing whole claim asked again, the start gate checks the node's helper is 0.4.3 or later; below it the box is left stopped, with words for each audience |
+| A manifest bb-box could not read, or a missing skills folder, threw out of the tool selection and could stop the plugin's setup (medium) | Reading the manifest and the skills gives no skills on any error, so the logged fallback leaves BB's own selection in place; a selection BB refuses is logged too. A candidate root whose manifest cannot be read is passed over |
+| A SKILL.md with CRLF line endings turned the narrowing off (low) | Line endings are made LF before the front matter is read |
+
+Each has a test that failed with its fix reverted, on a box: 5 reverts.
+Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node
+suite, 3,782 tests, 3,487 passed, 0 failed, 295 skipped; vitest, 469 passed.
+
+Merge order: this unit can merge and deploy at any time, as whole cards stay
+off and need 0.4.3. Unit 8b then upgrades the node's helper; then the gate on
+the test BB; then the owner turns `general.wholeCards` on.
+
+### After the fourth review
+
+Astra said no-go, with one high: a restore's handoff, which gives a whole
+box's claim back to its guest or to a new guest after the restore cleared it,
+asked the helper for the card whole without the version check, so with 0.4.2
+another install's stopped box that took the card meanwhile lost its lines. It
+was the third whole path found without the check, so the check is no longer
+on each path:
+
+| Where | What it does now |
+| --- | --- |
+| Every config write bb-box makes to a guest | A write whose tags carry a whole marker the guest does not have yet, which asks the helper for a whole card, reads the node's helper version first and is refused, with nothing written, below 0.4.3. Every path that asks for a whole card writes through it: acquires, forks, starts, a rollback's kept claim, a claim given back and a swap's given claim |
+| A restore, by rollback or by swap | A box whose card is whole is refused before it stops and before its claim is cleared, with words for each audience, while the helper is below 0.4.3. The restore's refusal now gives an agent its own words, as the backend's were dropped before |
+| `bb box gpu mark` | A guest whose box's record says a whole card is refused, with the upgrade it needs, and its tags are not written, below 0.4.3 |
+
+The checks on the acquire, fork placement and start paths stay, as they refuse
+before anything is copied or reserved, with each path's own words.
+
+Tests: Astra's reproduction, for both handoffs, now finds the restore refused
+before its claim is cleared, and the handoff refused with nothing written, so
+the other install's box keeps its lines. A second test asks for a whole card
+through every caller with 0.4.2 (two acquires, a fork's placement and its copy,
+a start that places its box again, a restore's held card, a rollback's kept
+claim, a claim given back and a swap's given claim) and finds each refused and
+no whole marker written. With the write check reverted, a fork placed before
+the helper went back to 0.4.2 wrote its whole marker: a fourth path the check
+now covers.
+
+Each rule has a test that failed with it reverted, on a box: 4 reverts (the
+write check, the restore's early refusal, `bb box gpu mark`, the agent's
+words). Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node suite,
+3,787 tests, 3,492 passed, 0 failed, 295 skipped; vitest, 469 passed.
+
+### After unit 8b went in first
+
+Unit 8b merged and was deployed before this unit (main `3dbc76bd`), and the
+lead upgraded the node's helper to 0.4.3 with its step B: the preview would
+write no guest, no guest changed and the helper wrote none, and production's
+doctor passes the helper on 0.4.3. This branch is rebased onto that main. The
+only conflict was at the end of this file, where both sections are kept, unit
+8b's first.
+
+- The test bridges no longer run the helper under the version 0.4.3: it is
+  0.4.3 in this tree. A test that needs an older one still asks for it.
+- The node steps no longer upgrade the helper first; they check that it is
+  0.4.3. Step 0 takes the `u5-check.sh` baseline. Step H prints the helper's
+  writes to guests outside the lent VMIDs for the record, as production's own
+  GPU boxes are made and released during the gate, and `u5-compare.sh` judges
+  production's GPU guests, allowing the lent VMIDs and the guests production's
+  bb-box changed. A yield of a guest outside the lent VMIDs still fails step H:
+  production asks for no whole card, so none of its guests yields.
+
+On a `linux` box in `node:26-bookworm` as root, on the rebased branch: `tsc`
+clean; the node suite, 3,800 tests, 3,505 passed, 0 failed, 295 skipped;
+vitest, 469 passed. Each block of the node steps passes `bash -n`, and step H's
+two journal filters were run on sample lines.
+
+### Still open
+
+- When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
+  warm guest of that kind must still be shared (section 3): today spares and
+  warm guests take the kind's default, which is never whole.
+- The live gate, on the node's helper 0.4.3.

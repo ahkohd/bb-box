@@ -133,7 +133,7 @@ test("071 unit 6, Astra 2: a restore holds the box's card while the box is stopp
   second.pass();
   const restarted = second.backend({ perGpu: 1 });
   const gone = second.stoppedGuest(7040, stopped, 9002);
-  await assert.rejects(restarted.holdGpuCard(gone, (await restarted.readGpuClaim(gone, signal()))!, signal()), /^BackendError: Card 1, which the box holds, cannot take it now: card 1 has 1 of this install's boxes, the most a card may have\. A restore keeps a box on its card, so bb-box does not move it to another one\./);
+  await assert.rejects(restarted.holdGpuCard(gone, (await restarted.readGpuClaim(gone, signal()))!, signal()), /^BackendError: Card 1, which the box holds, cannot take it now: card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. A restore keeps a box on its card, so bb-box does not move it to another one\./);
   assert.deepEqual(second.gpuTags(7040), [marker("shared", CARD_B, 2)]);
 
   const third = new ClaimsBridge();

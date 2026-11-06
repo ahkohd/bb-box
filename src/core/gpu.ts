@@ -147,3 +147,15 @@ export function userspaceRestoreWords(recorded: SnapshotGpu | null, hostDriver: 
   if (userspace !== host) return `This snapshot has NVIDIA's userspace ${userspace}, and the host's driver is now ${host}: nvidia-smi will fail in the box until its userspace is updated.`;
   return null;
 }
+
+export const WHOLE_CARDS_OFF = {
+  person: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
+  agent: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+} as const;
+
+export const WHOLE_CARDS_OFF_FOR_FORK = {
+  person: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn whole cards on with bb box option set general.wholeCards=true. bb-box copied nothing.",
+  agent: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.",
+} as const;
+
+export const WHOLE_CARDS_OFF_IN_LIST = "Whole cards are off on this install: ask the user if a box needs a card to itself.";

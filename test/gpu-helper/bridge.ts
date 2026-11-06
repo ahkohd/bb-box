@@ -13,12 +13,13 @@ after(async () => {
 });
 
 export class Bridge {
-  readonly node = new FakeNode({ writes: "off" });
+  readonly node: FakeNode;
   readonly proxmox = new FakeProxmox();
   helperRuns = 0;
   answering = true;
 
-  constructor() {
+  constructor(options: { readonly helperVersion?: string } = {}) {
+    this.node = new FakeNode({ writes: "off", ...(options.helperVersion ? { helperVersion: options.helperVersion } : {}) });
     this.proxmox.addTemplate(9000);
     this.proxmox.addTemplate(9001, { cores: "4", memory: "8192" });
     this.proxmox.guests.set(REPORT_VMID, { vmid: REPORT_VMID, type: "qemu", name: "bb-box-gpu-memory", status: "stopped", template: false, config: { name: "bb-box-gpu-memory", description: "" } });

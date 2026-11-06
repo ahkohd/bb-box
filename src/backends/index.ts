@@ -14,7 +14,7 @@ import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { proxmoxQemuDriver } from "./proxmox-qemu/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
-import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
+import { GENERAL_DEFAULTS, WHOLE_CARDS_BY_DEFAULT, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import { encoderKey } from "../core/encoder-ledger.ts";
 import type { Backend, BackendContext, BackendDriver, EncoderAccess, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
@@ -258,6 +258,7 @@ export class Backends {
   readonly #images: ImageFacts | undefined;
   readonly #tailnetFetch: TailnetFetch | undefined;
   readonly #bbUrl: (() => string | null) | undefined;
+  readonly #threadTitle: ((threadId: string) => Promise<string | null>) | undefined;
   readonly #encoder: KeyedEncoderAccess | undefined;
   #tailnetClient: { readonly made: string; readonly tailnet: Tailnet } | null = null;
 
@@ -279,10 +280,12 @@ export class Backends {
     images?: ImageFacts;
     tailnetFetch?: TailnetFetch;
     bbUrl?: () => string | null;
+    threadTitle?: (threadId: string) => Promise<string | null>;
     encoder?: KeyedEncoderAccess;
   }) {
     this.#encoder = options.encoder;
     this.#bbUrl = options.bbUrl;
+    this.#threadTitle = options.threadTitle;
     this.#tailnetFetch = options.tailnetFetch;
     this.#machines = options.machines;
     this.#images = options.images;
@@ -339,8 +342,10 @@ export class Backends {
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
       enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
+      wholeCards: () => this.#document?.general.wholeCards ?? WHOLE_CARDS_BY_DEFAULT,
       tailnet: () => this.tailnet(),
       ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
+      ...(this.#threadTitle ? { threadTitle: this.#threadTitle } : {}),
       kindsChanged: () => this.#kindsChanged(),
       factsChanged: () => this.#changed(),
       ...(this.#encoder ? { encoder: this.#encoderFor(id, this.#encoder) } : {}),

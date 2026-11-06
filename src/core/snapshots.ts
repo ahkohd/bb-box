@@ -26,11 +26,12 @@ import {
   type TaskKind,
   type TaskOutcome,
   type TaskRef,
+  agentMessageOf,
   startedGuest,
 } from "../backends/types.ts";
 import { BoxError, ReleaseWaits, type BoxRecord, type ForkAdmission, type ForkRequest, OPERATOR, forkNameProblem, identity, newBoxId, restoringWords, type RestoringMark } from "./boxes.ts";
 import { describeSize } from "./sizes.ts";
-import { gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
+import { WHOLE_CARDS_OFF_FOR_FORK, gpuStayWords, isGpuPart, snapshotGpuOf, userspaceRestoreWords, withGpu, withRecordedGpu, type SnapshotGpu } from "./gpu.ts";
 import { currentKindId } from "../backends/kinds.ts";
 import { notForkSafeWords, readForkSafe, readsForkSafetyAtStop, type ForkSafety } from "./identity.ts";
 import { pictureOfScreen, withinWait, type ScreenPicture } from "./snapshot-picture.ts";
@@ -102,6 +103,7 @@ export interface SnapshotBoxes {
   machineBack(box: BoxRecord): boolean;
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
+  wholeCards?(): Promise<boolean>;
 }
 
 export interface ThreadOnTheBox {
@@ -485,7 +487,7 @@ export function unflushedOf(operation: Pick<SnapshotOperation, "consent">): stri
 }
 
 function forkGpuRefused(backend: Backend, kind: string): string | null {
-  if (currentKindId(kind) !== "linux-desktop") return `Not forked: a fork of a ${kind} box takes gpu none, as only a linux-desktop fork may share a card now. Fork it with gpu none. bb-box copied nothing.`;
+  if (currentKindId(kind) !== "linux-desktop") return `Not forked: a fork of a ${kind} box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. bb-box copied nothing.`;
   if (!backend.placeForkGpu) return `Not forked: ${backend.label} gives a fork no GPU. Fork it with gpu none. bb-box copied nothing.`;
   return null;
 }
@@ -2581,6 +2583,7 @@ export class Snapshots {
       kind: box.kind,
       size: box.guest.size ?? box.size ?? null,
       gpu: input.gpu ?? "none",
+      who: caller,
     });
   }
 
@@ -2596,7 +2599,6 @@ export class Snapshots {
     const allowed = mayAct(caller, "fork", standing, target);
     if (!allowed.ok) throw new BoxError("not_owner", allowed.why);
     if (caller.is === "agent" && input.asMachine) throw new BoxError("not_owner", `Only the person makes a fork one of their machines. ${NOT_THE_AGENTS}`);
-    if (input.gpu === "whole") throw new BoxError("unsupported", "Not forked: a whole card is not offered for a fork yet. Fork it with gpu shared or none. bb-box copied nothing.");
     this.#requireStore("forks");
     const source = await this.#deps.boxes.find(target.box.id);
     const heldCopy = target.guest === "held-copy";
@@ -2616,8 +2618,9 @@ export class Snapshots {
     const kind = source?.kind ?? target.box.kind;
     const offer = this.offerFor(backend, kind);
     if (!offer || offer.fork !== "copy" || !backend.forkSnapshot || !backend.armFork || !backend.planSnapshots || !backend.guestIdentity || (heldCopy && !backend.copyPlan)) throw new BoxError("unsupported", `${backend.label} does not fork ${kind} boxes.`);
-    const sharedRefused = input.gpu === "shared" ? forkGpuRefused(backend, kind) : null;
-    if (sharedRefused) throw new BoxError("unsupported", sharedRefused);
+    if (input.gpu === "whole" && !(await this.#deps.boxes.wholeCards?.())) throw new BoxError("unsupported", caller.is === "agent" ? WHOLE_CARDS_OFF_FOR_FORK.agent : WHOLE_CARDS_OFF_FOR_FORK.person, WHOLE_CARDS_OFF_FOR_FORK.agent);
+    const gpuRefused = input.gpu === "shared" || input.gpu === "whole" ? forkGpuRefused(backend, kind) : null;
+    if (gpuRefused) throw new BoxError("unsupported", gpuRefused);
     const safeFrom = offer.forkSafeFrom ?? 1;
     if (target.forkSafe < safeFrom) {
       throw new BoxError(
@@ -3280,8 +3283,10 @@ export class Snapshots {
     } catch (error) {
       if (signal.aborted) throw error;
       const words = sentence(message(error));
+      const agentWords = agentMessageOf(error);
       await this.#neverBegan(context, box, `bb-box did not restore box ${box.name}: ${words}`);
-      throw new BoxError(error instanceof BackendError && error.code === "no_capacity" ? "no_capacity" : "unreachable", `bb-box did not restore box ${box.name}: ${words} bb-box changed nothing.`);
+      const refused = (said: string) => `bb-box did not restore box ${box.name}: ${said} bb-box changed nothing.`;
+      throw new BoxError(error instanceof BackendError && error.code === "no_capacity" ? "no_capacity" : "unreachable", refused(words), agentWords === null ? null : refused(sentence(agentWords)));
     }
   }
 

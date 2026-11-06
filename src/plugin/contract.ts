@@ -309,8 +309,8 @@ export const contract = defineRpcContract({
   "snapshots.tab": { input: z.null(), output: z.custom<SnapshotsTabView>() },
   "snapshots.bulkCheck": { input: z.object({ snapshots: z.array(z.string().min(1)).min(1).max(200), change: z.enum(["keep", "delete"]), ...keepDate }), output: z.custom<BulkCheck>() },
   "snapshots.bulk": { input: z.object({ snapshots: z.array(z.string().min(1)).min(1).max(200), change: z.enum(["keep", "delete"]), ...keepDate }), output: z.custom<BulkDone>() },
-  "snapshot.forkCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), asMachine: z.boolean().optional(), gpu: z.enum(["none", "shared"]).optional() }), output: z.custom<ForkPreview>() },
-  "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).refine((name) => name === "" || isMachineName(name)).optional(), asMachine: z.boolean().optional(), gpu: z.enum(["none", "shared"]).optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
+  "snapshot.forkCheck": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), asMachine: z.boolean().optional(), gpu: z.enum(["none", "shared", "whole"]).optional() }), output: z.custom<ForkPreview>() },
+  "snapshot.fork": { input: z.object({ box: z.string().min(1), snapshot: z.string().min(1), name: z.string().max(32).refine((name) => name === "" || isMachineName(name)).optional(), asMachine: z.boolean().optional(), gpu: z.enum(["none", "shared", "whole"]).optional(), request: snapshotRequest }), output: z.custom<ForkStarted>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */

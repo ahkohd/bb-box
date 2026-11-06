@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { test } from "node:test";
 import { CardReservations, cardsView, loadOf, nextGeneration, outstandingRequests, placeShared, settleOutstanding, underCardLock, waitForAnswer, type PlaceInput, type Placed } from "../src/backends/proxmox-lxc/gpu-claims.ts";
+import { PERSON, blockWords, type CardNamer } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
 import { parseHelperLines } from "../src/backends/proxmox-lxc/gpu-marking.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type CopyHooks, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { CARD_A, CARD_B, ClaimsBridge, INSTALL, POOL, SECOND_INSTALL } from "./gpu-helper/claims-bridge.ts";
@@ -48,8 +49,10 @@ function placedOn(placed: Placed): string | null {
   return placed.is === "placed" ? placed.card.uuid : null;
 }
 
+const byVmid: CardNamer = { guest: (vmid) => ({ is: "box", name: `CT ${vmid}`, threadId: null }), title: () => null };
+
 function reasonsOf(placed: Placed): readonly string[] {
-  return placed.is === "refused" ? placed.reasons : [];
+  return placed.is === "refused" ? placed.reasons.map((reason) => blockWords(reason, byVmid, PERSON)) : [];
 }
 
 function cardIn(tags: readonly string[]): string | null {
@@ -99,7 +102,7 @@ test("071 unit 5 gate: two acquires at once with desktops per GPU 1 go to differ
   const clones = bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
   await assert.rejects(backend.acquire(box(), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity");
-    assert.match(error.message, /^No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have and card 1 has 1 of this install's boxes, the most a card may have\. Release a desktop box, or raise the desktops per GPU\.$/);
+    assert.match(error.message, /^No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release a desktop box, or raise the desktops per GPU\.$/);
     return true;
   });
   assert.equal(bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length, clones, "refused before any copy");
@@ -132,7 +135,7 @@ test("071 unit 5 gate: a second install with its own pool asks for a card the fi
   const unnamed = bridge.backend({ install: SECOND_INSTALL, templates: "9001 gpu-x", first: 7070 });
   await assert.rejects(unnamed.acquire(box(), null, hooks(), signal()), /^BackendError: No card on pve can take another box now: no GPU desktop template's GPU ID \(gpu-x\) names a card the GPU helper's report lists; name each by the UUID nvidia-smi -L shows\./);
   const onlyA = bridge.backend({ install: SECOND_INSTALL, templates: `9001 GPU-${A}`, first: 7080 });
-  await assert.rejects(onlyA.acquire(box(), null, hooks(), signal()), /^BackendError: No card on pve can take another box now: card 0 is CT 7001's whole card\. Release a desktop box/);
+  await assert.rejects(onlyA.acquire(box(), null, hooks(), signal()), /^BackendError: No card on pve can take another box now: card 0 is held whole by CT 7001 of another install\. Release a desktop box/);
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
 
@@ -231,7 +234,7 @@ test("071 unit 5: a stopped shared desktop starts on its own card while it has r
   const pine = box("linux-desktop", "lone-pine");
   bridge.desktop(7022, CARD_B, pine, INSTALL, { marker: marker("shared", CARD_B, 1), running: true });
   bridge.pass();
-  await assert.rejects(backend.start({ ref: "7021", host: "pve", address: null, size: null, data: { template: 9001, box: reef.boxId } }, signal()), /Container 7021 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have and card 1 has 1 of this install's boxes, the most a card may have\. Release another desktop box, or start it again later\. It is stopped, with its disk as it was\./);
+  await assert.rejects(backend.start({ ref: "7021", host: "pve", address: null, size: null, data: { template: 9001, box: reef.boxId } }, signal()), /Container 7021 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release another desktop box, or start it again later\. It is stopped, with its disk as it was\./);
   assert.equal(bridge.proxmox.guests.get(7021)!.status, "stopped");
   assert.deepEqual(bridge.gpuTags(7021), [marker("shared", CARD_A, 1)], "nothing about it changed");
 });
@@ -309,7 +312,7 @@ test("071 unit 5: capacity counts claims: a stopped shared box holds no place, a
   bridge.pass();
   const full = await backend.capacity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }, [], signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /card 0 has 1 of this install's boxes, the most a card may have and card 1 has 1 of this install's boxes, the most a card may have/);
+  assert.match(full.message!, /card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)/);
   await backend.release(taken, releasing);
   bridge.pass();
   assert.equal((await backend.capacity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }, [], signal())).ok, true, "a released box frees its card");
@@ -342,7 +345,7 @@ test("071 unit 5: the claim rules on their own: holders, reservations, the lock,
   assert.deepEqual(reasonsOf(placeShared(input({ lines: lost, candidates: new Set([A]), vmid: 3 }))), ["card 0 waits for CT 4 to ask again, as the GPU helper's ledger was lost and it may hold the card"], "one of them asking again is not held back by itself");
   const held = reservations.add(A, "shared", 384, "bx", null);
   assert.equal(placeShared(input({ reserved: reservations.live(lines, 0), limit: 2 })).is, "placed");
-  assert.deepEqual(reasonsOf(placeShared(input({ reserved: reservations.live(lines, 0), limit: 1, candidates: new Set([A]) }))), ["card 0 has 2 of this install's boxes, the most a card may have"]);
+  assert.deepEqual(reasonsOf(placeShared(input({ reserved: reservations.live(lines, 0), limit: 1, candidates: new Set([A]) }))), ["card 0 has 2 of this install's boxes, the most a card may have (CT 1 and a box)"]);
   held.vmid = 1;
   assert.equal(loadOf(a, input({ reserved: reservations.live(lines, 0) })).boxes, 1, "a reservation for a guest the report already counts is counted once");
   reservations.settle(held, 0);
@@ -420,7 +423,7 @@ test("071 unit 5: an acquire resumed after a restart does not start the guest it
   const onlyB = bridge.backend({ templates: `9002 GPU-${B}` });
   await assert.rejects(
     onlyB.acquire(refused, { ref: "7009", host: "pve", address: null, size: null, data: { template: 9002, box: refused.boxId } }, hooks(), signal()),
-    /^Error: bb-box did not start the guest it had made for box turned-back, and releases it: No card on pve can take another box now: card 1 is CT 7008's whole card\. Release another desktop box, or start it again later\.$/,
+    /^Error: bb-box did not start the guest it had made for box turned-back, and releases it: No card on pve can take another box now: card 1 is claim-box-\d+'s whole card\. Release another desktop box, or start it again later\.$/,
   );
   assert.equal(bridge.proxmox.guests.has(7009), false, "the guest it had made is released");
   assert.ok(bridge.node.reportLines().some((line) => line.startsWith(`claim 7009 g1 refused whole-taken ${B}`)), "the helper had refused its marker");
@@ -502,7 +505,7 @@ test("071 unit 5, Opus 1: the start gate places a box only on a card a desktop t
   const owl = box("linux-desktop", "swift-owl");
   bridge.desktop(7046, CARD_A, owl, INSTALL, { marker: marker("shared", CARD_A, 1) });
   bridge.pass();
-  await assert.rejects(backend.start(bridge.stoppedGuest(7046, owl, 9001), signal()), /^Error: Container 7046 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have\. Release another desktop box, or start it again later\./);
+  await assert.rejects(backend.start(bridge.stoppedGuest(7046, owl, 9001), signal()), /^Error: Container 7046 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release another desktop box, or start it again later\./);
   assert.equal(bridge.cardOf(7046), CARD_A, "it is not moved to card 1, which no desktop template names");
   assert.deepEqual(bridge.node.guestWrites(), []);
 });
@@ -696,7 +699,7 @@ test("071 unit 5, final review F2: a ledger lost while nvidia-smi fails is rebui
   bridge.answering = true;
   bridge.node.smiFails(false);
   bridge.pass();
-  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /card 0 is CT 7001's whole card/);
+  await assert.rejects(backend.acquire(box(), null, hooks(), signal()), /card 0 is whole-owl's whole card/);
   assert.ok(bridge.node.reportLines().includes(`claim 7001 g1 granted whole ${A}`), bridge.node.reportLines().join("\n"));
   assert.equal(bridge.proxmox.guests.get(7001)!.status, "running");
   assert.deepEqual(bridge.node.guestWrites(), []);
@@ -793,7 +796,7 @@ test("071 unit 5, go review N2: a card the helper cannot map to its device nodes
   bridge.node.setCards([CARD_A, CARD_B]);
   bridge.pass();
   const lone = bridge.backend({ templates: `9001 GPU-${A}` });
-  await assert.rejects(lone.acquire(box(), null, hooks(), signal()), /card 0 is CT 7001's whole card/);
+  await assert.rejects(lone.acquire(box(), null, hooks(), signal()), /card 0 is whole-owl's whole card/);
   assert.ok(bridge.node.reportLines().includes(`claim 7001 g1 granted whole ${A}`), bridge.node.reportLines().join("\n"));
   assert.equal(bridge.proxmox.guests.get(7001)!.status, "running");
   assert.deepEqual(bridge.node.guestWrites(), []);

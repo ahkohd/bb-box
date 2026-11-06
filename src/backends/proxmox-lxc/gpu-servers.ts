@@ -114,9 +114,9 @@ export function serverRefusal(node: string, why: string, personFix: string): Ref
   };
 }
 
-export function noCardRoomRefusal(node: string, reasons: string): Refusal {
+export function wholeRefusal(node: string, why: string, personFix: string): Refusal {
   return {
-    person: `No card on ${node} can take a shared GPU now: ${reasons}. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings.`,
-    agent: `Not made: no card on ${node} can take a shared GPU now: ${reasons}. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+    person: `${node} cannot give a box a whole card now: ${why}. ${personFix}`,
+    agent: `Not made: ${node} cannot give a box a whole card now: ${why}. Ask for gpu shared, or ask the user. bb-box changed nothing.`,
   };
 }
