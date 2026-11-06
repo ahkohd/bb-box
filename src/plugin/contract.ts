@@ -9,6 +9,7 @@ import { isMachineName } from "../core/names.ts";
 import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
+import type { GpuMate } from "./gpu-page.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
@@ -204,6 +205,7 @@ export interface BoxPageState {
   readonly ended: EndedBox | null;
   readonly snapshots?: BoxSnapshotsView | null;
   readonly busy?: Busy | null;
+  readonly gpuMates?: readonly GpuMate[];
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */

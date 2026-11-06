@@ -4293,3 +4293,100 @@ the installer leaves; both runs left a half-installed userspace.
 - A desktop's update is tested with the fake backend only: the gate is on a
   server, as a GPU desktop's display can take more of a card than the gate's
   256 MiB allows.
+
+## Unit 14: the box's page and the Boxes page
+
+Built on main `07b96c95`, on branch `u71-14`. Section 13's box page and Boxes
+page: the GPU fact, the GPU card, a stopped box's words, and the notices, for
+Proxmox LXC and Docker as main has them. The node gate does not apply to this
+unit. There are no node steps, and nothing here reached the node.
+
+### What it does
+
+- **The GPU fact**, beside Size, so the page names the GPU once. "Card 0,
+  whole" with "NVIDIA RTX 4090 · 24 GiB" under it. "Card 1, shared" with
+  "with lone-pine" under it, or the model and memory when no other box of
+  this install holds the card. A model that itself contains commas stays one
+  model. An older desktop whose fact is still "GPU-0a1b" stays "Shared" with
+  that text under it.
+- **A stopped shared box on Proxmox LXC** holds no card. Its fact says "Card
+  1 when it starts, if it has room", and its row says "holds no card while
+  stopped". A stopped whole card stays its own. A stopped shared box on
+  Docker keeps the card, because its devices are fixed, and its row does not
+  say it holds no card.
+- **The badge** says "GPU" for a shared card and "Whole GPU" for a whole one,
+  including while the box is stopped. The Boxes page is not regrouped by card.
+- **The GPU card**, under Activity. Which card, the other boxes of this
+  install on it, with links, and the card's memory and use as the Monitor
+  reads them. This box's memory and the other use are marked apart when the
+  reading has both. Its processes are listed. "Change…" opens Resize at the
+  GPU. The last line says what the claim means: a shared card can be taken
+  entirely by one box; a whole card on Proxmox LXC fences other guests and
+  not the host; a whole card on Docker is where bb-box places boxes, not a
+  fence. A stopped box says what happens at its next start, and the lines
+  that wait for a reading keep their height.
+- **Notices.** A box on the wrong card, running or stopped. A userspace that
+  does not match the host's driver, with "Update NVIDIA's userspace…". Any
+  other card check, such as CUDA returning 802, so that why is not dropped.
+  Confirming the update refuses and changes nothing: installing the userspace
+  is unit 12.
+- Mates are the other boxes of this install, on the same backend, that hold
+  the same card. A stopped shared box on Proxmox LXC is not among them.
+
+### What was run
+
+On a linux box, in `node:26-bookworm` as root with `--init`:
+
+- `tsc` clean. The node suite: 3,853 tests, 3,431 passed, 112 failed, 310
+  skipped. The 112 are the environment failures earlier units recorded
+  (identity reset, the Android image, `setup-mac.sh`, snapshots). None is a
+  unit 14 test. The 8 new tests are the difference from the 3,845 on this
+  main. vitest: 473 passed, the 3 new page tests among them.
+- `test/gpu-page.test.ts`, 8 tests, and `test/gpu-page.test.tsx`, 3 tests:
+  the fact, the stopped words for Proxmox LXC and Docker, the badge, the
+  mates, each notice, the footers, the row, the card's reading, and Change
+  opening Resize at the GPU.
+- 26 reverts, each rule on its own, each failing its tests, and the files
+  put back. One of them, a model that contains a comma, first passed, because
+  the example model had no comma; the example now has one, and the revert
+  fails.
+
+### The live gate
+
+The node gate does not apply. The live check is the one unit 11 rehearsed:
+a fake card, on a linux box of this thread, with a fresh `npx bb-app@0.48.1`,
+no account, enrolment off, and whole cards on for that install alone. bb-box
+is this branch. Docker was given a CDI spec with only `nvidia.com/gpu=all`,
+as in WSL, and a fake `nvidia-smi` and `libcuda.so.1`. The probe read two
+cards, each an NVIDIA RTX 4090 of 24 GiB. Two shared `linux` boxes were made
+on card 0. The Monitor in the first read the card at 12 per cent, 6 GiB of
+24 GiB, of which the box's own process was 2 GiB.
+
+Screenshots at 390, 760 and 1440 px, light and dark, are in this thread's
+storage under `u71-14-shots/`.
+
+| What | Seen |
+| --- | --- |
+| The GPU fact | "Card 0, shared", and "with crisp-lagoon" under it. Size stays cores and memory. The badge says "GPU" |
+| The GPU card | The model and 24 GiB, Change…, the memory bar (this box, other use, free), python3 at 2 GiB, the other box linked, and the line that one box can take all of the card's memory |
+| A stopped box | Docker keeps the card. The card says it is not read while stopped, "None now.", and that a box keeps its card while stopped because its devices are fixed. The row says "Stopped" and keeps the GPU badge |
+| The wrong card | A start whose `nvidia-smi` listed the other card. The notice says the box is on the wrong card and that bb-box does not stop it |
+| Another card check | A start whose `cuInit` returned 802. The notice names that, and it is not the wrong-card notice |
+
+### Deviations from the note
+
+- The node gate does not apply, so there are no node steps. No Proxmox guest
+  was made. The stopped Proxmox words, "Card 1 when it starts, if it has
+  room" and "holds no card while stopped", are in the tests. The live stopped
+  box is a Docker one, which keeps its card.
+- Docker's card check is given no host driver, so it never writes the
+  userspace sentence. The userspace notice was not on the live page. The
+  tests cover it, including "Update NVIDIA's userspace…" and the refusal.
+- "Change…" opens today's Resize dialog with `data-resize-at="gpu"`. The GPU
+  choices inside Resize are unit 13, which is not built. The update's confirm
+  refuses, because the install is unit 12. Nothing was installed and nothing
+  was resized.
+- The memory bar is this box, other use, and free. One reading from inside
+  the guest cannot split other boxes from use outside bb-box.
+- A whole card was not made live. Its fact, badge and last line are in the
+  tests. The two live boxes were the shared pair the fact's "with" line needs.

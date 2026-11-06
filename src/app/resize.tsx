@@ -177,7 +177,7 @@ type Step = { readonly at: "pick" } | { readonly at: "confirm"; readonly down: n
  * The Resize dialog for `box`, open while it is not null: a thread's box, by `threadId`, or one of your machines without it.
  * `onResized` runs after a resize changed the box.
  */
-export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxView | null; threadId?: string; onClose: () => void; onResized?: () => void }) {
+export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }: { box: BoxView | null; threadId?: string; at?: "size" | "gpu"; onClose: () => void; onResized?: () => void }) {
   const rpc = useRpc<Contract>();
   const [choice, setChoice] = useState<string>(CUSTOM);
   const [fields, setFields] = useState<Fields>(fieldsOf(box?.sizeNow));
@@ -320,7 +320,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
 
   return (
     <AlertDialog open onOpenChange={(next) => !next && close()}>
-      <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
+      <AlertDialogContent className="max-h-[90vh] overflow-y-auto" data-resize-at={at}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
