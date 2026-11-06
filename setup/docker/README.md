@@ -264,7 +264,8 @@ the Docker host:
    on `gpu-desktops`, GPU boxes.
 
 bb-box reads each card's UUID, model and memory with `nvidia-smi` in a
-short-lived container given the cards, never loading them. A shared box goes
+short-lived container given the cards, never loading them. If that fails, a
+card the spec names by index still takes shared boxes, but no whole one. A shared box goes
 to the card with the fewest boxes, then the most memory free, and needs 1,024
 MiB free on it for a server or 384 MiB for a desktop, when last read. A whole
 box goes to a card no box holds, of any install, where whole cards are on
@@ -273,7 +274,8 @@ box goes to a card no box holds, of any install, where whole cards are on
 bb-box sets `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` to the box's
 card in the container's environment and in `/etc/environment`, so CUDA in
 `box_run`, a terminal, `sudo -i` and a service started from either uses the
-box's card. They choose a card; they are not a fence: `nvidia-smi` lists
+box's card. A desktop's session and its services get them from the image's
+start script, in images built by this bb-box's `build.sh`. They choose a card; they are not a fence: `nvidia-smi` lists
 every card the box can open, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"`
 shows its own.
 
@@ -287,6 +289,9 @@ shows its own.
   and another install on the host sees the part a box was made with.
 - A desktop whose card cannot drive its display falls back to the CPU, and
   the reason is in the container's log.
+- Give each Docker daemon one backend. Where two of an install's backends
+  reach the same daemon, bb-box makes boxes there through the one whose ID
+  sorts first, and the doctor fails the other.
 
 ## Check it worked
 

@@ -901,6 +901,7 @@ export interface Backend {
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
   gpuRoom?(kind: string): Promise<GpuRoom>;
+  cardReach?(kind: string): string | null;
   markGpus?(request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;

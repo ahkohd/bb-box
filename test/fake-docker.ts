@@ -103,7 +103,7 @@ if (process.argv[2] !== "-c" || !script.includes("libcuda.so.1")) {
 }
 const cards = JSON.parse(process.env.FAKE_CARDS ?? "[]");
 const visible = process.env.CUDA_VISIBLE_DEVICES;
-const picked = process.env.FAKE_CUDA_IGNORES_VISIBLE || visible === undefined ? cards : cards.filter((card) => "GPU-" + card.uuid === visible);
+const picked = process.env.FAKE_CUDA_NO_DEVICE ? [] : process.env.FAKE_CUDA_IGNORES_VISIBLE || visible === undefined ? cards : cards.filter((card) => "GPU-" + card.uuid === visible);
 if (!script.includes("cuDeviceGetUuid")) { console.log(picked.length ? 0 : 100); process.exit(0); }
 if (!picked.length) { console.log("cudacard 100 0 none"); process.exit(0); }
 console.log("cudacard 0 " + picked.length + " " + picked[0].uuid.replaceAll("-", ""));

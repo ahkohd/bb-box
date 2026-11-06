@@ -217,6 +217,7 @@ test("reads the daemon's facts and its containers", () => {
     parseInfo(
       JSON.stringify({
         Name: "docker1",
+        ID: "6f0a1b2c-daemon",
         ServerVersion: "29.0.0",
         OperatingSystem: "Ubuntu 24.04 LTS",
         OSType: "linux",
@@ -230,6 +231,7 @@ test("reads the daemon's facts and its containers", () => {
       }),
     ),
     {
+      id: "6f0a1b2c-daemon",
       name: "docker1",
       version: "29.0.0",
       operatingSystem: "Ubuntu 24.04 LTS",

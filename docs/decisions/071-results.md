@@ -3350,12 +3350,21 @@ nothing here is offered until it passes.
   memory with `nvidia-smi` in a short-lived container given the cards (no
   network, not privileged, `--pull never`), kept 15 s for a placement and
   60 s for `box_list`. A card is known by its UUID; the CDI device a box gets
-  is the one the toolkit names for it, by UUID or index.
+  is the one the toolkit names for it, by UUID or index. Where the probe
+  fails, a device named by UUID is that card and one named by index is kept
+  by its device, with nothing read: shared boxes go on it, with no CUDA
+  variables and no check, as before this unit, and no whole card. A box with
+  no GPU never runs the probe.
 - **WSL.** The toolkit's spec in WSL has one device, `nvidia.com/gpu=all`, as
   every card is `/dev/dxg`. Where the daemon lists only that, every card is
   given through it, and the box's card is the UUID bb-box placed it on.
-- **Placement**, under the backend's placement lock, as acquires were
-  already ordered. A box being made holds its card, with the memory it
+- **Placement**, under a lock of the Docker daemon's, by its ID from `docker
+  info`, which every backend instance on that daemon shares, with its
+  reservations and the cards left out: a settings check's instance of a
+  backend and the live one order their placements on one lock, and read
+  switched parts from the backend's one storage. Of two backends of the install on one daemon, only the one whose
+  ID sorts first makes boxes there; the other refuses, for each audience,
+  and its doctor fails `docker.one-backend`. A box being made holds its card, with the memory it
   needs reserved, from its placement until docker lists it. Every bb-box
   container on the host holds the card its labels name, running or
   stopped, of any install, as a container's devices are fixed. Shared: a card
@@ -3375,31 +3384,43 @@ nothing here is offered until it passes.
   `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` set to `GPU-<UUID>`,
   `NVIDIA_DRIVER_CAPABILITIES=all`, and the labels `bbbox.gpu`,
   `bbbox.gpu-card` and `bbbox.gpu-part` (the part it was made with). A
-  desktop still gets `BBBOX_GPU=1`, and `BBBOX_GPU_ID` when privileged: the
-  card's UUID where its CDI name is `all`.
+  desktop still gets `BBBOX_GPU=1`, and `BBBOX_GPU_ID` when it can see every
+  card: when privileged, or when its CDI name is `all`, where it is the
+  card's UUID. `BBBOX_GPU_CARD` names the card for the box's start script.
 - **Every route.** The container's environment reaches `docker exec`:
   `box_run`, the box page's terminal and BB's daemon with what it starts.
   After the box is ready, bb-box writes the two variables into
   `/etc/environment` as root, keeping its other lines, which the command
   prelude, login shells and PAM (`sudo -i`, `su -l`) read. So a service
-  started from a clean environment gets them too. bb-box's images are not
-  changed, so a test BB can use production's images on the owner's host.
+  started from a clean environment gets them too. A desktop's launcher,
+  `setup/docker/start`, starts its session and services (XFCE, Cua Driver,
+  Selkies) from a clean environment, so it now adds both variables from
+  `BBBOX_GPU_CARD`, past the `NVIDIA_VISIBLE_DEVICES=void` a CDI spec may
+  set; that needs desktop images built from this branch. Servers need no
+  image change, so the gate uses production's images on the owner's host.
 - **The check after start**, after an acquire and after each start of a box
   made by this unit: `nvidia-smi` lists the card, `cuInit` works, and CUDA's
   device 0 has the card's UUID (`cuDeviceGetUuid`, no context, no memory). A
-  fresh box whose CUDA picks another card, or none, or whose `nvidia-smi`
-  lists none, is removed, the acquire refused for each audience, and the card
-  left out for 10 minutes. Other failures keep the box and its GPU fact says
-  what the check found. A started box cannot move on Docker, so its fact
-  says what the check found.
+  fresh box whose CUDA picks another card or finds none (its device answer,
+  or `cuInit` 100, with the card listed), or whose `nvidia-smi` lists none,
+  is removed, its card left out for 10 minutes, and placed once more on
+  another card within the acquire, its record following it. When that fails
+  too, or no other card can take it, the acquire is refused for each
+  audience, naming each card and why, and nothing is left. Other failures
+  keep the box and its GPU fact says what the check found. A started box
+  cannot move on Docker, so its fact says what the check found.
 - **The words.** A GPU box's facts: "GPU: card 0, shared, <model>, 32 GiB.
   Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed."
-  Every box on a host whose boxes are privileged, GPU or none, and every GPU
-  box where the cards are one device, has a `Cards` fact, which `box_status`
-  and `box_acquire`'s answer show: "On <host>, every box with Docker in it
-  can open every card, with a GPU or without. None and Whole card are what
-  bb-box places, not what a box can reach." `box_list` adds it after the
-  cards, and the resize words and the doctor say it too.
+  The words about reach come from the host's privilege, not from a kind's
+  GPU: every box of every kind, CPU desktops included, on a host that lists
+  cards and whose boxes are privileged, with GPU boxes on or off, and every
+  GPU box where the cards are one device, has a `Cards` fact, which
+  `box_status` and `box_acquire`'s answer show: "On <host>, every box with
+  Docker in it can open every card, with a GPU or without. None and Whole
+  card are what bb-box places, not what a box can reach." `box_list` says it
+  once for each kind offered there, the New box form says it under
+  Resources for the provider a box would go to, and the resize words and
+  the doctor say it too.
 - **The share switch.** `box_resize gpu` and `bb box resize --gpu` (and
   `bb box machines resize --gpu`) take none, shared or whole; the tool's and
   the CLI's whole is hidden while whole cards are off, as unit 8 does.
@@ -3503,9 +3524,6 @@ within two sweeps, so the gate's script makes a real project and thread.
   with `installs`. Unit 9 extends it for Proxmox LXC.
 - On WSL every GPU box gets every card, as the spec has one device; the words
   say so even where boxes are not privileged.
-- A fresh box that fails its check is refused and its card left out, not made
-  again on another card: a container's card is fixed when it is made, and
-  making it again belongs to the registry's retry. The gate's host has one card.
 - Readings come from the probe container, not from a host report or a box,
   with their age in `box_list`. A placement reads the cards again when its
   reading is over 15 s old, which adds about a second to a GPU box's acquire.
@@ -3513,6 +3531,33 @@ within two sweeps, so the gate's script makes a real project and thread.
   shared, and their starts run no check, as before.
 - `linux-desktop` with gpu none is not offered on Docker: that is
   `linux-desktop-cpu`.
+
+### After the reviews
+
+Astra and Fable said no-go. The lead decided the fixes below, all in one
+more commit; the pull request stays a draft until the gate passes and is
+recorded here (Astra 1). Each fix has a test that failed with it reverted,
+on a box: 16 reverts for these fixes (15 rules and the form's line), and the
+25 reverts of the first round run again, one of them changed to the new
+line, each failing its tests.
+
+| Finding | Fix |
+| --- | --- |
+| The card lock and reservations were a backend instance's, so two backends on one daemon could both take a card whole (Astra 2) | The lock, the reservations and the cards left out are the Docker daemon's, by its ID, shared by every instance on it; switched parts are in the backend's storage, which its instances share. Of two backends of the install on one daemon, only the one whose ID sorts first makes boxes; the other refuses, for each audience, and the doctor's new `docker.one-backend` fails on it and warns on the first |
+| A CUDA that found no device passed when `cuInit` returned 100 before its card was read (Astra 3) | CUDA's device answer is read whenever `nvidia-smi` lists the card, and a `cuInit` of 100 with the card listed is no device: both are a wrong card |
+| A fresh box that failed its check was refused, not made again on another card, and the results said the registry would retry, which it does not (Astra 6, Fable 2) | Within the acquire, the box is removed, its card left out for 10 minutes and its record moved, and it is placed and made once more on another card; when that fails too, or no card can take it, it is refused naming each card and why. The results' words are corrected |
+| The desktop's session and services lost both variables in the launcher's clean environment (Astra 4) | `setup/docker/start` adds them from `BBBOX_GPU_CARD`, which bb-box sets on every GPU box; `BBBOX_GPU_ID` is passed to a desktop that sees every card: privileged, or on `nvidia.com/gpu=all` (Fable) |
+| The privileged-box words left out CPU desktops and were not in the New box form (Astra 5) | They come from the host's privilege and its cards, for every kind, with GPU boxes on or off: the `Cards` fact, `box_list` once per kind, and a line under Resources in the New box form for the provider a box would go to |
+| Devices named by index whose cards could not be read refused every GPU desktop (Fable 1) | They are kept by device: shared boxes go on them, with no CUDA variables and no check, as before this unit; whole, and a switch to whole, are refused on them |
+| A box with no GPU ran the probe (Fable) | The reach words come from `docker info`'s devices, so a box with no GPU never reads the cards |
+| Comment lines added to `test/fake-docker.mjs` (Astra 7) | Removed |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,827 tests, 3,405 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures as before, by name, as on main in
+the same box; vitest, 470 passed. `test/docker-gpus.test.ts` has 24 tests.
+One plugin test, a try to join BB with a set clock, failed once in a run of
+its own on this box and passed again; it fails on main the same way.
 
 ### The gate
 

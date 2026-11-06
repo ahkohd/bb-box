@@ -361,6 +361,7 @@ export function NewBox({
   // With 1 GPU chosen, why no GPU would take the box (#603); a ready spare holds its GPU already.
   const placing = onOffer ? [onOffer] : shown;
   const gpuFull = gpuChoice && picked.gpu && !placing.some(readyOn) ? gpuFullNote(placing, Date.now()) : null;
+  const cardReach = [...new Set(placing.flatMap((offer) => (offer.cardReach ? [offer.cardReach] : [])))].join(" ");
 
   useEffect(() => {
     if (open) return;
@@ -645,6 +646,7 @@ export function NewBox({
                   {gpuFull ? <p className="text-xs text-muted-foreground">{gpuFull}</p> : null}
                 </div>
               ) : null}
+              {cardReach ? <p className="text-xs text-muted-foreground">{cardReach}</p> : null}
             </FormSection>
           ) : null}
           <FormSection title="Provider" description="Where the box goes: the first with room for it, in this order, unless you choose one.">

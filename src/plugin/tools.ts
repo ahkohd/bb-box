@@ -369,11 +369,15 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
       } else if (room?.parts && !room.parts.includes("shared") && room.withheld && offer.gpuParts?.includes("shared")) {
         words.push(` No GPU${on} now: ${room.withheld}.`);
       }
-      if (room?.reach && room.cards?.length) words.push(` ${room.reach}`);
       if (kind.desktop && offer.gpuParts?.includes("none") && offer.gpuParts.includes("shared")) words.push(` gpu none${on} gives a desktop drawn by the CPU, from the same image.`);
       return words;
     })
     .join("");
+}
+
+export function cardReachText(kind: KindView): string {
+  const said = [...new Set(kind.offers.flatMap((offer) => (offer.cardReach ? [offer.cardReach] : [])))];
+  return said.map((words) => ` ${words}`).join("");
 }
 
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
@@ -636,7 +640,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map((box) => boxLine(seenByAgent(box))).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${cardReachText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);

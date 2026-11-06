@@ -28,6 +28,7 @@ const machine = (id: string, name: string, more: Partial<MachineRecord> = {}): M
 });
 
 const info = (more: Partial<DockerInfo> = {}): DockerInfo => ({
+  id: "",
   name: "devpc",
   version: "29.8.1",
   operatingSystem: "Arch Linux",

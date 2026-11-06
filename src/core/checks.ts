@@ -126,6 +126,7 @@ export const CHECKS = {
   "docker.lxcfs": { name: "Memory and CPUs a box sees", from: ["docker"], what: "The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken." },
   "docker.network": { name: "Network <network>", from: ["docker"], what: "bb-box's network for its boxes, made by bb-box." },
   "docker.privileged": { name: "Docker in boxes", from: ["docker"], what: "Whether boxes are privileged, so they can run Docker inside." },
+  "docker.one-backend": { name: "One backend for this daemon", from: ["docker"], what: "No other backend of this install reaches the same Docker daemon. Where two do, bb-box makes boxes there through the one whose ID sorts first, as each would count only its own boxes and cards (071)." },
   "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; and another install's GPU boxes on the host (071)." },
   "docker.capacity": { name: "Room on <host>", from: ["docker"], what: "Room on the host for a Linux box at its default size." },
   "docker.sizes": { name: "Room for each kind", from: ["docker"], what: "The host holds a box of each kind at its default size." },

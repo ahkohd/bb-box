@@ -304,6 +304,7 @@ export interface OfferView {
   /** A GPU desktop's GPUs as the backend last read them (#603); null when it reads none. */
   readonly gpuRoom: GpuRoom | null;
   readonly gpuParts?: readonly GpuPart[];
+  readonly cardReach?: string;
 }
 
 /** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
@@ -375,6 +376,7 @@ export function kindViews(
       hostOs: backend.hostOs ?? null,
       gpuRoom: gpus[key] ?? null,
       gpuParts: gpuPartsOffered(kind),
+      ...cardReachOf(gpus[key]?.reach ?? backend.cardReach?.(kind.id) ?? null),
     };
     const computerUse = kind.capabilities.computerUse !== null;
     const offerDevices = kind.capabilities.device;
@@ -653,6 +655,10 @@ export function formLine(box: BoxRecord): string | null {
 
 function neverReady(box: BoxRecord): boolean {
   return box.readyAt === null && !box.restoredAt;
+}
+
+function cardReachOf(reach: string | null): { readonly cardReach?: string } {
+  return reach ? { cardReach: reach } : {};
 }
 
 export function gpuLine(box: BoxRecord): string | null {

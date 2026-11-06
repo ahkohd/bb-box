@@ -20,6 +20,7 @@ export interface ProbedCard {
 
 export interface DockerCard {
   readonly uuid: string;
+  readonly uuidKnown: boolean;
   readonly index: number | null;
   readonly model: string | null;
   readonly totalMiB: number | null;
@@ -119,7 +120,7 @@ function deviceIndex(device: string): number | null {
 export function cardsOnHost(input: { readonly devices: readonly string[]; readonly allListed: boolean; readonly probed: readonly ProbedCard[] | null; readonly readAt: number | null; readonly unread: string | null }): CardsOnHost {
   const { devices, allListed, probed } = input;
   const oneDeviceForEveryCard = !devices.length && allListed;
-  const known = (card: Omit<DockerCard, "device">, device: string): DockerCard => ({ ...card, device });
+  const known = (card: Omit<DockerCard, "device" | "uuidKnown">, device: string): DockerCard => ({ ...card, uuidKnown: true, device });
   if (oneDeviceForEveryCard) {
     const cards = (probed ?? []).map((card) => known({ uuid: card.uuid, index: card.index, model: card.model, totalMiB: card.totalMiB, freeMiB: card.freeMiB }, ALL_CARDS_DEVICE));
     return { cards, oneDeviceForEveryCard, readAt: input.readAt, unread: input.unread };
@@ -129,7 +130,8 @@ export function cardsOnHost(input: { readonly devices: readonly string[]; readon
     const index = deviceIndex(device);
     const probe = (probed ?? []).find((card) => (uuid ? card.uuid === uuid : card.index === index));
     if (probe) return [known({ uuid: probe.uuid, index: probe.index, model: probe.model, totalMiB: probe.totalMiB, freeMiB: probe.freeMiB }, device)];
-    return uuid ? [known({ uuid, index: null, model: null, totalMiB: null, freeMiB: null }, device)] : [];
+    if (uuid) return [known({ uuid, index: null, model: null, totalMiB: null, freeMiB: null }, device)];
+    return index === null ? [] : [{ uuid: device, uuidKnown: false, index, model: null, totalMiB: null, freeMiB: null, device }];
   });
   return { cards: [...cards].sort(byIndex), oneDeviceForEveryCard, readAt: input.readAt, unread: input.unread };
 }
@@ -154,6 +156,10 @@ export function partOfLabel(value: string | undefined): CardPart {
 
 export function cardName(card: Pick<DockerCard, "index" | "uuid">): string {
   return card.index === null ? `card ${cudaVisible(card.uuid)}` : `card ${card.index}`;
+}
+
+export function cardOfUuid(card: string): boolean {
+  return cardUuid(card) === card;
 }
 
 function heldBy(holders: readonly CardHolder[], card: string, except?: string): CardHolder[] {
@@ -344,14 +350,23 @@ export function noCardsRefusal(host: string, why: string, what: BoxWhat): GpuRef
   };
 }
 
+export function hostListsCards(info: { readonly gpus: readonly string[]; readonly allGpus: boolean }): boolean {
+  return info.gpus.length > 0 || info.allGpus;
+}
+
+export function oneDeviceForEveryCardOf(info: { readonly gpus: readonly string[]; readonly allGpus: boolean }): boolean {
+  return !info.gpus.length && info.allGpus;
+}
+
 export function reachWords(host: string, privileged: boolean, oneDeviceForEveryCard: boolean): string | null {
   if (privileged) return `On ${host}, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.`;
   if (oneDeviceForEveryCard) return `On ${host}, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what bb-box places, not what a box can reach.`;
   return null;
 }
 
-export function seeItWords(card: string): string {
-  return `Run nvidia-smi -i ${cudaVisible(card)} to see it; every card on the host is listed`;
+export function seeItWords(card: Pick<DockerCard, "uuid" | "uuidKnown" | "index">): string {
+  const named = card.uuidKnown ? cudaVisible(card.uuid) : String(card.index);
+  return `Run nvidia-smi -i ${named} to see it; every card on the host is listed`;
 }
 
 export function placementOf(card: DockerCard): CardPlacement {
@@ -376,17 +391,21 @@ function cudaCardLine(output: string): { readonly result: string; readonly count
   return { result, count: Number(count) || 0, card };
 }
 
+const CUDA_NO_DEVICE = "100";
+
 export function judgeDockerCardCheck(output: string, card: string): CardCheck {
   const withoutCuda = output.split("\n").filter((line) => !line.trim().startsWith("cudacard ")).join("\n");
   const checked = judgeCardCheck(withoutCuda, card, null);
-  if (!checked.ok) return checked;
+  const listed = checked.ok || (checked.reading === "cards" && checked.seen.includes(card));
+  if (!listed) return checked;
+  const lines = output.split("\n").map((line) => line.trim());
+  if (lines.includes("cuinit no-python")) return checked;
   const cuda = cudaCardLine(output);
-  const cuinitLine = output.split("\n").map((line) => line.trim()).find((line) => line.startsWith("cuinit "));
-  if (cuinitLine === "cuinit no-python") return checked;
-  const failed = (why: string): CardCheck => ({ ok: false, why, seen: [checked.card.uuid], userspace: null, reading: "cards", userspaceOff: false });
+  const failed = (why: string): CardCheck => ({ ok: false, why, seen: [card], userspace: null, reading: "cards", userspaceOff: false });
+  if (cuda && cuda.result !== "0") return failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: it returned ${cuda.result || "nothing"}`);
+  if (cuda && cuda.card !== card) return failed(`CUDA in it picks ${cuda.card ? cudaVisible(cuda.card) : "a card it cannot name"}, not its card ${cudaVisible(card)}`);
+  if (!checked.ok) return lines.includes(`cuinit ${CUDA_NO_DEVICE}`) ? failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: cuInit returned ${CUDA_NO_DEVICE}`) : checked;
   if (!cuda) return failed("CUDA in it gave no answer for the card it picks");
-  if (cuda.result !== "0") return failed(`CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=${cudaVisible(card)}: it returned ${cuda.result || "nothing"}`);
-  if (cuda.card !== card) return failed(`CUDA in it picks ${cuda.card ? cudaVisible(cuda.card) : "a card it cannot name"}, not its card ${cudaVisible(card)}`);
   return checked;
 }
 
