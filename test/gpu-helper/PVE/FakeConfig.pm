@@ -95,6 +95,8 @@ sub lock_full {
     }
     log_line('locks.log', "$kind $vmid");
     swap_on_lock($kind, $vmid);
+    pool_on_lock($kind, $vmid);
+    change_on_lock($kind, $vmid);
     print STDERR "fake-pve: locked $kind $vmid\n" if $ENV{FAKE_PVE_TRACE_LOCKS};
     local $held{"$kind $vmid"} = 1;
     my @result = eval { $code->(@param) };
@@ -126,6 +128,67 @@ sub swap_on_lock {
     log_line('swaps.log', "$kind $vmid");
 }
 
+sub change_on_lock {
+    my ($kind, $vmid) = @_;
+    my ($who, $other, $from) = split /=/, ($ENV{FAKE_PVE_CHANGE_ON_LOCK} // ''), 3;
+    return unless defined $from && $who eq "$kind $vmid";
+    delete $ENV{FAKE_PVE_CHANGE_ON_LOCK};
+    my ($other_kind, $other_vmid) = split / /, $other, 2;
+    my $path = lock_path($other_kind, $other_vmid);
+    make_path(dirname($path));
+    open(my $fh, '>>', $path) or die "fake pve: cannot open $path: $!\n";
+    if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        close $fh;
+        log_line('changes.log', "$other blocked");
+        return;
+    }
+    open(my $in, '<', $from) or die "fake pve: cannot read $from: $!\n";
+    local $/;
+    my $text = <$in>;
+    close $in;
+    my $config = config_path($other_kind, $other_vmid);
+    open(my $out, '>', $config) or die "fake pve: cannot write $config: $!\n";
+    print {$out} $text;
+    close $out;
+    close $fh;
+    log_line('changes.log', "$other changed");
+}
+
+sub pool_on_lock {
+    my ($kind, $vmid) = @_;
+    move_pool_on("FAKE_PVE_POOL_ON_LOCK", $kind, $vmid);
+}
+
+sub move_pool_on {
+    my ($variable, $kind, $vmid) = @_;
+    my ($who, $move) = split /=/, ($ENV{$variable} // ''), 2;
+    return unless defined $move && $who eq "$kind $vmid";
+    delete $ENV{$variable};
+    my ($moved, $to) = split /:/, $move, 2;
+    my $path = root() . '/etc/pve/user.cfg';
+    open(my $in, '<', $path) or die "fake pve: cannot read $path: $!\n";
+    my @lines = <$in>;
+    close $in;
+    my $placed = 0;
+    for my $line (@lines) {
+        next unless $line =~ /^pool:/;
+        chomp $line;
+        my @fields = split /:/, $line, -1;
+        my @members = grep { $_ ne '' && $_ ne $moved } split /,/, ($fields[3] // '');
+        if ($fields[1] eq $to) {
+            push @members, $moved;
+            $placed = 1;
+        }
+        $fields[3] = join(',', @members);
+        $line = join(':', @fields) . "\n";
+    }
+    push @lines, "pool:$to:moved:$moved::\n" unless $placed;
+    open(my $out, '>', $path) or die "fake pve: cannot write $path: $!\n";
+    print {$out} @lines;
+    close $out;
+    log_line('pools.log', "$moved $to");
+}
+
 sub load {
     my ($kind, $vmid) = @_;
     my $path = config_path($kind, $vmid);
@@ -154,6 +217,7 @@ sub write {
     print {$fh} text($conf);
     close $fh;
     rename("$path.tmp", $path) or die "fake pve: cannot replace $path: $!\n";
+    move_pool_on("FAKE_PVE_POOL_ON_WRITE", $kind, $vmid);
     log_line('writes.log', "$kind $vmid");
     POSIX::_exit(137) if ($ENV{FAKE_PVE_DIE_AFTER_WRITE} // '') eq "$kind $vmid";
 }

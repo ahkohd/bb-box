@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.2';
+use constant VERSION => '0.4.3';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -868,11 +868,17 @@ sub whole_holder {
     return undef;
 }
 
+sub same_install_and_pool {
+    my ($guest, $to) = @_;
+    return defined $guest->{install} && defined $to->{install} && $guest->{install} eq $to->{install}
+        && defined $guest->{pool} && defined $to->{pool} && $guest->{pool} eq $to->{pool};
+}
+
 sub yields_card {
-    my ($ctx, $guest) = @_;
+    my ($ctx, $guest, $to) = @_;
     my $claim = claim_of($ctx, $guest->{vmid});
     return !$guest->{running} && !$guest->{ineligible} && !$guest->{malformed} && $claim && $claim->{part} eq 'shared'
-        && !$guest->{lock} && !$guest->{pending_devices};
+        && !$guest->{lock} && !$guest->{pending_devices} && same_install_and_pool($guest, $to);
 }
 
 sub unsettle {
@@ -931,7 +937,7 @@ sub whole_blockers {
     for my $vmid (sort { $a <=> $b } keys %$guests) {
         my $guest = $guests->{$vmid};
         next if $vmid == $requester || $guest->{holds_nothing} || !$guest->{named}{$uuid};
-        return ($vmid) unless yields_card($ctx, $guest);
+        return ($vmid) unless yields_card($ctx, $guest, $guests->{$requester});
         push @yielders, $guest;
     }
     return (undef, @yielders);
@@ -1013,14 +1019,12 @@ sub evaluate_request {
     }
     my $changes = !same_lines($guest->{devices}, $desired);
     return refuse($ctx, $guest, 'running') if $changes && $guest->{running};
-    my $yields_pending = 0;
-    for my $yielder (@yielders) {
-        my $outcome = yield_card($ctx, $guests, $yielder, $guest, $marker);
-        return unless defined $outcome;
-        return refuse($ctx, $guest, 'card-held', detail => $yielder->{vmid}) if $outcome eq 'refused';
-        $yields_pending = 1 if $outcome eq 'would';
-    }
-    commit_request($ctx, $guests, $guest, $yields_pending);
+    commit_request($ctx, $guests, $guest, \@yielders);
+}
+
+sub still_in_pool {
+    my ($guest) = @_;
+    return (fresh_pool($guest->{vmid}) // '') eq ($guest->{pool} // '');
 }
 
 sub yield_card {
@@ -1032,8 +1036,9 @@ sub yield_card {
         my ($conf, $running) = @_;
         my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
         return undef unless same_guest($yielder, $fresh);
-        return 'refused' unless yields_card($ctx, $fresh);
+        return 'refused' unless yields_card($ctx, $fresh, $to);
         return 'yielded' unless $fresh->{named}{ $marker->{card} };
+        return undef unless still_in_pool($to) && still_in_pool($fresh);
         $ctx->{would_pending} = would_signature($vmid, $why, $fresh, []);
         if ($ctx->{writes}) {
             my $entry = entry_for($ctx, $fresh);
@@ -1057,20 +1062,28 @@ sub yield_card {
 }
 
 sub commit_request {
-    my ($ctx, $guests, $guest, $yields_pending) = @_;
+    my ($ctx, $guests, $guest, $yielders) = @_;
     my $vmid = $guest->{vmid};
     my $marker = $guest->{marker};
     my $why = "request g$marker->{generation}";
     my $scanned_desired = $marker->{part} eq 'none' ? [] : device_set($ctx->{cards}{ $marker->{card} }, $guest->{set});
     my $scanned_changes = !same_lines($guest->{devices}, $scanned_desired);
-    return if !$ctx->{writes} && $scanned_changes && would_known($ctx, would_signature($vmid, $why, $guest, $scanned_desired));
-    return if $yields_pending && !$scanned_changes;
     my $outcome = with_guest($ctx, $vmid, sub {
         my ($conf, $running) = @_;
         my $fresh = describe_guest($ctx, $vmid, $conf, $running, fresh_pool($vmid));
         return ['changed'] unless same_guest($guest, $fresh);
         return ['refused', 'locked', $conf->{lock}] if $conf->{lock};
         return ['refused', 'pending'] if $fresh->{pending_devices};
+        my $yields_pending = 0;
+        for my $yielder (@{ $yielders // [] }) {
+            my $yielded = yield_card($ctx, $guests, $yielder, $fresh, $marker);
+            return ['left'] unless defined $yielded;
+            return ['refused', 'card-held', $yielder->{vmid}] if $yielded eq 'refused';
+            $yields_pending = 1 if $yielded eq 'would';
+        }
+        return ['would'] if !$ctx->{writes} && $scanned_changes && would_known($ctx, would_signature($vmid, $why, $guest, $scanned_desired));
+        return ['would'] if $yields_pending && !$scanned_changes;
+        return ['left'] unless still_in_pool($fresh);
         my $desired = [];
         if ($marker->{part} ne 'none') {
             my $card = fresh_card($ctx, $marker->{card}) or return ['refused', 'unknown-card'];
@@ -1427,7 +1440,7 @@ sub settle_whole_conflicts {
         }
         my %whole = map { $_ => 1 } @{ $wholes{$uuid} };
         my @others = grep { !$whole{$_} && !$guests->{$_}{holds_nothing} && $guests->{$_}{named}{$uuid} } sort { $a <=> $b } keys %$guests;
-        my @yielding = grep { yields_card($ctx, $guests->{$_}) } @others;
+        my @yielding = grep { yields_card($ctx, $guests->{$_}, $guests->{$keeper}) } @others;
         my %yielding = map { $_ => 1 } @yielding;
         my ($standing) = grep { !$yielding{$_} } @others;
         if (!$keeper_stands || defined $standing) {

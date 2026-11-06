@@ -325,8 +325,10 @@ free, then the lowest index.
 
 A whole box goes to a card that:
 
-1. no other guest on the node holds, running or stopped, other than
-   stopped shared boxes the helper manages, which yield;
+1. no other guest on the node holds, running or stopped, other than this
+   install's own stopped shared boxes in its pool that the helper manages,
+   which yield; another install's guest, or a guest that is not bb-box's,
+   never yields;
 2. has no card reserved on it by this install;
 3. has the memory a new box needs free when last read.
 
@@ -467,14 +469,16 @@ it alone writes device lines. Requests are checked one at a time, so two
 can never both win a card. It refuses:
 
 - whole on a card whose devices another guest has, other than stopped
-  shared boxes it manages (those yield);
+  shared boxes it manages of the asking guest's own install and pool
+  (those yield; from bb-box-gpu 0.4.3, decided in unit 8);
 - shared on a card another guest holds whole;
 - any device change for a guest that is running or locked;
 - any claim for a box whose claim another guest already has: a copy
   (section 9).
 
 **Yielding.** When the helper grants a whole claim on a card that stopped
-shared boxes it manages have the devices of, it takes those devices out of
+shared boxes it manages, of the asking guest's own install and pool, have
+the devices of, it takes those devices out of
 each of them, in each guest's own config lock, and writes `yielded` for
 them. If one of them starts first, it is running, and the whole claim is
 refused instead. A yielded box is placed again when it starts (section 3).

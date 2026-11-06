@@ -2925,3 +2925,98 @@ at once.
   alone, in place of the per-card templates.
 - Whether `linux-desktop-cpu` should move to the GPU desktop template now
   (above).
+
+## Unit 8b: bb-box-gpu 0.4.3, whole claims yield only the asking install's own boxes
+
+Built on main `02a54581`, on branch `u71-8b`, as the lead decided after unit
+8's reviews: a whole claim never takes the lines out of another install's
+guest. Before, the helper yielded every stopped shared box it managed on the
+card, of any install. bb-box from unit 8 already places a whole box only on a
+card where no other install's guest stands, but between its placement and the
+helper's answer another install's guest can come to stand stopped on the card,
+as when its clone of a per-card template is granted and not yet started.
+0.4.3 closes that: the authority refuses rather than yields.
+
+### What it does
+
+- A whole request yields only stopped shared boxes with a granted claim, not
+  locked and with no pending device change, as before, and now also of the
+  requesting guest's own install and pool. Any other guest with the card's
+  lines blocks it, and the request is refused `card-held`, naming it; that
+  guest's config is not written.
+- The same rule holds for the check under each yielding guest's config lock,
+  and for which guest a lost ledger's rebuild names when it refuses a whole
+  claim; the rebuild's outcome does not change, as a whole box there loses its
+  claim to any other guest on its card.
+- Version 0.4.3, protocol 1, so `setup-gpu.sh --writes on` and the upgrade's
+  preview need this release's helper. `setup-gpu.sh` itself is unchanged: an
+  upgrade is running this release's `setup-gpu.sh`, which installs 0.4.3,
+  runs its preview with writes on, and keeps the config and the ledger.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root:
+
+- `test/gpu-helper.test.ts` gains a test: another install's stopped shared
+  box, and this install's in another pool, keep their lines and the whole
+  claims are refused; this install's own box in its pool still yields. With
+  the rule reverted, that test fails. A unit 6 test that took a claim away
+  with another install's whole claim now takes it with this install's own.
+  The setup tests' release-relative versions move up one, as unit 6's did,
+  and the doctor's tests that read the real helper say 0.4.3.
+- The GPU and Proxmox LXC test files: 325 tests, 324 passed, 0 failed, 1
+  skipped. `tsc` clean. The node suite: 3,755 tests, 3,459 passed, 1 failed,
+  295 skipped; the failure was a `computer_act` timing test in
+  `test/plugin.test.ts`, which this unit does not touch, and the file passed
+  on a second run. vitest: 469 passed. `shellcheck -x setup-gpu.sh`: clean.
+- Merged with unit 8's branch: `tsc` clean, the node suite 3,787 tests, 3,492
+  passed, 0 failed, 295 skipped.
+
+### After the review
+
+Astra said no-go, with one high: the check under the yielding guest's config
+lock compared it with the requester as the pass had scanned it, so a
+requester changed in between, under its own lock, to another install or
+moved to another pool, still had the yield carried out, and its own request
+was then left as changed. Now:
+
+- The helper takes the requester's config lock first, reads it again, and
+  checks it is the guest it scanned (box, install, kind, pool and GPU tags,
+  so its marker and generation), before any yield. It holds that lock through
+  every yield and its own write, so its config cannot change meanwhile.
+- Each yielding guest is checked against that fresh requester under its own
+  lock, as before.
+- Pool membership, which Proxmox keeps outside a guest's config, is read
+  again before each write: before a yielding guest's, for it and the
+  requester, and before the requester's own. A change leaves the request for
+  the next pass and writes nothing more.
+
+Four tests, with the fake Proxmox changing a guest when a lock is taken or a
+config written: the requester changed to another install when its lock is
+taken; another actor's change to the requester while the yielding guest's
+lock is held, which now cannot take the requester's lock; the requester moved
+to another pool while the yielding guest's lock is held; and moved after the
+yielding guest's write, before its own. Each fails with its part of the fix
+reverted, on a box. A yield already written when the requester moves away
+stays written, and the yielded box is placed again at its next start, as any
+yielded box is.
+
+Fable said go, with lows: the same race from the other side, fixed above;
+`test/gpu-setup.test.ts`'s upgrade across a protocol change waited for the
+first install's start call, which its calls still held, so on a slow runner
+it marked a guest while the old helper answered; it now forgets the calls
+before the upgrade. That test had failed once under load in unit 8's runs.
+Its node-step lows are in the steps: the way back is archived from `02a54581`
+and checked to be 0.4.2 before it runs, and step B reads the journal from
+just after its baseline, leaving the guests to `u5-compare.sh`.
+
+Then, on a `linux` box in `node:26-bookworm` as root: `tsc` clean; the node
+suite, 3,759 tests, 3,464 passed, 0 failed, 295 skipped; vitest, 469 passed;
+`shellcheck -x setup-gpu.sh` clean.
+
+### The node steps
+
+Upgrade the node's helper to 0.4.3 with this release's `setup-gpu.sh`, after
+its preview, with writes on as before, and check that no guest changed: in
+the report to the lead. Whole cards stay off (`general.wholeCards`) until 0.4.3
+is on the node and the owner turns them on.
