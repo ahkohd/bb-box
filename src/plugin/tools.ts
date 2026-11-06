@@ -375,6 +375,11 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
     .join("");
 }
 
+export function cardReachText(kind: KindView): string {
+  const said = [...new Set(kind.offers.flatMap((offer) => (offer.cardReach ? [offer.cardReach] : [])))];
+  return said.map((words) => ` ${words}`).join("");
+}
+
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
 function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
   // A spare a thread started on becomes your machine at the next spare upkeep (036).
@@ -426,6 +431,30 @@ export function gpuParameter(wholeCards: boolean) {
         .describe(
           "The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
         );
+}
+
+export function resizeGpuParameter(wholeCards: boolean) {
+  return z
+    .enum(wholeCards ? ["none", "shared", "whole"] : ["none", "shared"])
+    .optional()
+    .describe(
+      wholeCards
+        ? "The box's GPU: shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Where a backend can, shared and whole switch live; adding a GPU, removing it or moving the box to another card cannot be done on Docker, where box_resize says so. box_list says what each provider can change."
+        : "The box's GPU: shared, one card other boxes may share. Left out, the GPU stays as it is. Adding a GPU, removing it or moving the box to another card cannot be done on Docker, where box_resize says so. box_list says what each provider can change.",
+    );
+}
+
+export function resizeParameters(wholeCards: boolean) {
+  return z.object({
+    box: boxParam,
+    size: z.string().min(1).optional().describe("small, medium or large, from box_list: the preset's cores and memory. The disk stays as it is."),
+    cores: z.number().int().positive().optional().describe("Cores. Left out, the box keeps its own."),
+    memory_gib: z.number().int().positive().optional().describe("Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own."),
+    disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, which only grows. Left out, the box keeps its own."),
+    gpu: resizeGpuParameter(wholeCards),
+    restart: z.boolean().optional().describe("Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so."),
+    check: z.boolean().optional().describe("Only say what the resize would change, how, and whether there is room. Defaults to false."),
+  });
 }
 
 export function acquireParameters(wholeCards: boolean) {
@@ -611,7 +640,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map((box) => boxLine(seenByAgent(box))).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${cardReachText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);
@@ -1082,21 +1111,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_resize",
     description:
-      "Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.",
+      "Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU between shared and whole, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.",
     presentation: { label: { pending: "Resizing a box", completed: "Resized a box" } },
-    parameters: z.object({
-      box: boxParam,
-      size: z.string().min(1).optional().describe("small, medium or large, from box_list: the preset's cores and memory. The disk stays as it is."),
-      cores: z.number().int().positive().optional().describe("Cores. Left out, the box keeps its own."),
-      memory_gib: z.number().int().positive().optional().describe("Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own."),
-      disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, which only grows. Left out, the box keeps its own."),
-      restart: z.boolean().optional().describe("Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so."),
-      check: z.boolean().optional().describe("Only say what the resize would change, how, and whether there is room. Defaults to false."),
-    }),
-    async execute({ box: ref, size, cores, memory_gib, disk_gib, restart, check }, { threadId, signal }) {
+    parameters: resizeParameters(true),
+    async execute({ box: ref, size, cores, memory_gib, disk_gib, gpu, restart, check }, { threadId, signal }) {
       try {
         const { owner, box: found, runsOn } = await app.resolve(thread(threadId), ref, signal);
-        const answer = await boxes.resize(owner, found.id, { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib }, {
+        const answer = await boxes.resize(owner, found.id, { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib, ...(gpu ? { gpu } : {}) }, {
           restart: restart === true,
           check: check === true,
           signal,

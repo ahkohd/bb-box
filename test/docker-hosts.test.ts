@@ -28,7 +28,9 @@ const machine = (id: string, name: string, more: Partial<MachineRecord> = {}): M
 });
 
 const info = (more: Partial<DockerInfo> = {}): DockerInfo => ({
+  id: "",
   name: "devpc",
+  rootDir: "",
   version: "29.8.1",
   operatingSystem: "Arch Linux",
   osType: "linux", kernelVersion: "",
@@ -41,6 +43,7 @@ const info = (more: Partial<DockerInfo> = {}): DockerInfo => ({
   memoryLimit: true,
   cpuset: true,
   gpus: [],
+  allGpus: false,
   ...more,
 });
 

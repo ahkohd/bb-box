@@ -1298,6 +1298,20 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
 });
 
+test("071 unit 11: the New box form says where every box can open every card, for the provider a box would go to, on a CPU desktop too", async () => {
+  const reach = "On docker-1, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };
+  const reaching = [...KINDS.map((kind) => (kind.id === "linux" ? { ...kind, offers: kind.offers.map((offer) => ({ ...offer, cardReach: reach })) } : kind)), { ...cpu, offers: cpu.offers.map((offer) => ({ ...offer, cardReach: reach })) }];
+  const { handlers } = server([], { kinds: reaching });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Type" });
+  expect(screen.getByText(reach).tagName).toBe("P");
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  expect(screen.getByText(reach).tagName).toBe("P");
+});
+
 test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {
   const now = Date.now();
   const reading = (id: string, freeMiB: number) => ({ id, freeMiB, totalMiB: 8192, at: now, neededMiB: 384, source: "desktop" as const });

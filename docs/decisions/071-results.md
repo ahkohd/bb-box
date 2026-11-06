@@ -3396,3 +3396,584 @@ gate's node steps.
   warm guests take the kind's default, which is never whole.
 - G1, G3 and G5 of the gate, which need a node or a window without the
   node's development container on the cards (above).
+
+## Unit 11: GPU boxes on Docker
+
+Built on main `4948d8a2`, on branch `u71-11`. Section 7's Docker part:
+servers with a GPU, whole as placement, the share switch, CUDA pointed at
+the box's card in every route, and the words about privileged boxes. No
+helper or node change. The gate ran on a test BB from this branch, on the
+owner's Windows PC's Docker in WSL with its one card, before the merge, and
+passed on 6 November 2026 (see [the gate](#the-gate)); nothing here was
+offered before it.
+
+### What it does
+
+- **Kinds.** With GPU boxes on (`gpu-desktops`), Docker's `linux` offers gpu
+  none, shared and, where `general.wholeCards` is on, whole; `linux-desktop`
+  shared and whole. With it off, neither offers a GPU, as before.
+- **The cards.** bb-box reads each card's index, UUID, model, total and free
+  memory with `nvidia-smi` in a short-lived container given the cards (no
+  network, not privileged, `--pull never`), kept 15 s for a placement and
+  60 s for `box_list`. A card is known by its UUID; the CDI device a box gets
+  is the one the toolkit names for it, by UUID or index. A card keeps its
+  key across readings: where the probe fails, the cards are as last read,
+  their free memory not known, so no whole card is placed. With no reading
+  since bb-box started, a device named by UUID is that card and one named by
+  index is kept by its device: shared boxes go on it, with no CUDA variables
+  and no check, as before this unit. A box's card is the one its labels
+  name when that is among the cards, or else the one its device gives.
+  Where a box holding a card whole matches no card, no GPU box is placed on
+  the host until it does. A box with no GPU never runs the probe.
+- **WSL.** The toolkit's spec in WSL has one device, `nvidia.com/gpu=all`, as
+  every card is `/dev/dxg`. Where the daemon lists only that, every card is
+  given through it, and the box's card is the UUID bb-box placed it on.
+- **Placement**, under a lock kept by the Docker daemon's engine ID, which
+  every backend instance on that daemon shares, with its reservations and
+  the cards left out: a settings check's instance of a backend and the live
+  one order their placements on one lock, and a rename of the host keeps it.
+  Cloned hosts that kept one engine ID share it too, which only makes them
+  place one at a time; their cards have different UUIDs. A box being made
+  counts on the daemon the backend making it reads at that moment, and on
+  every daemon of its engine ID when that backend cannot be asked. Each
+  acquire drops its reservation from the share it made it in, and a new
+  instance of a backend joins the share its engine ID has, so a reconfigure
+  keeps the boxes being made. Every backend of
+  the install that reaches the daemon, on or off, reads a box's switched
+  part from one record. Two backends are on one daemon when its engine ID,
+  name and Docker root from `docker info` are all the same. A backend counts
+  on a daemon once it places or plans a box there, and only
+  while it is on; listing, releasing and upkeep do not count. Of two
+  backends of the install that count on one daemon, only the one whose ID
+  sorts first places GPU boxes there; the other refuses them, for each
+  audience, and makes boxes with no GPU as usual, and the doctor warns on
+  both with `docker.one-backend`. A box being made holds its card, with the memory it
+  needs reserved, from its placement until docker lists it. Every bb-box
+  container on the host holds the card its labels name, running or
+  stopped, of any install, as a container's devices are fixed. Shared: a card
+  no box holds whole, with fewer boxes than boxes per card
+  (`desktops-per-gpu`), and 1,024 MiB free for a server or 384 MiB for a
+  desktop when last read, less what boxes being made need; then the fewest
+  boxes, the most free, the lowest index. Whole: a card no other box holds,
+  of any install, with that memory free (a card whose memory could not be
+  read takes no whole box); then the least used, the most free, the lowest
+  index. A card a box lately failed to see is left out for 10 minutes.
+- **Refusals** name each card's boxes, for the person with their threads'
+  titles (looked up for 2 s at most) and for an agent by box name, offering
+  its own boxes on those cards, another GPU part or the user; another
+  install's boxes are "<name> of another install". No card listed, or none
+  read, says so with the toolkit's fix.
+- **The container.** A GPU box gets `--device <its card's CDI name>`,
+  `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` set to `GPU-<UUID>`,
+  `NVIDIA_DRIVER_CAPABILITIES=all`, and the labels `bbbox.gpu`,
+  `bbbox.gpu-card` and `bbbox.gpu-part` (the part it was made with). A
+  desktop still gets `BBBOX_GPU=1`, and `BBBOX_GPU_ID` when it can see every
+  card: when privileged, or when its CDI name is `all`, where it is the
+  card's UUID. `BBBOX_GPU_CARD` names the card for the box's start script.
+- **Every route.** The container's environment reaches `docker exec`:
+  `box_run`, the box page's terminal and BB's daemon with what it starts.
+  After the box is ready, bb-box writes the two variables into
+  `/etc/environment` as root, keeping its other lines, which the command
+  prelude, login shells and PAM (`sudo -i`, `su -l`) read. So a service
+  started from a clean environment gets them too. A desktop's launcher,
+  `setup/docker/start`, starts its session and services (XFCE, Cua Driver,
+  Selkies) from a clean environment, so it now adds both variables from
+  `BBBOX_GPU_CARD`, past the `NVIDIA_VISIBLE_DEVICES=void` a CDI spec may
+  set; that needs desktop images built from this branch. Servers need no
+  image change, so the gate uses production's images on the owner's host.
+- **The check after start**, after an acquire and after each start of a box
+  made by this unit: `nvidia-smi` lists the card, `cuInit` works, and CUDA's
+  device 0 has the card's UUID (`cuDeviceGetUuid`, no context, no memory). A
+  fresh box whose CUDA picks another card or finds none (its device answer,
+  or `cuInit` 100, with the card listed), or whose `nvidia-smi` lists none,
+  is removed, its card left out for 10 minutes, and placed once more on
+  another card within the acquire, its record following it and the removed
+  container's reservation dropped. When that fails too, or no other card
+  can take it, the acquire is refused for each audience, naming each card
+  and why, and nothing is left. Any other CUDA error, such as 802, and
+  other failures keep the box on its card, which is not left out, and its
+  GPU fact says what the check found. A started box
+  cannot move on Docker, so its fact says what the check found.
+- **The words.** A GPU box's facts: "GPU: card 0, shared, <model>, 32 GiB.
+  Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed."
+  The words about reach come from the host's privilege, not from a kind's
+  GPU: every box of every kind, CPU desktops included, on a host that lists
+  cards and whose boxes are privileged, with GPU boxes on or off, and every
+  GPU box where the cards are one device, has a `Cards` fact, which
+  `box_status` and `box_acquire`'s answer show: "On <host>, every box with
+  Docker in it can open every card, with a GPU or without. None and Whole
+  card are what bb-box places, not what a box can reach." `box_list` says it
+  once for each kind offered there, the New box form says it under
+  Resources for the provider a box would go to, and the resize words and
+  the doctor say it too.
+- **The share switch.** `box_resize gpu` and `bb box resize --gpu` (and
+  `bb box machines resize --gpu`) take none, shared or whole; the tool's and
+  the CLI's whole is hidden while whole cards are off, as unit 8 does.
+  Docker's `Resizing.gpu` is add `no`, share `live`, move `no`. Shared to whole
+  is live where no other box holds the card, of any install, and refused
+  naming them otherwise ("on Docker a box cannot move to another card");
+  whole to shared is live. The plan is made again under the placement lock
+  when carried out. The part is this install's, kept in bb-box's storage
+  where every backend of the install reads it, by the container's ID, with
+  the engine ID, name and Docker root of the daemon it was written on, and
+  a generation that goes up at each switch. A release drops it. Otherwise
+  the upkeep of a daemon with the engine ID it was written under drops it
+  once no Docker daemon the install reaches lists its container, and never
+  while bb-box cannot tell which daemons it reaches. The claim on the guest
+  and the GPU fact follow it, and the record's `gpu` changes. A GPU added or
+  removed is refused, with words for each audience. A backend whose
+  `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
+  change.
+- **The doctor.** `docker.gpus` lists the cards with their memory when read,
+  the boxes per card, whether they are one device, and the reach words; it
+  warns, naming them, when another install's GPU boxes are on the host, as it
+  sees only the part they were made with; it warns when it could not read
+  the cards just now, and fails, naming it, when a box holding a card whole
+  matches no card it reads. `gpu.<card>.whole` fails a whole
+  card with another box on it; `gpu.<card>.limit` (new) warns of a card over
+  its limit, naming its boxes.
+- `setup/docker/README.md` has a "GPU boxes" section in place of "GPU
+  desktops".
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root with `--init`, as CI runs
+them:
+
+- `tsc` clean. The node suite: 3,820 tests, 3,398 passed, 112 failed, 310
+  skipped; vitest, 469 passed. On main `4948d8a2` in the same container: 3,800
+  tests, 3,378 passed, 112 failed, 310 skipped. The 112 are the same tests on
+  both, by name: identity reset scripts that find none of the container's
+  eth interfaces, and the snapshot, fork and keep tests built on them, the
+  Android image check and `setup-mac.sh`; none is a GPU or Docker test.
+  Without `--init`, `test/gpu-setup.test.ts` hangs on unreaped processes, on
+  main too.
+- `test/docker-gpus.test.ts`, 17 tests, against the fake docker, which now
+  lists cards in a probe container and, in a box given them, answers
+  `nvidia-smi` and CUDA's device by `CUDA_VISIBLE_DEVICES`: the kinds' parts;
+  a shared server's device, labels, environment, `/etc/environment`, claim,
+  facts and probe; a box with no GPU, privileged and not; WSL's one device;
+  boxes per card with stopped boxes, boxes being made and another install's;
+  the memory a server and a desktop need, and an unread card; whole
+  placement, its refusals for each audience and whole cards off; two whole
+  acquires at once, one container made; the share switch, its refusal and
+  the fixed devices; a box whose CUDA picks another card; a start after a
+  switch; `box_list`'s room; the doctor; the probe's parser; placement's
+  order; the check's judge; the environment script on a file.
+- `test/boxes.test.ts`, 3 tests: `box_resize gpu` live, recorded with its
+  claim, and left out keeps the GPU; refusals for each audience of a GPU a
+  backend cannot add or remove, a whole card it refuses, whole while whole
+  cards are off, and a GPU change where the backend's `Resizing` or its plan
+  has no GPU part; the resize line's words. `test/plugin.test.ts`:
+  `box_resize`'s `gpu` and the CLI's `--gpu` offer no whole card while whole
+  cards are off. `test/docker.test.ts`: today's GPU desktops' tests, now with
+  the new words.
+- 26 reverts, each rule on its own, each failing its tests, by a harness
+  that patches the rule out, runs its tests and puts it back. Two of them,
+  `box_resize`'s two GPU guards, first passed, as each covered the other;
+  a test for each on its own was added, and both then failed.
+
+### The rehearsal on a box with a fake card
+
+On a `linux` box with Docker 29.1.3, the real path with a card that is not
+there: `bbbox/linux:1` built from `setup/docker/build.sh linux`; a CDI spec in
+`/etc/cdi` written as WSL's is, with only `nvidia.com/gpu=all`, giving two
+fake cards, a fake `nvidia-smi` and a fake `libcuda.so.1` (C, honouring
+`CUDA_VISIBLE_DEVICES`). Docker listed the device as soon as the file was
+written, with no restart. A fresh `npx bb-app@0.48.1` in the box, with no
+account, bb-box installed from this branch by the gate's script, against the
+box's own Docker:
+
+| Step | Result |
+| --- | --- |
+| The doctor | "GPUs: 2 NVIDIA cards as CDI devices (card 0, NVIDIA GeForce RTX 5090 (fake), 32 GiB, 31000 MiB free when read; card 1, ...), up to 4 boxes each. Docker gives them as one device, nvidia.com/gpu=all, as in WSL. On <box>, every box with Docker in it can open every card, ..." |
+| `bb box acquire linux --gpu none` | Ready in 0.4 s, privileged, no device request, "Cards: On <box>, every box with Docker in it can open every card, with a GPU or without. ..." |
+| `--gpu shared` | Ready in 0.7 s with "gpu 52 ms, card check 38 ms"; "GPU: card 0, shared, NVIDIA GeForce RTX 5090 (fake), 32 GiB. Run nvidia-smi -i GPU-…a to see it; every card on the host is listed." Docker keeps the device in `DeviceRequests` (`cdi`, `nvidia.com/gpu=all`); both variables in the container's environment and in `/etc/environment` |
+| `bb box run` (as `box_run`) | `cuda-card.py load`: `result=0 devices=1 device0=GPU-…a`, a context and 64 MiB |
+| The box page's terminal command, on a PTY | The login shell had `CUDA_VISIBLE_DEVICES=GPU-…a`, and CUDA picked card 0 |
+| A service from `sudo -i` with the variables removed | Ran detached and picked card 0; a login from `env -i` had the variable, from `/etc/environment` through PAM |
+| `CUDA_VISIBLE_DEVICES` set to another UUID | `result=100 devices=0` |
+| `--gpu whole --check`, then the switch | Live in 55 ms; "GPU: card 0, whole, ..."; the doctor's "GPU 0 whole: Card 0 is <box>'s whole card, with no other box on it." |
+| Another `--gpu shared` | On card 1, as card 0 was whole |
+| `--gpu none --check` | Refused: "cannot lose card 0 on Docker" |
+| Back to shared | Live in 54 ms |
+
+The rehearsal found three faults in the gate's steps, fixed there: CDI
+devices are in `HostConfig.DeviceRequests`, not `Devices`; `pgrep -f` matched
+its own shell; and a terminal's input must wait for the shell. It also found
+that the sweep releases the boxes of a thread the test BB does not know,
+within two sweeps, so the gate's script makes a real project and thread.
+
+### Deviations from the note
+
+- Settings stay as units 7 and 8 left them: `gpu-desktops` (now worded "GPU
+  boxes"), `desktops-per-gpu` (now "Boxes per card", counting every
+  install's boxes on the card, as Docker counted desktops), `general.wholeCards`
+  for whole, and 1,024 MiB a constant. The key renames are unit 15's.
+- Resize's GPU part in core is built here for the share switch only, as unit
+  9 has not been built: `ResizePlan.gpu` is a `GpuResize` with the words and,
+  where refused, a refusal for each audience, not section 8's `GpuChange`
+  with `installs`. Unit 9 extends it for Proxmox LXC.
+- On WSL every GPU box gets every card, as the spec has one device; the words
+  say so even where boxes are not privileged.
+- Readings come from the probe container, not from a host report or a box,
+  with their age in `box_list`. A placement reads the cards again when its
+  reading is over 15 s old, which adds about a second to a GPU box's acquire.
+- Today's GPU desktops made before this unit are counted on their cards as
+  shared, and their starts run no check, as before.
+- `linux-desktop` with gpu none is not offered on Docker: that is
+  `linux-desktop-cpu`.
+
+### After the reviews
+
+Astra and Fable said no-go. The lead decided the fixes below, all in one
+more commit; the pull request stays a draft until the gate passes and is
+recorded here (Astra 1). Each fix has a test that failed with it reverted,
+on a box: 16 reverts for these fixes (15 rules and the form's line), and the
+25 reverts of the first round run again, one of them changed to the new
+line, each failing its tests.
+
+| Finding | Fix |
+| --- | --- |
+| The card lock and reservations were a backend instance's, so two backends on one daemon could both take a card whole (Astra 2) | The lock, the reservations and the cards left out are the Docker daemon's, by its ID, shared by every instance on it; switched parts are in the backend's storage, which its instances share. Of two backends of the install on one daemon, only the one whose ID sorts first makes boxes; the other refuses, for each audience, and the doctor's new `docker.one-backend` fails on it and warns on the first |
+| A CUDA that found no device passed when `cuInit` returned 100 before its card was read (Astra 3) | CUDA's device answer is read whenever `nvidia-smi` lists the card, and a `cuInit` of 100 with the card listed is no device: both are a wrong card |
+| A fresh box that failed its check was refused, not made again on another card, and the results said the registry would retry, which it does not (Astra 6, Fable 2) | Within the acquire, the box is removed, its card left out for 10 minutes and its record moved, and it is placed and made once more on another card; when that fails too, or no card can take it, it is refused naming each card and why. The results' words are corrected |
+| The desktop's session and services lost both variables in the launcher's clean environment (Astra 4) | `setup/docker/start` adds them from `BBBOX_GPU_CARD`, which bb-box sets on every GPU box; `BBBOX_GPU_ID` is passed to a desktop that sees every card: privileged, or on `nvidia.com/gpu=all` (Fable) |
+| The privileged-box words left out CPU desktops and were not in the New box form (Astra 5) | They come from the host's privilege and its cards, for every kind, with GPU boxes on or off: the `Cards` fact, `box_list` once per kind, and a line under Resources in the New box form for the provider a box would go to |
+| Devices named by index whose cards could not be read refused every GPU desktop (Fable 1) | They are kept by device: shared boxes go on them, with no CUDA variables and no check, as before this unit; whole, and a switch to whole, are refused on them |
+| A box with no GPU ran the probe (Fable) | The reach words come from `docker info`'s devices, so a box with no GPU never reads the cards |
+| Comment lines added to `test/fake-docker.mjs` (Astra 7) | Removed |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,827 tests, 3,405 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures as before, by name, as on main in
+the same box; vitest, 470 passed. `test/docker-gpus.test.ts` has 24 tests.
+One plugin test, a try to join BB with a set clock, failed once in a run of
+its own on this box and passed again; it fails on main the same way.
+
+### The gate
+
+Run by the lead on 6 November 2026 (UTC) on the owner's Windows PC, <host>,
+with one NVIDIA GeForce RTX 5090 (32 GiB), the driver 610.88 in Windows, and
+Docker 29.8.1 in an Arch Linux distribution in WSL, the WSL2 kernel 6.6.87.2.
+Nothing reached the host but the lead. Every step that used the card first
+read it card-wide and went on only under 10 per cent busy and 2 GiB in use;
+one test GPU box at a time; one CUDA load.
+
+**Read-only checks and setup (A and B, 06:32 to 06:33).** The card had 0 per
+cent busy and 1,126 MiB in use, Windows' own. WSL had `/dev/dxg`, NVIDIA's
+`libcuda`, NVML, `libdxcore` and `nvidia-smi`, one driver store folder of
+NVIDIA's that the toolkit chose, and one card. Docker read CDI specs from
+`/etc/cdi` and `/var/run/cdi`, listed no devices, ran `runc` by default with
+the owner's `nvidia` runtime registered, and was not rootless. NVIDIA's
+Container Toolkit 1.20.0 was already installed, so nothing was installed.
+`nvidia-ctk cdi generate --mode=wsl --output=/etc/cdi/nvidia.yaml` wrote one
+device, `nvidia.com/gpu=all`, and `docker info` listed it at once, with no
+restart. A probe container as bb-box makes it, given that device, had
+`/usr/bin/nvidia-smi`, `/dev/dxg` and `python3`, and listed the card with
+its memory. The spec stays: production's Docker GPU boxes there need it once
+this unit merges.
+
+**The test BB.** It ran in the same WSL distribution, as root: `npx
+bb-app@0.48.1` with no account, as a transient systemd unit, listening on
+127.0.0.1 only, with bb-box from a tarball of `dd6f4370` (without `docs/` and
+`site/`), enrolment and nightly images off, whole cards on, and a Docker
+backend on the distribution's own Docker socket, network `bbbox-gate`, GPU
+boxes on and no desktop images, so nothing left the host. It used the
+images production's bb-box had built there that day, and built none. Every
+box was made, run, resized and released through the test BB's CLI, `bb box
+...`, and its terminal through the box page's own WebSocket route; Docker
+was only read. The scripts are in the report to the lead; each wrote all it
+did to a file, and each ended "done".
+
+| Step (UTC) | Evidence |
+| --- | --- |
+| Stand-up (15:57) | The doctor: "1 NVIDIA card as CDI devices (card 0, NVIDIA GeForce RTX 5090, 32 GiB, 31244 MiB free when read), up to 4 boxes each. Docker gives them as one device, nvidia.com/gpu=all, as in WSL. On <host>, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach." The test BB listened on 127.0.0.1 alone |
+| C3 (15:59) | The doctor as above, and no other backend of the test install on the daemon. `bb box kinds --json`: `linux` offers gpu none, shared and whole; card 0 with no box, 31,244 MiB free, free for a whole card; 1,024 MiB needed; the reach words on every kind offered |
+| D0 | The card 0 per cent busy, 944 MiB in use. No bb-box container on the daemon, of any install |
+| D1, a privileged box with no GPU | `bb box acquire linux --gpu none`, ready in 1.8 s: its status has the Cards line and no GPU line; Docker shows it privileged with no device request and no card label. Through `bb box run`, as root in the box, `/dev/dxg` (`crw-rw-rw-`) opened; no `libcuda` and no `CUDA_VISIBLE_DEVICES`: it can open the card, as the words say, though bb-box gave it none |
+| D2, a shared server | `bb box acquire linux --gpu shared`, ready in 3.0 s, with "gpu 0.3 s, card check 0.5 s": claim the card's UUID, shared, generation 1, granted. Status: "GPU: card 0, shared, NVIDIA GeForce RTX 5090, 32 GiB. Run nvidia-smi -i GPU-<UUID> to see it; every card on the host is listed." and the Cards line. Docker: privileged, a `cdi` request for `nvidia.com/gpu=all`, labels with the card and `shared`, and `CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES` and `BBBOX_GPU_CARD` set to the card. In it, `/etc/environment` had both variables, `nvidia-smi -L` listed the card, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"` named it |
+| D3, `box_run`'s route, the one load | `cuda-card.py load` through `bb box run`: CUDA's device 0 the card's UUID, one device, and "64 MiB allocated, set and freed on device 0, result 0", in 1.1 s. The card read four times a second, card-wide: 944 MiB in use before (median of 13), 946 at most during (12), 944 after. The 2 MiB is WSL's card-wide reading of a CUDA context and a 64 MiB load, which CUDA reported made, set and freed: under WSL that figure does not follow a box's allocation as it does on Linux. The load was under 1 GiB and 60 s either way |
+| D4, a terminal | The box page's terminal route, a WebSocket to the test BB, the box user's login shell: both variables the card's, and CUDA's device 0 the card |
+| D5, a service | Started detached through `sudo -i` from an environment without the variables, so only `/etc/environment`, through PAM, could give them: CUDA's device 0 the card, and the process ended. A login from an empty environment had `CUDA_VISIBLE_DEVICES` set to the card |
+| D6 | With `CUDA_VISIBLE_DEVICES` naming another UUID, CUDA returned 100 with no device: the variable picks the card |
+| D7, whole and the switch | The check: "GPU: shared → whole card 0 · Live", with the reach words. The switch, live in 0.8 s: "GPU: card 0, whole, ...". A shared acquire was refused before any container: "No card on <host> can take a shared GPU now: card 0 is <box>'s whole card (in thread ...)". `--gpu none --check` refused: "cannot lose card 0 on Docker: a container's devices are fixed when it is made". The doctor: "GPU 0 whole: Card 0 is <box>'s whole card, with no other box on it." Back to shared, live in 0.8 s |
+| D8 (16:00) | The test box released; the daemon's bb-box containers the same as at D0, none; none of the test install's left; the card 0 per cent busy, 944 MiB in use |
+| Clean-up (16:00) | No test container left; the unit stopped and nothing answering on its port; `bbbox-gate` and the test BB's folder removed; `/etc/cdi/nvidia.yaml` kept |
+
+The doctor also warned, as for any Docker host without it, that the host has
+no LXCFS, and that no nightly image rebuild had run on the test BB, whose
+nightly images were off.
+
+What the gate did not cover: more than one card (the tests cover placement
+across cards and WSL's one device for several); a desktop with a GPU, as
+Xorg cannot draw on `/dev/dxg`; and switches seen by another install.
+
+### After the second reviews
+
+Astra said no-go and Fable go, with one medium finding. The lead decided the
+fixes below, in one more commit. Each has a test that failed with it
+reverted, on a box: 10 reverts for these fixes, and the 41 reverts of the
+earlier rounds run again, 5 of them changed to the new lines, each failing
+its tests.
+
+| Finding | Fix |
+| --- | --- |
+| A daemon was known by its engine ID alone, which a cloned host keeps, so two daemons, such as two Docker roots on one machine, were one, and the second backend refused every box, with a GPU or without (Astra 1) | A daemon is its engine ID, its name and its Docker root from its own `docker info` together; where they differ, the backends are on two daemons. Where two backends still look like one daemon, the second refuses GPU boxes alone, for each audience, and makes boxes with no GPU as usual; the doctor's `docker.one-backend` warns on both and no longer fails |
+| A backend that was off, or had only listed, released or kept up its boxes, counted on the daemon, so an old backend kept off beside a new one stopped it (Fable) | A backend counts once it places or plans a box there, through a capacity check, an acquire or a resize plan, and only while it is on in the install's settings; listing, releasing and upkeep use the daemon's lock without joining it |
+| A failed probe changed a card's key from its UUID to its device, so boxes, reservations and whole claims stopped counting on it, and a shared box went on a card held whole (Astra 2) | A card keeps its key across readings: where a probe fails, bb-box names the cards as last read, their free memory not known, so no whole card is placed, and the doctor warns. With no reading since bb-box started, a box's card is matched by its device. A box holding a card whole that matches no card bb-box reads stops every GPU placement there, for each audience, until it does, and the doctor fails, naming it |
+| A retry counted the reservation of the container it had removed, so with room for one more box it refused (Astra 3) | The retry drops that reservation before it reads the host |
+| Any CUDA error removed a fresh box and left its card out for 10 minutes (Astra 4) | Only CUDA's no-device answer (100) or another card's UUID does. Any other, such as 802 (system not ready), keeps the box on its card, with the error in its GPU fact, and the card is not left out |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,833 tests, 3,411 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures, by name, as on main (`ed5d3dee`)
+in the same box, where 114 failed; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 30 tests.
+
+The gate's results stand: none of these changes alters what it proved. It
+ran one backend on its daemon; every reading of the card succeeded; no fresh
+box failed its check, so none was made again; and CUDA returned 0 in each
+check. D6's 100 was CUDA run in the box, not bb-box's check, and a 100 in the
+check still removes a fresh box. The doctor's words the gate quoted are the
+same where the cards are read and no second backend counts.
+
+### After the third review
+
+Astra said no-go, with one finding. A share switch was kept in the storage of
+the backend that made it, so a backend made later on the same daemon read
+the container's label, shared, and put another shared box on a card held
+whole, while the first box kept its whole claim. Astra reproduced this by
+acquiring a shared box through one backend, switching it to whole, turning
+that backend off and acquiring a shared box through a new one.
+
+The lead decided the fix. A box's current part is kept in bb-box's storage
+where every backend of the install reads it, on or off, under the daemon and
+the container's ID. Placement, capacity, `held` and the doctor of any backend
+on that daemon read it. A release drops it, and so does the next upkeep of a
+backend on that daemon after its container has gone, without touching
+another daemon's records. A settings check reads it through a layer, so it
+changes nothing there. (The fourth review changed the key: see below.)
+
+A test runs Astra's sequence: the new backend refuses the shared box, naming
+the whole box, and the first keeps its whole claim. Each of 5 rules has a
+revert that fails it, on a box: the shared record, the one storage every
+backend's context gives, the drop at upkeep, the drop at release, and
+records kept per daemon. Then, on a `linux` box in `node:26-bookworm` as root
+with `--init`: `tsc` clean; the node suite, 3,834 tests, 3,412 passed, 112
+failed, 310 skipped, the 112 the same environment's failures, by name, as on
+main (`ed5d3dee`)
+in the same box; vitest, 470 passed. The 41 reverts of the earlier rounds
+and the 10 of the second ran again, one changed to the new write, each
+failing its tests.
+`test/docker-gpus.test.ts` has 31 tests.
+
+The gate's results stand. Its switches, shared to whole and back at D7, were
+made and read through its one backend. With this fix, that backend writes
+and reads the part in the shared storage instead, and the words and claims
+are the same.
+
+### After the fourth review
+
+Astra said no-go, with one finding. The record's key named the daemon by its
+engine ID, name and Docker root, and Docker's name follows the host's, which
+can change while the engine ID stays. Astra acquired a shared box, switched
+it to whole, renamed the host, reconnected and acquired a shared box: both
+boxes got the same card.
+
+The lead decided the fix. Every read, by placement, capacity, `held`, the
+doctor and a resize plan, finds a box's switched part by its container's ID,
+which Docker makes random, 64 hex characters long, and never changes,
+whatever the daemon is called now. The record carries the engine ID, name
+and Docker root it was written under. Upkeep deletes a record only when its
+container is gone from this daemon and it was written under this daemon's
+engine ID, or, where a daemon has none, its name and root; a release deletes
+its own box's record. So a host renamed keeps its boxes' switches and drops
+its records of containers gone, and one daemon's upkeep never drops
+another's. (This let cloned hosts, which share an engine ID, drop each
+other's records; the next section changes it.)
+
+A test runs Astra's sequence, through the backend that switched the box and
+through one made after the rename, and checks capacity, `held`, a resize
+plan and the doctor too; Astra's earlier sequence, a backend turned off and
+one made later, runs as before. Each of 8 rules has a revert that fails it,
+on a box: the shared record, the one storage every backend's context gives,
+the lookup by container ID whatever the daemon is called, the drop at
+upkeep, the drop by engine ID after a rename, another daemon's records kept,
+the drop at release, and the daemon a record was written under. Then, on a
+`linux` box in `node:26-bookworm` as root with `--init`: `tsc` clean; the
+node suite, 3,835 tests, 3,413 passed, 112 failed, 310 skipped, the 112
+the same environment's failures, by name, as on main (`ed5d3dee`) in the same
+box; vitest, 470 passed. The 51 reverts of the earlier
+rounds ran again, one changed to the new write, each failing its tests.
+`test/docker-gpus.test.ts` has 32 tests.
+
+The gate's results stand: it did not rename its host, and its one backend
+writes and reads the part by the container's ID now, with the same words and
+claims.
+
+### The rule for dropping a record, changed by the lead
+
+Under the fourth review's rule, two cloned hosts sharing an engine ID would
+each drop the other's records, as the other's containers are not on them,
+and so forget the other's whole switches. The lead changed the rule. Upkeep
+drops a record only when its container is gone from this daemon and either
+it was written under this daemon's engine ID, name and root, or it was
+written under this daemon's engine ID with a name and root that no Docker
+daemon the install reaches has now, which is a rename of this daemon. A
+record whose name and root are another reached daemon's is never dropped
+from here.
+
+The daemons the install reaches now are asked for at that moment, and only
+when such a record is found: each Docker backend bb-box has built, on or off,
+reads its daemon's `docker info`. If any of them does not answer, bb-box
+cannot tell, and keeps the record. Hetzner Cloud and Namespace hosts are not
+asked: their Docker hosts have no GPU boxes, so they write no such record.
+
+Tests: two cloned hosts with one engine ID, each with a box switched to
+whole, keep both records through each other's upkeep and refuse a shared box
+on their whole cards; each drops only its own record once its container is
+gone. A renamed host keeps its record while bb-box cannot tell which daemons
+it reaches, and drops it once it can. The registry reports every Docker
+backend's daemon, on or off, and none while one does not answer. Each of 7
+rules has a revert that fails it, on a box, and the 57 earlier reverts ran
+again, 1 changed to the new call and 2 replaced by these, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,837 tests, 3,415 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 34 tests.
+
+The gate's results stand: it ran one daemon, renamed nothing and dropped no
+record.
+
+### After the fifth review
+
+Astra said no-go, with two findings, both from a host's name changing:
+
+- after two cloned hosts each switched a box to whole, one was renamed; the
+  other's upkeep dropped the renamed clone's record, as its old name was no
+  longer reached, and a shared box went on its whole card (high)
+- a rename while an acquire was making its box gave the daemon a new share,
+  without the pending box's reservation, so two boxes went on one card
+  (medium)
+
+The lead decided the fix, taking the name out of everything but one check:
+
+- The lock, the reservations and the cards left out are kept by the engine
+  ID alone, which a rename does not change. Cloned hosts with one engine ID
+  share them, so they place one at a time; their cards have different UUIDs,
+  so no card is counted for the other. Each reservation names the backend
+  that made it and counts only on that backend's daemon, so a box one clone
+  is making takes none of the other's memory, cores or box count, as
+  Hetzner Cloud hosts made from one snapshot would otherwise. A backend
+  always counts its own, through a rename too. This last part is the
+  builder's, beyond the lead's decision.
+- The engine ID, name and Docker root together only tell two backends on
+  one daemon apart, so that the second stops only GPU boxes.
+- Upkeep drops a record only when its container is gone from every Docker
+  daemon the install reaches, and bb-box can tell which those are; the
+  daemon whose upkeep drops it must have the engine ID the record was
+  written under. The lead's rule counted only daemons sharing that engine
+  ID; this counts every daemon reached, which keeps a record wherever its
+  container is listed, as on a clone whose engine ID was made new. A release
+  still drops its own box's record.
+
+Astra's two reproductions are tests: the renamed clone keeps its record and
+refuses a shared box on its whole card, and a rename while a whole box is
+being made refuses a shared box on that card ("card 0 is kept whole for
+pending-whole, which bb-box is making"). Every earlier sequence still runs:
+the backend turned off and the one made later, the rename and reconnect,
+the clones, and two backends on one daemon. Two more tests: a box one clone
+is making takes none of the other's room, and after a rename a backend still
+counts its own pending whole card when a settings check's instance of it
+last read the old name. Each of 11 rules has a revert that fails it, on a
+box, and the 57 earlier reverts ran again, 3 changed to
+the new lines and 4 of the last round's replaced by these, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,841 tests, 3,419 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 38 tests.
+
+The gate's results stand: it ran one daemon, whose share and record are the
+same under either key.
+
+### After the sixth review
+
+Astra said no-go, with two medium findings:
+
+- after a rename while one backend was making a whole box, another backend
+  on the daemon compared its new name with the first backend's name as last
+  read, the old one, so it did not count the pending box and put a shared
+  box on its card
+- a reconfigure while a box was being made cleared the old instance's
+  share, so its acquire dropped its reservation from an empty one, and the
+  box was counted for ever, boxes with no GPU too
+
+The lead decided the fixes:
+
+- Whose daemon a reservation counts on is read from its owner at that
+  moment: when bb-box reads the host, as for every placement under the lock,
+  it asks each backend with a reservation for its daemon now. When the
+  owner cannot be asked, as once it is gone, or does not answer, the
+  reservation counts. A name never drops one.
+- An acquire keeps the share it reserved in and drops its reservation from
+  that share. A new instance of a backend already joins the share its engine
+  ID has, so a reconfigure keeps the boxes being made, and a test now holds
+  it to that.
+
+The builder's rule of the last round that a backend always counts its own
+reservations is now part of the first: its own read says its daemon.
+
+Astra's two reproductions are tests: after a rename, the other backend
+refuses a shared box with "card 0 is kept whole for pending-whole, which
+bb-box is making", and still does once the first backend is disposed; a
+reconfigure while a box with no GPU is being made leaves the new instance
+counting it, and once the acquire ends and the box is released, the host
+has room again. Every earlier sequence still runs. Each of 5 rules has a
+revert that fails it, on a box, and the 66 earlier reverts ran again, 1
+changed to the new call and 2 of the last round's replaced by these, each
+failing its tests. Then, on a `linux` box in `node:26-bookworm` as root with
+`--init`: `tsc` clean; the node suite, 3,843 tests, 3,421 passed, 112
+failed, 310 skipped, the 112 the same environment's failures, by name, as on
+main (`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 40 tests.
+
+The gate's results stand: it ran one backend, whose reservations count on
+its daemon as before.
+
+### After the seventh review
+
+Astra said no-go, with one medium finding. The daemon's lock first reads
+`docker info` to find the share, and that read had no signal. So a resumed
+acquire with no GPU, on a fresh backend whose BB machine was slow to be
+ready, ignored its cancellation, and the plugin could not stop: main's
+`Boxes.dispose()` settled at once, this branch's stayed pending.
+
+The fix passes each operation's signal through the placement lock to that
+read, for every placement, resize, release and upkeep, and to the read for a
+switched part's record. The builder checked the other calls this unit added
+on the placement path: each already had its signal. As the lock is now one
+per engine ID, shared by every instance of a backend, waiting for it ends
+when the signal aborts too; work already running under it ends by its own
+signal, so no reservation is made after its acquire has given up.
+
+Tests: Astra's reproduction, a plugin stopping while a resumed acquire with
+no GPU waits for a fresh backend's BB machine, settles at once; and a
+placement waiting for the lock that another instance holds ends when its
+signal aborts. Each of 3 rules has a revert that fails it, on a box, and the
+71 earlier reverts ran again, 3 changed to the new calls, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,845 tests, 3,423 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 42 tests.
+
+The gate's results stand: its operations were never cancelled, and an
+operation that is not cancelled runs as before.
+
+### Still open
+
+- A switch made by one install is not seen by another on the same host; the
+  doctor warns where two installs have GPU boxes there.

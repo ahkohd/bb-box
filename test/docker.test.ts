@@ -12,7 +12,7 @@ import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
-import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart } from "../src/core/document.ts";
 import { TransportError } from "../src/transports/types.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -35,9 +35,10 @@ function setup(values: Record<string, FieldValue> = {}, host: Record<string, unk
 }
 
 let counter = 0;
-function identity(kind = "linux", size = SMALL, threadId = "thr_abc123"): BoxIdentity {
+function identity(kind = "linux", size: MachineSize & { readonly gpu?: GpuPart } = SMALL, threadId = "thr_abc123"): BoxIdentity {
   counter++;
-  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { ...size, gpu: "none" } };
+  const gpu = size.gpu ?? (kind === "linux-desktop" ? "shared" : "none");
+  return { boxId: `bx${String(counter).padStart(12, "0")}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: { cores: size.cores, memoryMiB: size.memoryMiB, diskGiB: size.diskGiB, gpu } };
 }
 
 function hooks(onClaim: (guest: Guest) => void = () => {}) {
@@ -79,6 +80,7 @@ test("parses the fields, with the setup guide's defaults", () => {
     docker: true,
     network: "bbbox",
     boxes: 10,
+    gpus: false,
     desktopsPerGpu: 4,
     reserveMemoryMiB: 4096,
     machineDockerHost: null,
@@ -131,7 +133,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
     ["wayland-desktop-image", /Wayland desktop image "-v \/:\/host"/],
     ["network", /network name/],
     ["boxes", /most boxes/],
-    ["desktops-per-gpu", /desktops per GPU/],
+    ["desktops-per-gpu", /boxes per card/],
     ["reserve-memory-mib", /cannot be negative/],
   ] as const) {
     assert.ok(parsed.problems.some((problem) => problem.path === path && pattern.test(problem.message)), `${path}: ${pattern} in ${JSON.stringify(parsed.problems)}`);
@@ -215,6 +217,7 @@ test("reads the daemon's facts and its containers", () => {
     parseInfo(
       JSON.stringify({
         Name: "docker1",
+        ID: "6f0a1b2c-daemon",
         ServerVersion: "29.0.0",
         OperatingSystem: "Ubuntu 24.04 LTS",
         OSType: "linux",
@@ -228,7 +231,9 @@ test("reads the daemon's facts and its containers", () => {
       }),
     ),
     {
+      id: "6f0a1b2c-daemon",
       name: "docker1",
+      rootDir: "",
       version: "29.0.0",
       operatingSystem: "Ubuntu 24.04 LTS",
       osType: "linux",
@@ -242,6 +247,7 @@ test("reads the daemon's facts and its containers", () => {
       memoryLimit: true,
       cpuset: false,
       gpus: [GPU_A, GPU_B],
+      allGpus: true,
     },
   );
   const [container] = parseContainers(
@@ -625,7 +631,7 @@ test("counts an acquire from when it is placed, before its container runs", asyn
 test("places GPU desktops per GPU, counting stopped ones", async () => {
   const size = { cores: 4, memoryMiB: 8192, diskGiB: null };
   const none = setup({ "gpu-desktops": true });
-  assert.match((await none.backend.capacity("linux-desktop", size, [], signal())).message!, /lists no NVIDIA GPU as a CDI device/);
+  assert.match((await none.backend.capacity("linux-desktop", size, [], signal())).message!, /^Fake-docker cannot give a box a GPU now: it lists no NVIDIA card as a CDI device\. Install the NVIDIA Container Toolkit/);
 
   const { backend } = setup({ "gpu-desktops": true, "desktops-per-gpu": 1 }, { gpus: [GPU_A, GPU_B] });
   const capacity = await backend.capacity("linux-desktop", size, [], signal());
@@ -641,7 +647,7 @@ test("places GPU desktops per GPU, counting stopped ones", async () => {
   await backend.stop(first, signal());
   await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal());
   const full = await backend.capacity("linux-desktop", size, [], signal());
-  assert.match(full.message!, /each GPU on fake-docker has the 1 desktops it may have/);
+  assert.match(full.message!, /^No card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have \(calm-otter-\d+\) and card 1 has 1 box, the most a card may have \(calm-otter-\d+\)\. Release a box on a card, ask for a linux-desktop-cpu box, or raise the boxes per card in BB Box's Docker settings\.$/);
   // A CPU desktop needs no GPU.
   assert.equal((await backend.capacity("linux-desktop-cpu", size, [], signal())).ok, true);
 });

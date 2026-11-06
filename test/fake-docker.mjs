@@ -64,7 +64,9 @@ function info() {
   const gpus = host.gpus ?? [];
   console.log(
     JSON.stringify({
+      ID: host.daemonId ?? `fake-${createHash("sha256").update(root).digest("hex").slice(0, 16)}`,
       Name: host.name ?? "fake-docker",
+      DockerRootDir: host.rootDir ?? "/var/lib/docker",
       ServerVersion: "29.0.0",
       OperatingSystem: host.operatingSystem ?? "Ubuntu 24.04 LTS",
       OSType: host.osType ?? "linux",
@@ -76,7 +78,7 @@ function info() {
       CpuCfsQuota: host.cpuLimit ?? true,
       MemoryLimit: host.memoryLimit ?? true,
       CPUSet: host.cpuset ?? true,
-      DiscoveredDevices: gpus.length ? [{ Source: "cdi", ID: "nvidia.com/gpu=all" }, ...gpus.map((id) => ({ Source: "cdi", ID: id }))] : null,
+      DiscoveredDevices: gpus.length || host.allGpus ? [{ Source: "cdi", ID: "nvidia.com/gpu=all" }, ...gpus.map((id) => ({ Source: "cdi", ID: id }))] : null,
     }),
   );
 }
@@ -111,8 +113,36 @@ function checkMounts(mounts) {
   }
 }
 
+function hostCards() {
+  if (host.cards) return host.cards;
+  return (host.gpus ?? []).map((device, at) => {
+    const uuid = /=GPU-([0-9a-f-]{36})$/i.exec(device)?.[1];
+    const named = /=(\d+)$/.exec(device)?.[1];
+    const index = named === undefined ? at : Number(named);
+    return { index, uuid: (uuid ?? `00000000-0000-0000-0000-${String(index).padStart(12, "0")}`).toLowerCase(), name: "NVIDIA Fake Card", totalMiB: 24576, freeMiB: 24000, device };
+  });
+}
+
+function cardsGiven(devices, privileged) {
+  const cards = hostCards();
+  if (privileged || devices.includes("nvidia.com/gpu=all")) return cards;
+  return cards.filter((card) => devices.includes(card.device ?? `nvidia.com/gpu=GPU-${card.uuid}`) || devices.includes(`nvidia.com/gpu=${card.index}`));
+}
+
+function probeCards(devices) {
+  if (host.probeFails) fail(host.probeFails, 125);
+  for (const card of cardsGiven(devices, false)) console.log(`${card.index}, GPU-${card.uuid}, ${card.name}, ${card.totalMiB}, ${card.freeMiB}`);
+}
+
 function run(rest) {
   appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
+  const runDevices = rest.flatMap((arg, i) => (rest[i - 1] === "--device" ? [arg] : []));
+  if (rest.at(-1)?.includes("--query-gpu=index,uuid,name,memory.total,memory.free")) {
+    for (const device of runDevices) {
+      if (!(host.gpus ?? []).includes(device) && !(device === "nvidia.com/gpu=all" && (host.gpus?.length || host.allGpus))) fail(`docker: Error response from daemon: could not select device driver "cdi" with capabilities: []: unresolvable CDI devices ${device}`, 125);
+    }
+    return probeCards(runDevices);
+  }
   const mounts = rest.flatMap((arg, i) => (rest[i - 1] === "--mount" ? [mountOf(arg)] : []));
   if (mounts.some((mount) => mount.Source === "/var/lib/lxcfs")) {
     checkMounts(mounts);
@@ -170,7 +200,7 @@ function create(rest) {
   const network = options["--network"];
   if (!(network in read("networks.json", {}))) fail(`Error response from daemon: network ${network} not found`);
   for (const device of devices) {
-    if (!(host.gpus ?? []).includes(device)) fail(`Error response from daemon: could not select device driver "cdi" with capabilities: []: unresolvable CDI devices ${device}`);
+    if (!(host.gpus ?? []).includes(device) && !(device === "nvidia.com/gpu=all" && host.allGpus)) fail(`Error response from daemon: could not select device driver "cdi" with capabilities: []: unresolvable CDI devices ${device}`);
   }
   const id = randomBytes(32).toString("hex");
   try {
@@ -179,6 +209,7 @@ function create(rest) {
     fail(`Error response from daemon: Conflict. The container name "/${name}" is already in use by container "${find(name)?.Id ?? "?"}". You have to remove (or rename) that container to be able to reuse that name.`);
   }
   mkdirSync(join(dir(name), "home"));
+  mkdirSync(join(dir(name), "etc"));
   const count = names().length + 1;
   save({
     Id: id,
@@ -342,9 +373,12 @@ function exec(rest) {
       .replaceAll("/usr/local/libexec/bb-box/", `${join(dir(name), "libexec", "bb-box")}/`)
       .replaceAll("/home/box", home);
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
+  const cards = cardsGiven(found.HostConfig.Devices ?? [], found.HostConfig.Privileged === true);
+  const gpuEnv = Object.fromEntries((found.Config.Env ?? []).filter((pair) => /^(CUDA_VISIBLE_DEVICES|NVIDIA_VISIBLE_DEVICES)=/.test(pair)).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]));
+  const cardEnv = cards.length ? { PATH: `${join(root, "gpu-bin")}:${process.env.PATH}`, FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_CUDA_ERROR: host.cudaError ? String(host.cudaError) : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
   const child = spawn(command, commandArgs, {
     cwd: workdir ? own(workdir) : home,
-    env: { PATH: process.env.PATH, HOME: home, ...env },
+    env: { PATH: process.env.PATH, HOME: home, ...gpuEnv, ...env, ...cardEnv },
     stdio: "inherit",
   });
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));

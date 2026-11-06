@@ -3,7 +3,7 @@
 // Writes go one at a time: storage has no compare-and-set, so the revision
 // check and the write must not interleave.
 
-import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
+import { SHARED_BY_BACKENDS, layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
 import type { Arch, BackendDriver, BackendStorage, MachineSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, Price, WarmShortfall } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
@@ -486,9 +486,10 @@ export class Configuration {
    */
   async #test(id: string, driver: BackendDriver<any>, config: unknown, signal?: AbortSignal): Promise<DoctorReport> {
     const storage = layeredStorage(scopedStorage(this.#deps.kv, `backend/${id}/`));
+    const sharedStorage = layeredStorage(scopedStorage(this.#deps.kv, SHARED_BY_BACKENDS));
     let backend: ReturnType<BackendDriver<any>["create"]> | null = null;
     try {
-      backend = driver.create(config, { ...this.#deps.backends.context(id, storage), warm: () => 0 });
+      backend = driver.create(config, { ...this.#deps.backends.context(id, storage, sharedStorage), warm: () => 0 });
       const built = backend;
       return await boundedDoctor((bounded) => built.doctor(bounded), this.#deps.testTimeoutMs ?? TEST_TIMEOUT_MS, signal);
     } catch (error) {

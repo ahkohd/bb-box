@@ -7179,7 +7179,11 @@ test("071 unit 8, round 2: while whole cards are off, the schemas agents get for
   assert.deepEqual((await gpuOf("box_acquire"))?.enum, ["none", "shared"]);
   assert.doesNotMatch((await gpuOf("box_acquire"))?.description ?? "", /whole/);
   assert.deepEqual((await gpuOf("box_fork"))?.enum, ["none", "shared"]);
+  assert.deepEqual((await gpuOf("box_resize"))?.enum, ["none", "shared"]);
+  assert.doesNotMatch((await gpuOf("box_resize"))?.description ?? "", /whole/);
   const help = async (words: readonly string[]) => (await harness.behavior.runCli([...words, "--help"])).stdout ?? "";
+  assert.doesNotMatch((await help(["resize"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /whole/);
+  assert.match((await help(["resize"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /The box's GPU: none, or shared, one card other boxes may share\./);
   assert.match(await help(["acquire"]), /--gpu <value> +The box's GPU: none, or shared, one card other boxes may share\./);
   assert.doesNotMatch(await help(["acquire"]), /whole/);
   assert.doesNotMatch((await help(["snapshot", "fork"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /whole/);
@@ -7189,6 +7193,8 @@ test("071 unit 8, round 2: while whole cards are off, the schemas agents get for
   assert.deepEqual((await gpuOf("box_acquire"))?.enum, ["none", "shared", "whole"]);
   assert.match((await gpuOf("box_acquire"))?.description ?? "", /where this install has whole cards on/);
   assert.deepEqual((await gpuOf("box_fork"))?.enum, ["none", "shared", "whole"]);
+  assert.deepEqual((await gpuOf("box_resize"))?.enum, ["none", "shared", "whole"]);
+  assert.match((await help(["resize"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself\./);
   assert.match(await help(["acquire"]), /--gpu <value> +The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself\./);
   assert.match((await help(["snapshot", "fork"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /shared or whole/);
 });

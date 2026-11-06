@@ -3,7 +3,7 @@
 // setup/docker/build.sh makes.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseDockerPart, type DockerConfig } from "../src/backends/docker/config.ts";
 import type { FieldValue } from "../src/backends/types.ts";
@@ -51,6 +51,7 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   const script = new URL("./fake-docker.mjs", import.meta.url).pathname;
   writeFileSync(binary, `#!/bin/sh\nFAKE_DOCKER_ROOT='${root}' exec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(binary, 0o755);
+  fakeGpuTools(join(root, "gpu-bin"));
   // As setup/docker/build.sh labels its images: the layout, and a fresh record (049).
   const record = (kind: string) => JSON.stringify({ contract: 1, image: "standard", kind, arch: "x86_64", build: "build.fake", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
   const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.image-record": record(kind) });
@@ -84,6 +85,37 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
     inspect: (name) => JSON.parse(readFileSync(join(containers, name, "config.json"), "utf8")) as FakeContainer,
     home: (name) => join(containers, name, "home"),
   };
+}
+
+function fakeGpuTools(bin: string): void {
+  mkdirSync(bin, { recursive: true });
+  const smi = String.raw`#!/usr/bin/env node
+const cards = JSON.parse(process.env.FAKE_CARDS ?? "[]");
+if (!cards.length) { console.log("No devices were found"); process.exit(6); }
+for (const card of cards) console.log("GPU-" + card.uuid + ", " + card.name + ", " + card.totalMiB);
+`;
+  const python = String.raw`#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const script = process.argv[3] ?? "";
+if (process.argv[2] !== "-c" || !script.includes("libcuda.so.1")) {
+  const real = spawnSync(process.env.FAKE_REAL_PYTHON || "python3", process.argv.slice(2), { stdio: "inherit", env: { ...process.env, PATH: (process.env.PATH ?? "").split(":").slice(1).join(":") } });
+  process.exit(real.status ?? 1);
+}
+const cards = JSON.parse(process.env.FAKE_CARDS ?? "[]");
+if (process.env.FAKE_CUDA_ERROR) {
+  console.log(script.includes("cuDeviceGetUuid") ? "cudacard " + process.env.FAKE_CUDA_ERROR + " 0 none" : process.env.FAKE_CUDA_ERROR);
+  process.exit(0);
+}
+const visible = process.env.CUDA_VISIBLE_DEVICES;
+const picked = process.env.FAKE_CUDA_NO_DEVICE ? [] : process.env.FAKE_CUDA_IGNORES_VISIBLE || visible === undefined ? cards : cards.filter((card) => "GPU-" + card.uuid === visible);
+if (!script.includes("cuDeviceGetUuid")) { console.log(picked.length ? 0 : 100); process.exit(0); }
+if (!picked.length) { console.log("cudacard 100 0 none"); process.exit(0); }
+console.log("cudacard 0 " + picked.length + " " + picked[0].uuid.replaceAll("-", ""));
+`;
+  writeFileSync(join(bin, "nvidia-smi"), smi);
+  writeFileSync(join(bin, "python3"), python);
+  chmodSync(join(bin, "nvidia-smi"), 0o755);
+  chmodSync(join(bin, "python3"), 0o755);
 }
 
 /** A config from the fields given, the rest at their defaults. */

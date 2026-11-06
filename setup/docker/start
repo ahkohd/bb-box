@@ -55,6 +55,7 @@ set -a
 [ ! -r /etc/environment ] || . /etc/environment
 set +a
 box_env=(HOME="$home" USER="$user" LOGNAME="$user" SHELL=/bin/bash LANG=C.UTF-8 PATH="$PATH")
+[ -z "${BBBOX_GPU_CARD:-}" ] || box_env+=(CUDA_VISIBLE_DEVICES="$BBBOX_GPU_CARD" NVIDIA_VISIBLE_DEVICES="$BBBOX_GPU_CARD")
 as_box() { setpriv --reuid="$user" --regid="$user" --init-groups env -i "${box_env[@]}" "$@"; }
 # Runs a command again a second after it exits, as Restart=always does.
 keep() { while :; do "$@"; sleep 1; done; }

@@ -11,7 +11,7 @@
 //   pool: a container is ready in about a second.
 // - Capacity: the host's memory, less a reserve and the limits of the
 //   running bb-box containers; a most-boxes setting, counting every
-//   install's; and desktops per GPU for GPU desktops, from the GPUs the
+//   install's; and boxes per card for GPU boxes, from the cards the
 //   NVIDIA Container Toolkit lists as CDI devices. Boxes share the host's
 //   disk, so there is no disk limit, and a box keeps its image's disk.
 // - Every call that acts on a container inspects it first and acts only on
@@ -32,8 +32,19 @@ import {
   type Backend,
   type BackendContext,
   type BackendImages,
+  type BackendStorage,
+  type DockerDaemonIdentity,
+  type DockerDaemonReached,
   type BoxIdentity,
   type BoxKind,
+  type CapacityAsking,
+  type GpuPart,
+  type GpuRefusal,
+  type GpuResize,
+  type GpuRoom,
+  type GuestFact,
+  type ResizeTarget,
+  type Started,
   type BoxOwner,
   type MachineSize,
   type BoxTransports,
@@ -68,6 +79,52 @@ import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 import { dockerImageBuilding } from "./building.ts";
+import { backendsOn, daemonKey, daemonShare, engineKey, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_RESIZE } from "../../core/gpu.ts";
+import { SERVER_GPU_MIB, type CardCheck } from "../card-check.ts";
+import {
+  ALL_CARDS_DEVICE,
+  AVOID_CARD_MS,
+  DESKTOP_GPU_MIB,
+  DOCKER_CARD_CHECK,
+  PROBE_SCRIPT,
+  READING_FRESH_MS,
+  READING_KEPT_MS,
+  auditCards,
+  wholeHoldersOnNoCard,
+  cardName,
+  cardKeyOf,
+  cardOfLabels,
+  cardOfUuid,
+  cardRooms,
+  hostListsCards,
+  oneDeviceForEveryCardOf,
+  cardsOnHost,
+  claimOf,
+  cudaVisible,
+  deviceCard,
+  environmentScript,
+  factWords,
+  holderName,
+  judgeDockerCardCheck,
+  noCardsRefusal,
+  parseProbe,
+  partOfLabel,
+  placeCard,
+  placementOf,
+  placementRefusal,
+  reachWords,
+  seeItWords,
+  threadsNamed,
+  wrongCard,
+  type BoxWhat,
+  type CardHolder,
+  type CardPart,
+  type CardsOnHost,
+  type DockerCard,
+  type ProbedCard,
+  type ThreadTitles,
+} from "./gpus.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 const READY_TIMEOUT_MS = 60_000;
@@ -99,6 +156,15 @@ const DOCKER_COMMAND: CommandCapability = { transport: "docker", shell: "sh", ad
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 type Pending = { readonly kind: string; readonly size: MachineSize };
+type CardPlacing = ({ readonly is: "placed"; readonly card: DockerCard } | { readonly is: "refused"; readonly refusal: GpuRefusal }) & { readonly limits: readonly Limit[] };
+type StoredPart = { readonly part: CardPart; readonly generation: number };
+type PartRecord = StoredPart & { readonly writtenUnder: DockerDaemonIdentity };
+const GPU_PARTS = "docker/gpu-part/";
+const GPU_PART_KEY = (containerId: string) => `${GPU_PARTS}${containerId}`;
+const GPU_FACT = "GPU";
+const GPU_CHECK_FACT = "GPU check";
+const CARDS_FACT = "Cards";
+const TITLE_WAIT_MS = 2_000;
 
 export interface DockerBackendOptions {
   /** The docker CLI, instead of `docker` on the PATH. */
@@ -165,9 +231,50 @@ function runScript(script: string, args: readonly string[], env: NodeJS.ProcessE
 
 /** A container bb-box is making, counted against the host until docker lists it. */
 interface Placing {
+  readonly backendId: string;
   readonly name: string;
   readonly memoryMiB: number;
   readonly gpu: string | null;
+  readonly cpus: CpuList | null;
+  readonly card: string | null;
+  readonly part: GpuPart;
+  readonly needMiB: number;
+  readonly boxName: string;
+  readonly threadId: string;
+}
+
+interface MadeGpu {
+  readonly gpu: string | null;
+  readonly card: string | null;
+  readonly part: GpuPart;
+}
+
+interface WrongCard {
+  readonly is: "wrong";
+  readonly card: string;
+  readonly named: string;
+  readonly why: string;
+}
+
+type CheckedFacts = { readonly is: "facts"; readonly facts: readonly GuestFact[] } | WrongCard;
+
+function madeOnCard(card: DockerCard | null, part: GpuPart): MadeGpu {
+  if (!card) return { gpu: null, card: null, part: "none" };
+  return { gpu: card.device, card: card.uuidKnown ? card.uuid : null, part };
+}
+
+function madeOf(guest: Guest): MadeGpu {
+  const gpu = typeof guest.data?.gpu === "string" ? guest.data.gpu : null;
+  if (!gpu) return { gpu: null, card: null, part: "none" };
+  const card = typeof guest.data?.card === "string" ? guest.data.card : deviceCard(gpu);
+  return { gpu, card, part: guest.data?.part === "whole" ? "whole" : "shared" };
+}
+
+interface PlacedBox {
+  readonly host: string;
+  readonly gpu: string | null;
+  readonly card: DockerCard | null;
+  readonly part: GpuPart;
   readonly cpus: CpuList | null;
 }
 
@@ -184,6 +291,7 @@ interface HostState {
   readonly info: DockerInfo;
   /** Every bb-box container on the host, of every install. */
   readonly containers: readonly ContainerInfo[];
+  readonly placing: readonly Placing[];
 }
 
 function message(error: unknown): string {
@@ -291,10 +399,44 @@ function withSize(record: ImageRecord | null, sizeBytes: number | null): ImageRe
   return record && sizeBytes !== null ? { ...record, sizeGiB: Math.round((sizeBytes / 1024 ** 3) * 10) / 10 } : record;
 }
 
-function dataOf(container: ContainerInfo): Record<string, string> {
+function dataOf(container: ContainerInfo, card: string | null, part: GpuPart): Record<string, string> {
   const box = container.labels[LABELS.box];
   const gpu = container.labels[LABELS.gpu];
-  return { ...(box ? { box } : {}), ...(gpu ? { gpu } : {}) };
+  return { ...(box ? { box } : {}), ...(gpu ? { gpu, part } : {}), ...(card ? { card } : {}) };
+}
+
+function guestCard(guest: Guest): { readonly card: string; readonly part: CardPart } | null {
+  const card = typeof guest.data?.card === "string" ? guest.data.card : typeof guest.data?.gpu === "string" ? deviceCard(guest.data.gpu) : null;
+  if (!card) return null;
+  return { card, part: guest.data?.part === "whole" ? "whole" : "shared" };
+}
+
+function neededMiB(kind: string): number {
+  return kind === "linux-desktop" ? DESKTOP_GPU_MIB : SERVER_GPU_MIB;
+}
+
+function boxWhat(kind: string): BoxWhat {
+  return kind === "linux-desktop" ? "desktop" : "server";
+}
+
+function withoutGpuFacts(facts: readonly GuestFact[] | undefined): GuestFact[] {
+  return (facts ?? []).filter((fact) => fact.label !== GPU_FACT && fact.label !== GPU_CHECK_FACT && fact.label !== CARDS_FACT);
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function listOf(items: readonly string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+function machineSize(size: MachineSize): MachineSize {
+  return { cores: size.cores, memoryMiB: size.memoryMiB, diskGiB: size.diskGiB };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref?.());
 }
 
 /**
@@ -414,6 +556,11 @@ export function refusedByAppArmor(result: { readonly exitCode: number | null; re
   return result.exitCode === 127 && /cannot apply additional memory protection after relocation: Permission denied/.test(result.stderr);
 }
 
+function daemonIdentityOf(info: DockerInfo): DockerDaemonIdentity {
+  return { engineId: info.id, name: info.name, rootDir: info.rootDir };
+}
+
+
 export class DockerBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -434,8 +581,6 @@ export class DockerBackend implements Backend {
   #knownName: string | null = null;
   /** The host's OS as last learned, from BB for a BB machine or from the daemon over ssh://, kept with the name. */
   #knownOs: GuestOs | null = null;
-  /** Containers being acquired, by box ID, until their acquire ends. */
-  readonly #placing = new Map<string, Placing>();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
@@ -458,11 +603,15 @@ export class DockerBackend implements Backend {
     startsFrom: true,
     spares: true,
   };
-  /** Placement is one at a time, so two acquires never take the last room on the host. */
-  #placement: Promise<unknown> = Promise.resolve();
+  #share: DaemonShare<Placing> | null = null;
+  readonly #reservedIn = new Map<string, DaemonShare<Placing>>();
+  #joined = false;
   #hostCpus: { readonly at: number; readonly cpus: CpuList } | null = null;
   #daemonCpus: CpuList | null = null;
   #lxcfs: { readonly at: number; readonly on: LxcfsOnHost | null } | null = null;
+  #reading: { readonly at: number; readonly probed: readonly ProbedCard[] | null; readonly unread: string | null } | null = null;
+  #probing: Promise<void> | null = null;
+  #lastProbed: readonly ProbedCard[] | null = null;
 
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
@@ -572,8 +721,28 @@ export class DockerBackend implements Backend {
   }
 
   kinds(): BoxKind[] {
-    if (this.#info?.rootless) return this.#rootlessKinds;
-    return this.#gpuBusId === false ? this.#oldDesktopKinds : this.#kinds;
+    const kinds = this.#info?.rootless ? this.#rootlessKinds : this.#gpuBusId === false ? this.#oldDesktopKinds : this.#kinds;
+    return kinds.map((kind) => {
+      const parts = this.#gpuParts(kind.id);
+      return parts ? { ...kind, gpuParts: parts } : kind;
+    });
+  }
+
+  #wholeOn(): boolean {
+    return this.#context.wholeCards?.() ?? false;
+  }
+
+  #gpuParts(kind: string): readonly GpuPart[] | null {
+    if (!this.#config.gpus) return null;
+    const whole: readonly GpuPart[] = this.#wholeOn() ? ["whole"] : [];
+    if (kind === "linux" && this.#config.images.linux) return ["none", "shared", ...whole];
+    if (kind === "linux-desktop" && this.#config.images["linux-desktop"]) return ["shared", ...whole];
+    return null;
+  }
+
+  #gpuAsked(kind: string, gpu: GpuPart | undefined): GpuPart {
+    if (gpu !== undefined) return gpu;
+    return kind === "linux-desktop" ? "shared" : "none";
   }
 
   /**
@@ -615,8 +784,11 @@ export class DockerBackend implements Backend {
     return this.#info?.name || hostWords(this.#config.host);
   }
 
-  async capacity(kind: string, size: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: MachineSize & { readonly gpu?: GpuPart }, pending: readonly Pending[], signal?: AbortSignal, asking?: CapacityAsking): Promise<Capacity> {
     this.#kind(kind);
+    const part = this.#gpuAsked(kind, size.gpu);
+    const refusedPart = this.#partRefusal(kind, part);
+    if (refusedPart) return { ok: false, message: refusedPart.person, agentMessage: refusedPart.agent, warm: null, hosts: [{ host: this.#host, ok: false, limits: [] }] };
     // A BB machine that is offline takes no box, said at once from BB's view of it, with no call to it (042).
     const machine = this.#config.machine;
     if (machine && (await abortable(this.#context.machines?.connected(machine) ?? Promise.resolve(null), signal)) !== true) {
@@ -634,31 +806,290 @@ export class DockerBackend implements Backend {
         hosts: [{ host: this.#host, ok: false, limits: [] }],
       };
     }
-    const placed = [...this.#placing.values()];
+    const placed = state.placing;
     const unplaced: Unplaced = {
       count: Math.max(0, pending.length - placed.length),
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
       gpuDesktops: Math.max(0, pending.filter((other) => other.kind === "linux-desktop").length - placed.filter((other) => other.gpu).length),
     };
+    const shared = this.#sharedDaemonRefusal(part);
+    if (shared) return { ok: false, message: shared.person, agentMessage: shared.agent, warm: null, hosts: [{ host: state.info.name || this.#host, ok: false, limits: [] }] };
     const room = this.#room(state, kind, size, unplaced);
-    return { ok: room.why === null, message: room.why === null ? null : this.#full(kind, room.why), warm: null, hosts: [room.capacity] };
+    if (room.why !== null || part === "none") return { ok: room.why === null, message: room.why === null ? null : this.#full(kind, room.why), warm: null, hosts: [room.capacity] };
+    const onCard = await this.#cardPlacement(state, kind, part, asking?.threadId ?? null, kind === "linux-desktop" && part === "shared" ? unplaced.gpuDesktops : 0, READING_KEPT_MS, signal);
+    const limits = [...room.capacity.limits, ...onCard.limits];
+    if (onCard.is === "refused") return { ok: false, message: onCard.refusal.person, agentMessage: onCard.refusal.agent, warm: null, hosts: [{ ...room.capacity, ok: false, limits }] };
+    return { ok: true, message: null, warm: null, hosts: [{ ...room.capacity, limits }] };
+  }
+
+  #partRefusal(kind: string, part: GpuPart): GpuRefusal | null {
+    if (part === "none") return kind === "linux-desktop" ? { person: `${this.label} gives linux-desktop boxes a GPU. Ask for a linux-desktop-cpu box for a desktop drawn by the CPU.`, agent: "Not made: a linux-desktop on Docker always has a GPU. Ask for a linux-desktop-cpu box, or ask the user. bb-box changed nothing." } : null;
+    if (!this.#gpuParts(kind)?.includes(part)) {
+      if (part === "whole" && this.#gpuParts(kind)?.includes("shared")) return WHOLE_CARDS_OFF;
+      return {
+        person: `${this.label} gives ${kind} boxes no GPU${this.#config.gpus ? "" : ": GPU boxes are off in its settings"}. Ask for gpu none.`,
+        agent: `Not made: ${this.label} gives ${kind} boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+      };
+    }
+    return null;
+  }
+
+  async #titles(threads: readonly string[]): Promise<ThreadTitles> {
+    const lookup = this.#context.threadTitle;
+    const titles = new Map<string, string | null>();
+    if (!lookup) return titles;
+    await Promise.all(
+      threads.map(async (threadId) => {
+        titles.set(threadId, await Promise.race([lookup(threadId).catch(() => null), sleep(TITLE_WAIT_MS).then(() => null)]));
+      }),
+    );
+    return titles;
+  }
+
+  get #storageOfEveryBackend(): BackendStorage {
+    return this.#context.sharedStorage ?? this.#context.storage;
+  }
+
+  async #storedPart(containerId: string): Promise<StoredPart | null> {
+    const stored = await this.#storageOfEveryBackend.get<PartRecord>(GPU_PART_KEY(containerId)).catch(() => undefined);
+    return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? { part: stored.part, generation: stored.generation } : null;
+  }
+
+  async #writtenUnder(signal?: AbortSignal): Promise<DockerDaemonIdentity> {
+    await this.#shared(signal);
+    return this.#info ? daemonIdentityOf(this.#info) : { engineId: "", name: "", rootDir: "" };
+  }
+
+  async dockerDaemons(signal?: AbortSignal): Promise<readonly DockerDaemonReached[]> {
+    const [info, containers] = await Promise.all([this.#cli.info(signal), this.#cli.ids({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId }, signal)]);
+    return [{ ...daemonIdentityOf(info), containers }];
+  }
+
+  async #partOf(container: ContainerInfo): Promise<StoredPart> {
+    const mine = container.labels[LABELS.install] === this.#context.installId;
+    const switched = mine ? await this.#storedPart(container.id) : null;
+    return switched ?? { part: partOfLabel(container.labels[LABELS.gpuPart]), generation: 1 };
+  }
+
+  async #dropPartsOfGoneContainers(state: HostState, signal?: AbortSignal): Promise<void> {
+    const here = daemonIdentityOf(state.info);
+    const there = new Set(state.containers.map((container) => container.id));
+    const keys = (await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[])).filter((key) => !there.has(key.slice(GPU_PARTS.length)));
+    const gone = await Promise.all(keys.map(async (key) => ({ key, writtenUnder: (await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined))?.writtenUnder })));
+    const ofThisEngine = gone.filter((record) => record.writtenUnder !== undefined && record.writtenUnder.engineId === here.engineId);
+    if (!ofThisEngine.length) return;
+    const reached = await (this.#context.dockerDaemonsReached?.(signal) ?? Promise.resolve(null)).catch(() => null);
+    if (!reached) return;
+    const listedSomewhere = new Set(reached.flatMap((daemon) => daemon.containers));
+    await Promise.all(ofThisEngine.filter((record) => !listedSomewhere.has(record.key.slice(GPU_PARTS.length))).map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
+  }
+
+  #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
+    this.#probing ??= (async () => {
+      const at = this.#now();
+      const image = this.#probeImage();
+      if (!image) {
+        this.#reading = { at, probed: null, unread: "no box image is on the host to read them from" };
+        return;
+      }
+      const devices = info.allGpus ? [ALL_CARDS_DEVICE] : info.gpus;
+      const result = await this.#cli
+        .run(["container", "run", "--rm", "--pull", "never", "--network", "none", ...devices.flatMap((device) => ["--device", device]), image, "sh", "-c", PROBE_SCRIPT], { timeoutMs: 30_000, signal })
+        .catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: message(error), timedOut: false }));
+      const probed = result.exitCode === 0 ? parseProbe(result.stdout) : [];
+      const said = `${result.stderr}`.trim().split("\n").at(-1) || `exit code ${result.exitCode ?? "none"}`;
+      this.#reading = probed.length ? { at, probed, unread: null } : { at, probed: null, unread: `nvidia-smi in a container given the cards answered ${result.exitCode === 0 ? "with no card" : said}` };
+      if (probed.length) this.#lastProbed = probed;
+    })().finally(() => {
+      this.#probing = null;
+    });
+    return this.#probing;
+  }
+
+  async #cardsOn(info: DockerInfo, signal?: AbortSignal, freshMs = READING_FRESH_MS): Promise<CardsOnHost> {
+    if (!info.gpus.length && !info.allGpus) return { cards: [], oneDeviceForEveryCard: false, readAt: null, unread: null };
+    if (!this.#reading || this.#now() - this.#reading.at > freshMs) await this.#readCards(info, signal);
+    const reading = this.#reading;
+    const lastKnown = this.#lastProbed?.map((card) => ({ ...card, freeMiB: null }));
+    return cardsOnHost({ devices: info.gpus, allListed: info.allGpus, probed: reading?.probed ?? lastKnown ?? null, readAt: reading?.probed ? reading.at : null, unread: reading?.unread ?? null });
+  }
+
+  #avoidedCards(): ReadonlySet<string> {
+    const now = this.#now();
+    for (const [card, until] of this.#avoided) if (until <= now) this.#avoided.delete(card);
+    return new Set(this.#avoided.keys());
+  }
+
+  async #holders(state: HostState, cards: CardsOnHost): Promise<CardHolder[]> {
+    const placing = new Map(state.placing.map((each) => [each.name, each]));
+    const held = await Promise.all(
+      state.containers.map(async (container): Promise<CardHolder | null> => {
+        if (container.labels[LABELS.imageBox] || placing.has(container.name)) return null;
+        const card = cardOfLabels(container.labels, cards.cards, LABELS.gpuCard, LABELS.gpu);
+        if (!card) return null;
+        const own = container.labels[LABELS.install] === this.#context.installId;
+        const relabelled = own ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)).catch(() => undefined) : undefined;
+        return {
+          card,
+          part: (await this.#partOf(container)).part,
+          name: relabelled?.name ?? (container.labels[LABELS.name] || container.name),
+          threadId: own ? (relabelled?.threadId ?? container.labels[LABELS.thread] ?? null) : null,
+          otherInstall: !own,
+          state: ACTIVE.has(container.status) ? "running" : "stopped",
+          container: container.name,
+          needMiB: 0,
+        };
+      }),
+    );
+    const making = [...placing.values()].flatMap((each): CardHolder[] => {
+      const card = each.part !== "none" ? cardKeyOf(each.card, each.gpu, cards.cards) : null;
+      return card ? [{ card, part: each.part as CardPart, name: each.boxName, threadId: each.threadId, otherInstall: false, state: "making", container: each.name, needMiB: each.needMiB }] : [];
+    });
+    return [...held.filter((holder): holder is CardHolder => holder !== null), ...making];
+  }
+
+  async #cardPlacement(state: HostState, kind: string, part: CardPart, threadId: string | null, unplacedPerCard: number, freshMs: number, signal?: AbortSignal): Promise<CardPlacing> {
+    const host = state.info.name || this.#host;
+    const what = boxWhat(kind);
+    const cards = await this.#cardsOn(state.info, signal, freshMs);
+    if (!cards.cards.length) {
+      const why = cards.unread ? `bb-box could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
+      return { is: "refused", refusal: noCardsRefusal(host, why, what), limits: [] };
+    }
+    const holders = await this.#holders(state, cards);
+    const lost = wholeHoldersOnNoCard(holders, cards.cards);
+    if (lost.length) {
+      const names = listOf(lost.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
+      const why = `${names} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now${cards.unread ? `, as it could not read the cards: ${cards.unread}` : ""}`;
+      return {
+        is: "refused",
+        refusal: {
+          person: `${capitalise(host)} cannot give a box a GPU now: ${why}. Run bb box doctor.`,
+          agent: `Not made: ${host} cannot give a box a GPU now: ${why}. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+        },
+        limits: [],
+      };
+    }
+    const limits: Limit[] = cards.cards.map((card) => ({
+      resource: "gpu-desktops",
+      id: cards.oneDeviceForEveryCard ? cudaVisible(card.uuid) : card.device,
+      used: holders.filter((holder) => holder.card === card.uuid).length + unplacedPerCard,
+      total: this.#config.desktopsPerGpu,
+      reserve: 0,
+      unit: "count",
+    }));
+    const result = placeCard({ part, needMiB: neededMiB(kind), what, cards: cards.cards, holders, perCard: this.#config.desktopsPerGpu, avoided: this.#avoidedCards(), unplacedPerCard });
+    if (result.is === "placed") return { is: "placed", card: result.card, limits };
+    return { is: "refused", refusal: placementRefusal(host, part, what, result.blocks, await this.#titles(threadsNamed(result.blocks)), threadId), limits };
   }
 
   /** The daemon's facts and every bb-box container on the host. */
   async #state(signal?: AbortSignal): Promise<HostState> {
     const [info, containers] = await Promise.all([this.#cli.info(signal), this.#cli.list({ [LABELS.backend]: "docker" }, signal)]);
     this.#info = info;
-    return { info, containers };
+    const share = this.#shareOf(info);
+    return { info, containers, placing: await this.#placingOnDaemon(share, info, signal) };
   }
 
-  /** Whether a box of `size` fits, and if not, why, with what to do; for a GPU desktop, the GPU it gets. */
-  #room(state: HostState, kind: string, size: MachineSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null; gpu: string | null } {
+  async #placingOnDaemon(share: DaemonShare<Placing>, info: DockerInfo, signal?: AbortSignal): Promise<Placing[]> {
+    const here = daemonKey(info, this.#daemonFallback);
+    const owners = new Map<string, Promise<string | null>>();
+    const ownerDaemon = (backendId: string): Promise<string | null> => {
+      let read = owners.get(backendId);
+      if (!read) {
+        const owner = share.backends.get(backendId);
+        read = owner ? owner.daemonNow(signal).catch(() => null) : Promise.resolve(null);
+        owners.set(backendId, read);
+      }
+      return read;
+    };
+    const entries = [...share.placing.values()];
+    const counted = await Promise.all(entries.map(async (each) => ((await ownerDaemon(each.backendId)) ?? here) === here));
+    return entries.filter((_, index) => counted[index]);
+  }
+
+  async #daemonRead(signal?: AbortSignal): Promise<string> {
+    return daemonKey(await this.#cli.info(signal), this.#daemonFallback);
+  }
+
+  #shareOf(info: DockerInfo): DaemonShare<Placing> {
+    const daemon = engineKey(info, this.#daemonFallback);
+    if (this.#share?.daemon === daemon) return this.#share;
+    if (this.#share && this.#joined) leaveDaemon(this.#share, this.id);
+    this.#joined = false;
+    this.#share = daemonShare<Placing>(daemon);
+    return this.#share;
+  }
+
+  get #daemonFallback(): string {
+    return this.#config.machine ?? this.#config.host ?? "local";
+  }
+
+  #daemonNow(): string {
+    return this.#info ? daemonKey(this.#info, this.#daemonFallback) : `host:${this.#daemonFallback}`;
+  }
+
+  #join(): void {
+    if (!this.#share || this.#joined) return;
+    joinDaemon(this.#share, this.id, { on: () => this.#context.on?.() ?? true, daemon: () => this.#daemonNow(), daemonNow: (signal) => this.#daemonRead(signal) });
+    this.#joined = true;
+  }
+
+  async #shared(signal?: AbortSignal): Promise<DaemonShare<Placing>> {
+    if (this.#share) return this.#share;
+    const info = await this.#cli.info(signal);
+    this.#info = info;
+    return this.#shareOf(info);
+  }
+
+  #reserve(boxId: string, placing: Placing): void {
+    const share = this.#share;
+    if (!share) return;
+    this.#unreserve(boxId);
+    share.placing.set(boxId, placing);
+    this.#reservedIn.set(boxId, share);
+  }
+
+  #unreserve(boxId: string): void {
+    this.#reservedIn.get(boxId)?.placing.delete(boxId);
+    this.#reservedIn.delete(boxId);
+  }
+
+  get #avoided(): Map<string, number> {
+    return this.#share?.avoided ?? new Map();
+  }
+
+  #otherBackendOnDaemon(): string | null {
+    if (!this.#share) return null;
+    const first = backendsOn(this.#share, this.#daemonNow()).find((id) => id !== this.id && id < this.id) ?? null;
+    return first;
+  }
+
+  #sharedDaemonRefusal(part: GpuPart): GpuRefusal | null {
+    this.#join();
+    if (part === "none") return null;
+    const other = this.#otherBackendOnDaemon();
+    if (other === null) return null;
+    return {
+      person: `${this.label} reaches the same Docker daemon as the backend ${other}, so bb-box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.`,
+      agent: `Not made: ${this.label} reaches the same Docker daemon as another backend, so bb-box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. bb-box changed nothing.`,
+    };
+  }
+
+  async dispose(): Promise<void> {
+    if (this.#share && this.#joined) leaveDaemon(this.#share, this.id);
+    this.#share = null;
+    this.#joined = false;
+  }
+
+  /** Whether a box of `size` fits, and if not, why, with what to do. */
+  #room(state: HostState, _kind: string, size: MachineSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null } {
     const { info, containers } = state;
     const host = info.name || this.#host;
     const listed = new Set(containers.map((container) => container.name));
     const active = containers.filter((container) => ACTIVE.has(container.status));
     const holding = new Set(active.map((container) => container.name));
-    const placing = [...this.#placing.values()];
+    const placing = state.placing;
     const unlisted = placing.filter((other) => !listed.has(other.name));
     const guests = containers.length + unlisted.length + unplaced.count;
     const memoryUsed =
@@ -671,18 +1102,6 @@ export class DockerBackend implements Backend {
       { resource: "guests", used: guests, total: this.#config.boxes, reserve: 0, unit: "count" },
       { resource: "memory", used: memoryUsed, total: info.memoryMiB, reserve, unit: "MiB" },
     ];
-    // A stopped desktop keeps its GPU, which it takes again when it starts.
-    const gpus = kind === "linux-desktop"
-      ? info.gpus.map((id) => ({
-          id,
-          used:
-            containers.filter((container) => container.labels[LABELS.gpu] === id).length +
-            unlisted.filter((other) => other.gpu === id).length +
-            unplaced.gpuDesktops,
-        }))
-      : [];
-    for (const gpu of gpus) limits.push({ resource: "gpu-desktops", id: gpu.id, used: gpu.used, total: this.#config.desktopsPerGpu, reserve: 0, unit: "count" });
-    const free = gpus.filter((gpu) => gpu.used < this.#config.desktopsPerGpu).sort((a, b) => a.used - b.used)[0] ?? null;
 
     let why: string | null = null;
     if (size.diskGiB !== null) {
@@ -703,22 +1122,16 @@ export class DockerBackend implements Backend {
             (memoryFree > reserve
               ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
               : "Release a box, or lower the memory kept free in bb-box's settings");
-    } else if (kind === "linux-desktop" && !gpus.length) {
-      why = `${host} lists no NVIDIA GPU as a CDI device. Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), or ask for a linux-desktop-cpu box`;
-    } else if (kind === "linux-desktop" && !free) {
-      why = `each GPU on ${host} has the ${this.#config.desktopsPerGpu} desktops it may have. Release a GPU desktop, or ask for a linux-desktop-cpu box`;
     }
-    return { capacity: { host, ok: why === null, limits }, why, gpu: why === null && free ? free.id : null };
+    return { capacity: { host, ok: why === null, limits }, why };
   }
 
   #full(kind: string, why: string): string {
     return `${this.label} cannot take this ${kind} box: ${why}.`;
   }
 
-  #underPlacement<T>(work: () => Promise<T>): Promise<T> {
-    const done = this.#placement.then(work);
-    this.#placement = done.catch(() => undefined);
-    return done;
+  async #underPlacement<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return underDaemonLock(await this.#shared(signal), work, signal);
   }
 
   #pinsCpus(info: DockerInfo): boolean {
@@ -729,7 +1142,7 @@ export class DockerBackend implements Backend {
     const running = new Set(state.containers.filter((container) => ACTIVE.has(container.status)).map((container) => container.name));
     return [
       ...state.containers.filter((container) => running.has(container.name) && container.name !== name && container.cpus).map((container) => container.cpus!),
-      ...[...this.#placing.values()].filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
+      ...state.placing.filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
     ];
   }
 
@@ -747,6 +1160,7 @@ export class DockerBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
+      await this.#dropPartsOfGoneContainers(state, signal);
       if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
       if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
       await this.#lxcfsOnHost(signal, true);
@@ -754,7 +1168,7 @@ export class DockerBackend implements Backend {
       this.#daemonCpus = null;
       await this.#probedCpus(state.info, signal, true);
       await this.#moveSharingBoxes(signal);
-    });
+    }, signal);
   }
 
   #probeImage(): string | null {
@@ -797,26 +1211,42 @@ export class DockerBackend implements Backend {
   }
 
   /** Checks room and counts the box against the host, one acquire at a time. */
-  #place(box: BoxIdentity, signal: AbortSignal): Promise<{ host: string; gpu: string | null; cpus: CpuList | null }> {
+  #place(box: BoxIdentity, signal: AbortSignal): Promise<PlacedBox> {
     return this.#underPlacement(async () => {
+      this.#unreserve(box.boxId);
       const state = await this.#state(signal);
       const room = this.#room(state, box.kind, box.size);
       if (room.why !== null) throw new BackendError("no_capacity", this.#full(box.kind, room.why));
+      const part = this.#gpuAsked(box.kind, box.size.gpu);
+      const shared = this.#sharedDaemonRefusal(part);
+      if (shared) throw new BackendError("no_capacity", shared.person, shared.agent);
+      const refusedPart = this.#partRefusal(box.kind, part);
+      if (refusedPart) throw new BackendError("unsupported", refusedPart.person, refusedPart.agent);
+      let card: DockerCard | null = null;
+      if (part !== "none") {
+        const placed = await this.#cardPlacement(state, box.kind, part, box.threadId, 0, READING_FRESH_MS, signal);
+        if (placed.is === "refused") throw new BackendError("no_capacity", placed.refusal.person, placed.refusal.agent);
+        card = placed.card;
+      }
       const name = containerName(box.boxId);
       const cpus = await this.#allot(state, name, box.size.cores, signal);
-      this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB, gpu: room.gpu, cpus });
-      return { host: room.capacity.host, gpu: room.gpu, cpus };
-    });
+      this.#reserve(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus));
+      return { host: room.capacity.host, gpu: card?.device ?? null, card, part, cpus };
+    }, signal);
   }
 
-  #resumePlacement(box: BoxIdentity, gpu: string | null, signal: AbortSignal, again = false): Promise<CpuList | null> {
+  #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null): Placing {
+    return { backendId: this.id, name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind) : 0, boxName: box.name, threadId: box.threadId };
+  }
+
+  #resumePlacement(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, signal: AbortSignal, again = false): Promise<CpuList | null> {
     return this.#underPlacement(async () => {
       const name = containerName(box.boxId);
       const cpus = await this.#allot(await this.#state(signal), name, box.size.cores, signal, again);
-      this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB, gpu, cpus });
+      this.#reserve(box.boxId, this.#placingOf(box, gpu, card, part, cpus));
       if (again) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto the host's CPUs as they are now", error));
       return cpus;
-    });
+    }, signal);
   }
 
   async #moveSharingBoxes(signal?: AbortSignal): Promise<void> {
@@ -827,7 +1257,7 @@ export class DockerBackend implements Backend {
     const mine = running.filter((container) => container.labels[LABELS.install] === this.#context.installId);
     const held = [
       ...running.filter((container) => !mine.includes(container)).map((container) => container.cpus!),
-      ...[...this.#placing.values()].filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
+      ...state.placing.filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
     ];
     const moves = movesOntoFreeCpus(await this.#cpusOfHost(state.info, signal), mine.map((container) => ({ id: container.id, cpus: container.cpus! })), held);
     for (const move of moves) {
@@ -857,61 +1287,143 @@ export class DockerBackend implements Backend {
     // A container already made for this box is counted, so a resumed acquire is not placed again.
     const resumed = previous?.ref === name;
     let host: string;
-    let gpu: string | null;
+    let made: MadeGpu;
+    let placedCard: DockerCard | null = null;
     let cpus: CpuList | null;
     if (resumed) {
       host = previous.host ?? this.#host;
-      gpu = typeof previous.data?.gpu === "string" ? previous.data.gpu : null;
-      cpus = await this.#resumePlacement(box, gpu, signal);
+      made = madeOf(previous);
+      cpus = await this.#resumePlacement(box, made.gpu, made.card ?? made.gpu, made.part, signal);
     } else {
-      ({ host, gpu, cpus } = await step("place", () => this.#place(box, signal)));
+      const placed = await step("place", () => this.#place(box, signal));
+      host = placed.host;
+      cpus = placed.cpus;
+      placedCard = placed.card;
+      made = madeOnCard(placed.card, placed.part);
     }
     const guest = (address: string | null, size: MachineSize | null = null): Guest => ({
       ref: name,
       host,
       address,
       size,
-      data: { box: box.boxId, ...(gpu ? { gpu } : {}) },
+      data: { box: box.boxId, ...(made.gpu ? { gpu: made.gpu, part: made.part } : {}), ...(made.card ? { card: made.card } : {}) },
     });
+    const missed: WrongCard[] = [];
     try {
       await hooks.claim(guest(null));
       await step("network", () => this.#network(signal));
-      gpu = await step("create", async () => {
-        let lxcfs = await this.#lxcfsOnHost(signal);
-        try {
-          return await this.#create(box, image, gpu, cpus, lxcfs, signal);
-        } catch (error) {
-          if (cpus && this.#learnRefusal(error)) cpus = await this.#resumePlacement(box, gpu, signal, true);
-          else if (lxcfs?.serves && /lxcfs/i.test(message(error))) lxcfs = await this.#lxcfsOnHost(signal, true);
-          else throw error;
-          return this.#create(box, image, gpu, cpus, lxcfs, signal);
+      for (;;) {
+        made = await step("create", async () => {
+          let lxcfs = await this.#lxcfsOnHost(signal);
+          try {
+            return await this.#create(box, image, made, cpus, lxcfs, signal);
+          } catch (error) {
+            if (cpus && this.#learnRefusal(error)) cpus = await this.#resumePlacement(box, made.gpu, made.card ?? made.gpu, made.part, signal, true);
+            else if (lxcfs?.serves && /lxcfs/i.test(message(error))) lxcfs = await this.#lxcfsOnHost(signal, true);
+            else throw error;
+            return this.#create(box, image, made, cpus, lxcfs, signal);
+          }
+        });
+        if (!missed.length) await hooks.starting();
+        await step("start", () => this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal }));
+        await step("ready", () => this.#ready(name, deadline, signal));
+        const [container] = await this.#cli.inspect([name], signal);
+        if (!container) throw new Error(`The container ${name} went from ${host} as it started.`);
+        const checked = await this.#cardFacts(box, container, made, placedCard, step, signal);
+        if (checked.is === "facts") {
+          const ready: Guest = {
+            ...guest(this.#address(container), sizeOf(container)),
+            ...(checked.facts.length ? { facts: checked.facts } : {}),
+            ...(made.card && made.part !== "none" ? { claim: claimOf(made.card, made.part, 1) } : {}),
+          };
+          // Claimed again, so the box's record has the address and size as it becomes ready.
+          await hooks.claim(ready);
+          return ready;
         }
-      });
-      await hooks.starting();
-      await step("start", () => this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal }));
-      await step("ready", () => this.#ready(name, deadline, signal));
-      const [made] = await this.#cli.inspect([name], signal);
-      if (!made) throw new Error(`The container ${name} went from ${host} as it started.`);
-      const ready = guest(this.#address(made), sizeOf(made));
-      // Claimed again, so the box's record has the address and size as it becomes ready.
-      await hooks.claim(ready);
-      return ready;
+        missed.push(checked);
+        await this.#remove(name, box.boxId);
+        this.#avoided.set(checked.card, this.#now() + AVOID_CARD_MS);
+        if (missed.length > 1) throw this.#missedCards(box, host, missed, null);
+        const again = await step("place", () => this.#place(box, signal)).catch((error: unknown) => {
+          throw error instanceof BackendError && error.code === "no_capacity" ? this.#missedCards(box, host, missed, { person: error.message, agent: error.agentMessage ?? error.message }) : error;
+        });
+        cpus = again.cpus;
+        placedCard = again.card;
+        made = madeOnCard(again.card, again.part);
+        await hooks.claim(guest(null));
+      }
     } catch (error) {
       // Only a container with this box's labels goes, so one of another box's is left alone.
       await this.#remove(name, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       throw error;
     } finally {
-      this.#placing.delete(box.boxId);
+      this.#unreserve(box.boxId);
     }
+  }
+
+  async #cardFacts(box: BoxIdentity, container: ContainerInfo, made: MadeGpu, placed: DockerCard | null, step: Step, signal: AbortSignal): Promise<CheckedFacts> {
+    const reach = this.#reachFacts(box.kind, made.gpu !== null);
+    if (!made.gpu || made.part === "none") return { is: "facts", facts: reach };
+    const part = made.part;
+    const card = made.card;
+    if (!card) return { is: "facts", facts: [{ label: GPU_FACT, value: factWords(part, placed, null) }, ...(placed ? [{ label: GPU_CHECK_FACT, value: seeItWords(placed) }] : []), ...reach] };
+    await step("gpu", () => this.#writeEnvironment(container.name, card, signal));
+    const check = await step("card check", () => this.#checkCard(container.name, card, signal));
+    const known = placed ?? (await this.#knownCard(card, signal));
+    if (!check.ok && wrongCard(check, card)) return { is: "wrong", card, named: cardName(known ?? { index: null, uuid: card }), why: check.why };
+    const seen = known ?? { uuid: card, uuidKnown: true, index: null };
+    return { is: "facts", facts: [{ label: GPU_FACT, value: factWords(part, known, check) }, { label: GPU_CHECK_FACT, value: seeItWords(seen) }, ...reach] };
+  }
+
+  #missedCards(box: BoxIdentity, host: string, missed: readonly WrongCard[], refusal: GpuRefusal | null): BackendError {
+    const said = missed.map((wrong, at) => `${at ? "then " : ""}${wrong.named}: ${wrong.why}`).join("; ");
+    const cards = listOf(missed.map((wrong) => wrong.named));
+    const person = `${box.name} did not get its card on ${host}: ${said}. bb-box removed what it made, and new boxes leave ${cards} out for 10 minutes.${refusal ? ` No other card could take it: ${refusal.person}` : " Run bb box doctor."}`;
+    const agentRefusal = refusal?.agent.replace(/^Not made: /, "").replace(/ bb-box changed nothing\.$/, "");
+    const agent = `Not made: ${box.name} did not get its card: ${said}. bb-box removed what it made.${agentRefusal ? ` No other card could take it: ${agentRefusal}` : " Ask the user."}`;
+    return new BackendError("no_capacity", person, agent);
+  }
+
+  #reachFacts(kind: string, hasCard: boolean): GuestFact[] {
+    const words = this.cardReach(kind, hasCard);
+    return words ? [{ label: CARDS_FACT, value: words }] : [];
+  }
+
+  cardReach(kind: string, hasCard = false): string | null {
+    const info = this.#info;
+    if (!info || !hostListsCards(info) || !this.kinds().some((offer) => offer.id === kind)) return null;
+    return reachWords(info.name || this.#host, this.#privileged(kind), oneDeviceForEveryCardOf(info) && hasCard);
+  }
+
+  async #knownCard(card: string, signal?: AbortSignal): Promise<DockerCard | null> {
+    if (!this.#info) return null;
+    const cards = await this.#cardsOn(this.#info, signal, READING_KEPT_MS).catch(() => null);
+    return cards?.cards.find((each) => each.uuid === card) ?? null;
+  }
+
+  async #writeEnvironment(ref: string, card: string, signal?: AbortSignal): Promise<void> {
+    const result = await this.#cli.run(["exec", "--user", "0", ref, "/bin/sh", "-c", environmentScript(card)], { timeoutMs: 30_000, signal });
+    if (result.exitCode !== 0) throw new Error(`bb-box could not point CUDA at ${cudaVisible(card)} in /etc/environment of ${ref}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+  }
+
+  async #checkCard(ref: string, card: string, signal?: AbortSignal): Promise<CardCheck> {
+    const command = new DockerTransport(this.#cli, ref);
+    const once = async () => {
+      const result = await command.run(DOCKER_CARD_CHECK, { timeoutMs: 30_000, signal, maxOutputBytes: 16 * 1024 }).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: message(error), timedOut: false }));
+      return judgeDockerCardCheck(`${result.stdout}\n${result.stderr}`, card);
+    };
+    const first = await once();
+    return !first.ok && first.reading === "incomplete" ? once() : first;
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(guest.ref);
     this.#cursor.forget(guest.ref);
-    await this.#remove(guest.ref, this.#boxOf(guest), signal);
+    const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
-    await this.#underPlacement(() => this.#moveSharingBoxes(signal)).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
+    if (removed) await this.#storageOfEveryBackend.delete(GPU_PART_KEY(removed));
+    await this.#underPlacement(() => this.#moveSharingBoxes(signal), signal).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -936,12 +1448,23 @@ export class DockerBackend implements Backend {
     return found ? powerOf(found.status) : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal): Promise<Started | void> {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
     await this.#cli.ok(["container", "start", found.id], { timeoutMs: 120_000, signal });
     await this.#ready(found.id, deadline, signal);
+    const held = typeof guest.data?.card === "string" ? guestCard(guest) : null;
+    if (!held) return;
+    const stored = await this.#partOf(found);
+    const check = await this.#checkCard(found.name, held.card, signal);
+    const known = await this.#knownCard(held.card, signal);
+    const kept = withoutGpuFacts(guest.facts);
+    const reach = (guest.facts ?? []).filter((fact) => fact.label === CARDS_FACT);
+    return {
+      facts: [{ label: GPU_FACT, value: factWords(stored.part, known, check) }, { label: GPU_CHECK_FACT, value: seeItWords({ uuid: held.card, uuidKnown: true, index: null }) }, ...reach, ...kept],
+      claim: claimOf(held.card, stored.part, stored.generation),
+    };
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -956,10 +1479,11 @@ export class DockerBackend implements Backend {
    * (028). `/dev/shm` keeps the size it had at create (061).
    */
   resizing(kind: string): Resizing | null {
-    return this.kinds().some((offer) => offer.id === kind) ? { cores: "live", memory: "live", disk: "no", shrinks: true } : null;
+    if (!this.kinds().some((offer) => offer.id === kind)) return null;
+    return { cores: "live", memory: "live", disk: "no", shrinks: true, ...(this.#gpuParts(kind) ? { gpu: { add: "no", share: "live", move: "no" } } : {}) };
   }
 
-  async planResize(guest: Guest, kind: string, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+  async planResize(guest: Guest, kind: string, to: ResizeTarget, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
     this.#kind(kind);
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
@@ -969,17 +1493,77 @@ export class DockerBackend implements Backend {
     if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "live" });
     if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "live" });
     if (to.diskGiB !== null) parts.push({ part: "disk", from: null, to: to.diskGiB, way: "no" });
-    return { parts, room: await this.#resizeRoom(from, to, pending, signal), downSeconds: null };
+    const gpu = to.gpu === undefined ? null : await this.#planGpu(await this.#state(signal), found, kind, to.gpu, signal);
+    return { parts, room: await this.#resizeRoom(from, to, pending, signal), downSeconds: null, ...(gpu ? { gpu } : {}) };
+  }
+
+  async #planGpu(state: HostState, found: ContainerInfo, kind: string, to: GpuPart, signal?: AbortSignal): Promise<GpuResize | null> {
+    const cards = await this.#cardsOn(state.info, signal, READING_FRESH_MS);
+    const card = found.labels[LABELS.gpu] ? cardOfLabels(found.labels, cards.cards, LABELS.gpuCard, LABELS.gpu) : null;
+    const stored = card ? await this.#partOf(found) : null;
+    const from: GpuPart = stored?.part ?? "none";
+    if (from === to) return null;
+    const host = state.info.name || this.#host;
+    const relabelled = await this.#context.storage.get<Relabelled>(relabelKey(found.name)).catch(() => undefined);
+    const name = relabelled?.name ?? (found.labels[LABELS.name] || found.name);
+    const known = card ? (cards.cards.find((each) => each.uuid === card) ?? null) : null;
+    const placement = known ? placementOf(known) : null;
+    const named = card ? cardName(known ?? { index: null, uuid: card }) : null;
+    if (from === "none" || to === "none") {
+      const change = from === "none" ? `gain a card` : `lose ${named}`;
+      const words = `GPU: ${from} → ${to} · Cannot change on Docker. A container's devices are fixed when it is made, so ${name} cannot ${change}. Make a new box with the GPU it needs.`;
+      const refusal: GpuRefusal = {
+        person: `${capitalise(name)} cannot ${change} on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.`,
+        agent: `Not resized: ${name} cannot ${change} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+      };
+      return { from, to, way: "no", card: placement, others: [], words, refusal };
+    }
+    if (to === "whole" && !this.#wholeOn()) return { from, to, way: "no", card: placement, others: [], words: WHOLE_CARDS_OFF_FOR_RESIZE.person, refusal: WHOLE_CARDS_OFF_FOR_RESIZE };
+    const shared = this.#sharedDaemonRefusal(to);
+    if (shared) {
+      const refusal = { person: shared.person, agent: shared.agent.replace(/^Not made: /, "Not resized: ") };
+      return { from, to, way: "live", card: placement, others: [], words: refusal.person, refusal };
+    }
+    if (to === "whole" && known && !known.uuidKnown) {
+      const refusal: GpuRefusal = {
+        person: `No card is free for ${name} alone: bb-box could not read ${named}, so it cannot tell what uses it. Keep the GPU shared, or run bb box doctor.`,
+        agent: `Not resized: no card is free for ${name} alone: bb-box could not read ${named}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+      };
+      return { from, to, way: "live", card: placement, others: [], words: refusal.person, refusal };
+    }
+    const reach = reachWords(host, this.#privileged(kind), cards.oneDeviceForEveryCard);
+    const tail = reach ? ` ${reach}` : "";
+    if (to === "shared") {
+      const words = `GPU: whole ${named} → shared · Live. ${capitalise(named!)} opens to other boxes, up to ${this.#config.desktopsPerGpu}. They share its memory and its time. Nothing in ${name} stops.${tail}`;
+      return { from, to, way: "live", card: placement, others: [], words, refusal: null };
+    }
+    const holders = (await this.#holders(state, cards)).filter((holder) => holder.card === card && holder.container !== found.name);
+    const others = holders.map((holder) => ({ name: holder.name, stopped: holder.state === "stopped" }));
+    if (holders.length) {
+      const titles = await this.#titles([...new Set(holders.flatMap((holder) => (holder.threadId ? [holder.threadId] : [])))]);
+      const list = (audience: "person" | "agent") => holders.map((holder) => `${holderName(holder, titles, audience === "person" ? { to: "person" } : { to: "agent", threadId: null })}${holder.state === "stopped" ? " (stopped)" : holder.state === "making" ? " (being made)" : ""}`);
+      const on = (audience: "person" | "agent") => `${capitalise(named!)} has ${listOf(list(audience))} on it, and on Docker a box cannot move to another card`;
+      const refusal: GpuRefusal = {
+        person: `No card is free for ${name} alone. ${on("person")}. Release ${holders.length === 1 ? "it" : "one of them"}, or keep the GPU shared.`,
+        agent: `Not resized: no card is free for ${name} alone. ${on("agent")}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+      };
+      return { from, to, way: "live", card: placement, others, words: refusal.person, refusal };
+    }
+    const words = `GPU: shared → whole ${named} · Live. ${capitalise(named!)} becomes ${name}'s alone: no other box is placed on it while ${name} holds it. Nothing in ${name} stops.${tail}`;
+    return { from, to, way: "live", card: placement, others: [], words, refusal: null };
   }
 
   /** Changes a container's CPUs and memory, swap with it, as `docker update` does at once, running or stopped (061). */
-  async resize(guest: Guest, _kind: string, to: MachineSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: ResizeTarget, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     if (to.diskGiB !== null) throw new BackendError("unsupported", "A Docker box shares its host's disk, so it has no disk of its own to grow.");
     return this.#underPlacement(async () => {
       const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
       if (!found) throw this.#gone(guest);
       const from = sizeOf(found);
       const state = await this.#state(signal);
+      const gpu = to.gpu === undefined ? null : await this.#planGpu(state, found, kind, to.gpu, signal);
+      if (gpu?.refusal) throw new BackendError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
+      if (gpu && gpu.way !== "live") throw new BackendError("unsupported", gpu.words);
       const pinTo = async (again: boolean) => {
         const host = await this.#cpusToPinTo(state.info, to.cores, signal, again);
         return host ? resizeCpus(host, this.#cpusHeldBesides(state, found.name), found.cpus ?? [], to.cores) : null;
@@ -1002,8 +1586,24 @@ export class DockerBackend implements Backend {
       }
       if (from && to.cores < from.cores) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto CPUs a shrink freed", error));
       const [now] = await this.#cli.inspect([found.id], signal);
-      return { ...guest, size: (now && sizeOf(now)) ?? to };
-    });
+      const resized: Guest = { ...guest, size: (now && sizeOf(now)) ?? machineSize(to) };
+      return gpu ? this.#switchShare(resized, found, gpu, signal) : resized;
+    }, signal);
+  }
+
+  async #switchShare(guest: Guest, found: ContainerInfo, change: GpuResize, signal?: AbortSignal): Promise<Guest> {
+    const held = guestCard(guest);
+    const card = change.card?.card ?? held?.card ?? found.labels[LABELS.gpuCard] ?? null;
+    if (!card || change.to === "none") return guest;
+    const part = change.to;
+    const generation = (await this.#partOf(found)).generation + 1;
+    const claimed = cardOfUuid(card);
+    await this.#storageOfEveryBackend.set(GPU_PART_KEY(found.id), { part, generation, writtenUnder: await this.#writtenUnder(signal) } satisfies PartRecord);
+    const known = await this.#knownCard(card, signal);
+    const facts = guest.facts?.some((fact) => fact.label === GPU_FACT)
+      ? guest.facts.map((fact) => (fact.label === GPU_FACT ? { ...fact, value: factWords(part, known, null) } : fact))
+      : [{ label: GPU_FACT, value: factWords(part, known, null) }, { label: GPU_CHECK_FACT, value: seeItWords({ uuid: card, uuidKnown: true, index: null }) }, ...(guest.facts ?? [])];
+    return { ...guest, data: { ...guest.data, ...(claimed ? { card } : {}), part }, facts, ...(claimed ? { claim: claimOf(card, part, generation) } : {}) };
   }
 
   /** Room on the host for a container to grow from `from` to `to`: the memory it adds, kept within the reserve, and cores within the host's (061). */
@@ -1030,6 +1630,40 @@ export class DockerBackend implements Backend {
     return { ok: why === null, message: why, warm: null, hosts: [{ host, ok: why === null, limits }] };
   }
 
+  async gpuRoom(kind: string): Promise<GpuRoom> {
+    const offered = this.#gpuParts(kind);
+    if (!offered) return { readings: [], fullUntil: null };
+    let state: HostState;
+    try {
+      state = await this.#state();
+    } catch (error) {
+      return { readings: [], fullUntil: null, parts: kind === "linux" ? ["none"] : [], withheld: `${this.#host} did not answer: ${message(error)}` };
+    }
+    const host = state.info.name || this.#host;
+    const cards = await this.#cardsOn(state.info, undefined, READING_KEPT_MS);
+    if (!cards.cards.length) {
+      const why = cards.unread ? `bb-box could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
+      return { readings: [], fullUntil: null, parts: kind === "linux" ? ["none"] : [], withheld: `${host}: ${why}` };
+    }
+    const holders = await this.#holders(state, cards);
+    const whole = offered.includes("whole");
+    const ask = { needMiB: neededMiB(kind), what: boxWhat(kind), cards: cards.cards, holders, perCard: this.#config.desktopsPerGpu, avoided: this.#avoidedCards() } as const;
+    const freeForWhole = (card: DockerCard) => whole && placeCard({ ...ask, part: "whole", only: card.uuid }).is === "placed";
+    return {
+      readings: [],
+      fullUntil: null,
+      parts: offered,
+      withheld: null,
+      cards: cardRooms({ cards: cards.cards, holders, freeForWhole }),
+      host,
+      limit: this.#config.desktopsPerGpu,
+      at: cards.readAt,
+      neededMiB: neededMiB(kind),
+      wholeOff: !this.#wholeOn(),
+      reach: reachWords(host, this.#privileged(kind), cards.oneDeviceForEveryCard),
+    };
+  }
+
   /** Whether a container comes from the build its kind's image names now: false once a refresh has moved the tag (049); null without either. */
   async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
     const image = this.#config.images[kind as DockerKind];
@@ -1048,17 +1682,21 @@ export class DockerBackend implements Backend {
       this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId }, signal),
     ]);
     this.#info = info;
+    this.#shareOf(info);
     return Promise.all(
       // An image box (049) is no box's: its build removes it.
       containers.filter((container) => !container.labels[LABELS.imageBox]).map(async (container) => {
         const owner = ownerOf(container.labels);
         const relabelled = owner ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)) : undefined;
+        const card = container.labels[LABELS.gpu] ? (container.labels[LABELS.gpuCard] ?? null) : null;
+        const part = container.labels[LABELS.gpu] ? await this.#partOf(container) : null;
         return {
           ref: container.name,
           host: info.name || this.#host,
           address: this.#address(container),
           size: sizeOf(container),
-          data: dataOf(container),
+          data: dataOf(container, card, part?.part ?? "none"),
+          ...(card && part ? { claim: claimOf(card, part.part, part.generation) } : {}),
           owner: owner && relabelled ? { ...owner, threadId: relabelled.threadId, name: relabelled.name } : owner,
           power: powerOf(container.status),
         };
@@ -1302,19 +1940,8 @@ export class DockerBackend implements Backend {
         );
       }
 
-      if (this.#config.images["linux-desktop"]) {
-        if (info.gpus.length) {
-          push("docker.gpus", "GPUs", "ok", `${info.gpus.length} NVIDIA GPU${info.gpus.length === 1 ? "" : "s"} as CDI devices, ${this.#config.desktopsPerGpu} desktops each.`);
-        } else {
-          push(
-            "docker.gpus",
-            "GPUs",
-            "fail",
-            `${info.name} lists no NVIDIA GPU as a CDI device, so no linux-desktop box can start.`,
-            "Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), or turn off GPU desktops.",
-          );
-        }
-      }
+      this.#checkOneBackend(push);
+      if (this.#config.gpus) await this.#checkCards(state, push, signal);
 
       const room = this.#room(state, "linux", this.#context.kind("linux").defaultSize);
       push(
@@ -1362,6 +1989,74 @@ export class DockerBackend implements Backend {
       checks,
       notes,
     };
+  }
+
+  #checkOneBackend(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void): void {
+    const sharing = this.#share ? backendsOn(this.#share, this.#daemonNow()).filter((id) => id !== this.id) : [];
+    if (!sharing.length) return;
+    const refused = this.#otherBackendOnDaemon();
+    const fix = "Remove the other backend in BB Box's settings, or point it at another Docker host.";
+    if (refused) {
+      push("docker.one-backend", "One backend for this daemon", "warn", `${this.label} reaches the same Docker daemon as the backend ${refused}, so bb-box places no GPU box through it, as two backends on one daemon would each count only their own boxes on its cards. Boxes with no GPU are made as usual.`, fix);
+      return;
+    }
+    push("docker.one-backend", "One backend for this daemon", "warn", `The ${sharing.length === 1 ? "backend" : "backends"} ${listOf(sharing)} ${sharing.length === 1 ? "reaches" : "reach"} the same Docker daemon as this one, so bb-box places GPU boxes there through this one alone.`, fix);
+  }
+
+  async #checkCards(state: HostState, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    const { info } = state;
+    const fix = "Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), or turn off GPU boxes.";
+    const cards = await this.#cardsOn(info, signal, 0);
+    if (!cards.cards.length) {
+      const why = cards.unread ? `lists cards as CDI devices, but bb-box could not read them: ${cards.unread}` : "lists no NVIDIA card as a CDI device";
+      push("docker.gpus", "GPUs", "fail", `${info.name} ${why}, so no box there can have a GPU.`, fix);
+      return;
+    }
+    const holders = await this.#holders(state, cards);
+    const listed = cards.cards.map((card) => `${cardName(card)}${card.model ? `, ${card.model}` : ""}${card.totalMiB !== null ? `, ${Math.round(card.totalMiB / 1024)} GiB` : ""}${card.freeMiB !== null ? `, ${card.freeMiB} MiB free when read` : ""}`).join("; ");
+    const one = cards.oneDeviceForEveryCard ? ` Docker gives them as one device, ${ALL_CARDS_DEVICE}, as in WSL.` : "";
+    const reach = reachWords(info.name, this.#config.docker && !info.rootless, cards.oneDeviceForEveryCard);
+    const unread = cards.unread ? ` bb-box could not read them just now (${cards.unread}), so it names them as last read and their free memory is not known: no box gets a whole card until it can read them.` : "";
+    const facts = `${cards.cards.length} NVIDIA card${cards.cards.length === 1 ? "" : "s"} as CDI devices (${listed}), up to ${this.#config.desktopsPerGpu} boxes each.${one}${reach ? ` ${reach}` : ""}${unread}`;
+    const others = holders.filter((holder) => holder.otherInstall);
+    const lost = wholeHoldersOnNoCard(holders, cards.cards);
+    const lostNames = listOf(lost.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
+    const fixes = [
+      lost.length ? `Release ${lostNames}, or give ${info.name} ${lost.length === 1 ? "its card" : "their cards"} back.` : null,
+      others.length ? "Give each install its own Docker host for GPU boxes, or switch none of them between shared and whole." : null,
+      unread ? `Check that nvidia-smi answers in a container given the cards on ${info.name}: docker run --rm --device ${info.allGpus ? ALL_CARDS_DEVICE : (info.gpus[0] ?? ALL_CARDS_DEVICE)} <a box image> nvidia-smi -L.` : null,
+    ].filter((fix): fix is string => fix !== null);
+    if (fixes.length) {
+      const otherWords = others.length ? ` Another install's GPU boxes are on ${info.name}: ${listOf(others.map((holder) => holder.name))}. bb-box counts them on their cards, but sees the GPU part they were made with, not a later switch, and they see this install's boxes the same way.` : "";
+      const lostWords = lost.length ? ` ${lostNames} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now, so it places no GPU box on ${info.name} until it can.` : "";
+      push("docker.gpus", "GPUs", lost.length ? "fail" : "warn", `${facts}${otherWords}${lostWords}`, fixes.join(" "));
+    } else {
+      push("docker.gpus", "GPUs", "ok", facts);
+    }
+    for (const audit of auditCards(cards.cards, holders, this.#config.desktopsPerGpu)) {
+      const card = audit.card;
+      const named = (list: readonly CardHolder[]) => listOf(list.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
+      const label = card.index === null ? cudaVisible(card.uuid) : String(card.index);
+      if (audit.whole.length) {
+        const clean = audit.whole.length === 1 && !audit.others.length;
+        push(
+          `gpu.${card.uuid}.whole`,
+          `GPU ${label} whole`,
+          clean ? "ok" : "fail",
+          clean ? `${capitalise(cardName(card))} is ${named(audit.whole)}'s whole card, with no other box on it.` : `${capitalise(cardName(card))} is held whole by ${named(audit.whole)}, and ${named(audit.holders.filter((holder) => !audit.whole.includes(holder) || audit.whole.length > 1))} ${audit.holders.length - 1 === 1 ? "is" : "are"} on it too: a placement went wrong.`,
+          clean ? null : "Release the boxes that should not be on the card, or switch the whole box to shared.",
+        );
+      }
+      if (audit.over) {
+        push(
+          `gpu.${card.uuid}.limit`,
+          `GPU ${label} boxes`,
+          "warn",
+          `${capitalise(cardName(card))} has ${audit.holders.length} boxes, ${audit.over} over the limit of ${this.#config.desktopsPerGpu}: ${named(audit.holders)}. They keep running; no new box goes on ${cardName(card)} until it has room.`,
+          "Release boxes on the card, or raise the boxes per card in bb-box's Docker settings.",
+        );
+      }
+    }
   }
 
   // The host's side.
@@ -1467,13 +2162,14 @@ export class DockerBackend implements Backend {
   }
 
   /** Removes the box's container and its volumes, if it is this install's and the box's. */
-  async #remove(ref: string, boxId: string | null, signal?: AbortSignal): Promise<void> {
+  async #remove(ref: string, boxId: string | null, signal?: AbortSignal): Promise<string | null> {
     const found = await this.#owned(ref, boxId, signal);
-    if (!found) return;
+    if (!found) return null;
     const result = await this.#cli.run(["container", "rm", "--force", "--volumes", found.id], { timeoutMs: 120_000, signal });
     if (result.exitCode !== 0 && !NO_SUCH.test(result.stderr) && !/already in progress/i.test(result.stderr)) {
       throw this.#cli.error("docker container rm", result);
     }
+    return found.id;
   }
 
   /** The network bb-box keeps its boxes on, made the first time, on which they cannot reach each other. */
@@ -1495,9 +2191,10 @@ export class DockerBackend implements Backend {
    * is this box's, as after a restart, and fails if not. Returns the GPU the
    * container has.
    */
-  async #create(box: BoxIdentity, image: string, gpu: string | null, cpus: CpuList | null, lxcfs: LxcfsOnHost | null, signal: AbortSignal): Promise<string | null> {
+  async #create(box: BoxIdentity, image: string, made: MadeGpu, cpus: CpuList | null, lxcfs: LxcfsOnHost | null, signal: AbortSignal): Promise<MadeGpu> {
     const name = containerName(box.boxId);
     const { cores, memoryMiB } = box.size;
+    const { gpu, card, part } = made;
     const labels: Record<string, string> = {
       [LABELS.backend]: "docker",
       [LABELS.install]: this.#context.installId,
@@ -1507,17 +2204,22 @@ export class DockerBackend implements Backend {
       [LABELS.kind]: box.kind,
       [LABELS.created]: String(box.createdAt),
       ...(gpu ? { [LABELS.gpu]: gpu } : {}),
+      ...(gpu && card ? { [LABELS.gpuCard]: card, [LABELS.gpuPart]: part } : {}),
     };
     if (box.kind === "linux-desktop" && gpu) await this.#readGpuBusId(signal);
     const privileged = this.#privileged(box.kind);
+    const desktopGpuId = gpu && gpu !== ALL_CARDS_DEVICE ? gpu.slice(gpu.indexOf("=") + 1) : card ? cudaVisible(card) : null;
+    const seesEveryCard = privileged || gpu === ALL_CARDS_DEVICE;
     const extra = [
       // Docker's own data on a volume, since overlayfs cannot hold overlayfs.
       ...(privileged ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
-      ...(box.kind === "linux-desktop" && gpu ? ["--device", gpu, "--env", "NVIDIA_DRIVER_CAPABILITIES=all", "--env", "BBBOX_GPU=1"] : []),
+      ...(gpu ? ["--device", gpu, "--env", "NVIDIA_DRIVER_CAPABILITIES=all"] : []),
+      ...(gpu && card ? ["--env", `CUDA_VISIBLE_DEVICES=${cudaVisible(card)}`, "--env", `NVIDIA_VISIBLE_DEVICES=${cudaVisible(card)}`, "--env", `BBBOX_GPU_CARD=${cudaVisible(card)}`] : []),
+      ...(box.kind === "linux-desktop" && gpu ? ["--env", "BBBOX_GPU=1"] : []),
       // A privileged container sees every GPU on the host, and Xorg would
       // take the first, so the box's start points Xorg at the one placed, by
       // its UUID or index, as nvidia-smi --id takes it (#283).
-      ...(box.kind === "linux-desktop" && gpu && privileged ? ["--env", `BBBOX_GPU_ID=${gpu.slice(gpu.indexOf("=") + 1)}`] : []),
+      ...(box.kind === "linux-desktop" && gpu && seesEveryCard && desktopGpuId ? ["--env", `BBBOX_GPU_ID=${desktopGpuId}`] : []),
     ];
     const args = [
       "container", "create",
@@ -1543,11 +2245,13 @@ export class DockerBackend implements Backend {
       START,
     ];
     const result = await this.#cli.run(args, { timeoutMs: 120_000, signal });
-    if (result.exitCode === 0) return gpu;
+    if (result.exitCode === 0) return made;
     if (/Conflict|already in use/i.test(result.stderr)) {
       const found = await this.#owned(name, box.boxId, signal);
       if (!found) throw new Error(`The container ${name} on ${this.#host} belongs to another box, so bb-box left it alone.`);
-      return found.labels[LABELS.gpu] ?? null;
+      const foundGpu = found.labels[LABELS.gpu] ?? null;
+      const foundCard = foundGpu ? (found.labels[LABELS.gpuCard] ?? deviceCard(foundGpu)) : null;
+      return { gpu: foundGpu, card: foundCard, part: foundCard ? partOfLabel(found.labels[LABELS.gpuPart]) : "none" };
     }
     if (/No such image/i.test(result.stderr)) {
       const building = dockerImageBuilding(this.#config.machine, image);

@@ -47,6 +47,8 @@ export const LABELS = {
   created: "bbbox.created",
   /** The CDI device of a GPU desktop. */
   gpu: "bbbox.gpu",
+  gpuCard: "bbbox.gpu-card",
+  gpuPart: "bbbox.gpu-part",
   /** On an image setup/docker/build.sh made: its layout version, which its record's contract replaces (049). */
   imageVersion: "bbbox.image-version",
   /** On an image setup/docker/build.sh made: its record, /usr/share/bb-box/image.json, as JSON (049). */
@@ -62,7 +64,9 @@ export const LABELS = {
 } as const;
 
 export interface DockerInfo {
+  readonly id: string;
   readonly name: string;
+  readonly rootDir: string;
   readonly version: string;
   /** For example "Ubuntu 24.04.3 LTS" or "Docker Desktop". */
   readonly operatingSystem: string;
@@ -85,6 +89,7 @@ export interface DockerInfo {
   readonly cpuset: boolean;
   /** NVIDIA GPUs the daemon lists as CDI devices, one name each, such as nvidia.com/gpu=0. */
   readonly gpus: readonly string[];
+  readonly allGpus: boolean;
 }
 
 export interface ContainerInfo {
@@ -133,11 +138,17 @@ export function gpusOf(devices: unknown): string[] {
   return (uuids.length ? uuids : ids).sort();
 }
 
+export function listsAllGpus(devices: unknown): boolean {
+  return (Array.isArray(devices) ? devices : []).map((device) => record(device)).some((device) => device.Source === "cdi" && device.ID === "nvidia.com/gpu=all");
+}
+
 export function parseInfo(text: string): DockerInfo {
   const info = record(JSON.parse(text));
   const security = Array.isArray(info.SecurityOptions) ? info.SecurityOptions.map(String) : [];
   return {
+    id: typeof info.ID === "string" ? info.ID : "",
     name: typeof info.Name === "string" ? info.Name : "",
+    rootDir: typeof info.DockerRootDir === "string" ? info.DockerRootDir : "",
     version: typeof info.ServerVersion === "string" ? info.ServerVersion : "",
     operatingSystem: typeof info.OperatingSystem === "string" ? info.OperatingSystem : "",
     osType: typeof info.OSType === "string" ? info.OSType : "",
@@ -151,6 +162,7 @@ export function parseInfo(text: string): DockerInfo {
     memoryLimit: info.MemoryLimit !== false,
     cpuset: info.CPUSet !== false,
     gpus: gpusOf(info.DiscoveredDevices),
+    allGpus: listsAllGpus(info.DiscoveredDevices),
   };
 }
 
@@ -336,12 +348,15 @@ export class DockerCli {
 
   /** Every container with all of `labels`, running or not. */
   async list(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ContainerInfo[]> {
+    return this.inspect(await this.ids(labels, signal), signal);
+  }
+
+  async ids(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string[]> {
     const filters = Object.entries(labels).flatMap(([key, value]) => ["--filter", `label=${key}=${value}`]);
-    const ids = (await this.ok(["container", "ls", "--all", "--quiet", "--no-trunc", ...filters], { timeoutMs: 30_000, signal }))
+    return (await this.ok(["container", "ls", "--all", "--quiet", "--no-trunc", ...filters], { timeoutMs: 30_000, signal }))
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    return this.inspect(ids, signal);
   }
 }
 

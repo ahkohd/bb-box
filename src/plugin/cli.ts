@@ -20,6 +20,7 @@ import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
 import { snapshotCommands } from "./snapshot-cli.ts";
 import { gpuCommands } from "./gpu-cli.ts";
+import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 
@@ -178,9 +179,11 @@ async function resizeBox(
   app: BbBox,
   threadId: string,
   ref: string,
-  options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; restart?: boolean; check?: boolean; force?: boolean },
+  options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; gpu?: string; restart?: boolean; check?: boolean; force?: boolean },
 ) {
-  return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] }, {
+  const gpu = options.gpu === undefined ? undefined : String(options.gpu);
+  if (gpu !== undefined && !isGpuPart(gpu)) throw new BoxError("unsupported", `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}, not ${gpu}.`);
+  return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"], ...(gpu !== undefined ? { gpu } : {}) }, {
     restart: options.restart === true,
     check: options.check === true,
     by: "the CLI",
@@ -195,6 +198,19 @@ async function resizeBox(
 async function resizeWords(app: BbBox, answer: Awaited<ReturnType<typeof resizeBox>>, checked: boolean): Promise<string> {
   const machine = checked ? null : await app.machineCores(answer);
   return `${resizeText(answer, checked)}${machine ? `\n${machine}` : ""}`;
+}
+
+function resizeGpuOption(app: BbBox) {
+  return {
+    gpu: {
+      type: "string",
+      get description() {
+        return wholeCardsOn(app)
+          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. On Docker shared and whole switch live, and a GPU cannot be added, removed or moved."
+          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.";
+      },
+    },
+  } as const;
 }
 
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
@@ -313,7 +329,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         resize: cliCommand({
           summary: "Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: boxPositional,
-          options: { ...threadOption, ...resizeOptions },
+          options: { ...threadOption, ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }, ctx) =>
             guard("Resizing the box", async () => {
               const threadId = threadOf(options.thread, ctx);
@@ -355,7 +371,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         "machines resize": cliCommand({
           summary: "Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
           positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
-          options: resizeOptions,
+          options: { ...resizeOptions, ...resizeGpuOption(app) },
           run: ({ positionals, options }) =>
             guard("Resizing the machine", async () => out(await resizeWords(app, await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
         }),
