@@ -3394,8 +3394,12 @@ gate's node steps.
 - When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
   warm guest of that kind must still be shared (section 3): today spares and
   warm guests take the kind's default, which is never whole.
-- G1, G3 and G5 of the gate, which need a node or a window without the
-  node's development container on the cards (above).
+- G1, G3 and G5 of the gate are accepted as not testable on this node
+  (owner, 6 November 2026): the node's development container holds both
+  cards and stays up. Whole cards stay off on Proxmox LXC
+  (`general.wholeCards` unset). Docker's whole card, as placement, passed
+  live in unit 11's gate. G1, G3 and G5 run with the full gate's node steps
+  on a node where a card is free, before whole cards are turned on there.
 
 ## Unit 11: GPU boxes on Docker
 
