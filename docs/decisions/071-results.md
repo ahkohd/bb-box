@@ -3330,10 +3330,12 @@ two journal filters were run on sample lines.
 Run by the lead on the node and by the builder on a test BB, on 6 November
 2026 (UTC), on main at `4948d8a2`, after the merge and its deploy, with
 `general.wholeCards` off on production and the node's helper at 0.4.3 from
-unit 8b's step B. No card was free: the owner keeps production's boxes on both
-cards running. So only the items that need no free card were run, on node
-steps adapted for it, whose step 0 and step K required both cards to be held
-by a guest outside the lent VMIDs and stopped if either was free.
+unit 8b's step B. No card can be free while a guest outside bb-box, the
+node's own development container, holds both cards' device lines: it blocks
+every whole claim on either card, whatever else stops. So only the items that
+need no free card were run, on node steps adapted for it, whose step 0 and
+step K required both cards to be held by a guest outside the lent VMIDs and
+stopped if either was free.
 
 The test BB was a fresh `npx bb-app@0.48.1` on a Proxmox LXC box, with no
 account, bb-box installed from `git archive 4948d8a2`, live checks off, and
@@ -3382,13 +3384,15 @@ firewall rules out and released its box.
 G1 (two whole acquires at once for one free card), G3 (a stopped shared test
 guest yields, and starts on the other card) and G5 (a stopped whole box keeps
 its card) wait for a free card. Each needs a whole box made, and a whole claim
-is made only on a card that no guest outside the lent VMIDs holds, while the
-owner keeps production's boxes on both cards running. They run with the full
-gate's node steps once one card is free.
+is made only on a card that no guest outside the lent VMIDs holds, which no
+card is while the node's development container holds both cards' lines. They
+need a node without it, or a window without it, and then run with the full
+gate's node steps.
 
 ### Still open
 
 - When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
   warm guest of that kind must still be shared (section 3): today spares and
   warm guests take the kind's default, which is never whole.
-- G1, G3 and G5 of the gate, which wait for a free card (above).
+- G1, G3 and G5 of the gate, which need a node or a window without the
+  node's development container on the cards (above).
