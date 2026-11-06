@@ -5227,6 +5227,76 @@ test("computer_act that opens a popup still returns the window and the popup whe
   assert.ok(reads.some((entry) => entry.args.window_id !== 100), "the popup was read");
 });
 
+test("a desktop click cancelled during its after-read still returns the popup", async (t) => {
+  const { harness, box, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const call = (name: string, input: unknown, signal?: AbortSignal) => harness.behavior.callAgentTool(name, input, { threadId: THREAD, projectId: PROJECT, ...(signal ? { signal } : {}) });
+  await call("computer_screenshot", { box: box.name });
+  editDesktop(file, (desktop) => {
+    desktop.delays.afterRead = 5_000;
+  });
+  const callsBefore = readDesktop(file).calls.length;
+  const controller = new AbortController();
+  const pending = call("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }, controller.signal);
+  const sawRead = (async () => {
+    for (;;) {
+      const calls = readDesktop(file).calls;
+      const clickedAt = calls.findIndex((entry, index) => index >= callsBefore && entry.tool === "click");
+      if (clickedAt >= 0 && calls.slice(clickedAt + 1).some((entry) => entry.tool === "get_window_state")) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })();
+  await Promise.race([
+    sawRead,
+    pending.then(() => {
+      throw new Error("the click finished before its after-read could be cancelled");
+    }),
+  ]);
+  controller.abort("cancelled");
+  const result = await pending;
+  assert.equal(isError(result), false, text(result));
+  const said = text(result);
+  assert.match(said, /^Right-clicked \(327, 196\) on the desktop/);
+  assert.match(said, /Opened a context menu on list item 'Task 3'/);
+  assert.doesNotMatch(said, /could not read what changed|The call was cancelled/);
+  const reads = readDesktop(file).calls.filter((entry, index) => index >= callsBefore && entry.tool === "get_window_state");
+  assert.ok(reads.length >= 2, "the cancelled read was asked again");
+});
+
+test("a desktop click whose after-read and its retry both fail still reports the click", async (t) => {
+  const { harness, box, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const call = (name: string, input: unknown, signal?: AbortSignal) => harness.behavior.callAgentTool(name, input, { threadId: THREAD, projectId: PROJECT, ...(signal ? { signal } : {}) });
+  await call("computer_screenshot", { box: box.name });
+  editDesktop(file, (desktop) => {
+    desktop.delays.list_windows = 8_000;
+  });
+  const callsBefore = readDesktop(file).calls.length;
+  const controller = new AbortController();
+  const pending = call("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }, controller.signal);
+  const sawList = (async () => {
+    for (;;) {
+      const calls = readDesktop(file).calls;
+      const clickedAt = calls.findIndex((entry, index) => index >= callsBefore && entry.tool === "click");
+      if (clickedAt >= 0 && calls.slice(clickedAt + 1).some((entry) => entry.tool === "list_windows")) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })();
+  await Promise.race([
+    sawList,
+    pending.then(() => {
+      throw new Error("the click finished before its after-read could be cancelled");
+    }),
+  ]);
+  controller.abort("cancelled");
+  const result = await pending;
+  assert.equal(isError(result), false, text(result));
+  const said = text(result);
+  assert.match(said, /^Right-clicked \(327, 196\) on the desktop/);
+  assert.match(said, /bb-box could not read what changed/);
+  assert.match(said, /Call computer_screenshot with window "desktop"/);
+});
+
 test("on Sway, text an element refuses in the background is pasted with Cua's paste key, and the clipboard's text put back (#707)", async (t) => {
   // wtype's own keys lose characters in Chrome: bb-box puts the text on the clipboard, Cua presses the paste key.
   const bin = tempDir("sway");

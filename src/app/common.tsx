@@ -67,6 +67,7 @@ export function forgetLive(): void {
 
 interface LiveRun {
   readonly key: string;
+  readonly epoch: number;
   again: boolean;
   done: Promise<void>;
 }
@@ -76,26 +77,32 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
   latest.current = { load, relevant };
   const sequence = useRef(0);
   const running = useRef<LiveRun | null>(null);
+  const epoch = useRef(0);
+  const mounted = useRef(true);
   const [value, setValue] = useState<T | null>(() => (remembered.has(key) ? (remembered.get(key) as T) : null));
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback((): Promise<void> => {
+    if (!mounted.current) return Promise.resolve();
     const current = running.current;
-    if (current && current.key === key) {
+    if (current && current.key === key && current.epoch === epoch.current) {
       current.again = true;
       return current.done;
     }
-    const run: LiveRun = { key, again: false, done: Promise.resolve() };
+    const runEpoch = epoch.current;
+    const run: LiveRun = { key, epoch: runEpoch, again: false, done: Promise.resolve() };
     const loadUntilCurrent = async () => {
       do {
         run.again = false;
         const mine = ++sequence.current;
         try {
           const next = await latest.current.load();
+          if (!mounted.current || epoch.current !== runEpoch) return;
           if (mine !== sequence.current) continue;
           remembered.set(key, next);
           setValue(next);
           setError(null);
         } catch (caught) {
+          if (!mounted.current || epoch.current !== runEpoch) return;
           if (mine === sequence.current) setError(message(caught));
         }
       } while (run.again && running.current === run);
@@ -107,9 +114,14 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
     return run.done;
   }, [key]);
   useEffect(() => {
+    mounted.current = true;
     setValue(remembered.has(key) ? (remembered.get(key) as T) : null);
     setError(null);
     void refresh();
+    return () => {
+      mounted.current = false;
+      epoch.current += 1;
+    };
   }, [key, refresh]);
   useRealtime("changed", (payload) => {
     if (latest.current.relevant(payload)) void refresh();

@@ -161,6 +161,15 @@ type StoredPart = { readonly part: CardPart; readonly generation: number };
 type PartRecord = StoredPart & { readonly writtenUnder: DockerDaemonIdentity };
 const GPU_PARTS = "docker/gpu-part/";
 const GPU_PART_KEY = (containerId: string) => `${GPU_PARTS}${containerId}`;
+const RELABELS = "docker/relabel/";
+
+function relabelRecordKey(daemon: string, containerId: string): string {
+  return `${RELABELS}${encodeURIComponent(daemon)}/${containerId}`;
+}
+
+function sameDaemon(record: DockerDaemonIdentity | undefined, info: DockerInfo): boolean {
+  return !!record && record.engineId === info.id && record.name === info.name && record.rootDir === info.rootDir;
+}
 const GPU_FACT = "GPU";
 const GPU_CHECK_FACT = "GPU check";
 const CARDS_FACT = "Cards";
@@ -335,6 +344,8 @@ interface Relabelled {
   readonly threadId: string;
   readonly name: string;
 }
+
+type RelabelRecord = Relabelled & { readonly writtenUnder: DockerDaemonIdentity };
 
 /** The storage key of the host's last known name (#265). */
 const NAME_KEY = "host-name";
@@ -871,17 +882,47 @@ export class DockerBackend implements Backend {
     return switched ?? { part: partOfLabel(container.labels[LABELS.gpuPart]), generation: 1 };
   }
 
-  async #dropPartsOfGoneContainers(state: HostState, signal?: AbortSignal): Promise<void> {
+  async #dropDaemonRecords(prefix: string, state: HostState, signal?: AbortSignal): Promise<void> {
     const here = daemonIdentityOf(state.info);
     const there = new Set(state.containers.map((container) => container.id));
-    const keys = (await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[])).filter((key) => !there.has(key.slice(GPU_PARTS.length)));
-    const gone = await Promise.all(keys.map(async (key) => ({ key, writtenUnder: (await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined))?.writtenUnder })));
+    const keys = (await this.#storageOfEveryBackend.list(prefix).catch(() => [] as string[])).filter((key) => !there.has(key.slice(prefix.length)));
+    const gone = await Promise.all(keys.map(async (key) => ({ key, writtenUnder: (await this.#storageOfEveryBackend.get<{ writtenUnder?: DockerDaemonIdentity }>(key).catch(() => undefined))?.writtenUnder })));
     const ofThisEngine = gone.filter((record) => record.writtenUnder !== undefined && record.writtenUnder.engineId === here.engineId);
     if (!ofThisEngine.length) return;
     const reached = await (this.#context.dockerDaemonsReached?.(signal) ?? Promise.resolve(null)).catch(() => null);
     if (!reached) return;
     const listedSomewhere = new Set(reached.flatMap((daemon) => daemon.containers));
-    await Promise.all(ofThisEngine.filter((record) => !listedSomewhere.has(record.key.slice(GPU_PARTS.length))).map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
+    await Promise.all(ofThisEngine.filter((record) => !listedSomewhere.has(record.key.slice(prefix.length))).map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
+  }
+
+  async #relabelKey(containerId: string, signal?: AbortSignal): Promise<{ readonly key: string; readonly info: DockerInfo } | null> {
+    const info = this.#info ?? (await this.#cli.info(signal).catch(() => null));
+    if (!info) return null;
+    this.#info = info;
+    return { key: relabelRecordKey(daemonKey(info, this.#daemonFallback), containerId), info };
+  }
+
+  async #relabelled(container: ContainerInfo, signal?: AbortSignal): Promise<Relabelled | undefined> {
+    const here = await this.#relabelKey(container.id, signal);
+    if (here) {
+      const stored = await this.#storageOfEveryBackend.get<RelabelRecord>(here.key).catch(() => undefined);
+      if (stored?.threadId && stored.name && sameDaemon(stored.writtenUnder, here.info)) return { threadId: stored.threadId, name: stored.name };
+    }
+    const legacy = await this.#context.storage.get<Relabelled>(relabelKey(container.name)).catch(() => undefined);
+    if (!legacy?.threadId || !legacy.name) return undefined;
+    if (here) {
+      const shared = await this.#storageOfEveryBackend.set(here.key, { threadId: legacy.threadId, name: legacy.name, writtenUnder: daemonIdentityOf(here.info) }).then(() => true, () => false);
+      if (shared) await this.#context.storage.delete(relabelKey(container.name)).catch(() => undefined);
+    }
+    return { threadId: legacy.threadId, name: legacy.name };
+  }
+
+  async #dropRelabels(state: HostState): Promise<void> {
+    const prefix = `${RELABELS}${encodeURIComponent(daemonKey(state.info, this.#daemonFallback))}/`;
+    const there = new Set(state.containers.map((container) => container.id));
+    const keys = (await this.#storageOfEveryBackend.list(prefix).catch(() => [] as string[])).filter((key) => !there.has(key.slice(prefix.length)));
+    if (!keys.length) return;
+    await Promise.all(keys.map((key) => this.#storageOfEveryBackend.delete(key).catch(() => undefined)));
   }
 
   #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
@@ -928,7 +969,7 @@ export class DockerBackend implements Backend {
         const card = cardOfLabels(container.labels, cards.cards, LABELS.gpuCard, LABELS.gpu);
         if (!card) return null;
         const own = container.labels[LABELS.install] === this.#context.installId;
-        const relabelled = own ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)).catch(() => undefined) : undefined;
+        const relabelled = own ? await this.#relabelled(container) : undefined;
         return {
           card,
           part: (await this.#partOf(container)).part,
@@ -1160,7 +1201,8 @@ export class DockerBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
-      await this.#dropPartsOfGoneContainers(state, signal);
+      await this.#dropDaemonRecords(GPU_PARTS, state, signal);
+      await this.#dropRelabels(state);
       if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
       if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
       await this.#lxcfsOnHost(signal, true);
@@ -1422,7 +1464,11 @@ export class DockerBackend implements Backend {
     this.#cursor.forget(guest.ref);
     const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
-    if (removed) await this.#storageOfEveryBackend.delete(GPU_PART_KEY(removed));
+    if (removed) {
+      await this.#storageOfEveryBackend.delete(GPU_PART_KEY(removed));
+      const relabel = await this.#relabelKey(removed, signal);
+      if (relabel) await this.#storageOfEveryBackend.delete(relabel.key);
+    }
     await this.#underPlacement(() => this.#moveSharingBoxes(signal), signal).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
@@ -1433,8 +1479,14 @@ export class DockerBackend implements Backend {
    * backend's storage and given over the labels by held(). The hostname
    * inside stays: changing it needs a privilege boxes do not have.
    */
-  async relabel(guest: Guest, box: BoxIdentity): Promise<void> {
-    await this.#context.storage.set(relabelKey(guest.ref), { threadId: box.threadId, name: box.name } satisfies Relabelled);
+  async relabel(guest: Guest, box: BoxIdentity, _from?: string, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) return;
+    const writtenUnder = await this.#writtenUnder(signal);
+    const relabel = await this.#relabelKey(found.id, signal);
+    if (relabel) await this.#storageOfEveryBackend.set(relabel.key, { threadId: box.threadId, name: box.name, writtenUnder });
+    await this.#context.storage.delete(relabelKey(guest.ref)).catch(() => undefined);
+    await this.#context.storage.delete(relabelKey(found.name)).catch(() => undefined);
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
@@ -1504,7 +1556,7 @@ export class DockerBackend implements Backend {
     const from: GpuPart = stored?.part ?? "none";
     if (from === to) return null;
     const host = state.info.name || this.#host;
-    const relabelled = await this.#context.storage.get<Relabelled>(relabelKey(found.name)).catch(() => undefined);
+    const relabelled = await this.#relabelled(found);
     const name = relabelled?.name ?? (found.labels[LABELS.name] || found.name);
     const known = card ? (cards.cards.find((each) => each.uuid === card) ?? null) : null;
     const placement = known ? placementOf(known) : null;
@@ -1687,7 +1739,7 @@ export class DockerBackend implements Backend {
       // An image box (049) is no box's: its build removes it.
       containers.filter((container) => !container.labels[LABELS.imageBox]).map(async (container) => {
         const owner = ownerOf(container.labels);
-        const relabelled = owner ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)) : undefined;
+        const relabelled = owner ? await this.#relabelled(container) : undefined;
         const card = container.labels[LABELS.gpu] ? (container.labels[LABELS.gpuCard] ?? null) : null;
         const part = container.labels[LABELS.gpu] ? await this.#partOf(container) : null;
         return {

@@ -126,7 +126,7 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
 }
 
 export function blocksWords(blocks: readonly CardBlock[], namer: CardNamer, audience: Audience): string {
-  return inWords(blocks.map((block) => blockWords(block, namer, audience)));
+  return blocks.map((block) => blockWords(block, namer, audience)).join("; ");
 }
 
 function holdersOf(block: CardBlock, namer: CardNamer): { readonly name: string; readonly threadId: string | null }[] {

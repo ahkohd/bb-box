@@ -2554,6 +2554,20 @@ export class Computer {
    * again for a moment while nothing has.
    */
   async #settle(use: Use, watch: Watch, cause: Cause): Promise<{ parts: string[]; hints: string[] }> {
+    try {
+      return await this.#settleOnce(use, watch, cause);
+    } catch (error) {
+      if (!use.signal?.aborted) throw error;
+      try {
+        return await this.#settleOnce({ ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) }, watch, cause);
+      } catch (again) {
+        const failed = unread(again, 'Call computer_screenshot with window "desktop" to see the desktop now.');
+        return { parts: failed.parts, hints: failed.hints };
+      }
+    }
+  }
+
+  async #settleOnce(use: Use, watch: Watch, cause: Cause): Promise<{ parts: string[]; hints: string[] }> {
     const deadline = Date.now() + (this.#deps.desktopWaitMs ?? DESKTOP_WAIT_MS);
     const parts: string[] = [];
     const hints: string[] = [];

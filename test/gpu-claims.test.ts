@@ -102,7 +102,7 @@ test("071 unit 5 gate: two acquires at once with desktops per GPU 1 go to differ
   const clones = bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
   await assert.rejects(backend.acquire(box(), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity");
-    assert.match(error.message, /^No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release a desktop box, or raise the desktops per GPU\.$/);
+    assert.match(error.message, /^No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\); card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release a desktop box, or raise the desktops per GPU\.$/);
     return true;
   });
   assert.equal(bridge.proxmox.calls.filter((call) => call.path.endsWith("/clone")).length, clones, "refused before any copy");
@@ -234,7 +234,7 @@ test("071 unit 5: a stopped shared desktop starts on its own card while it has r
   const pine = box("linux-desktop", "lone-pine");
   bridge.desktop(7022, CARD_B, pine, INSTALL, { marker: marker("shared", CARD_B, 1), running: true });
   bridge.pass();
-  await assert.rejects(backend.start({ ref: "7021", host: "pve", address: null, size: null, data: { template: 9001, box: reef.boxId } }, signal()), /Container 7021 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release another desktop box, or start it again later\. It is stopped, with its disk as it was\./);
+  await assert.rejects(backend.start({ ref: "7021", host: "pve", address: null, size: null, data: { template: 9001, box: reef.boxId } }, signal()), /Container 7021 was not started: No card on pve can take another box now: card 0 has 1 of this install's boxes, the most a card may have \([^)]+\); card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)\. Release another desktop box, or start it again later\. It is stopped, with its disk as it was\./);
   assert.equal(bridge.proxmox.guests.get(7021)!.status, "stopped");
   assert.deepEqual(bridge.gpuTags(7021), [marker("shared", CARD_A, 1)], "nothing about it changed");
 });
@@ -312,7 +312,7 @@ test("071 unit 5: capacity counts claims: a stopped shared box holds no place, a
   bridge.pass();
   const full = await backend.capacity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }, [], signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /card 0 has 1 of this install's boxes, the most a card may have \([^)]+\) and card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)/);
+  assert.match(full.message!, /card 0 has 1 of this install's boxes, the most a card may have \([^)]+\); card 1 has 1 of this install's boxes, the most a card may have \([^)]+\)/);
   await backend.release(taken, releasing);
   bridge.pass();
   assert.equal((await backend.capacity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }, [], signal())).ok, true, "a released box frees its card");

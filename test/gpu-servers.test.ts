@@ -156,7 +156,7 @@ test("071 unit 7: a server needs 1024 MiB free on its card, and a card at its li
   assert.notEqual(made.claim!.card, used, "the server goes to the card the desktop left");
   const room = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, []);
   assert.equal(room.ok, false);
-  assert.match(room.message!, /^No card on pve can take a shared GPU now: card 0 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\) and card 1 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\)\. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
+  assert.match(room.message!, /^No card on pve can take a shared GPU now: card 0 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\); card 1 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\)\. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
   assert.match(room.agentMessage!, /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
   const room2 = await bridge.backend().gpuRoom("linux");
   assert.deepEqual(room2.parts, ["none", "shared", "whole"]);

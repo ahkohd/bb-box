@@ -6,6 +6,7 @@ import { useState, type ComponentType } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
+import { useRpc } from "@get-bb/plugin-sdk/app";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
@@ -21,7 +22,7 @@ import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
-import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
+import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta, useLive } from "../src/app/common.tsx";
 import { BoxLine, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { BAR_NUMBERS_SHOWN_KEY } from "../src/app/view-bar.tsx";
@@ -10759,12 +10760,58 @@ test("a thread's card shows a spinner while it works and nothing when idle, a ro
     vi.useRealTimers();
   }
   cleanup();
+  forgetLive();
   const idle = server([box()], { entries: () => ({ thread: { id: THREAD, title: "Fix the sign-in flow", running: false, activeAt: now - 3 * 60 * MIN - 60_000 } }) });
   const quiet = boxesPage(idle.handlers);
   await quiet.findByRole("link", { name: "calm-otter" });
-  const quietCard = quiet.getByRole("region", { name: "Fix the sign-in flow" });
-  expect(within(quietCard).queryByRole("img", { name: "Working" })).toBeNull();
-  expect(quietCard.textContent).not.toMatch(/Idle|Working/);
+  await waitFor(() => {
+    const quietCard = quiet.getByRole("region", { name: "Fix the sign-in flow" });
+    expect(within(quietCard).queryByRole("img", { name: "Working" })).toBeNull();
+    expect(quietCard.textContent).not.toMatch(/Idle|Working/);
+  });
+});
+
+test("removing one subscriber of a live key leaves the other's load", async () => {
+  forgetLive();
+  const pending: Array<() => void> = [];
+  const handlers = {
+    allBoxes: () =>
+      new Promise((resolve) => {
+        pending.push(() => resolve([{ threadId: THREAD, box: box(), owner: "thread" as const }]));
+      }),
+  } as unknown as PluginRpcTestHandlers<Contract>;
+  function Subscriber({ name }: { name: string }) {
+    const rpc = useRpc<Contract>();
+    const { value } = useLive("overlap", () => rpc.call("allBoxes"), () => false);
+    return <p data-subscriber={name}>{value ? "loaded" : "pending"}</p>;
+  }
+  function Pair() {
+    const [both, setBoth] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setBoth(false)}>
+          Remove first
+        </button>
+        {both ? <Subscriber name="first" /> : null}
+        <Subscriber name="second" />
+      </>
+    );
+  }
+  const slot = renderSlot({ component: Pair }, { threadId: THREAD, params: null }, { rpc: handlers, pluginId: "bb-box" });
+  await waitFor(async () => {
+    const before = pending.length;
+    expect(before).toBeGreaterThanOrEqual(2);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(pending.length).toBe(before);
+  });
+  const started = pending.splice(0, pending.length);
+  fireEvent.click(slot.getByRole("button", { name: "Remove first" }));
+  expect(slot.container.querySelector('[data-subscriber="first"]')).toBeNull();
+  expect(slot.container.querySelector('[data-subscriber="second"]')!.textContent).toBe("pending");
+  await act(async () => {
+    for (const finish of started) finish();
+  });
+  await waitFor(() => expect(slot.container.querySelector('[data-subscriber="second"]')!.textContent).toBe("loaded"));
 });
 
 test("Last active sorts the boxes used most recently first, and boxes nobody used for days last (069 unit 4)", () => {
