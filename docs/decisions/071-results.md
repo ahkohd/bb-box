@@ -3506,11 +3506,12 @@ offered before it.
   naming them otherwise ("on Docker a box cannot move to another card");
   whole to shared is live. The plan is made again under the placement lock
   when carried out. The part is this install's, kept in bb-box's storage
-  where every backend of the install reads it, under the daemon and the
-  container's ID, with a generation that goes up at each switch. A release
-  drops it, and so does the next upkeep of a backend on that daemon after
-  its container has gone. The claim on the guest and
-  the GPU fact follow it, and the record's `gpu` changes. A GPU added or
+  where every backend of the install reads it, by the container's ID, with
+  the engine ID, name and Docker root of the daemon it was written on, and
+  a generation that goes up at each switch. A release drops it. So does the
+  next upkeep of a backend on a daemon with that engine ID, once its
+  container is gone from there. The claim on the guest and the GPU fact
+  follow it, and the record's `gpu` changes. A GPU added or
   removed is refused, with words for each audience. A backend whose
   `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
   change.
@@ -3743,15 +3744,16 @@ the container's ID. Placement, capacity, `held` and the doctor of any backend
 on that daemon read it. A release drops it, and so does the next upkeep of a
 backend on that daemon after its container has gone, without touching
 another daemon's records. A settings check reads it through a layer, so it
-changes nothing there.
+changes nothing there. (The fourth review changed the key: see below.)
 
 A test runs Astra's sequence: the new backend refuses the shared box, naming
 the whole box, and the first keeps its whole claim. Each of 5 rules has a
 revert that fails it, on a box: the shared record, the one storage every
 backend's context gives, the drop at upkeep, the drop at release, and
 records kept per daemon. Then, on a `linux` box in `node:26-bookworm` as root
-with `--init`: `tsc` clean; the node suite, 3,834 tests, 3,412 passed, 112 failed, 310 skipped,
-the 112 the same environment's failures, by name, as on main (`ed5d3dee`)
+with `--init`: `tsc` clean; the node suite, 3,834 tests, 3,412 passed, 112
+failed, 310 skipped, the 112 the same environment's failures, by name, as on
+main (`ed5d3dee`)
 in the same box; vitest, 470 passed. The 41 reverts of the earlier rounds
 and the 10 of the second ran again, one changed to the new write, each
 failing its tests.
@@ -3761,6 +3763,45 @@ The gate's results stand. Its switches, shared to whole and back at D7, were
 made and read through its one backend. With this fix, that backend writes
 and reads the part in the shared storage instead, and the words and claims
 are the same.
+
+### After the fourth review
+
+Astra said no-go, with one finding. The record's key named the daemon by its
+engine ID, name and Docker root, and Docker's name follows the host's, which
+can change while the engine ID stays. Astra acquired a shared box, switched
+it to whole, renamed the host, reconnected and acquired a shared box: both
+boxes got the same card.
+
+The lead decided the fix. Every read, by placement, capacity, `held`, the
+doctor and a resize plan, finds a box's switched part by its container's ID,
+which Docker makes random, 64 hex characters long, and never changes,
+whatever the daemon is called now. The record carries the engine ID, name
+and Docker root it was written under. Upkeep deletes a record only when its
+container is gone from this daemon and it was written under this daemon's
+engine ID, or, where a daemon has none, its name and root; a release deletes
+its own box's record. So a host renamed keeps its boxes' switches and drops
+its records of containers gone, and one daemon's upkeep never drops
+another's. Daemons whose engine IDs are the same, such as cloned hosts,
+delete each other's records of containers gone, as the lead decided.
+
+A test runs Astra's sequence, through the backend that switched the box and
+through one made after the rename, and checks capacity, `held`, a resize
+plan and the doctor too; Astra's earlier sequence, a backend turned off and
+one made later, runs as before. Each of 8 rules has a revert that fails it,
+on a box: the shared record, the one storage every backend's context gives,
+the lookup by container ID whatever the daemon is called, the drop at
+upkeep, the drop by engine ID after a rename, another daemon's records kept,
+the drop at release, and the daemon a record was written under. Then, on a
+`linux` box in `node:26-bookworm` as root with `--init`: `tsc` clean; the
+node suite, 3,835 tests, 3,413 passed, 112 failed, 310 skipped, the 112
+the same environment's failures, by name, as on main (`ed5d3dee`) in the same
+box; vitest, 470 passed. The 51 reverts of the earlier
+rounds ran again, one changed to the new write, each failing its tests.
+`test/docker-gpus.test.ts` has 32 tests.
+
+The gate's results stand: it did not rename its host, and its one backend
+writes and reads the part by the container's ID now, with the same words and
+claims.
 
 ### Still open
 

@@ -20,7 +20,7 @@
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -156,7 +156,10 @@ type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 type Pending = { readonly kind: string; readonly size: MachineSize };
 type CardPlacing = ({ readonly is: "placed"; readonly card: DockerCard } | { readonly is: "refused"; readonly refusal: GpuRefusal }) & { readonly limits: readonly Limit[] };
 type StoredPart = { readonly part: CardPart; readonly generation: number };
-const GPU_PARTS_OF_DAEMON = (daemon: string) => `docker/gpu-part/${createHash("sha256").update(daemon).digest("hex").slice(0, 16)}/`;
+type WrittenUnder = { readonly engineId: string; readonly name: string; readonly rootDir: string };
+type PartRecord = StoredPart & { readonly writtenUnder: WrittenUnder };
+const GPU_PARTS = "docker/gpu-part/";
+const GPU_PART_KEY = (containerId: string) => `${GPU_PARTS}${containerId}`;
 const GPU_FACT = "GPU";
 const GPU_CHECK_FACT = "GPU check";
 const CARDS_FACT = "Cards";
@@ -550,6 +553,12 @@ export function refusedByAppArmor(result: { readonly exitCode: number | null; re
   return result.exitCode === 127 && /cannot apply additional memory protection after relocation: Permission denied/.test(result.stderr);
 }
 
+function writtenUnderThisDaemon(writtenUnder: WrittenUnder | undefined, info: DockerInfo): boolean {
+  if (!writtenUnder) return false;
+  if (writtenUnder.engineId) return writtenUnder.engineId === info.id;
+  return !info.id && writtenUnder.name === info.name && writtenUnder.rootDir === info.rootDir;
+}
+
 export class DockerBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -838,13 +847,15 @@ export class DockerBackend implements Backend {
     return this.#context.sharedStorage ?? this.#context.storage;
   }
 
-  async #partKey(containerId: string): Promise<string> {
-    return GPU_PARTS_OF_DAEMON((await this.#shared()).daemon) + containerId;
+  async #storedPart(containerId: string): Promise<StoredPart | null> {
+    const stored = await this.#storageOfEveryBackend.get<PartRecord>(GPU_PART_KEY(containerId)).catch(() => undefined);
+    return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? { part: stored.part, generation: stored.generation } : null;
   }
 
-  async #storedPart(containerId: string): Promise<StoredPart | null> {
-    const stored = await this.#storageOfEveryBackend.get<StoredPart>(await this.#partKey(containerId)).catch(() => undefined);
-    return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? stored : null;
+  async #writtenUnder(): Promise<WrittenUnder> {
+    await this.#shared();
+    const info = this.#info;
+    return { engineId: info?.id ?? "", name: info?.name ?? "", rootDir: info?.rootDir ?? "" };
   }
 
   async #partOf(container: ContainerInfo): Promise<StoredPart> {
@@ -854,10 +865,15 @@ export class DockerBackend implements Backend {
   }
 
   async #dropPartsOfGoneContainers(state: HostState): Promise<void> {
-    const prefix = GPU_PARTS_OF_DAEMON((await this.#shared()).daemon);
     const there = new Set(state.containers.map((container) => container.id));
-    const kept = await this.#storageOfEveryBackend.list(prefix).catch(() => [] as string[]);
-    await Promise.all(kept.filter((key) => !there.has(key.slice(prefix.length))).map((key) => this.#storageOfEveryBackend.delete(key).catch(() => undefined)));
+    const keys = await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[]);
+    const gone = keys.filter((key) => !there.has(key.slice(GPU_PARTS.length)));
+    await Promise.all(
+      gone.map(async (key) => {
+        const record = await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined);
+        if (record && writtenUnderThisDaemon(record.writtenUnder, state.info)) await this.#storageOfEveryBackend.delete(key).catch(() => undefined);
+      }),
+    );
   }
 
   #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
@@ -1360,7 +1376,7 @@ export class DockerBackend implements Backend {
     this.#cursor.forget(guest.ref);
     const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
-    if (removed) await this.#storageOfEveryBackend.delete(await this.#partKey(removed));
+    if (removed) await this.#storageOfEveryBackend.delete(GPU_PART_KEY(removed));
     await this.#underPlacement(() => this.#moveSharingBoxes(signal)).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
@@ -1536,7 +1552,7 @@ export class DockerBackend implements Backend {
     const part = change.to;
     const generation = (await this.#partOf(found)).generation + 1;
     const claimed = cardOfUuid(card);
-    await this.#storageOfEveryBackend.set(await this.#partKey(found.id), { part, generation } satisfies StoredPart);
+    await this.#storageOfEveryBackend.set(GPU_PART_KEY(found.id), { part, generation, writtenUnder: await this.#writtenUnder() } satisfies PartRecord);
     const known = await this.#knownCard(card, signal);
     const facts = guest.facts?.some((fact) => fact.label === GPU_FACT)
       ? guest.facts.map((fact) => (fact.label === GPU_FACT ? { ...fact, value: factWords(part, known, null) } : fact))

@@ -368,6 +368,29 @@ test("071 unit 11: a share switch holds for every backend on the daemon, one tur
   assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1, "one daemon's upkeep keeps another daemon's records");
 });
 
+test("071 unit 11: a switched part is found by its container's ID, so a box switched to whole keeps its card after its host is renamed, for the backend that switched it and one made after, and the renamed daemon's upkeep drops its records of containers gone", async () => {
+  const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], name: "before-rename" });
+  const config = dockerConfig({ "gpu-desktops": true });
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {} });
+  const everyBackend = backends.context("docker").sharedStorage!;
+  const make = () => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id: "docker" }), sharedStorage: backends.context("docker").sharedStorage!, wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const live = make();
+  const box = await live.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
+  await live.resize(box, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
+  fake.set({ name: "after-rename" });
+  await assert.rejects(live.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is amber-fox's whole card/);
+  const reconnected = make();
+  await assert.rejects(reconnected.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is amber-fox's whole card/);
+  assert.equal(fake.containers().length, 1);
+  assert.equal((await reconnected.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, false);
+  assert.deepEqual((await reconnected.held(signal())).map((each) => [each.host, each.claim?.part, each.claim?.generation]), [["after-rename", "whole", 2]]);
+  assert.equal((await reconnected.planResize(box, "linux", { ...SMALL, gpu: "shared" }, [], signal())).gpu?.from, "whole");
+  assert.equal((await reconnected.doctor(signal())).checks.find((check) => check.id === `gpu.${CARD_A}.whole`)?.status, "ok");
+  execFileSync(fake.binary, ["container", "rm", "--force", fake.inspect(box.ref).Id]);
+  await reconnected.maintain(signal());
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "the record written before the rename has this daemon's engine ID, so its upkeep drops it");
+});
+
 test("071 unit 11: a failed probe keeps each card's key and its last reading's name, so a card held whole takes no shared box; its free memory is unknown and no whole card is placed", async () => {
   let clock = 1_800_000_000_000;
   const devices = ["nvidia.com/gpu=0", "nvidia.com/gpu=1"];
