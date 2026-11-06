@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -7,6 +7,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   UPDATE_DIR,
+  UPDATE_LOCK,
+  USERSPACE_READ,
   agentUserspaceWords,
   asRoot,
   judgeAnyCard,
@@ -15,8 +17,11 @@ import {
   judgeUpdateCheck,
   planWords,
   settledUpdate,
-  updateCheckCommand,
+  UPDATE_CHECK,
+  fetchCommand,
+  updateScriptText,
   updateFilesCommand,
+  updateRunning,
   userspaceState,
   type UserspaceReading,
   type UserspaceUpdate,
@@ -38,6 +43,7 @@ function fakeRoot(options: { driver?: string | null; os?: string | null; image?:
   if (options.os !== null) file("etc/os-release", options.os ?? 'NAME="Ubuntu"\nID=ubuntu\nVERSION_ID="24.04"\n');
   if (options.image !== false) file("usr/share/bb-box/image.json", "{}\n");
   if (options.desktop) file("etc/bb-box/desktop.env", options.desktop);
+  mkdirSync(join(root, "run"), { recursive: true });
   return root;
 }
 
@@ -72,10 +78,28 @@ test("071 unit 12: the update script's check reads the box's architecture, syste
   assert.match(clean.out, /^free-mib \d+$/m);
   assert.match(clean.out, /^arch \S+$/m);
 
-  const apt = run(root, ["check"], {}, fakeDpkg("nvidia-driver-570 install ok installed\nlibnvidia-compute-570 install ok installed\ncuda-drivers-570 deinstall ok config-files\n"));
+  const apt = run(root, ["check"], {}, fakeDpkg("nvidia-driver-570 install ok installed\nlibnvidia-compute-570 install ok installed\ncuda-drivers-570 deinstall ok config-files\nlibc6 install ok installed\n"));
   assert.match(apt.out, /^apt nvidia-driver-570 libnvidia-compute-570 $/m);
   const judged = judgeUpdateCheck(apt.out.replace(/^arch .*$/m, "arch x86_64").replace(/^free-mib .*$/m, "free-mib 9000"), "580.142");
   assert.deepEqual(judged, { ok: false, why: "has nvidia-driver-570, libnvidia-compute-570 from apt, which NVIDIA's installer would conflict with. Remove them, or make a new box with a GPU" });
+
+  const partial = run(root, ["check"], {}, fakeDpkg("nvidia-driver-570 hold ok installed\nlibnvidia-gl-570 install ok unpacked\nlibnvidia-extra-570 install reinstreq half-installed\nnvidia-firmware-570 purge ok not-installed\n"));
+  assert.match(partial.out, /^apt nvidia-driver-570 libnvidia-gl-570:unpacked libnvidia-extra-570:half-installed,reinstreq $/m, "held, unpacked and half-installed packages all count");
+  assert.deepEqual(judgeUpdateCheck(partial.out.replace(/^arch .*$/m, "arch x86_64").replace(/^free-mib .*$/m, "free-mib 9000"), "580.142"), {
+    ok: false,
+    why: "has nvidia-driver-570, libnvidia-gl-570 (unpacked), libnvidia-extra-570 (half-installed, reinstreq) from apt, which NVIDIA's installer would conflict with. Remove them, or make a new box with a GPU",
+  });
+
+  const failingBin = tempDir("nvidia-update-bin");
+  writeFileSync(join(failingBin, "dpkg-query"), "#!/bin/sh\necho 'dpkg-query: error: parsing file /var/lib/dpkg/status' >&2\nexit 2\n");
+  chmodSync(join(failingBin, "dpkg-query"), 0o755);
+  const unreadable = run(root, ["check"], {}, failingBin);
+  assert.equal(unreadable.status, 0, unreadable.err);
+  assert.match(unreadable.out, /^apt unreadable$/m);
+  assert.deepEqual(judgeUpdateCheck(unreadable.out.replace(/^arch .*$/m, "arch x86_64").replace(/^free-mib .*$/m, "free-mib 9000"), "580.142"), {
+    ok: false,
+    why: "did not let bb-box list its packages from apt, so bb-box cannot tell whether NVIDIA's installer would conflict with them",
+  });
 
   const other = run(fakeRoot({ os: 'ID=debian\nVERSION_ID="12"\n', image: false, driver: null }), ["check"], {}, fakeDpkg(""));
   for (const line of ["os debian 12", "image other", "kernel-driver none"]) assert.ok(other.out.split("\n").includes(line), `${line} in ${other.out}`);
@@ -145,6 +169,8 @@ test("071 unit 12: bb-box puts the update script and the installer's two scripts
   assert.equal(readFileSync(join(into, "nvidia-userspace-update.sh"), "utf8"), readFileSync(SCRIPT, "utf8"));
   assert.equal(readFileSync(join(into, "guest", "nvidia-userspace.sh"), "utf8"), readFileSync(join(GUEST, "nvidia-userspace.sh"), "utf8"));
   assert.equal(readFileSync(join(into, "guest", "bb-box-nvidia-drivers.sh"), "utf8"), readFileSync(join(GUEST, "bb-box-nvidia-drivers.sh"), "utf8"));
+  assert.ok(fetchCommand("580.142", SETUP).includes(readFileSync(SCRIPT).toString("base64")), "they go in with the download, the first step that changes the box");
+  assert.equal(updateScriptText(SETUP), readFileSync(SCRIPT, "utf8"));
 });
 
 const reading = (file: string, library: string, at = 2): UserspaceReading => ({ file, library, hostDriver: "580.142", at }) as UserspaceReading;
@@ -234,12 +260,78 @@ test("071 unit 12: the checks after an update's restart: a card listed with CUDA
   assert.equal(judgeDesktopCheck("display-mode gpu\n"), "the desktop's check did not finish");
 });
 
-test("071 unit 12: bb-box's commands run as root through one wrapper, its quoting kept, and its check runs whole from the files it puts in", { skip: process.getuid?.() !== 0 ? "needs root, as bb-box's commands in a box do" : false }, () => {
+test("071 unit 12: bb-box's commands run as root through one wrapper, its quoting kept, and its check runs whole from its script on stdin, writing nothing in the box", { skip: process.getuid?.() !== 0 ? "needs root, as bb-box's commands in a box do" : false }, () => {
   const quoted = spawnSync("bash", ["-c", asRoot(`printf '%s|%s\\n' "it's" "$(id -u)"`)], { encoding: "utf8" });
   assert.equal(quoted.status, 0, quoted.stderr);
   assert.equal(quoted.stdout, "it's|0\n");
-  const into = tempDir("nvidia-update-check");
-  const check = spawnSync("bash", ["-c", updateCheckCommand(SETUP).replaceAll(UPDATE_DIR, into)], { encoding: "utf8" });
+  assert.equal(UPDATE_CHECK.includes(UPDATE_DIR), false, "the check writes nothing in the box: its script comes on stdin");
+  const check = spawnSync("bash", ["-c", UPDATE_CHECK], { input: updateScriptText(SETUP), encoding: "utf8" });
   assert.equal(check.status, 0, check.stderr);
   assert.match(check.stdout, /^arch \S+\nos .+\nimage (bb-box|other)\nfree-mib \d+\nkernel-driver \S+\napt .+\n(gpu-process \d+ .+\n)*check done\n$/);
+});
+
+function lockedRoot(): { readonly root: string; readonly lock: string } {
+  const root = fakeRoot();
+  return { root, lock: join(root, "run", "bb-box-nvidia-update.lock") };
+}
+
+function readingWithLock(lock: string): string {
+  const result = spawnSync("bash", ["-c", USERSPACE_READ.replaceAll(UPDATE_LOCK, lock)], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+test("071 unit 12: the update holds a lock in the box while it fetches and installs, which the installer's own processes keep while they run, so a second update is refused and a reading says one is still running", async () => {
+  const { root, lock } = lockedRoot();
+  const dir = tempDir("nvidia-update-dir");
+  const pidFile = join(tempDir("nvidia-update-orphan"), "orphan.pid");
+  mkdirSync(join(dir, "guest"), { recursive: true });
+  writeFileSync(join(dir, "guest", "nvidia-userspace.sh"), `setsid sleep 30 < /dev/null > /dev/null 2>&1 &\necho $! > ${pidFile}\necho 580.142\n`);
+  const first = run(root, ["install", dir]);
+  assert.equal(first.status, 0, first.err);
+  const orphan = Number(readFileSync(pidFile, "utf8"));
+  try {
+    assert.equal(updateRunning(readingWithLock(lock)), true, "an installer left running, as one bb-box's restart did not stop, keeps the lock");
+    const again = run(root, ["install", tempDir("nvidia-update-dir")]);
+    assert.notEqual(again.status, 0);
+    assert.match(again.err, /an earlier update of NVIDIA's userspace is still running in this box/);
+    const fetch = run(root, ["fetch", tempDir("nvidia-update-dir"), "580.142"], { BBBOX_NVIDIA_BASE: mirror("580.142") });
+    assert.notEqual(fetch.status, 0);
+    assert.match(fetch.err, /still running in this box/);
+  } finally {
+    process.kill(orphan, "SIGKILL");
+  }
+  for (let i = 0; i < 100 && updateRunning(readingWithLock(lock)); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(existsSync(lock), true, "the lock file stays behind");
+  assert.equal(updateRunning(readingWithLock(lock)), false, "a lock whose last holder died is no lock: the kernel drops it with its holder");
+  const later = run(root, ["fetch", tempDir("nvidia-update-dir"), "580.142"], { BBBOX_NVIDIA_BASE: mirror("580.142") });
+  assert.equal(later.status, 0, later.err);
+});
+
+test("071 unit 12: a reading reports no update running where there is no lock file, or one no process holds", () => {
+  const { lock } = lockedRoot();
+  assert.equal(updateRunning(readingWithLock(lock)), false);
+  writeFileSync(lock, "");
+  assert.equal(updateRunning(readingWithLock(lock)), false);
+  assert.match(readingWithLock(lock), /^file \S+\nlibrary \S+\nuserspace read\n$/);
+});
+
+test("071 unit 12: the update's check reports an earlier update still running, and bb-box refuses on it", async () => {
+  const { root, lock } = lockedRoot();
+  writeFileSync(lock, "");
+  const holder = spawn("flock", [lock, "sleep", "30"], { stdio: "ignore", detached: true });
+  try {
+    for (let i = 0; i < 100 && !updateRunning(readingWithLock(lock)); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    const held = run(root, ["check"], {}, fakeDpkg(""));
+    assert.equal(held.status, 0, held.err);
+    assert.match(held.out, /^update running$/m);
+    assert.deepEqual(judgeUpdateCheck(held.out.replace(/^arch .*$/m, "arch x86_64").replace(/^free-mib .*$/m, "free-mib 9000"), "580.142"), {
+      ok: false,
+      why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another",
+    });
+  } finally {
+    process.kill(-holder.pid!, "SIGKILL");
+  }
+  for (let i = 0; i < 100 && updateRunning(readingWithLock(lock)); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.doesNotMatch(run(root, ["check"], {}, fakeDpkg("")).out, /update running/);
 });

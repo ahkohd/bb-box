@@ -105,7 +105,7 @@ export interface SnapshotBoxes {
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
   wholeCards?(): Promise<boolean>;
-  readUserspace?(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord>;
+  readUserspace?(box: BoxRecord, signal?: AbortSignal, started?: boolean): Promise<BoxRecord>;
 }
 
 export interface ThreadOnTheBox {
@@ -1868,7 +1868,7 @@ export class Snapshots {
   async #userspaceAfter(box: BoxRecord): Promise<BoxRecord> {
     if (box.state !== "ready" || !this.#deps.boxes.readUserspace) return box;
     try {
-      return await this.#deps.boxes.readUserspace(box, this.#stopping.signal);
+      return await this.#deps.boxes.readUserspace(box, this.#stopping.signal, true);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;
       this.#deps.log?.(`Could not read NVIDIA's userspace in box ${box.name} after its restore: ${message(error)}`);

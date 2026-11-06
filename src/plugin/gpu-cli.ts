@@ -159,7 +159,7 @@ export function gpuCommands(app: BbBox) {
               }
               await app.checkRestart(plan.box, options.force === true);
               const taken = options.snapshot ? await app.snapshots.take(COMMAND, plan.box, { box: { id: plan.box.id, threadId: plan.box.threadId }, runsOn: false }, { note: `Taken by bb box gpu update before it installed NVIDIA's userspace ${plan.to} over ${fromOf(plan.from)}.` }) : null;
-              const done = await app.boxes.updateUserspace(owner, box.id, { who: BY_COMMAND, beforeRestart: (found) => app.checkRestart(found, options.force === true).then(() => undefined), signal: ctx.signal });
+              const done = await app.boxes.updateUserspace(owner, box.id, { who: BY_COMMAND, checkRestart: (found) => app.checkRestart(found, options.force === true).then(() => undefined), signal: ctx.signal });
               const before = taken?.snapshot ? `Took snapshot "${taken.snapshot.name}" first. ` : "";
               results.push({ box: done.box.name, ok: true, words: `${before}${done.words}` });
             } catch (error) {

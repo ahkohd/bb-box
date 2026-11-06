@@ -18,6 +18,8 @@ export interface FakeNvidia {
   hostRefused: { readonly why: string; readonly fix: string | null } | null;
   display: "gpu" | "cpu";
   cardCheckThrows: boolean;
+  running: boolean;
+  hostThrows: boolean;
 }
 
 export function fakeNvidia(start: Partial<FakeNvidia> = {}): FakeNvidia {
@@ -36,6 +38,8 @@ export function fakeNvidia(start: Partial<FakeNvidia> = {}): FakeNvidia {
     hostRefused: null,
     display: "gpu",
     cardCheckThrows: false,
+    running: false,
+    hostThrows: false,
     ...start,
   };
 }
@@ -43,7 +47,7 @@ export function fakeNvidia(start: Partial<FakeNvidia> = {}): FakeNvidia {
 const ok = (stdout: string, exitCode = 0, stderr = ""): RunResult => ({ exitCode, stdout, stderr, durationMs: 1, timedOut: false, truncated: false });
 
 function callOf(script: string): FakeCall | null {
-  if (script.includes("nvidia-userspace-update.sh check")) return "check";
+  if (script.includes("bash -s check")) return "check";
   if (script.includes("nvidia-userspace-update.sh fetch")) return "fetch";
   if (script.includes("nvidia-userspace-update.sh install")) return "install";
   if (script.includes("libnvidia-ml.so.1")) return "read";
@@ -56,7 +60,7 @@ function answer(nvidia: FakeNvidia, call: FakeCall, options: RunOptions | undefi
   switch (call) {
     case "read": {
       const library = nvidia.library === "none" ? "none" : `/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.${nvidia.library}`;
-      return Promise.resolve(ok(`file ${nvidia.file}\nlibrary ${library}\nuserspace read\n`));
+      return Promise.resolve(ok(`${nvidia.running ? "update running\n" : ""}file ${nvidia.file}\nlibrary ${library}\nuserspace read\n`));
     }
     case "check":
       return Promise.resolve(
@@ -136,6 +140,7 @@ export function withFakeNvidia(backend: Backend, nvidia: FakeNvidia, kinds: read
   };
   writable.nvidiaHost = async (kind: string) => {
     if (!kinds.includes(kind)) return null;
+    if (nvidia.hostThrows) throw new Error("the host's report could not be read");
     return nvidia.hostRefused ? { driver: null, refused: nvidia.hostRefused } : { driver: nvidia.driver, refused: null };
   };
 }

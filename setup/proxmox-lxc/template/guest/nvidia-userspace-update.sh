@@ -7,11 +7,20 @@ root=${BB_BOX_ROOT:-}
 mode=${1:-}
 host_driver=$root/sys/module/nvidia/version
 desktop_env=$root/etc/bb-box/desktop.env
+lock=$root/run/bb-box-nvidia-update.lock
 nvidia_base=${BBBOX_NVIDIA_BASE:-https://download.nvidia.com/XFree86/Linux-x86_64}
 
+hold_lock() {
+  exec 9>>"$lock"
+  flock -n 9 || die "an earlier update of NVIDIA's userspace is still running in this box"
+}
+
 apt_packages() {
-  { dpkg-query -W -f '${Package} ${Status}\n' 'nvidia-*' 'libnvidia-*' 'cuda-drivers*' 2>/dev/null || true; } |
-    awk '$(NF-2) == "install" && $(NF-1) == "ok" && $NF == "installed" { print $1 }' | tr '\n' ' '
+  local listing
+  listing=$(dpkg-query -W -f '${Package} ${Status}\n' 2>/dev/null) || { echo unreadable; return 0; }
+  awk '$1 ~ /^(nvidia-|libnvidia-|cuda-drivers)/ && !(($NF == "not-installed" || $NF == "config-files") && $(NF-1) == "ok") {
+    if ($NF == "installed" && $(NF-1) == "ok") print $1; else print $1 ":" $NF ($(NF-1) == "ok" ? "" : "," $(NF-1))
+  }' <<<"$listing" | tr '\n' ' '
 }
 
 gpu_processes() {
@@ -37,6 +46,7 @@ case "$mode" in
     echo "kernel-driver $(cat "$host_driver" 2>/dev/null || echo none)"
     packages=$(apt_packages)
     echo "apt ${packages:-none}"
+    if [ -e "$lock" ] && ! flock -n -s "$lock" true; then echo "update running"; fi
     gpu_processes
     echo "check done"
     ;;
@@ -44,6 +54,7 @@ case "$mode" in
     dir=${2:?usage: nvidia-userspace-update.sh fetch <dir> <driver>}
     driver=${3:?usage: nvidia-userspace-update.sh fetch <dir> <driver>}
     [[ "$driver" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "$driver is not a driver version"
+    hold_lock
     seen=$(cat "$host_driver" 2>/dev/null) || die "the box sees no NVIDIA driver on its host"
     [ "$seen" = "$driver" ] || die "the box sees the host's driver $seen, not $driver"
     art=$dir/artifacts
@@ -65,6 +76,7 @@ case "$mode" in
     ;;
   install)
     dir=${2:?usage: nvidia-userspace-update.sh install <dir>}
+    hold_lock
     installed=$(bash "$dir/guest/nvidia-userspace.sh" "$dir")
     if [ -f "$desktop_env" ]; then
       if grep -q '^DISPLAY_MODE=' "$desktop_env"; then

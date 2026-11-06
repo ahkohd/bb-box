@@ -106,8 +106,8 @@ test("071 unit 12: --check says what the update does and changes nothing; the up
   assert.equal((await found(state, box)).nvidiaUserspace, "570.86");
 
   const asked: string[] = [];
-  const done = await state.boxes.updateUserspace(THREAD, box.id, { who: BY_COMMAND, beforeRestart: async (seen) => void asked.push(seen.name) });
-  assert.deepEqual(asked, [box.name], "the restart's guards are asked once, before anything changes");
+  const done = await state.boxes.updateUserspace(THREAD, box.id, { who: BY_COMMAND, checkRestart: async (seen) => void asked.push(seen.name) });
+  assert.deepEqual(asked, [box.name, box.name], "the restart's guards are asked before anything changes, and again just before the restart");
   assert.equal(done.changed, true);
   assert.match(done.words, new RegExp(`^Updated NVIDIA's userspace in box ${box.name} from 570\\.86 to 580\\.142, and restarted it, in \\d+ s\\. nvidia-smi in it lists .+, and CUDA's driver initialises\\.$`));
   assert.deepEqual(updateCalls(state.nvidia), ["check", "check", "fetch", "install"]);
@@ -366,7 +366,7 @@ test("071 unit 12: bb box gpu update is refused while a thread works on the box 
   assert.equal(forced.exitCode, 0, forced.stderr);
   assert.deepEqual(busy.taken, [`${box.name}: named by the time: Taken by bb box gpu update before it installed NVIDIA's userspace 580.142 over 570.86.`], "named by the time, so a second update's snapshot never takes the first's name");
   assert.match(forced.stdout ?? "", new RegExp(`^Took snapshot "Fri 22:30" first\\. Updated NVIDIA's userspace in box ${box.name} from 570\\.86 to 580\\.142`));
-  assert.deepEqual(busy.guarded, [true, true], "--force reaches the restart's guard, before the snapshot and before the restart");
+  assert.deepEqual(busy.guarded, [true, true, true], "--force reaches the restart's guard: before the snapshot, before the update's first step and just before its restart");
 
   state.nvidia.file = state.nvidia.library = "570.86";
   await state.boxes.readUserspace(await found(state, box));
@@ -442,4 +442,115 @@ test("071 unit 12: a check after the restart that cannot run fails the update at
   const failed = await rejectionOf(state.boxes.updateUserspace(THREAD, box.id));
   assert.match(failed.message, /its check after the restart failed: Checking the box failed: the connection to the box closed\. It goes on running\./);
   assert.deepEqual([(await found(state, box)).userspaceUpdate?.state, (await found(state, box)).userspaceUpdate?.step], ["failed", "check"]);
+});
+
+test("071 unit 12: while an earlier update still runs in the box, as one bb-box lost when it restarted, the sweep and the doctor leave it unknown, a new update is refused before any check, and once it ends the sweep settles it and Update again works", async () => {
+  const state = world(fakeNvidia({ install: "hangs-half" }));
+  const box = await gpuBox(state);
+  const updating = state.boxes.updateUserspace(THREAD, box.id, { who: BY_COMMAND }).catch((error: unknown) => error);
+  for (let i = 0; i < 400 && !state.nvidia.calls.includes("install"); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  await state.restart();
+  await updating;
+  state.nvidia.running = true;
+  state.nvidia.calls.length = 0;
+
+  await state.boxes.sweep();
+  const held = await found(state, box);
+  assert.equal(held.userspaceUpdate?.state, "unknown", "a reading taken while the update runs settles nothing");
+  assert.notDeepEqual([held.userspaceRead?.file, held.userspaceRead?.library], ["570.86", "none"], "nor is it recorded");
+  const named = (await state.boxes.userspaceChecks()).find((check) => check.id === `gpu-userspace.${box.name}`);
+  assert.deepEqual(named && { status: named.status, detail: named.detail, fix: named.fix }, {
+    status: "warn",
+    detail: `An earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then.`,
+    fix: "Wait for it to end, then run bb box doctor again.",
+  });
+  for (const check of [true, false]) {
+    const refused = await rejectionOf(state.boxes.updateUserspace(THREAD, box.id, { check }));
+    assert.equal(refused.code, "try_again");
+    assert.equal(refused.message, `Not changed: an earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then. Run this again once it has ended: bb box doctor says when it has.`);
+  }
+  assert.deepEqual(updateCalls(state.nvidia), [], "nothing is checked, fetched or installed beside it");
+  assert.equal((await found(state, box)).userspaceUpdate?.state, "unknown");
+
+  state.nvidia.running = false;
+  state.nvidia.install = "works";
+  await state.boxes.sweep();
+  const settled = await found(state, box);
+  assert.equal(settled.userspaceUpdate?.state, "failed");
+  assert.match(settled.userspaceUpdate?.error ?? "", /When bb-box read the box again, it had a half-installed NVIDIA userspace/);
+  assert.equal((await state.boxes.updateUserspace(THREAD, box.id, { who: BY_COMMAND })).changed, true);
+});
+
+test("071 unit 12: the restart's guard is asked again just before the restart, so a thread that began working during the download stops the update before it restarts the box, and Update again restarts it later", async () => {
+  const state = world();
+  const box = await gpuBox(state);
+  let calls = 0;
+  const failed = await rejectionOf(
+    state.boxes.updateUserspace(THREAD, box.id, {
+      checkRestart: async (seen) => {
+        if (++calls === 2) throw new BoxError("in_use", `Restarting box ${seen.name} would end the work of thread "Train the model", which is working on it. Wait until it is done.`);
+      },
+    }),
+  );
+  assert.equal(failed.code, "in_use");
+  assert.equal(
+    failed.message,
+    `bb-box installed NVIDIA's userspace 580.142 in box ${box.name}, but did not restart it: Restarting box ${box.name} would end the work of thread "Train the model", which is working on it. Wait until it is done. Its programs keep the old libraries until it restarts. Run bb box gpu update ${box.name} again once it can restart.`,
+  );
+  const after = await found(state, box);
+  assert.equal(after.state, "ready");
+  assert.ok(!state.kinds(after).includes("stop-asked"), "the box was not restarted");
+  assert.deepEqual([after.userspaceUpdate?.state, after.userspaceUpdate?.step], ["failed", "restart"]);
+  assert.equal(boxView(after, true, { owner: "agent", holder: null }).userspaceNotice?.action, "update-again");
+  assert.equal((await state.boxes.updateUserspace(THREAD, box.id)).changed, true);
+});
+
+test("071 unit 12: a restart that fails after the install says the new userspace is on the box's disk", async () => {
+  const state = world();
+  const box = await gpuBox(state);
+  const backend = state.backend as unknown as { start: (...args: unknown[]) => Promise<unknown> };
+  const start = backend.start.bind(state.backend);
+  backend.start = async (...args: unknown[]) => {
+    if (state.nvidia.calls.includes("install")) throw new Error("the box did not start");
+    return start(...args);
+  };
+  const failed = await rejectionOf(state.boxes.updateUserspace(THREAD, box.id));
+  assert.match(failed.message, new RegExp(`^bb-box installed NVIDIA's userspace 580\\.142 in box ${box.name}, but could not restart it: .*the box did not start\\. It is stopped now, with the new userspace on its disk\\. Run bb box gpu update ${box.name} again once it runs\\.$`));
+});
+
+test("071 unit 12: a failed update is settled once a reading after a start, or after a download that failed, shows the host's driver, so the box is no longer named and no update reinstalls it", async () => {
+  const state = world(fakeNvidia({ fetchFails: "could not download NVIDIA-Linux-x86_64-580.142.run" }));
+  const box = await gpuBox(state);
+  await rejectionOf(state.boxes.updateUserspace(THREAD, box.id));
+  assert.deepEqual([(await found(state, box)).userspaceUpdate?.state, (await found(state, box)).userspaceUpdate?.step], ["failed", "fetch"]);
+  state.nvidia.file = state.nvidia.library = "580.142";
+  assert.equal((await state.boxes.userspaceChecks()).some((check) => check.id === `gpu-userspace.${box.name}`), false, "a doctor's reading settles a failed download once the box has the host's driver");
+  assert.equal((await found(state, box)).userspaceUpdate?.state, "done");
+
+  const cut = world(fakeNvidia({ cardCheckThrows: true }));
+  const restarted = await gpuBox(cut);
+  await rejectionOf(cut.boxes.updateUserspace(THREAD, restarted.id));
+  assert.deepEqual([(await found(cut, restarted)).userspaceUpdate?.state, (await found(cut, restarted)).userspaceUpdate?.step], ["failed", "check"]);
+  await cut.boxes.userspaceChecks();
+  assert.equal((await found(cut, restarted)).userspaceUpdate?.state, "failed", "a reading with no start since leaves an update that failed after its install named");
+  await cut.boxes.stop(THREAD, restarted.id);
+  await cut.boxes.start(THREAD, restarted.id);
+  const settled = await found(cut, restarted);
+  assert.equal(settled.userspaceUpdate?.state, "done", "a reading at a start bb-box makes settles it");
+  assert.equal(boxView(settled, true, { owner: "agent", holder: null }).userspaceNotice, null);
+  cut.nvidia.calls.length = 0;
+  assert.equal((await cut.boxes.updateUserspace(THREAD, restarted.id, { check: true })).needed, false);
+  assert.deepEqual(updateCalls(cut.nvidia), [], "nothing is reinstalled in a box that matches");
+});
+
+test("071 unit 12: the doctor says why it did not read a running box it has no reading of", async () => {
+  const state = world();
+  const box = await gpuBox(state);
+  await state.boxes.update(box, () => ({ userspaceRead: null, nvidiaUserspace: null }));
+  state.nvidia.hostThrows = true;
+  const check = (await state.boxes.userspaceChecks()).find((candidate) => candidate.id === `gpu-userspace.${box.name}`);
+  assert.deepEqual(check && { status: check.status, detail: check.detail }, {
+    status: "ok",
+    detail: `bb-box has not read NVIDIA's userspace in box ${box.name} yet, and did not now, as bb-box could not read the host's driver: Reading the host's NVIDIA driver failed: the host's report could not be read: the doctor reads it at its next run.`,
+  });
 });

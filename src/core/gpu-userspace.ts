@@ -35,15 +35,18 @@ export interface GpuProcess {
 export type UpdateCheck = { readonly ok: true; readonly processes: readonly GpuProcess[] } | { readonly ok: false; readonly why: string };
 
 export const UPDATE_DIR = "/var/tmp/bb-box-nvidia-update";
+export const UPDATE_LOCK = "/run/bb-box-nvidia-update.lock";
 export const UPDATE_SCRIPT = `${UPDATE_DIR}/nvidia-userspace-update.sh`;
 export const UPDATE_FREE_MIB = 2048;
 
 const READ_DONE = "userspace read";
+const UPDATE_RUNNING = "update running";
 const CHECK_DONE = "check done";
 const VERSION = /^\d+(\.\d+)+$/;
 const LIBRARY = /libnvidia-ml\.so\.(\d+(?:\.\d+)+)$/;
 
 export const USERSPACE_READ =
+  `u=${UPDATE_LOCK}; if [ -e "$u" ]; then flock -n -s -E 75 "$u" true 2>/dev/null; if [ $? = 75 ]; then echo '${UPDATE_RUNNING}'; fi; fi; ` +
   "f=/usr/share/bb-box/nvidia-version; " +
   `if [ -r "$f" ]; then printf 'file %s\\n' "$(head -c 64 "$f" | tr -d '\\n')"; else echo 'file none'; fi; ` +
   "l=; for d in /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib; do if [ -e \"$d/libnvidia-ml.so.1\" ]; then l=$(readlink -f \"$d/libnvidia-ml.so.1\"); break; fi; done; " +
@@ -63,6 +66,14 @@ export function judgeReading(output: string, hostDriver: string | null, at: numb
   if (!lines.includes(READ_DONE)) return null;
   const library = valueAfter(lines, "library");
   return { file: versionOf(valueAfter(lines, "file")), library: versionOf(library ? (LIBRARY.exec(library)?.[1] ?? null) : null), hostDriver, at };
+}
+
+export function updateRunning(output: string): boolean {
+  return output.split("\n").some((line) => line.trim() === UPDATE_RUNNING);
+}
+
+export function stillRunningWords(box: string): string {
+  return `An earlier update of NVIDIA's userspace is still running in box ${box}: bb-box reads its userspace once it ends, and starts no other update until then`;
 }
 
 export function userspaceOfReading(reading: UserspaceReading): UserspaceVersion {
@@ -123,12 +134,14 @@ export function asRoot(script: string): string {
   return `s=; [ "$(id -u)" = 0 ] || s="sudo -n"; $s bash -c '${script.replaceAll("'", "'\\''")}'`;
 }
 
-export function updateCheckCommand(root = setupDir()): string {
-  return asRoot(`${updateFilesCommand(root)} && bash ${UPDATE_SCRIPT} check`);
+export const UPDATE_CHECK = asRoot("bash -s check");
+
+export function updateScriptText(root = setupDir()): string {
+  return readFileSync(join(root, "proxmox-lxc", "template", "guest", "nvidia-userspace-update.sh"), "utf8");
 }
 
-export function fetchCommand(driver: string): string {
-  return asRoot(`bash ${UPDATE_SCRIPT} fetch ${UPDATE_DIR} ${driver}`);
+export function fetchCommand(driver: string, root = setupDir()): string {
+  return asRoot(`${updateFilesCommand(root)} && bash ${UPDATE_SCRIPT} fetch ${UPDATE_DIR} ${driver}`);
 }
 
 export function installCommand(): string {
@@ -137,6 +150,7 @@ export function installCommand(): string {
 
 export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.includes(UPDATE_RUNNING)) return { ok: false, why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another" };
   if (!lines.includes(CHECK_DONE)) {
     const said = lines.find((line) => /sudo|password|not permitted|denied/i.test(line));
     return { ok: false, why: said ? `lets bb-box run nothing as root (${said.replace(/\.$/, "")})` : "did not finish bb-box's check" };
@@ -150,9 +164,15 @@ export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
   if (!Number.isFinite(free) || free < UPDATE_FREE_MIB) {
     return { ok: false, why: `has ${Number.isFinite(free) ? `${free} MiB` : "an unknown amount"} free in /var/tmp, and NVIDIA's installer and its files need ${UPDATE_FREE_MIB / 1024} GiB` };
   }
-  const packages = (valueAfter(lines, "apt") ?? "none").split(/\s+/).filter((name) => name && name !== "none");
+  const apt = valueAfter(lines, "apt") ?? "unreadable";
+  if (apt === "unreadable") return { ok: false, why: "did not let bb-box list its packages from apt, so bb-box cannot tell whether NVIDIA's installer would conflict with them" };
+  const packages = apt.split(/\s+/).filter((name) => name && name !== "none");
   if (packages.length) {
-    return { ok: false, why: `has ${packages.join(", ")} from apt, which NVIDIA's installer would conflict with. Remove ${packages.length === 1 ? "it" : "them"}, or make a new box with a GPU` };
+    const named = packages.map((entry) => {
+      const [name, state] = entry.split(":");
+      return state ? `${name} (${state.replace(",", ", ")})` : name!;
+    });
+    return { ok: false, why: `has ${named.join(", ")} from apt, which NVIDIA's installer would conflict with. Remove ${packages.length === 1 ? "it" : "them"}, or make a new box with a GPU` };
   }
   const seen = valueAfter(lines, "kernel-driver");
   if (seen !== driver) return { ok: false, why: `sees the host's NVIDIA driver as ${seen || "none"}, not ${driver} as the host reports it` };
@@ -215,8 +235,10 @@ export function agentUserspaceWords(box: string, state: UserspaceState): string 
   }
 }
 
-export function settledUpdate(update: UserspaceUpdate | null | undefined, reading: UserspaceReading): { readonly userspaceUpdate?: UserspaceUpdate } {
-  if (update?.state !== "unknown") return {};
+export function settledUpdate(update: UserspaceUpdate | null | undefined, reading: UserspaceReading, started = false): { readonly userspaceUpdate?: UserspaceUpdate } {
+  if (!update || (update.state !== "unknown" && update.state !== "failed")) return {};
+  if (matchesDriver(reading, update.to) && (started || update.step === "fetch")) return { userspaceUpdate: { ...update, state: "done", ms: null } };
+  if (update.state !== "unknown") return {};
   const step = matchesDriver(reading, update.to) && !installedBeforeItFailed(update) ? "restart" : update.step;
   return { userspaceUpdate: { ...update, state: "failed", step, error: `${update.error ?? "It was cut short."} When bb-box read the box again, it had ${readingWords(reading)}.` } };
 }

@@ -101,3 +101,18 @@ test("071 unit 12: a take reads the box's userspace now, whatever its record say
   assert.equal(named?.detail, `Box ${box.name} has NVIDIA's userspace 570.86, and the host's driver is 580.142: nvidia-smi and CUDA fail in it until its userspace is updated.`);
   assert.deepEqual(updateCalls(nvidia), [], "neither the take, the restore nor the doctor updates it");
 });
+
+test("071 unit 12: a restore's start settles an update that failed after its install, once the box it brings back has the host's driver", async () => {
+  const state = armedWorld();
+  const nvidia = fakeNvidia({ file: "580.142", library: "580.142" });
+  withFakeNvidia(state.backend, nvidia);
+  const plain = await readyBox(state);
+  const box = (await state.boxes.update(plain, () => ({ size: { ...plain.size!, gpu: "shared" as const } })))!;
+  const matching = (await state.snapshots.take(COMMAND, box, standing(box), { name: "matching" })).snapshot!;
+  const failed = (await state.boxes.update(box, () => ({ userspaceUpdate: { from: "570.86", to: "580.142", at: state.now, state: "failed" as const, step: "check" as const, ms: 1, error: "nvidia-smi in it listed no card" } })))!;
+  await state.boxes.readUserspace(failed);
+  assert.equal((await state.boxes.find(box.id))?.userspaceUpdate?.state, "failed", "a reading with no start leaves it named");
+  await state.snapshots.restore(COMMAND, failed, standing(failed), matching.id);
+  assert.equal((await state.boxes.find(box.id))?.userspaceUpdate?.state, "done");
+  assert.deepEqual(updateCalls(nvidia), []);
+});

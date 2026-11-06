@@ -218,6 +218,8 @@ const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** The desktop's display service writes the path it took, gpu or cpu, and why. */
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
+const DRIVER_READS = 3;
+const DRIVER_READ_MS = 10_000;
 const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
 /** The host's NVIDIA driver, as a container sees it: the host's kernel module. */
 const NVIDIA_VERSION_FILE = "/sys/module/nvidia/version";
@@ -1505,12 +1507,31 @@ export class ProxmoxLxcBackend implements Backend {
       if (driver) return { driver, refused: null };
       return { driver: null, refused: { why: `The GPU helper on ${api.node} does not report the host's NVIDIA driver.`, fix: `Run host/setup-gpu.sh again, as root on ${api.node}, then bb box doctor.` } };
     }
-    const seen = (await this.#hostNvidia())?.version ?? null;
+    const seen = await this.#driverInARunningBox(api, signal);
     if (seen) return { driver: seen, refused: null };
     return {
       driver: null,
-      refused: { why: `bb-box does not know the NVIDIA driver on ${api.node}: it has no GPU helper, and no GPU desktop there has seen the driver yet.`, fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}.` },
+      refused: { why: `bb-box cannot tell the NVIDIA driver on ${api.node}: it has no GPU helper, and no running box of this install there showed the driver.`, fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}, or start a box there.` },
     };
+  }
+
+  async #driverInARunningBox(api: Proxmox, signal?: AbortSignal): Promise<string | null> {
+    const install = installTag(this.#context.installId);
+    const running = (await api.listPool(this.#config.proxmox.pool, signal)).filter(
+      (guest) => guest.type === "lxc" && !guest.template && guest.status === "running" && this.#inRange(guest.vmid) && guest.tags.includes(install),
+    );
+    for (const guest of running.slice(0, DRIVER_READS)) {
+      const read = await (await this.#command(guest.vmid)).run("cat /sys/module/nvidia/version", { timeoutMs: DRIVER_READ_MS, signal, maxOutputBytes: 256 }).catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return null;
+      });
+      const version = read?.exitCode === 0 ? read.stdout.trim() : "";
+      if (/^\d+(\.\d+)+$/.test(version)) {
+        await this.#sawNvidia(version);
+        return version;
+      }
+    }
+    return null;
   }
 
   async placeForkGpu(box: BoxIdentity, gpu: GpuPart, signal?: AbortSignal): Promise<void> {
