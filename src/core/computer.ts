@@ -2558,7 +2558,12 @@ export class Computer {
       return await this.#settleOnce(use, watch, cause);
     } catch (error) {
       if (!use.signal?.aborted) throw error;
-      return await this.#settleOnce({ ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) }, watch, cause);
+      try {
+        return await this.#settleOnce({ ...use, signal: AbortSignal.timeout(WALK_MS + 2_000) }, watch, cause);
+      } catch (again) {
+        const failed = unread(again, 'Call computer_screenshot with window "desktop" to see the desktop now.');
+        return { parts: failed.parts, hints: failed.hints };
+      }
     }
   }
 

@@ -1559,8 +1559,6 @@ export class ProxmoxLxcBackend implements Backend {
         writes: (api, box, made) => this.#writesFor(api, made ? madeOwner(this.#context.installId, box) : boxOwner(this.#context.installId, box)),
         sizeOf,
         logError: (operation, error) => this.#context.logError(operation, error),
-        inRange: (vmid) => this.#inRange(vmid),
-        visible: (api, signal) => api.visibleGuests(signal),
       },
       ref,
       box,
@@ -3175,7 +3173,6 @@ export class ProxmoxLxcBackend implements Backend {
       config: (vmid, signal) => api.config(vmid, signal),
       setNetwork: (vmid, settings, signal) => owned.setNetwork(vmid, owner, settings, signal),
       destroy: (vmid, signal) => owned.destroy(vmid, owner, signal),
-      unlock: (vmid, signal) => owned.configure(vmid, owner, { delete: ["lock"] }, signal),
     };
   }
 

@@ -54,15 +54,6 @@ export function useNow(active: boolean, everyMs = 100): number {
  */
 /** The last value loaded for each key, so a tab that remounts starts from what it showed and does not go blank while it refetches (037). */
 const remembered = new Map<string, unknown>();
-const liveGeneration = new Map<string, number>();
-
-function liveGenerationOf(key: string): number {
-  return liveGeneration.get(key) ?? 0;
-}
-
-function retireLive(key: string): void {
-  liveGeneration.set(key, liveGenerationOf(key) + 1);
-}
 
 /** The value last loaded under `key`, if any, as a view other than its own may want it before loading its own. */
 export function rememberedLive<T>(key: string): T | undefined {
@@ -76,7 +67,7 @@ export function forgetLive(): void {
 
 interface LiveRun {
   readonly key: string;
-  readonly generation: number;
+  readonly epoch: number;
   again: boolean;
   done: Promise<void>;
 }
@@ -86,29 +77,32 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
   latest.current = { load, relevant };
   const sequence = useRef(0);
   const running = useRef<LiveRun | null>(null);
+  const epoch = useRef(0);
+  const mounted = useRef(true);
   const [value, setValue] = useState<T | null>(() => (remembered.has(key) ? (remembered.get(key) as T) : null));
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback((): Promise<void> => {
+    if (!mounted.current) return Promise.resolve();
     const current = running.current;
-    if (current && current.key === key && current.generation === liveGenerationOf(key)) {
+    if (current && current.key === key && current.epoch === epoch.current) {
       current.again = true;
       return current.done;
     }
-    const run: LiveRun = { key, generation: liveGenerationOf(key), again: false, done: Promise.resolve() };
+    const runEpoch = epoch.current;
+    const run: LiveRun = { key, epoch: runEpoch, again: false, done: Promise.resolve() };
     const loadUntilCurrent = async () => {
       do {
         run.again = false;
         const mine = ++sequence.current;
-        const generation = liveGenerationOf(key);
         try {
           const next = await latest.current.load();
-          if (liveGenerationOf(key) !== generation) return;
+          if (!mounted.current || epoch.current !== runEpoch) return;
           if (mine !== sequence.current) continue;
           remembered.set(key, next);
           setValue(next);
           setError(null);
         } catch (caught) {
-          if (liveGenerationOf(key) !== generation) return;
+          if (!mounted.current || epoch.current !== runEpoch) return;
           if (mine === sequence.current) setError(message(caught));
         }
       } while (run.again && running.current === run);
@@ -120,10 +114,14 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
     return run.done;
   }, [key]);
   useEffect(() => {
+    mounted.current = true;
     setValue(remembered.has(key) ? (remembered.get(key) as T) : null);
     setError(null);
     void refresh();
-    return () => retireLive(key);
+    return () => {
+      mounted.current = false;
+      epoch.current += 1;
+    };
   }, [key, refresh]);
   useRealtime("changed", (payload) => {
     if (latest.current.relevant(payload)) void refresh();

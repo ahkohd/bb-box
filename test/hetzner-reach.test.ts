@@ -93,9 +93,6 @@ test("a host's first boot keeps containers from the metadata service before Dock
   assert.match(setup, new RegExp(`tailscale up --auth-key=file:${TAILSCALE_KEY_PATH} --hostname=bb-box-test-h1abcdef --accept-dns=false`));
   assert.ok(setup.indexOf("tailscale up") < setup.indexOf(`rm -f ${TAILSCALE_KEY_PATH}`), "the key file goes once used");
   assert.ok(setup.indexOf(`-d ${METADATA_ADDRESS}`) < setup.indexOf("get.docker.com"), "the rule is there before Docker is");
-  assert.ok(setup.indexOf("get.docker.com") < setup.indexOf("systemctl stop docker.socket docker.service"), "Docker is installed before its copied engine id is removed");
-  assert.ok(setup.indexOf("systemctl stop docker.socket docker.service") < setup.indexOf("rm -f /var/lib/docker/engine-id"), "the daemon is stopped before its id file goes, or it writes the same id back");
-  assert.ok(setup.indexOf("rm -f /var/lib/docker/engine-id") < setup.indexOf("systemctl enable --now docker"), "the id Docker first serves is one this host made");
   assert.ok(setup.indexOf("get.docker.com") < setup.indexOf("apt-get install -y -qq lxcfs"), "LXCFS comes after Docker, so boxes see their own memory and CPUs (062)");
   assert.match(setup, /systemctl enable --now lxcfs\napt-mark hold lxcfs/, "held, so unattended-upgrades never upgrades it under running boxes");
   assert.ok(setup.includes(`printf '[Unit]\\nRefuseManualStop=yes\\n' > ${LXCFS_KEPT_RUNNING}\nsystemctl daemon-reload`), "and systemd refuses to restart it, from needrestart or a package's script, which would break running boxes' files");

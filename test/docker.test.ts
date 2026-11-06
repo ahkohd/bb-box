@@ -1147,6 +1147,40 @@ test("a rename is stored for the daemon, so another backend on it reports the ne
   assert.equal((await shared.list("docker/relabel/")).length, 0);
 });
 
+test("two daemons that keep the same container id never share a rename", async () => {
+  const containerId = "ab".repeat(32);
+  const shared = new MemoryStorage();
+  const make = (daemonId: string, name: string) => {
+    const fake = fakeDockerHost({ daemonId, name, rootDir: `/var/lib/docker/${name}`, containerId });
+    const backend = new DockerBackend(dockerConfig(), { ...testContext(new MemoryStorage(), "test", { id: `docker:${name}` }), sharedStorage: shared }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+    return { fake, backend };
+  };
+  const a = make("engine-a", "host-a");
+  const b = make("engine-b", "host-b");
+  const boxA = identity("linux", SMALL, "thr_a");
+  const boxB = identity("linux", SMALL, "thr_b");
+  const guestA = await a.backend.acquire(boxA, null, hooks().hooks, signal());
+  const guestB = await b.backend.acquire(boxB, null, hooks().hooks, signal());
+  assert.equal(a.fake.inspect(guestA.ref).Id, containerId);
+  assert.equal(b.fake.inspect(guestB.ref).Id, containerId);
+  await a.backend.relabel(guestA, { ...boxA, threadId: "thr_next", name: "taken-name" });
+  const untouched = (await b.backend.held()).find((held) => held.ref === guestB.ref)?.owner;
+  assert.deepEqual([untouched?.threadId, untouched?.name], [boxB.threadId, boxB.name]);
+  await b.backend.relabel(guestB, { ...boxB, threadId: "thr_b2", name: "other-name" });
+  const onA = (await a.backend.held()).find((held) => held.ref === guestA.ref)?.owner;
+  const onB = (await b.backend.held()).find((held) => held.ref === guestB.ref)?.owner;
+  assert.deepEqual([onA?.threadId, onA?.name], ["thr_next", "taken-name"]);
+  assert.deepEqual([onB?.threadId, onB?.name], ["thr_b2", "other-name"]);
+  assert.equal((await shared.list("docker/relabel/")).length, 2);
+  await a.backend.release(guestA, releasing);
+  await a.backend.maintain();
+  const kept = (await b.backend.held()).find((held) => held.ref === guestB.ref)?.owner;
+  assert.deepEqual([kept?.threadId, kept?.name], ["thr_b2", "other-name"]);
+  assert.equal((await shared.list("docker/relabel/")).length, 1);
+  await b.backend.release(guestB, releasing);
+  assert.equal((await shared.list("docker/relabel/")).length, 0);
+});
+
 test("a Docker host that is a BB machine is reached through bb-box's relay, named as BB names it, and an offline one takes no box and runs nothing (042)", async () => {
   const fake = fakeDockerHost();
   const state = { connected: true as boolean | null, readies: 0 };

@@ -43,10 +43,6 @@ interface FakeTask {
   exitstatus: string;
   pollsLeft: number;
   start: number;
-  log: string[];
-  vmid?: number;
-  finish?: () => void;
-  settled: boolean;
 }
 
 export const TOKEN_ROLE = [
@@ -88,10 +84,6 @@ export class FakeProxmox {
   readonly nextTaskExit = new Map<string, string>();
   /** Polls before a task stops. */
   taskPolls = 1;
-  describeCloneWhenTheTaskEnds = false;
-  cloneTargetInLog: number | null = null;
-  omitCloneLog = false;
-  poolWhileCloneRuns: string | undefined = undefined;
   /** Node memory in bytes, as /nodes/{node}/status reports it. */
   memory = { total: 64 * 2 ** 30, available: 48 * 2 ** 30 };
   /** CPU threads, as /nodes/{node}/status reports them. */
@@ -207,18 +199,11 @@ export class FakeProxmox {
     return this.#route(call);
   };
 
-  #task(type: string, id: number | string, exit?: string, extra?: { log?: string[]; vmid?: number; finish?: () => void }): string {
+  #task(type: string, id: number | string, exit?: string): string {
     const upid = `UPID:${this.node}:0000${++this.#taskCounter}:00:00:${type}:${id}:bb-box@pve!plugin:`;
-    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls, start: Math.floor(Date.now() / 1000), log: extra?.log ?? [], vmid: extra?.vmid, finish: extra?.finish, settled: false });
+    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls, start: Math.floor(Date.now() / 1000) });
     this.nextTaskExit.delete(type);
     return upid;
-  }
-
-  #stopped(task: FakeTask): void {
-    if (task.settled) return;
-    task.settled = true;
-    if (task.exitstatus === "OK" || /^WARNINGS: \d+$/.test(task.exitstatus)) task.finish?.();
-    task.finish = undefined;
   }
 
   /** The token's rights come from the pool, so Proxmox refuses a VMID with no guest before it looks for one. */
@@ -393,25 +378,7 @@ export class FakeProxmox {
         task.pollsLeft--;
         return ok({ status: "running", upid });
       }
-      this.#stopped(task);
       return ok({ status: "stopped", exitstatus: task.exitstatus, upid });
-    }
-
-    if ((match = /^\/nodes\/([^/]+)\/tasks\/([^/]+)\/log$/.exec(path)) && method === "GET") {
-      const task = this.#tasks.get(decodeURIComponent(match[2]!));
-      if (!task) return respond(500, "no such task", { data: null });
-      return ok(task.log.map((line, index) => ({ n: index + 1, t: line })));
-    }
-
-    if ((match = /^\/nodes\/([^/]+)\/tasks\/([^/]+)$/.exec(path)) && method === "DELETE") {
-      const task = this.#tasks.get(decodeURIComponent(match[2]!));
-      if (!task) return respond(500, "no such task", { data: null });
-      task.pollsLeft = 0;
-      task.exitstatus = "got unexpected control message";
-      task.finish = undefined;
-      task.settled = true;
-      if (task.vmid !== undefined) delete this.guests.get(task.vmid)?.config.lock;
-      return ok(null);
     }
 
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/clone$/.exec(path)) && method === "POST") {
@@ -452,35 +419,17 @@ export class FakeProxmox {
         const size = /size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G";
         config.rootfs = params.full === "1" ? `${params.storage ?? "local-lvm"}:vm-${newid}-disk-0,size=${size}` : `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${size}`;
       }
-      const hold = type === "qemu" && this.describeCloneWhenTheTaskEnds;
-      const storedDescription = params.description ? asProxmoxStoresDescription(params.description) : undefined;
-      if (storedDescription && !hold) config.description = storedDescription;
-      if (hold) config.lock = "clone";
-      const pool = hold ? this.poolWhileCloneRuns : params.pool;
+      if (params.description) config.description = asProxmoxStoresDescription(params.description);
       this.guests.set(newid, {
         vmid: newid,
         ...(type === "qemu" ? { type: "qemu" as const } : {}),
         name,
-        pool,
+        pool: params.pool,
         status: "stopped",
         template: false,
         config,
       });
-      const logged = this.cloneTargetInLog ?? newid;
-      const what = type === "qemu" ? "VM" : "container";
-      return ok(this.#task(type === "qemu" ? "qmclone" : "vzclone", source.vmid, undefined, {
-        log: this.omitCloneLog ? [] : [`creating a clone of ${what} ${source.vmid} with ID ${logged}`],
-        vmid: newid,
-        finish: hold
-          ? () => {
-              const guest = this.guests.get(newid);
-              if (!guest) return;
-              if (storedDescription && this.cloneTargetInLog === null) guest.config.description = storedDescription;
-              delete guest.config.lock;
-              if (params.pool) guest.pool = params.pool;
-            }
-          : undefined,
-      }));
+      return ok(this.#task(type === "qemu" ? "qmclone" : "vzclone", source.vmid));
     }
 
     if (method === "GET" && (match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/pending$/.exec(path))) {
@@ -507,8 +456,7 @@ export class FakeProxmox {
           return respond(500, "detected modified configuration - file changed by other user? Try again.", { data: null });
         }
         // Deleting `vmstate` discards a suspended VM's state, and so its lock.
-        const deleting = params.delete?.split(",") ?? [];
-        if (match[1] === "qemu" && guest.config.lock && !deleting.includes("vmstate") && !deleting.includes("lock")) {
+        if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
           return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
         }
         // A disk given as <storage>:<GiB> is a new volume, as Proxmox allocates one.
@@ -531,7 +479,7 @@ export class FakeProxmox {
             guest.config[`unused${n}`] = disk.split(",")[0]!;
           }
         }
-        if (params.delete?.split(",").some((key) => key === "vmstate" || key === "lock")) delete guest.config.lock;
+        if (params.delete?.split(",").includes("vmstate")) delete guest.config.lock;
         if (params.hostname) guest.name = params.hostname;
         if (params.name) guest.name = params.name;
         return ok(null);

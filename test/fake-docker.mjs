@@ -202,7 +202,7 @@ function create(rest) {
   for (const device of devices) {
     if (!(host.gpus ?? []).includes(device) && !(device === "nvidia.com/gpu=all" && host.allGpus)) fail(`Error response from daemon: could not select device driver "cdi" with capabilities: []: unresolvable CDI devices ${device}`);
   }
-  const id = randomBytes(32).toString("hex");
+  const id = typeof host.containerId === "string" ? host.containerId : randomBytes(32).toString("hex");
   try {
     mkdirSync(dir(name));
   } catch {
