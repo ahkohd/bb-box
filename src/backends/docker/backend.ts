@@ -33,6 +33,7 @@ import {
   type BackendContext,
   type BackendImages,
   type BackendStorage,
+  type DockerDaemonIdentity,
   type BoxIdentity,
   type BoxKind,
   type CapacityAsking,
@@ -156,8 +157,7 @@ type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 type Pending = { readonly kind: string; readonly size: MachineSize };
 type CardPlacing = ({ readonly is: "placed"; readonly card: DockerCard } | { readonly is: "refused"; readonly refusal: GpuRefusal }) & { readonly limits: readonly Limit[] };
 type StoredPart = { readonly part: CardPart; readonly generation: number };
-type WrittenUnder = { readonly engineId: string; readonly name: string; readonly rootDir: string };
-type PartRecord = StoredPart & { readonly writtenUnder: WrittenUnder };
+type PartRecord = StoredPart & { readonly writtenUnder: DockerDaemonIdentity };
 const GPU_PARTS = "docker/gpu-part/";
 const GPU_PART_KEY = (containerId: string) => `${GPU_PARTS}${containerId}`;
 const GPU_FACT = "GPU";
@@ -553,10 +553,16 @@ export function refusedByAppArmor(result: { readonly exitCode: number | null; re
   return result.exitCode === 127 && /cannot apply additional memory protection after relocation: Permission denied/.test(result.stderr);
 }
 
-function writtenUnderThisDaemon(writtenUnder: WrittenUnder | undefined, info: DockerInfo): boolean {
-  if (!writtenUnder) return false;
-  if (writtenUnder.engineId) return writtenUnder.engineId === info.id;
-  return !info.id && writtenUnder.name === info.name && writtenUnder.rootDir === info.rootDir;
+function daemonIdentityOf(info: DockerInfo): DockerDaemonIdentity {
+  return { engineId: info.id, name: info.name, rootDir: info.rootDir };
+}
+
+function sameDaemon(one: DockerDaemonIdentity | undefined, other: DockerDaemonIdentity): boolean {
+  return Boolean(one) && one!.engineId === other.engineId && one!.name === other.name && one!.rootDir === other.rootDir;
+}
+
+function renamedFrom(writtenUnder: DockerDaemonIdentity | undefined, now: DockerDaemonIdentity): boolean {
+  return Boolean(writtenUnder && now.engineId) && writtenUnder!.engineId === now.engineId && !sameDaemon(writtenUnder, now);
 }
 
 export class DockerBackend implements Backend {
@@ -852,10 +858,13 @@ export class DockerBackend implements Backend {
     return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? { part: stored.part, generation: stored.generation } : null;
   }
 
-  async #writtenUnder(): Promise<WrittenUnder> {
+  async #writtenUnder(): Promise<DockerDaemonIdentity> {
     await this.#shared();
-    const info = this.#info;
-    return { engineId: info?.id ?? "", name: info?.name ?? "", rootDir: info?.rootDir ?? "" };
+    return this.#info ? daemonIdentityOf(this.#info) : { engineId: "", name: "", rootDir: "" };
+  }
+
+  async dockerDaemons(signal?: AbortSignal): Promise<readonly DockerDaemonIdentity[]> {
+    return [daemonIdentityOf(await this.#cli.info(signal))];
   }
 
   async #partOf(container: ContainerInfo): Promise<StoredPart> {
@@ -864,16 +873,16 @@ export class DockerBackend implements Backend {
     return switched ?? { part: partOfLabel(container.labels[LABELS.gpuPart]), generation: 1 };
   }
 
-  async #dropPartsOfGoneContainers(state: HostState): Promise<void> {
+  async #dropPartsOfGoneContainers(state: HostState, signal?: AbortSignal): Promise<void> {
+    const here = daemonIdentityOf(state.info);
     const there = new Set(state.containers.map((container) => container.id));
-    const keys = await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[]);
-    const gone = keys.filter((key) => !there.has(key.slice(GPU_PARTS.length)));
-    await Promise.all(
-      gone.map(async (key) => {
-        const record = await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined);
-        if (record && writtenUnderThisDaemon(record.writtenUnder, state.info)) await this.#storageOfEveryBackend.delete(key).catch(() => undefined);
-      }),
-    );
+    const keys = (await this.#storageOfEveryBackend.list(GPU_PARTS).catch(() => [] as string[])).filter((key) => !there.has(key.slice(GPU_PARTS.length)));
+    const gone = await Promise.all(keys.map(async (key) => ({ key, writtenUnder: (await this.#storageOfEveryBackend.get<PartRecord>(key).catch(() => undefined))?.writtenUnder })));
+    const writtenHere = gone.filter((record) => sameDaemon(record.writtenUnder, here));
+    const renamed = gone.filter((record) => renamedFrom(record.writtenUnder, here));
+    const reached = renamed.length ? await (this.#context.dockerDaemonsReached?.(signal) ?? Promise.resolve(null)).catch(() => null) : null;
+    const writtenBeforeARename = reached ? renamed.filter((record) => !reached.some((daemon) => daemon.name === record.writtenUnder!.name && daemon.rootDir === record.writtenUnder!.rootDir)) : [];
+    await Promise.all([...writtenHere, ...writtenBeforeARename].map((record) => this.#storageOfEveryBackend.delete(record.key).catch(() => undefined)));
   }
 
   #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
@@ -1114,7 +1123,7 @@ export class DockerBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
-      await this.#dropPartsOfGoneContainers(state);
+      await this.#dropPartsOfGoneContainers(state, signal);
       if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
       if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
       await this.#lxcfsOnHost(signal, true);

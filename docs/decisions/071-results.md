@@ -3508,9 +3508,11 @@ offered before it.
   when carried out. The part is this install's, kept in bb-box's storage
   where every backend of the install reads it, by the container's ID, with
   the engine ID, name and Docker root of the daemon it was written on, and
-  a generation that goes up at each switch. A release drops it. So does the
-  next upkeep of a backend on a daemon with that engine ID, once its
-  container is gone from there. The claim on the guest and the GPU fact
+  a generation that goes up at each switch. A release drops it. Once its
+  container is gone from a daemon, that daemon's upkeep drops it if it was
+  written under the daemon's engine ID, name and root, or under its engine
+  ID with a name and root no Docker daemon the install reaches has now, as
+  after a rename; never while bb-box cannot tell which daemons it reaches. The claim on the guest and the GPU fact
   follow it, and the record's `gpu` changes. A GPU added or
   removed is refused, with words for each audience. A backend whose
   `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
@@ -3781,8 +3783,8 @@ container is gone from this daemon and it was written under this daemon's
 engine ID, or, where a daemon has none, its name and root; a release deletes
 its own box's record. So a host renamed keeps its boxes' switches and drops
 its records of containers gone, and one daemon's upkeep never drops
-another's. Daemons whose engine IDs are the same, such as cloned hosts,
-delete each other's records of containers gone, as the lead decided.
+another's. (This let cloned hosts, which share an engine ID, drop each
+other's records; the next section changes it.)
 
 A test runs Astra's sequence, through the backend that switched the box and
 through one made after the rename, and checks capacity, `held`, a resize
@@ -3802,6 +3804,41 @@ rounds ran again, one changed to the new write, each failing its tests.
 The gate's results stand: it did not rename its host, and its one backend
 writes and reads the part by the container's ID now, with the same words and
 claims.
+
+### The rule for dropping a record, changed by the lead
+
+Under the fourth review's rule, two cloned hosts sharing an engine ID would
+each drop the other's records, as the other's containers are not on them,
+and so forget the other's whole switches. The lead changed the rule. Upkeep
+drops a record only when its container is gone from this daemon and either
+it was written under this daemon's engine ID, name and root, or it was
+written under this daemon's engine ID with a name and root that no Docker
+daemon the install reaches has now, which is a rename of this daemon. A
+record whose name and root are another reached daemon's is never dropped
+from here.
+
+The daemons the install reaches now are asked for at that moment, and only
+when such a record is found: each Docker backend bb-box has built, on or off,
+reads its daemon's `docker info`. If any of them does not answer, bb-box
+cannot tell, and keeps the record. Hetzner Cloud and Namespace hosts are not
+asked: their Docker hosts have no GPU boxes, so they write no such record.
+
+Tests: two cloned hosts with one engine ID, each with a box switched to
+whole, keep both records through each other's upkeep and refuse a shared box
+on their whole cards; each drops only its own record once its container is
+gone. A renamed host keeps its record while bb-box cannot tell which daemons
+it reaches, and drops it once it can. The registry reports every Docker
+backend's daemon, on or off, and none while one does not answer. Each of 7
+rules has a revert that fails it, on a box, and the 57 earlier reverts ran
+again, 1 changed to the new call and 2 replaced by these, each failing its
+tests. Then, on a `linux` box in `node:26-bookworm` as root with `--init`:
+`tsc` clean; the node suite, 3,837 tests, 3,415 passed, 112 failed, 310
+skipped, the 112 the same environment's failures, by name, as on main
+(`ed5d3dee`) in the same box; vitest, 470 passed.
+`test/docker-gpus.test.ts` has 34 tests.
+
+The gate's results stand: it ran one daemon, renamed nothing and dropped no
+record.
 
 ### Still open
 

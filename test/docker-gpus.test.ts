@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { Backends } from "../src/backends/index.ts";
+import { dockerDriver } from "../src/backends/docker/index.ts";
+import type { DockerConfig } from "../src/backends/docker/config.ts";
+import type { ConfigDocument } from "../src/core/document.ts";
 import { cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BackendContext, type BoxIdentity, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
 import { cardReachText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -373,7 +376,11 @@ test("071 unit 11: a switched part is found by its container's ID, so a box swit
   const config = dockerConfig({ "gpu-desktops": true });
   const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {} });
   const everyBackend = backends.context("docker").sharedStorage!;
-  const make = () => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id: "docker" }), sharedStorage: backends.context("docker").sharedStorage!, wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  let reachKnown = true;
+  const make = (): DockerBackend => {
+    const made: DockerBackend = new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id: "docker" }), sharedStorage: backends.context("docker").sharedStorage!, dockerDaemonsReached: async (signal) => (reachKnown ? made.dockerDaemons(signal) : null), wholeCards: () => true }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+    return made;
+  };
   const live = make();
   const box = await live.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
   await live.resize(box, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
@@ -387,8 +394,69 @@ test("071 unit 11: a switched part is found by its container's ID, so a box swit
   assert.equal((await reconnected.planResize(box, "linux", { ...SMALL, gpu: "shared" }, [], signal())).gpu?.from, "whole");
   assert.equal((await reconnected.doctor(signal())).checks.find((check) => check.id === `gpu.${CARD_A}.whole`)?.status, "ok");
   execFileSync(fake.binary, ["container", "rm", "--force", fake.inspect(box.ref).Id]);
+  reachKnown = false;
   await reconnected.maintain(signal());
-  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "the record written before the rename has this daemon's engine ID, so its upkeep drops it");
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1, "while bb-box cannot tell which daemons it reaches, a record written under another name is kept");
+  reachKnown = true;
+  await reconnected.maintain(signal());
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "written under this daemon's engine ID with a name no daemon reached has now, so its upkeep drops it once its container is gone");
+});
+
+test("071 unit 11: two cloned hosts with one engine ID each keep their switches through the other's upkeep, as each record names a daemon the install reaches", async () => {
+  const config = dockerConfig({ "gpu-desktops": true });
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {} });
+  const everyBackend = backends.context("docker").sharedStorage!;
+  const hostA = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], daemonId: "CLONED:ENGINE:ID", name: "clone-a" });
+  const hostB = fakeDockerHost({ gpus: [DEVICE_B], cards: [card(0, CARD_B, DEVICE_B)], daemonId: "CLONED:ENGINE:ID", name: "clone-b" });
+  const made: DockerBackend[] = [];
+  const reached = async (signal?: AbortSignal) => (await Promise.all(made.map((backend) => backend.dockerDaemons(signal)))).flat();
+  const make = (id: string, host: ReturnType<typeof fakeDockerHost>) => {
+    const backend = new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), sharedStorage: backends.context(id).sharedStorage!, dockerDaemonsReached: reached, wholeCards: () => true }, { binary: host.binary, readyTimeoutMs: 2_000 });
+    made.push(backend);
+    return backend;
+  };
+  const a = make("docker:a", hostA);
+  const b = make("docker:b", hostB);
+  const onA = await a.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
+  await a.resize(onA, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
+  const onB = await b.acquire(identity("linux", "shared", "thr_abc123", "birch-owl"), null, hooks(), signal());
+  await b.resize(onB, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
+  await a.maintain(signal());
+  await b.maintain(signal());
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 2, "neither clone's upkeep drops the other's record");
+  await assert.rejects(a.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is amber-fox's whole card/);
+  await assert.rejects(b.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is birch-owl's whole card/);
+  execFileSync(hostB.binary, ["container", "rm", "--force", hostB.inspect(onB.ref).Id]);
+  await a.maintain(signal());
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 2, "a record naming the other clone is never dropped from here");
+  await b.maintain(signal());
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [`docker/gpu-part/${hostA.inspect(onA.ref).Id}`], "each daemon drops its own records of containers gone");
+});
+
+test("071 unit 11: the daemons an install reaches are every Docker backend's, on or off, and none are known while one of them does not answer", async () => {
+  const one = fakeDockerHost({ name: "host-one" });
+  const two = fakeDockerHost({ name: "host-two" });
+  const binaries: Record<string, string> = { "ssh://box@one.example": one.binary, "ssh://box@two.example": two.binary };
+  const driver = { ...dockerDriver, create: (config: DockerConfig, context: BackendContext) => new DockerBackend(config, context, { binary: binaries[config.host ?? ""]! }) };
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {}, drivers: [driver] });
+  const document: ConfigDocument = {
+    schema: 1,
+    revision: 1,
+    backends: [
+      { id: "docker", type: "docker", enabled: true, fields: { host: "ssh://box@one.example" } },
+      { id: "docker:two", type: "docker", enabled: false, fields: { host: "ssh://box@two.example" } },
+    ],
+    kinds: {},
+    general: {},
+  };
+  try {
+    await backends.configure(document, {});
+    assert.deepEqual(((await backends.context("docker").dockerDaemonsReached!(signal())) ?? []).map((daemon) => daemon.name).sort(), ["host-one", "host-two"]);
+    two.set({ down: true });
+    assert.equal(await backends.context("docker").dockerDaemonsReached!(signal()), null);
+  } finally {
+    await backends.dispose();
+  }
 });
 
 test("071 unit 11: a failed probe keeps each card's key and its last reading's name, so a card held whole takes no shared box; its free memory is unknown and no whole card is placed", async () => {
