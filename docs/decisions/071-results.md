@@ -3325,12 +3325,77 @@ clean; the node suite, 3,800 tests, 3,505 passed, 0 failed, 295 skipped;
 vitest, 469 passed. Each block of the node steps passes `bash -n`, and step H's
 two journal filters were run on sample lines.
 
+### The gate on the node, in part
+
+Run by the lead on the node and by the builder on a test BB, on 6 November
+2026 (UTC), on main at `4948d8a2`, after the merge and its deploy, with
+`general.wholeCards` off on production and the node's helper at 0.4.3 from
+unit 8b's step B. No card can be free while a guest outside bb-box, the
+node's own development container, holds both cards' device lines: it blocks
+every whole claim on either card, whatever else stops. So only the items that
+need no free card were run, on node steps adapted for it, whose step 0 and
+step K required both cards to be held by a guest outside the lent VMIDs and
+stopped if either was free.
+
+The test BB was a fresh `npx bb-app@0.48.1` on a Proxmox LXC box, with no
+account, bb-box installed from `git archive 4948d8a2`, live checks off, and
+`general.wholeCards` on for its install alone. Its server ran as a systemd
+unit bound to every address, and iptables let only the box itself and the
+lent addresses reach its two ports. Its thread's agent was a script that calls
+bb-box's tools as an agent does, so the gate read an agent's words as well as
+a person's. The lead added its Proxmox LXC backend: the test pool,
+production's Linux template, the lent VMIDs and addresses, desktops per GPU 1,
+no desktop templates and no warm boxes. Its check found no problem.
+
+| Step | Evidence |
+| --- | --- |
+| 0 (05:32) | The helper 0.4.3, writes on, serving the test pool; the lent VMIDs free. Card 0 held by 3 guests outside the lent VMIDs, card 1 by 4, all shared and running; one guest, on both cards, is not bb-box's. `u5-check.sh`'s baseline: 36 guests |
+| A, the test BB | `general.wholeCards` true. The doctor: the GPU helper ok, 0.4.3 with writes on for the test pool; "Boxes on their cards", the markers and both whole checks ok; 5 of 5 VMIDs free. Two warnings: the thin pool's snapshots, known from unit 6, and no nightly image run yet. `bb box kinds --json`: `linux` offers gpu `none`, `shared` and `whole`, and its room lists both cards, neither free for a whole card (card 0: 3 boxes, 97,171 MiB free; card 1: 4 boxes, 96,983 MiB free) |
+| K (05:33:06) | Both cards still held by guests outside the lent VMIDs; no lent VMID in use |
+| G2 (05:33:12 to 05:33:22) | S1, a shared server, made on card 0, its claim g1 granted. Then a whole card asked for twice, through the CLI and through the agent, and refused at once both times, at admission, `no_capacity`, in the words below |
+| G2 on the node (05:34) | S1 the one lent VMID in use: its claim g1 granted shared, and it holds card 0, running, managed. No lent guest deleted since step K, by the API or through the helper; no lent guest holds a card whole; no guest yielded. S1's lines are card 0's server set (`/dev/nvidia1`, `nvidiactl`, `nvidia-uvm`, `nvidia-uvm-tools`), with no desktop nodes |
+| G4 (05:34) | Inside S1: `/dev/nvidia1` and the shared nodes only. Card 1's node is absent, and `mknod` of it is refused, "Operation not permitted". `nvidia-smi -L` lists card 0 alone. `/proc/driver/nvidia/gpus` lists both cards' PCI addresses: a guest can see that a card exists, not open it |
+| H (05:35) | S1 released at 05:34:50. The lent VMIDs free, none holding a card; no mismatch. The helper wrote no guest outside the lent VMIDs, and none yielded. `u5-compare.sh`: 7 GPU guests of 36 compared, no guest changed, with no production guest to allow |
+
+The person's words, from the CLI:
+
+> No card on `<node>` is free for a whole card now: card 0 has CT `<vmid>`,
+> which is not bb-box's, CT `<vmid>` of another install, CT `<vmid>` of
+> another install and S1 (in thread "CALL box_list") running and card 1 has
+> CT `<vmid>`, which is not bb-box's, CT `<vmid>` of another install, CT
+> `<vmid>` of another install and CT `<vmid>` of another install running.
+> Release a box on one of the cards, ask for gpu shared, or ask for gpu none.
+
+The agent's, from `box_acquire`:
+
+> Not made: no card on `<node>` is free for a whole card now: card 0 has CT
+> `<vmid>`, which is not bb-box's, CT `<vmid>` of another install, CT
+> `<vmid>` of another install and S1 running and card 1 has CT `<vmid>`,
+> which is not bb-box's, CT `<vmid>` of another install, CT `<vmid>` of
+> another install and CT `<vmid>` of another install running. Release one of
+> your own boxes on card 0 (S1), ask for gpu shared, or ask the user. bb-box
+> changed nothing.
+
+The person sees S1 with its thread's title, which is its first prompt, as a
+test BB with no account writes no titles; the agent sees box names only, and
+its own box to release. After step H the builder stopped the test BB, took its
+firewall rules out and released its box.
+
+G1 (two whole acquires at once for one free card), G3 (a stopped shared test
+guest yields, and starts on the other card) and G5 (a stopped whole box keeps
+its card) wait for a free card. Each needs a whole box made, and a whole claim
+is made only on a card that no guest outside the lent VMIDs holds, which no
+card is while the node's development container holds both cards' lines. They
+need a node without it, or a window without it, and then run with the full
+gate's node steps.
+
 ### Still open
 
 - When unit 15 lets a kind's "GPU when not asked for" be whole, a spare and a
   warm guest of that kind must still be shared (section 3): today spares and
   warm guests take the kind's default, which is never whole.
-- The live gate, on the node's helper 0.4.3.
+- G1, G3 and G5 of the gate, which need a node or a window without the
+  node's development container on the cards (above).
 
 ## Unit 11: GPU boxes on Docker
 
