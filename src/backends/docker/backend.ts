@@ -20,7 +20,7 @@
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -32,6 +32,7 @@ import {
   type Backend,
   type BackendContext,
   type BackendImages,
+  type BackendStorage,
   type BoxIdentity,
   type BoxKind,
   type CapacityAsking,
@@ -155,7 +156,7 @@ type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 type Pending = { readonly kind: string; readonly size: MachineSize };
 type CardPlacing = ({ readonly is: "placed"; readonly card: DockerCard } | { readonly is: "refused"; readonly refusal: GpuRefusal }) & { readonly limits: readonly Limit[] };
 type StoredPart = { readonly part: CardPart; readonly generation: number };
-const GPU_PART_KEY = (ref: string) => `gpu-part/${ref}`;
+const GPU_PARTS_OF_DAEMON = (daemon: string) => `docker/gpu-part/${createHash("sha256").update(daemon).digest("hex").slice(0, 16)}/`;
 const GPU_FACT = "GPU";
 const GPU_CHECK_FACT = "GPU check";
 const CARDS_FACT = "Cards";
@@ -833,15 +834,30 @@ export class DockerBackend implements Backend {
     return titles;
   }
 
-  async #storedPart(ref: string): Promise<StoredPart | null> {
-    const stored = await this.#context.storage.get<StoredPart>(GPU_PART_KEY(ref)).catch(() => undefined);
+  get #storageOfEveryBackend(): BackendStorage {
+    return this.#context.sharedStorage ?? this.#context.storage;
+  }
+
+  async #partKey(containerId: string): Promise<string> {
+    return GPU_PARTS_OF_DAEMON((await this.#shared()).daemon) + containerId;
+  }
+
+  async #storedPart(containerId: string): Promise<StoredPart | null> {
+    const stored = await this.#storageOfEveryBackend.get<StoredPart>(await this.#partKey(containerId)).catch(() => undefined);
     return stored && (stored.part === "shared" || stored.part === "whole") && Number.isInteger(stored.generation) ? stored : null;
   }
 
   async #partOf(container: ContainerInfo): Promise<StoredPart> {
     const mine = container.labels[LABELS.install] === this.#context.installId;
-    const switched = mine ? await this.#storedPart(container.name) : null;
+    const switched = mine ? await this.#storedPart(container.id) : null;
     return switched ?? { part: partOfLabel(container.labels[LABELS.gpuPart]), generation: 1 };
+  }
+
+  async #dropPartsOfGoneContainers(state: HostState): Promise<void> {
+    const prefix = GPU_PARTS_OF_DAEMON((await this.#shared()).daemon);
+    const there = new Set(state.containers.map((container) => container.id));
+    const kept = await this.#storageOfEveryBackend.list(prefix).catch(() => [] as string[]);
+    await Promise.all(kept.filter((key) => !there.has(key.slice(prefix.length))).map((key) => this.#storageOfEveryBackend.delete(key).catch(() => undefined)));
   }
 
   #readCards(info: DockerInfo, signal?: AbortSignal): Promise<void> {
@@ -1082,6 +1098,7 @@ export class DockerBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
+      await this.#dropPartsOfGoneContainers(state);
       if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
       if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
       await this.#lxcfsOnHost(signal, true);
@@ -1341,9 +1358,9 @@ export class DockerBackend implements Backend {
     const started = performance.now();
     this.#selkies.forget(guest.ref);
     this.#cursor.forget(guest.ref);
-    await this.#remove(guest.ref, this.#boxOf(guest), signal);
+    const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
-    await this.#context.storage.delete(GPU_PART_KEY(guest.ref));
+    if (removed) await this.#storageOfEveryBackend.delete(await this.#partKey(removed));
     await this.#underPlacement(() => this.#moveSharingBoxes(signal)).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
@@ -1519,7 +1536,7 @@ export class DockerBackend implements Backend {
     const part = change.to;
     const generation = (await this.#partOf(found)).generation + 1;
     const claimed = cardOfUuid(card);
-    await this.#context.storage.set(GPU_PART_KEY(found.name), { part, generation } satisfies StoredPart);
+    await this.#storageOfEveryBackend.set(await this.#partKey(found.id), { part, generation } satisfies StoredPart);
     const known = await this.#knownCard(card, signal);
     const facts = guest.facts?.some((fact) => fact.label === GPU_FACT)
       ? guest.facts.map((fact) => (fact.label === GPU_FACT ? { ...fact, value: factWords(part, known, null) } : fact))
@@ -2083,13 +2100,14 @@ export class DockerBackend implements Backend {
   }
 
   /** Removes the box's container and its volumes, if it is this install's and the box's. */
-  async #remove(ref: string, boxId: string | null, signal?: AbortSignal): Promise<void> {
+  async #remove(ref: string, boxId: string | null, signal?: AbortSignal): Promise<string | null> {
     const found = await this.#owned(ref, boxId, signal);
-    if (!found) return;
+    if (!found) return null;
     const result = await this.#cli.run(["container", "rm", "--force", "--volumes", found.id], { timeoutMs: 120_000, signal });
     if (result.exitCode !== 0 && !NO_SUCH.test(result.stderr) && !/already in progress/i.test(result.stderr)) {
       throw this.#cli.error("docker container rm", result);
     }
+    return found.id;
   }
 
   /** The network bb-box keeps its boxes on, made the first time, on which they cannot reach each other. */

@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
+import { Backends } from "../src/backends/index.ts";
 import { cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
 import { cardReachText } from "../src/plugin/tools.ts";
@@ -332,6 +333,39 @@ test("071 unit 11: a share switch made through one instance of a backend holds f
   const box = await live.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
   await live.resize(box, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
   assert.match((await check.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).message ?? "", /card 0 is amber-fox's whole card/);
+});
+
+test("071 unit 11: a share switch holds for every backend on the daemon, one turned off and one made later too, and its record goes with its container", async () => {
+  const fake = fakeDockerHost({ gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)] });
+  const config = dockerConfig({ "gpu-desktops": true });
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {} });
+  const everyBackend = backends.context("docker:a-old").sharedStorage!;
+  let oldOn = true;
+  const make = (id: string, on: () => boolean) => new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id }), sharedStorage: backends.context(id).sharedStorage!, wholeCards: () => true, on }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const old = make("docker:a-old", () => oldOn);
+  const box = await old.acquire(identity("linux", "shared", "thr_abc123", "amber-fox"), null, hooks(), signal());
+  assert.equal((await old.resize(box, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal())).claim?.part, "whole");
+  oldOn = false;
+  const next = make("docker:b-next", () => true);
+  await assert.rejects(next.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is amber-fox's whole card/);
+  assert.equal(fake.containers().length, 1);
+  assert.deepEqual((await next.held(signal())).map((each) => [each.claim?.card, each.claim?.part]), [[CARD_A, "whole"]]);
+  assert.equal((await next.doctor(signal())).checks.find((check) => check.id === `gpu.${CARD_A}.whole`)?.status, "ok");
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1);
+  execFileSync(fake.binary, ["container", "rm", "--force", fake.inspect(box.ref).Id]);
+  await next.maintain(signal());
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "a container removed outside bb-box loses its record at the next upkeep");
+  const again = await next.acquire(identity("linux", "shared", "thr_abc123", "birch-owl"), null, hooks(), signal());
+  await next.resize(again, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1);
+  await next.release(again, { resetting: async () => {}, timing: () => {} }, signal());
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "a release drops its record");
+  const other = fakeDockerHost({ gpus: [DEVICE_B], cards: [card(0, CARD_B, DEVICE_B)], name: "other-host" });
+  const elsewhere = new DockerBackend(config, { ...testContext(new MemoryStorage(), "test", { id: "docker:elsewhere" }), sharedStorage: backends.context("docker:elsewhere").sharedStorage!, wholeCards: () => true }, { binary: other.binary, readyTimeoutMs: 2_000 });
+  const far = await elsewhere.acquire(identity("linux", "shared", "thr_abc123", "cedar-elk"), null, hooks(), signal());
+  await elsewhere.resize(far, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
+  await next.maintain(signal());
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1, "one daemon's upkeep keeps another daemon's records");
 });
 
 test("071 unit 11: a failed probe keeps each card's key and its last reading's name, so a card held whole takes no shared box; its free memory is unknown and no whole card is placed", async () => {

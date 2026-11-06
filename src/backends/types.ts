@@ -1289,6 +1289,7 @@ export interface BackendContext {
   readonly id: string;
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
+  readonly sharedStorage?: BackendStorage;
   /**
    * This bb-box install's ID (018). A backend records it on every guest from
    * its first write, warm and part-made guests too, and acts only on guests

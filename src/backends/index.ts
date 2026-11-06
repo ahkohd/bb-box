@@ -46,6 +46,8 @@ export function driverLabel(backendId: string, drivers: readonly BackendDriver<a
   return drivers.find((driver) => driver.type === type)?.label ?? backendId;
 }
 
+export const SHARED_BY_BACKENDS = "backends-shared/";
+
 /** Keys under `prefix`, with the prefix hidden from the backend. */
 export function scopedStorage(storage: BackendStorage, prefix: string): BackendStorage {
   return {
@@ -323,10 +325,11 @@ export class Backends {
   }
 
   /** The context a backend of the configuration gets. Switches and warm counts are read live. */
-  context(id: string, storage: BackendStorage = scopedStorage(this.#storage, `backend/${id}/`)): BackendContext {
+  context(id: string, storage: BackendStorage = scopedStorage(this.#storage, `backend/${id}/`), sharedStorage: BackendStorage = scopedStorage(this.#storage, SHARED_BY_BACKENDS)): BackendContext {
     return {
       id,
       storage,
+      sharedStorage,
       installId: this.#installId,
       logError: this.#logError,
       log: this.#log,

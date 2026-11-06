@@ -3431,8 +3431,8 @@ offered before it.
 - **Placement**, under a lock of the Docker daemon's, which every backend
   instance on that daemon shares, with its reservations and the cards left
   out: a settings check's instance of a backend and the live one order
-  their placements on one lock, and read switched parts from the backend's
-  one storage. A daemon is known by its engine ID, its name and its Docker
+  their placements on one lock. Every backend of the install that reaches
+  the daemon, on or off, reads a box's switched part from one record. A daemon is known by its engine ID, its name and its Docker
   root from `docker info` together, as cloned hosts keep one engine ID. A
   backend counts on a daemon once it places or plans a box there, and only
   while it is on; listing, releasing and upkeep do not count. Of two
@@ -3505,8 +3505,11 @@ offered before it.
   is live where no other box holds the card, of any install, and refused
   naming them otherwise ("on Docker a box cannot move to another card");
   whole to shared is live. The plan is made again under the placement lock
-  when carried out. The part is this install's, in the backend's storage
-  with a generation that goes up at each switch; the claim on the guest and
+  when carried out. The part is this install's, kept in bb-box's storage
+  where every backend of the install reads it, under the daemon and the
+  container's ID, with a generation that goes up at each switch. A release
+  drops it, and so does the next upkeep of a backend on that daemon after
+  its container has gone. The claim on the guest and
   the GPU fact follow it, and the record's `gpu` changes. A GPU added or
   removed is refused, with words for each audience. A backend whose
   `Resizing` has no `gpu`, Proxmox LXC until unit 9, refuses every GPU
@@ -3724,6 +3727,40 @@ box failed its check, so none was made again; and CUDA returned 0 in each
 check. D6's 100 was CUDA run in the box, not bb-box's check, and a 100 in the
 check still removes a fresh box. The doctor's words the gate quoted are the
 same where the cards are read and no second backend counts.
+
+### After the third review
+
+Astra said no-go, with one finding. A share switch was kept in the storage of
+the backend that made it, so a backend made later on the same daemon read
+the container's label, shared, and put another shared box on a card held
+whole, while the first box kept its whole claim. Astra reproduced this by
+acquiring a shared box through one backend, switching it to whole, turning
+that backend off and acquiring a shared box through a new one.
+
+The lead decided the fix. A box's current part is kept in bb-box's storage
+where every backend of the install reads it, on or off, under the daemon and
+the container's ID. Placement, capacity, `held` and the doctor of any backend
+on that daemon read it. A release drops it, and so does the next upkeep of a
+backend on that daemon after its container has gone, without touching
+another daemon's records. A settings check reads it through a layer, so it
+changes nothing there.
+
+A test runs Astra's sequence: the new backend refuses the shared box, naming
+the whole box, and the first keeps its whole claim. Each of 5 rules has a
+revert that fails it, on a box: the shared record, the one storage every
+backend's context gives, the drop at upkeep, the drop at release, and
+records kept per daemon. Then, on a `linux` box in `node:26-bookworm` as root
+with `--init`: `tsc` clean; the node suite, 3,834 tests, 3,412 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures, by name, as on main (`ed5d3dee`)
+in the same box; vitest, 470 passed. The 41 reverts of the earlier rounds
+and the 10 of the second ran again, one changed to the new write, each
+failing its tests.
+`test/docker-gpus.test.ts` has 31 tests.
+
+The gate's results stand. Its switches, shared to whole and back at D7, were
+made and read through its one backend. With this fix, that backend writes
+and reads the part in the shared storage instead, and the words and claims
+are the same.
 
 ### Still open
 
