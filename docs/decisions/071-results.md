@@ -4614,7 +4614,8 @@ commit, and two timing tests that passed when run on their own, a desktop
 click's cancel and a Mac's tailnet key; vitest, 471 passed. The harness has
 59 reverts: 11 new for these fixes, 5 rewritten for the new code, and the
 rule that an unreadable power state is recorded stopped replaced by its
-opposite. Each new and rewritten one fails its tests. One passed at first,
+opposite. Run in full on the box, each of the 59 fails its tests. One
+passed at first,
 the start's own words that the box is stopped taken off before bb-box's, as
 no test's start said them; a start that fails after the grant on a box that
 does not see its card now does, and it then failed.
@@ -4627,6 +4628,75 @@ new shared claim and its disk, and said so, with the full stop missing
 above. F1a's, F1b's and F2's watchers are now one Perl process that reads
 the guest's and the report's config files every 10 ms, with no subprocess,
 and locks the guest with Proxmox's own `set_lock` in the same process.
+
+### The gate
+
+On the unit's first build, steps 0, A, K, Q, R2, R3 and S passed. On the
+reviews' fixes, K, Q, R2, R3 and S passed again, and F1a's first try lost
+its race, as above. On `87356d94`, the gate ran K, Q, R3, S, F1a, F1b, F2
+and H, and each passed; R2 was not run again, as it passed on the commit
+before and nothing it drives changed. Every step ran on the test BB with its
+own pool, on the lent guests, with both cards held by guests outside
+bb-box.
+
+- **K**, before each step: both cards still held.
+- **Q**: S1 made with no GPU. The agent's check named card 1, with a
+  restart. S2 was made with a shared GPU on card 1, which then held this
+  install's one box per card. The agent's resize, with restart true and 4
+  cores, was refused, naming S2 as filling card 1 and saying S1 would now
+  get card 0. Its next call resized S1 in 11.3 s, cores 2 to 4 and GPU none
+  to shared, on card 0, its first claim granted. The helper's power log has
+  no stop of S1 before the refused call ended, then one stop and one start.
+  In S1, `nvidia-smi -L` lists one card.
+- **R3**: S2, shared to none. The check said it restarts without card 1. The
+  resize without `restart` was refused, changing nothing; with it, it took
+  10.2 s, with one stop and one start. Its marker asks for none, granted, it
+  has no NVIDIA lines, and in it `nvidia-smi` finds no driver.
+- **S**: S2, stopped. None to shared took 1.7 s and shared to none 1.6 s,
+  each "while it stayed stopped", with no power action; whole was refused,
+  naming every guest running on each card. S2 stayed stopped with no GPU.
+- **The watcher**, installed on the node once before F1a. One Perl process reads the
+  guest's and the report's config files every 10 ms, with no subprocess,
+  and locks the guest with Proxmox's own `set_lock`, as vzdump does, under
+  the guest's config lock, touching only that guest's config. In a dry run
+  on a box it locked within 1 ms of seeing the marker; each `pct` call
+  costs a Perl start of 0.3 to 0.6 s.
+- **F1a**: S2, none to shared with 4 cores and a restart. The watcher saw
+  the new shared marker, g5, and locked S2 8 ms later, with its cores at 4.
+  The helper refused g5, locked, and the watcher unlocked S2 0.66 s after
+  the lock. bb-box put the cores back to 2 and asked for none again, g6,
+  granted. The resize failed in 4.9 s: S2 stopped, with its disk, 2 cores,
+  no NVIDIA lines and its GPU as it was, in words that say so.
+- **F1b**: the same, with the lock kept. The watcher locked S2 7 ms after
+  the new marker, g7, was seen, and the helper refused it. bb-box could
+  neither put the cores back nor ask for none again, and the resize failed
+  in 15.8 s, most of it the four tries of each: S2 stopped with 4 cores, its
+  disk, the refused marker and its standing claim, g6 none, granted; its
+  words say the marker still asks for card 1 and its next start asks for no
+  GPU again. Once unlocked, its start asked for none, g8, granted, and
+  started it with no card; its record had no claim and GPU none, and its
+  cores went back to 2 live in 37 ms.
+- **F2**: S2, none to shared with a restart, and the lock taken once the new
+  claim was granted. The watcher locked S2 2 ms after it saw the grant of
+  g9. bb-box's start was refused at its power request's write, locked, and
+  the resize failed in 4.0 s: S2 stopped with its disk, holding g9, shared
+  on card 1, with that card's lines, and its words say so, with the
+  sentence before "It is stopped" ended. Once unlocked, its start started it
+  on card 1, and `nvidia-smi -L` lists one card.
+- **H**: S1 and S2 released. No lent guest holds a card or is locked, the
+  helper reports no mismatch, and no guest outside the lent ones yielded its
+  card. The read-only check found 7 GPU guests of 40 before and 9 of 45
+  after; the two new GPU guests were production boxes made meanwhile, and
+  production's other changes were its spares cycling. Both cards were idle.
+
+S's node check first failed on a boundary in the steps, not in bb-box: the
+helper logged the grant of the stopped box's shared claim at
+1794013423.14, and the builder took the step's midpoint, `s-mid`, in that
+same second, so `journalctl --until @MID` left the grant out. The check
+passed with the midpoint a second later, and the builder now waits a second
+before it takes it. F2's builder check for the full stop first required the
+words to end the line, which the CLI's error code after them would have
+failed; it was fixed before the step ran.
 
 ### Deviations from the note
 
@@ -4665,9 +4735,9 @@ and locks the guest with Proxmox's own `set_lock` in the same process.
 
 ### Still open
 
-- L, M and W of the gate, which need a free card: the live switch with a
-  process that counts on the card, a move to a free card, and the rows that
-  need a whole box. As for unit 8's G1, G3 and G5, the node's development
+- L, M and W of the gate, which need a free card: L, the live switch with a
+  process that counts on the card; M, a move to a free card; and W, the rows
+  that need a whole box. As for unit 8's G1, G3 and G5, the node's development
   container holds both cards; they run on a node where a card is free,
   before whole cards are turned on there. Until then whole cards stay off,
   so production offers only adding and removing a shared GPU, whose rows the
