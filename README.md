@@ -10,12 +10,13 @@ Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and An
 - **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or Hetzner Cloud, Namespace and boat.dev.
 - **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or an Android device in its emulator. See [device boxes](docs/guide/devices.md).
 - **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
-- **Resize as you go.** More cores, memory or disk when a build needs them, from the Box panel, the box's page or the agent. See [resizing a box](docs/guide/resizing.md).
+- **GPUs for training and graphics.** A box can share an NVIDIA card or have one to itself, with `nvidia-smi`, CUDA and PyTorch ready, on Proxmox or Docker. See [GPU boxes](docs/guide/gpu-boxes.md).
+- **Resize as you go.** More cores, memory, disk or a GPU when a build needs them, from the Box panel, the box's page or the agent. See [resizing a box](docs/guide/resizing.md).
 - **Snapshot, undo and fork.** Save a box before a risky change, restore it with an undo, or fork it into a fresh box with its own identity. See [snapshots](docs/guide/snapshots.md).
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 - **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
-- **Every machine at a glance.** CPU, memory, disk and processes of every box and machine, in BB's sidebar. See [the Monitor](docs/guide/monitor.md).
+- **Every machine at a glance.** CPU, memory, disk, GPU and processes of every box and machine, in BB's sidebar. See [the Monitor](docs/guide/monitor.md).
 
 *bb-box assumes one trusted user. It is not a sandbox for code you do not trust.*
 
