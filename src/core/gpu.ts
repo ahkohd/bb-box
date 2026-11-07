@@ -63,6 +63,13 @@ export function gpuForSpare(part: GpuPart): GpuPart {
   return part === "whole" ? "shared" : part;
 }
 
+export function configuredGpu(kind: string, settings: GpuWhenNotAsked): GpuPart | null {
+  const id = currentKindId(kind);
+  if (kindNamingNoGpu(id)) return null;
+  const set = settings[id];
+  return set !== undefined && gpuPartsOf(id).includes(set) ? set : null;
+}
+
 export function chooseGpu(kind: string, asked?: GpuPart, settings: GpuWhenNotAsked = {}): GpuChoice {
   if (asked === undefined) return { ok: true, gpu: gpuWhenNotAsked(kind, settings) };
   if (!holdsCard(asked)) return { ok: true, gpu: asked };

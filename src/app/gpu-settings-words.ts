@@ -39,6 +39,12 @@ export function draftLimit(text: unknown): number | null {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+export function limitAfterSave(typed: unknown, replaced: unknown, fallback: unknown): number | null {
+  const blank = typed === null || typed === undefined || String(typed).trim() === "";
+  if (!blank) return draftLimit(typeof typed === "string" ? typed.trim() : typed);
+  return draftLimit(replaced) ?? draftLimit(fallback);
+}
+
 export function loweredLimitWords(cards: readonly SettingsCard[], limit: number, saved: number | null, counts: LimitCounts): string | null {
   if (limit <= 0 || (saved !== null && saved > 0 && limit >= saved)) return null;
   const over = cards.filter((card) => boxesOver(card, limit) > 0);

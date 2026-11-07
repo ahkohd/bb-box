@@ -5312,9 +5312,9 @@ The shots from the live gate were not taken again. The test BB and its backend w
 
 ## Unit 15: settings, the guide, the setup guides and the skill
 
-Built on main `a06fc8b7`. Section 12's settings and section 15's guide page,
-with the reference, the setup guides and the skills. The New box form's first
-choice is unit 13's, which is not merged yet: see Still open at the end of this entry.
+Built on main `a06fc8b7`, then rebased onto `1eee5617` once unit 13 merged.
+Section 12's settings and section 15's guide page, with the reference, the
+setup guides and the skills.
 
 ### What it does
 
@@ -5371,7 +5371,8 @@ choice is unit 13's, which is not merged yet: see Still open at the end of this 
   Core uses it for a request that leaves `gpu` out. A spare of a kind whose
   GPU is whole is made shared, so a whole box never takes one. Saving a
   kind's sizes keeps its GPU. `box_list` says what a kind gets with `gpu`
-  left out, and the kind view carries it for the New box form.
+  left out. The New box form starts on it, until the person's own choice
+  for the kind is remembered.
 - **`desktop-templates`** says a GPU ID is no longer needed once the helper
   is there. A line with one still reads.
 - **The guide page**, `docs/guide/gpu-boxes.md`, from the draft, as main and
@@ -5520,13 +5521,46 @@ the window.
 - **An explicit old 0** is a Proxmox LXC key: Docker's old
   `desktops-per-gpu` never took 0.
 
+### After Astra's review
+
+Astra said no-go, with one high, two medium and one low finding. Each is
+fixed. The first three have a test that fails on revert, each checked by
+reverting the fix alone.
+
+- **High: a configured GPU default could become none.** A request that
+  left `gpu` out took the kind's setting, but placement still let an offer
+  with no GPU take it as none, as it does for bb-box's own default. A
+  default set in the settings is now a requirement: an offer without that
+  GPU is passed over, and with none that has it the acquire is refused, with
+  words that say the GPU came from the kind's setting and how to change it.
+  bb-box's own default, with nothing set, is as before. Test:
+  `boxes.test.ts`, a configured GPU is a requirement; reverted, the box went
+  to the provider with no card.
+- **Medium: the New box form did not start on the kind's setting.** It now
+  starts on `kind.gpuWhenNotAsked`, for a server and a desktop, and keeps a
+  remembered choice. A choice equal to the setting is left off the acquire,
+  as unit 13 does, and a ready spare counts only where the setting is not a
+  whole card. Test: `app.test.tsx`, the first GPU is the kind's setting;
+  reverted, it started on None, not Shared.
+- **Medium: clearing Boxes per card skipped the warning.** A cleared field
+  is now judged by the limit that would then hold: the replaced key's value,
+  else the default. Clearing an explicit 8 over an old 2, with four boxes on
+  a card, names them. Tests: `gpu-settings.test.ts` and `app.test.tsx`,
+  clearing Boxes per card; reverted, both fail.
+- **Low: a doc comment** on `perGpu` in `proxmox-lxc/config.ts`, which the
+  reference generator does not read, is removed. It changes no behaviour, so
+  it has no test.
+
+After the fixes, on the rebased branch: `npm run typecheck` clean, and
+`npm test` as below.
+
 ### Still open
 
-- **Unit 13.** Once it merges, this branch is rebased onto it. Two files
-  conflict only by adding beside each other: `src/plugin/rpc.ts` and the
-  app test's fake RPC. The New box form's first choice then reads the kind's
-  setting, `kind.gpuWhenNotAsked`, where unit 13 calls `gpuWhenNotAsked`
-  with bb-box's defaults alone.
+- **The Desktop type in the New box form** opens on the CPU desktop where
+  both a CPU and a GPU desktop are offered, as unit 13 built it, so
+  `linux-desktop`'s setting is its first choice only where there is no CPU
+  desktop, or once the GPU desktop is chosen. Whether Desktop should open on
+  the GPU desktop when its setting is shared or whole is for the lead.
 - **Whole cards off leaving a whole box as it is, on Proxmox LXC**, is
   untested live: no card on the node is free for a whole box. It ran live on
   Docker, and on Proxmox LXC in its tests.

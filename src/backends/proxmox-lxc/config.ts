@@ -90,7 +90,6 @@ export interface LxcConfig {
   readonly proxmox: ProxmoxConnection;
   readonly flavours: Readonly<Record<LxcFlavour, LxcFlavourConfig>>;
   readonly desktop: {
-    /** The most boxes each card runs at once, desktops and servers together, or null for no limit. */
     readonly perGpu: number | null;
     readonly voxl: VoxlOffer;
   };

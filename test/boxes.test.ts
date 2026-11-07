@@ -4256,3 +4256,25 @@ test("071 unit 15: a request that leaves gpu out gets its kind's GPU when not as
   assert.equal(whole.size?.gpu, "whole");
   assert.notEqual(whole.id, spare.id, "a whole box never takes a spare");
 });
+
+test("071 unit 15, review: a kind's configured GPU is a requirement: a provider without it is passed over, and with none that has it the acquire is refused, never given no GPU", async () => {
+  const world = setup({ id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none"] }] });
+  world.general = { ...world.general, gpuWhenNotAsked: { linux: "shared" } };
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }), {
+    code: "unsupported",
+    message: "Not made: no provider here gives linux boxes a shared GPU, the GPU the user set for linux boxes that do not ask for one: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.",
+  });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: { is: "person" } }), {
+    message: "No provider gives linux boxes a shared GPU, linux's GPU when not asked for in BB Box's settings: Fake host gives linux boxes no GPU. Ask for gpu none, or change linux's GPU when not asked for in BB Box's settings, or with bb box kind set linux --gpu <none|shared|whole>.",
+  });
+  assert.deepEqual(await world.boxes.list(THREAD), [], "no box with no GPU was made");
+  world.others.push(new FakeBackend({ root: tempDir("gpu-setting-cards"), storage: scopedStorage(world.kv, "backend/cards/"), id: "fake:cards", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS }));
+  const made = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(made.backend, "fake:cards", "the provider with no card is passed over");
+  assert.equal(made.size?.gpu, "shared");
+  const asked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  assert.equal(asked.size?.gpu, "none", "a part asked for wins over the setting");
+  world.general = { ...world.general, gpuWhenNotAsked: {} };
+  const shipped = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(shipped.size?.gpu, "none", "with no setting, bb-box's own default is as before");
+});

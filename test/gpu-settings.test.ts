@@ -13,7 +13,7 @@ import { setKind } from "../src/plugin/config-edits.ts";
 import { fieldLine } from "../src/plugin/config-cli.ts";
 import { settingsCards } from "../src/plugin/gpu-settings.ts";
 import { candidateOf, plain } from "../src/app/settings-paths.ts";
-import { draftLimit, kindGpuChoices, kindGpuWords, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
+import { draftLimit, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
 import type { ConfigState } from "../src/plugin/configuration.ts";
 import { ClaimsBridge, CARD_A, CARD_B, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
 import { marker } from "./gpu-helper/node.ts";
@@ -322,4 +322,16 @@ test("071 unit 15, live: on Proxmox LXC the list of cards and the doctor count t
   assert.equal(held.counted, 1, "this install's one box, not the other install's guest");
   assert.deepEqual(held.holders.map((holder) => [holder.is, holder.counts]).sort(), [["box", true], ["other-install", false]]);
   assert.deepEqual((await lowered.doctor()).checks.filter((check) => check.id.endsWith(".limit")), [], "at the limit, not over it");
+});
+
+test("071 unit 15, review: a Boxes per card cleared before Save is judged by the limit that would then hold: the replaced key's value, else the default", () => {
+  assert.equal(limitAfterSave("", 2, 4), 2, "an explicit 8 cleared over an old 2 gives 2");
+  assert.equal(limitAfterSave(null, undefined, 4), 4);
+  assert.equal(limitAfterSave(" ", 0, 4), 0, "an old 0 means no limit");
+  assert.equal(limitAfterSave("3", 2, 4), 3);
+  assert.equal(limitAfterSave("x", 2, 4), null, "text that is no number says nothing");
+  const view = settingsCards({ ...IN_USE, limit: 8 }, "proxmox-lxc", []);
+  assert.ok(view.is === "read");
+  if (view.is !== "read") return;
+  assert.match(loweredLimitWords(view.cards, limitAfterSave("", 2, 4)!, 8, "this-install-running") ?? "", /^With 2, card 1 has 3 of this install's boxes running, 1 over: /);
 });

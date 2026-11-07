@@ -11749,3 +11749,41 @@ test("071 unit 15, live: Whole cards turned off on a backend whose own field is 
   await waitFor(() => expect(old.changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
   expect(bodyOf(old.changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "gpu-desktops": true, gpus: false });
 });
+
+test("071 unit 15, review: clearing Boxes per card names the boxes the limit it falls back to would put over it", async () => {
+  applied = gpuDocument({ "boxes-per-card": 8, "desktops-per-gpu": 2 });
+  const { handlers } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(8) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const perCard = within(gpus).getByRole("textbox", { name: "Boxes per card" }) as HTMLInputElement;
+  expect(perCard.value).toBe("8");
+  await within(gpus).findByText(/^The cards on pve-1/);
+  fireEvent.change(perCard, { target: { value: "" } });
+  expect(within(gpus).getByText("With 2, card 1 has 4 of this install's boxes running, 2 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();
+});
+
+test("071 unit 15, review: the New box form's first GPU is the kind's setting, for a server and a desktop, until the person's own choice is remembered", async () => {
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["none", "shared", "whole"], host: "pve-1", at: Date.now(), cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, freeForWhole: true }] };
+  const serverBase = kindView("linux", "Linux", "A server.", 2, false);
+  const serverKind: KindView = { ...offered(serverBase, [{ ...serverBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room, resizing: ADDS_A_GPU }]), gpuWhenNotAsked: "shared" };
+  const desktopBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const desktopKind: KindView = { ...offered(desktopBase, [{ ...desktopBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["shared", "whole"], gpuRoom: room }]), gpuWhenNotAsked: "whole" };
+  const { handlers, changes } = server([], { kinds: [serverKind, desktopKind] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  expect((await screen.findByRole("combobox", { name: "GPU" })).textContent).toBe("Shared");
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Whole card"));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Server/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Shared"));
+  await choose("GPU", "None");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("acquire linux"))).toBe(true));
+  expect(changes.find((change) => change.startsWith("acquire linux"))).toContain('"gpu":"none"');
+  cleanup();
+  const again = panel(server([], { kinds: [serverKind, desktopKind] }).handlers);
+  await again.findByText("No boxes yet");
+  fireEvent.click(again.getByRole("button", { name: "New box" }));
+  expect((await screen.findByRole("combobox", { name: "GPU" })).textContent).toBe("None");
+});

@@ -103,7 +103,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, gpuForSpare, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, configuredGpu, gpuForSpare, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 import {
   DESKTOP_GPU_CHECK,
   USERSPACE_READ,
@@ -1404,17 +1404,19 @@ export class Boxes {
       const offered = [...new Set(everywhere.flatMap((candidate) => (candidate.kind.capabilities.device ? offeredModels(candidate.kind.capabilities.device) : [])))];
       throw new BoxError("unknown_device", `No backend offers the ${askedDevice} now.${offered.length ? ` The ${wanted} devices offered are: ${offered.join(", ")}.` : ""}`);
     }
-    const gpuChoice = chooseGpu(input.kind, input.gpu, (await this.#deps.general()).gpuWhenNotAsked);
+    const gpuSettings = (await this.#deps.general()).gpuWhenNotAsked ?? {};
+    const gpuChoice = chooseGpu(input.kind, input.gpu, gpuSettings);
     if (!gpuChoice.ok) throw new BoxError("unsupported", gpuChoice.message);
     const askedGpu = input.threadId === SPARES ? gpuForSpare(gpuChoice.gpu) : gpuChoice.gpu;
-    const gpuAsked = input.gpu !== undefined;
+    const gpuFromSetting = input.gpu === undefined && configuredGpu(input.kind, gpuSettings) !== null;
+    const gpuAsked = input.gpu !== undefined || gpuFromSetting;
     const gpuFor = (kind: BoxKind) => gpuOnOffer(kind, askedGpu, gpuAsked);
     const forAgent = who.is === "agent";
     if (askedGpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", forAgent ? WHOLE_CARDS_OFF.agent : WHOLE_CARDS_OFF.person, WHOLE_CARDS_OFF.agent);
     // The named providers are the only ones tried, in acquire order (044).
     const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
     const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
-    const offered = this.#takingGpu(named ? named.offers : withDevice, wanted, askedGpu, gpuAsked, forAgent);
+    const offered = this.#takingGpu(named ? named.offers : withDevice, wanted, askedGpu, gpuAsked, forAgent, gpuFromSetting);
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
@@ -2309,7 +2311,7 @@ export class Boxes {
     return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
   }
 
-  #takingGpu(offered: OfferedKind[], kind: string, gpu: GpuPart, asked: boolean, forAgent: boolean): OfferedKind[] {
+  #takingGpu(offered: OfferedKind[], kind: string, gpu: GpuPart, asked: boolean, forAgent: boolean, fromSetting = false): OfferedKind[] {
     const taking = offered.filter((candidate) => offersGpuPart(candidate.kind, gpuOnOffer(candidate.kind, gpu, asked)));
     if (taking.length || !offered.length) return taking;
     const providers = [...new Set(offered.map((candidate) => this.#providerName(candidate.backend)))].join(" and ");
@@ -2317,8 +2319,10 @@ export class Boxes {
     const shared = gpu === "whole" && offered.some((candidate) => offersGpuPart(candidate.kind, "shared"));
     const why = gpu === "none" ? `${kind} boxes from ${providers} always have a GPU` : shared ? `${providers} ${gives} ${kind} boxes a shared GPU, not a whole card` : `${providers} ${gives} ${kind} boxes no GPU`;
     const instead = gpu === "none" ? (kind === "linux-desktop" ? "Ask for linux-desktop-cpu for a desktop drawn by the CPU" : "Leave gpu out") : shared ? "Ask for gpu shared" : asked ? "Ask for gpu none" : `Ask for gpu none, or for another kind`;
-    if (forAgent) throw new BoxError("unsupported", `Not made: no provider here gives ${kind} boxes ${gpuPartWords(gpu)}: ${why}. ${instead}, or ask the user. bb-box changed nothing.`);
-    throw new BoxError("unsupported", `No provider gives ${kind} boxes ${gpuPartWords(gpu)}: ${why}. ${instead}.`);
+    const setting = fromSetting ? `, the GPU the user set for ${kind} boxes that do not ask for one` : "";
+    if (forAgent) throw new BoxError("unsupported", `Not made: no provider here gives ${kind} boxes ${gpuPartWords(gpu)}${setting}: ${why}. ${instead}, or ask the user. bb-box changed nothing.`);
+    const change = fromSetting ? `, or change ${kind}'s GPU when not asked for in BB Box's settings, or with bb box kind set ${kind} --gpu <none|shared|whole>` : "";
+    throw new BoxError("unsupported", `No provider gives ${kind} boxes ${gpuPartWords(gpu)}${fromSetting ? `, ${kind}'s GPU when not asked for in BB Box's settings` : ""}: ${why}. ${instead}${change}.`);
   }
 
   /**

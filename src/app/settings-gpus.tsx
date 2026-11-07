@@ -8,7 +8,7 @@ import { gpuWhenNotAsked, isGpuPart } from "../core/gpu.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { FieldView } from "../plugin/configuration.ts";
 import type { SettingsCard, SettingsCardHolder, SettingsCards } from "../plugin/gpu-settings.ts";
-import { capitalised, cardName, draftLimit, gib, GPU_CHOICE_LABELS, kindGpuChoices, kindGpuWords, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "./gpu-settings-words.ts";
+import { capitalised, cardName, gib, GPU_CHOICE_LABELS, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "./gpu-settings-words.ts";
 import { MenuSelect } from "./box-form.tsx";
 import { boxPage } from "./box-route.ts";
 import { useBoxesNav } from "./box-nav.tsx";
@@ -175,7 +175,9 @@ export function GpusGroup({ form, title, fields }: { form: BackendForm; title: s
   const cards = useCards(form.config.id, form.state.revision);
   const read = cards?.is === "read" ? cards : null;
   const limitPath = backendFieldPath(form.config.id, BOXES_PER_CARD_FIELD);
-  const typed = form.draft.changed(limitPath) ? draftLimit(form.draft.current(limitPath)) : null;
+  const limitField = fields.find((field) => field.key === BOXES_PER_CARD_FIELD);
+  const replaced = limitField?.replaces ? form.draft.current(backendFieldPath(form.config.id, limitField.replaces)) : null;
+  const typed = form.draft.changed(limitPath) ? limitAfterSave(form.draft.current(limitPath), replaced, limitField?.default) : null;
   const lowered = read && typed !== null ? loweredLimitWords(read.cards, typed, read.limit, read.counts) : null;
   return (
     <Group title={title} description={GROUP_WORDS.gpus}>
