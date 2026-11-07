@@ -126,6 +126,6 @@ const { markers, bytes, sizes } = await page.evaluate(() => ({ markers: window.m
 const sceneTitle = inBox("xdotool search --name '^scene ' getwindowname 2>/dev/null | head -n 1 || true");
 await browser.close();
 stopScene();
-const result = { label, stream, workload, link: process.env.LINK ?? "lan", seconds, sizes, scene: sceneTitle, ...summarise(markers, bytes, from, to), cpuCores: cpuCores(await cpu) };
+const result = { label, stream, workload, link: process.env.LINK ?? "lan", seconds, startedAt: new Date(from).toISOString(), endedAt: new Date(to).toISOString(), sizes, scene: sceneTitle, ...summarise(markers, bytes, from, to), cpuCores: cpuCores(await cpu) };
 writeFileSync(join(out, `${label}.json`), JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result));
