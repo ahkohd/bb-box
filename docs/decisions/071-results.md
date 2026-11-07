@@ -4054,7 +4054,10 @@ gpu update`, which a person runs.
   says "An earlier update of NVIDIA's userspace is still running in box X:
   bb-box reads its userspace once it ends, and starts no other update until
   then.", and a new update, `--check` and Update again included, is refused
-  before any check. The script refuses too, should one get past.
+  before any check. The script refuses too, should one get past. The box's
+  record keeps when a reading last saw the lock held, until a reading sees it
+  free, so `bb box status`, the box's view and an agent's `box_status` say the
+  same and offer no Update again meanwhile.
 - **When it does not finish.** A failed download changes nothing in the box.
   A failed install leaves the box running, not restarted, and reads it: a
   half-installed userspace is named, with "run bb box gpu update X again". A
@@ -4065,9 +4068,11 @@ gpu update`, which a person runs.
   becomes failed with what the box had; an install that had finished is left
   at its restart. A box left starting or stopping by the cut is settled from
   its power first. The box is never released for it. A failed update stops
-  being named once a reading after a start bb-box makes, a restore's
-  included, or after a download that failed, shows the host's driver: the
-  update is then done, and no update reinstalls a box that matches.
+  being named once a reading shows the host's driver as read then, after a
+  start bb-box made since the update, a restore's included, or after a
+  download that failed: the update is then done, and no update reinstalls a
+  box that matches. The start is kept on the update's record, so a reading
+  that comes later, after the start's own reading failed, still counts it.
 - **The doctor**, a section of its own: `gpu-userspace` counts the boxes with
   a GPU whose userspace is the host's driver; `gpu-userspace.<box>` warns for
   each that is not, that is half-installed, or whose last update did not
@@ -4093,16 +4098,18 @@ the branch's last commit, after the reviews' round:
 
 - `tsc` clean, and `node scripts/reference.ts --check` clean after the
   reference was written again (the new command and the two new checks).
-- The node suite as root, rebased on main `6ef653f5`: 3,887 tests, 3,463
-  passed, 114 failed, 310 skipped. The failures are the same tests, by name,
-  as on that main in the same container (3,849 tests, 3,425 passed, 114
-  failed, 310 skipped): identity reset scripts that find none of the
-  container's eth interfaces, the snapshot, fork and keep tests built on
-  them, the Android image check and `setup-mac.sh`, as unit 11 found. vitest:
+- The node suite as root, rebased on main `6ef653f5`, run alone: 3,889
+  tests, 3,468 passed, 111 failed, 310 skipped. Each failure is one of main's
+  in the same container (3,849 tests, 3,425 passed, 114 failed, 310 skipped,
+  run beside two other runs at a load of about 60 on 8 cores): identity reset
+  scripts that find none of the container's eth interfaces, the snapshot,
+  fork and keep tests built on them, the Android image check and
+  `setup-mac.sh`, as unit 11 found. Four of main's pass here: three
+  timing-bound under that load, and one of the Android image check's. vitest:
   471 passed, as on that main.
-- The new files as the box user: 40 passed, and the one that needs root
+- The new files as the box user: 42 passed, and the one that needs root
   skipped.
-- `test/gpu-userspace.test.ts`, 19 tests, through `Boxes` with the fake
+- `test/gpu-userspace.test.ts`, 21 tests, through `Boxes` with the fake
   backend, a card and a fake NVIDIA userspace in its box: the check and the
   update over an older userspace, with its steps in order, the restart's
   guard asked twice and the restart in the box log; the refusals before
@@ -4116,7 +4123,10 @@ the branch's last commit, after the reviews' round:
   running one; the doctor reading a change bb-box did not make; a check
   after the restart that fails, that cannot run, and an install that changed
   nothing; the guard refusing just before the restart; a restart that fails;
-  a failed update settled by a matching reading; a desktop's check on the
+  a failed update settled by a matching reading, against the host's driver
+  read then, and after a start whose own reading failed; a held lock in
+  status with no Update again, and an update not read since it was cut short
+  sending the person to the doctor; a desktop's check on the
   GPU; a person's machine and a spare; and the CLI: `--check`, the restart's
   guard and `--force`, `--snapshot`, and several boxes.
 - `test/gpu-userspace-scripts.test.ts`, 14 tests: the update script on a fake
@@ -4138,7 +4148,7 @@ the branch's last commit, after the reviews' round:
   the doctor names it, with nothing updated; a restore's start settles an
   update that failed after its install. Its earlier take test gives its fake
   box a userspace to read.
-- Each rule was reverted on its own on the box, and its tests failed: 86
+- Each rule was reverted on its own on the box, and its tests failed: 94
   reverts, by a harness that patches each rule out, runs its tests and puts
   it back. Two of them, the abort of an update when bb-box stops and the
   refusal of a new one meanwhile, fail by their test's timeout.
@@ -4203,6 +4213,21 @@ same round.
 | A failed restart said "with its disk as it was" after its install (low) | "with the new userspace on its disk" |
 | The doctor's "not checked" assumed a stopped box (low) | A running box it did not read says why: bb-box was working on it, or could not read the host's driver |
 | With no helper, Proxmox gave the driver a desktop saw at an earlier start (low) | It reads the driver from a running box of the install each time, or says why it cannot |
+
+Astra's re-review said no-go, with two medium findings and a low one; the
+lead decided all three go in this round.
+
+| Finding | Fix |
+| --- | --- |
+| A failed update was settled against its own target, not the host's driver, so after a failed download and a host back on the box's driver it reinstalled the same version (medium) | It is settled against the host's driver as the reading found it |
+| Only the reading made at a start counted it, so a start whose reading failed was lost, and later matching readings never settled the update (medium) | A start is kept on the failed update's record (`restartedSince`) before its reading, and every later reading counts it |
+| The held lock reached the doctor but not status, which still offered Update again (low) | The box's record keeps when a reading saw the lock held (`userspaceRunningSeenAt`); status, the view and `box_status` say an earlier update is still running, with no action, until a reading sees the lock free |
+
+Fable's re-review said go, with one low finding, which the lead put in this
+round: for an update cut short and not read since, `bb box status` told the
+person to update again, which the lock may refuse. Status now says that `bb
+box doctor` reads the box and says whether that update is still running and
+when to update it again, with no action; an agent is told to ask the user.
 
 ### Deviations from the note
 

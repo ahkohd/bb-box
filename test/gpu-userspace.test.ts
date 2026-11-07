@@ -219,7 +219,12 @@ test("071 unit 12: bb-box restarting mid-install leaves the update unknown until
   assert.equal((await rejectionOf(stopped.updateUserspace(THREAD, box.id))).message, "bb-box is stopping, as for an update. Try again once it is back.");
   const cut = await found(state, box);
   assert.equal(cut.userspaceUpdate?.state, "unknown", "bb-box stopped in the middle, so it does not know what the box has");
-  assert.match(boxView(cut, true, { owner: "agent", holder: null }).userspaceNotice?.words ?? "", new RegExp(`^An update of NVIDIA's userspace in ${box.name} to 580\\.142 was cut short while installing it, and bb-box has not read its userspace since\\.$`));
+  assert.deepEqual(boxView(cut, true, { owner: "agent", holder: null }).userspaceNotice, {
+    words: `An update of NVIDIA's userspace in ${box.name} to 580.142 was cut short while installing it, and bb-box has not read its userspace since. bb box doctor reads it, and says whether that update is still running and when to update it again.`,
+    action: null,
+  });
+  assert.equal(userspaceFixLine(cut), `NVIDIA userspace: An update of NVIDIA's userspace in ${box.name} to 580.142 was cut short while installing it, and bb-box has not read its userspace since. bb box doctor reads it, and says whether that update is still running and when to update it again.`, "status sends the person to the doctor, not to Update again, while the update may still run");
+  assert.match(boxDetail(cut), new RegExp(`^GPU: .*was cut short while installing it, and bb-box has not read its userspace since\\. nvidia-smi and CUDA may fail in it\\. Ask the user\\.$`, "m"));
   state.nvidia.calls.length = 0;
 
   await state.boxes.sweep();
@@ -464,6 +469,14 @@ test("071 unit 12: while an earlier update still runs in the box, as one bb-box 
     detail: `An earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then.`,
     fix: "Wait for it to end, then run bb box doctor again.",
   });
+  const busy = await found(state, box);
+  assert.equal(typeof busy.userspaceRunningSeenAt, "number", "the held lock is recorded on the box");
+  assert.deepEqual(boxView(busy, true, { owner: "agent", holder: null }).userspaceNotice, {
+    words: "An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.",
+    action: null,
+  });
+  assert.equal(userspaceFixLine(busy), "NVIDIA userspace: An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.", "status offers no Update again while it runs");
+  assert.match(boxDetail(busy), new RegExp(`^GPU: .*An earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then\\. nvidia-smi and CUDA may fail in it until it ends\\. Ask the user\\.$`, "m"));
   for (const check of [true, false]) {
     const refused = await rejectionOf(state.boxes.updateUserspace(THREAD, box.id, { check }));
     assert.equal(refused.code, "try_again");
@@ -478,6 +491,8 @@ test("071 unit 12: while an earlier update still runs in the box, as one bb-box 
   const settled = await found(state, box);
   assert.equal(settled.userspaceUpdate?.state, "failed");
   assert.match(settled.userspaceUpdate?.error ?? "", /When bb-box read the box again, it had a half-installed NVIDIA userspace/);
+  assert.equal(settled.userspaceRunningSeenAt, null, "a reading with the lock free clears it");
+  assert.equal(boxView(settled, true, { owner: "agent", holder: null }).userspaceNotice?.action, "update-again");
   assert.equal((await state.boxes.updateUserspace(THREAD, box.id, { who: BY_COMMAND })).changed, true);
 });
 
@@ -553,4 +568,35 @@ test("071 unit 12: the doctor says why it did not read a running box it has no r
     status: "ok",
     detail: `bb-box has not read NVIDIA's userspace in box ${box.name} yet, and did not now, as bb-box could not read the host's driver: Reading the host's NVIDIA driver failed: the host's report could not be read: the doctor reads it at its next run.`,
   });
+});
+
+test("071 unit 12: a failed update is settled against the host's driver as read now, so after a failed download and a host back on the box's driver nothing is reinstalled", async () => {
+  const state = world(fakeNvidia({ fetchFails: "could not download NVIDIA-Linux-x86_64-580.142.run" }));
+  const box = await gpuBox(state);
+  await rejectionOf(state.boxes.updateUserspace(THREAD, box.id));
+  state.nvidia.driver = "570.86";
+  state.nvidia.calls.length = 0;
+  const again = await state.boxes.updateUserspace(THREAD, box.id, { check: true });
+  assert.equal(again.needed, false);
+  assert.equal(again.words, `Box ${box.name} already has NVIDIA's userspace 570.86, the host's driver. bb-box changed nothing.`);
+  assert.deepEqual(updateCalls(state.nvidia), []);
+  assert.equal((await found(state, box)).userspaceUpdate?.state, "done");
+});
+
+test("071 unit 12: a start is kept as evidence on a failed update, so a matching reading after a start whose own reading failed still settles it", async () => {
+  const state = world(fakeNvidia({ cardCheckThrows: true }));
+  const box = await gpuBox(state);
+  await rejectionOf(state.boxes.updateUserspace(THREAD, box.id));
+  state.nvidia.hostThrows = true;
+  await state.boxes.stop(THREAD, box.id);
+  await state.boxes.start(THREAD, box.id);
+  const started = await found(state, box);
+  assert.equal(started.userspaceUpdate?.state, "failed", "the start's own reading failed");
+  assert.equal(started.userspaceUpdate?.restartedSince, true);
+  state.nvidia.hostThrows = false;
+  state.nvidia.calls.length = 0;
+  assert.equal((await state.boxes.userspaceChecks()).some((check) => check.id === `gpu-userspace.${box.name}`), false);
+  assert.equal((await found(state, box)).userspaceUpdate?.state, "done");
+  assert.equal((await state.boxes.updateUserspace(THREAD, box.id, { check: true })).needed, false);
+  assert.deepEqual(updateCalls(state.nvidia), []);
 });

@@ -71,6 +71,7 @@ export interface BoxView {
   readonly nvidiaUserspace?: NvidiaUserspace;
   readonly userspaceRead?: UserspaceReading | null;
   readonly userspaceUpdate?: UserspaceUpdate | null;
+  readonly userspaceRunningSeenAt?: number | null;
   readonly userspaceNotice?: UserspaceNotice | null;
   readonly requires: readonly string[];
   /** Features beyond what the kind promises. */
@@ -173,6 +174,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     nvidiaUserspace: userspaceOf(box),
     userspaceRead: box.userspaceRead ?? null,
     userspaceUpdate: box.userspaceUpdate ?? null,
+    userspaceRunningSeenAt: box.userspaceRunningSeenAt ?? null,
     userspaceNotice: userspaceNoticeOf(box),
     requires: box.requires,
     extras: extraFeatures(box),
@@ -674,7 +676,7 @@ export interface UserspaceNotice {
 }
 
 function boxUserspaceState(box: BoxRecord): UserspaceState {
-  return userspaceState(box.userspaceRead, box.userspaceUpdate, box.userspaceRead?.hostDriver ?? null);
+  return userspaceState(box.userspaceRead, box.userspaceUpdate, box.userspaceRead?.hostDriver ?? null, typeof box.userspaceRunningSeenAt === "number");
 }
 
 export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
@@ -689,9 +691,13 @@ export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
     case "half":
       return { words: `It has ${readingWords(state.reading)}, so nvidia-smi and CUDA may fail in it.`, action: "update-again" };
     case "unfinished":
-      return { words: updateLeftWords(box.name, state.update), action: "update-again" };
+      return state.update.state === "unknown"
+        ? { words: `${updateLeftWords(box.name, state.update)} bb box doctor reads it, and says whether that update is still running and when to update it again.`, action: null }
+        : { words: updateLeftWords(box.name, state.update), action: "update-again" };
     case "updating":
       return { words: `bb-box is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
+    case "running":
+      return { words: "An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.", action: null };
     default:
       return null;
   }
@@ -699,7 +705,8 @@ export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
 
 export function userspaceFixLine(box: BoxRecord): string | null {
   const notice = userspaceNoticeOf(box);
-  if (!notice?.action) return null;
+  if (!notice) return null;
+  if (!notice.action) return `NVIDIA userspace: ${notice.words}`;
   const owner = box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`;
   const command = `bb box gpu update ${box.name}${owner}`;
   return `NVIDIA userspace: ${notice.words} ${notice.action === "update-again" ? "Update it again" : "Update it"}${box.state === "stopped" ? ` once it runs` : ""}: ${command}`;

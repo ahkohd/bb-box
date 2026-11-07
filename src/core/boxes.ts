@@ -112,6 +112,7 @@ import {
   matchesDriver,
   planWords,
   readingWords,
+  restartedSinceUpdate,
   settledUpdate,
   stillRunningWords,
   UPDATE_CHECK,
@@ -221,6 +222,7 @@ export interface BoxRecord {
   readonly nvidiaUserspace?: NvidiaUserspace | null;
   readonly userspaceRead?: UserspaceReading | null;
   readonly userspaceUpdate?: UserspaceUpdate | null;
+  readonly userspaceRunningSeenAt?: number | null;
   /** Set by the backend's claim, before it makes or changes anything. */
   readonly guest: Guest | null;
   readonly state: BoxState;
@@ -335,6 +337,8 @@ function userspaceCheck(box: BoxRecord, state: UserspaceState, unread: string | 
   switch (state.is) {
     case "updating":
       return { id, name, status: "ok", detail: `bb-box is updating NVIDIA's userspace in ${box.name} to ${state.update.to} now, at its ${state.update.step} step.`, fix: null };
+    case "running":
+      return { id, name, status: "warn", detail: `${stillRunningWords(box.name)}.`, fix: "Wait for it to end, then run bb box doctor again." };
     case "unfinished":
       return { id, name, status: "warn", detail: `${updateLeftWords(box.name, state.update)} nvidia-smi and CUDA may fail in it.`, fix: fixWhenRunning(`update it again: ${update}`) };
     case "half":
@@ -3253,18 +3257,19 @@ export class Boxes {
   }
 
   async #readUserspace(box: BoxRecord, signal?: AbortSignal, known?: NvidiaHost | null, started = false): Promise<BoxRecord> {
-    if (box.state !== "ready" || !box.guest || !this.#readsUserspace(box)) return box;
-    const host = known !== undefined ? known : await this.#userspaceHost(box, signal);
-    if (!host) return box;
-    return (await this.#readingIn(box, host.driver, signal, started)).box;
+    const current = started ? ((await this.update(box, (latest) => restartedSinceUpdate(latest.userspaceUpdate))) ?? box) : box;
+    if (current.state !== "ready" || !current.guest || !this.#readsUserspace(current)) return current;
+    const host = known !== undefined ? known : await this.#userspaceHost(current, signal);
+    if (!host) return current;
+    return (await this.#readingIn(current, host.driver, signal)).box;
   }
 
-  async #readingIn(box: BoxRecord, driver: string | null, signal?: AbortSignal, started = false): Promise<{ readonly box: BoxRecord; readonly reading: UserspaceReading; readonly running: boolean }> {
+  async #readingIn(box: BoxRecord, driver: string | null, signal?: AbortSignal): Promise<{ readonly box: BoxRecord; readonly reading: UserspaceReading; readonly running: boolean }> {
     const result = await this.runOwn(box, USERSPACE_READ, { timeoutMs: USERSPACE_READ_MS, maxOutputBytes: 2048, signal });
     const reading = result.exitCode === 0 ? judgeReading(result.stdout, driver, this.#now()) : null;
     if (!reading) throw new BoxError("unreachable", `bb-box could not read NVIDIA's userspace in box ${box.name}: ${lastLines(`${result.stdout}\n${result.stderr}`) || `exit code ${result.exitCode}`}.`);
-    if (updateRunning(result.stdout)) return { box, reading, running: true };
-    const recorded = await this.update(box, (current) => ({ nvidiaUserspace: userspaceOfReading(reading), userspaceRead: reading, ...settledUpdate(current.userspaceUpdate, reading, started) }));
+    if (updateRunning(result.stdout)) return { box: (await this.update(box, () => ({ userspaceRunningSeenAt: reading.at }))) ?? box, reading, running: true };
+    const recorded = await this.update(box, (current) => ({ nvidiaUserspace: userspaceOfReading(reading), userspaceRead: reading, userspaceRunningSeenAt: null, ...settledUpdate(current.userspaceUpdate, reading) }));
     return { box: recorded ?? box, reading, running: false };
   }
 
@@ -3423,8 +3428,7 @@ export class Boxes {
           );
         }
         const notReadNow = current.state !== "ready" ? null : this.#work.has(box.id) ? "bb-box is working on it" : "failed" in host ? `bb-box could not read the host's driver: ${host.failed.replace(/\.$/, "")}` : null;
-        if (running) return { id: `gpu-userspace.${current.name}`, name: `NVIDIA userspace in ${current.name}`, status: "warn", detail: `${stillRunningWords(current.name)}.`, fix: "Wait for it to end, then run bb box doctor again." };
-        const state = userspaceState(current.userspaceRead, current.userspaceUpdate, driver);
+        const state = userspaceState(current.userspaceRead, current.userspaceUpdate, driver, running);
         if (state.is === "matches" && !unread) {
           matching++;
           return null;

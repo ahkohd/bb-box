@@ -25,6 +25,7 @@ export interface UserspaceUpdate {
   readonly step: UserspaceUpdateStep;
   readonly ms: number | null;
   readonly error: string | null;
+  readonly restartedSince?: boolean;
 }
 
 export interface GpuProcess {
@@ -203,6 +204,7 @@ export type UserspaceState =
   | { readonly is: "differs"; readonly version: UserspaceVersion; readonly driver: string }
   | { readonly is: "half"; readonly reading: UserspaceReading }
   | { readonly is: "updating"; readonly update: UserspaceUpdate }
+  | { readonly is: "running" }
   | { readonly is: "unfinished"; readonly update: UserspaceUpdate }
   | { readonly is: "not-checked" }
   | { readonly is: "driver-unknown"; readonly version: UserspaceVersion };
@@ -211,8 +213,9 @@ function installedBeforeItFailed(update: UserspaceUpdate): boolean {
   return update.step === "restart" || update.step === "check";
 }
 
-export function userspaceState(reading: UserspaceReading | null | undefined, update: UserspaceUpdate | null | undefined, driver: string | null): UserspaceState {
+export function userspaceState(reading: UserspaceReading | null | undefined, update: UserspaceUpdate | null | undefined, driver: string | null, running = false): UserspaceState {
   if (update?.state === "updating") return { is: "updating", update };
+  if (running) return { is: "running" };
   if (reading && halfInstalled(reading)) return { is: "half", reading };
   if (update?.state === "unknown" || update?.state === "failed") return { is: "unfinished", update };
   if (!reading) return { is: "not-checked" };
@@ -229,15 +232,18 @@ export function agentUserspaceWords(box: string, state: UserspaceState): string 
     case "half":
       return `nvidia-smi and CUDA may fail in ${box}: it has ${readingWords(state.reading)}. Ask the user to update it again.`;
     case "unfinished":
-      return `${updateLeftWords(box, state.update)} nvidia-smi and CUDA may fail in it. Ask the user to update it again.`;
+      return `${updateLeftWords(box, state.update)} nvidia-smi and CUDA may fail in it. Ask the user${state.update.state === "unknown" ? "" : " to update it again"}.`;
+    case "running":
+      return `${stillRunningWords(box)}. nvidia-smi and CUDA may fail in it until it ends. Ask the user.`;
     default:
       return null;
   }
 }
 
-export function settledUpdate(update: UserspaceUpdate | null | undefined, reading: UserspaceReading, started = false): { readonly userspaceUpdate?: UserspaceUpdate } {
+export function settledUpdate(update: UserspaceUpdate | null | undefined, reading: UserspaceReading): { readonly userspaceUpdate?: UserspaceUpdate } {
   if (!update || (update.state !== "unknown" && update.state !== "failed")) return {};
-  if (matchesDriver(reading, update.to) && (started || update.step === "fetch")) return { userspaceUpdate: { ...update, state: "done", ms: null } };
+  const driver = reading.hostDriver;
+  if (driver && matchesDriver(reading, driver) && (update.restartedSince || update.step === "fetch")) return { userspaceUpdate: { ...update, state: "done", ms: null } };
   if (update.state !== "unknown") return {};
   const step = matchesDriver(reading, update.to) && !installedBeforeItFailed(update) ? "restart" : update.step;
   return { userspaceUpdate: { ...update, state: "failed", step, error: `${update.error ?? "It was cut short."} When bb-box read the box again, it had ${readingWords(reading)}.` } };
@@ -271,4 +277,9 @@ export function judgeDesktopCheck(output: string): string | null {
   if (!/"frames":[1-9]/.test(video)) return `its desktop's video sent no frames${video ? ` (${video})` : ""}`;
   if (valueAfter(lines, "nvenc") !== "yes") return "its desktop's video is not encoded with NVENC";
   return null;
+}
+
+export function restartedSinceUpdate(update: UserspaceUpdate | null | undefined): { readonly userspaceUpdate?: UserspaceUpdate } {
+  if (!update || (update.state !== "unknown" && update.state !== "failed") || update.restartedSince) return {};
+  return { userspaceUpdate: { ...update, restartedSince: true } };
 }
