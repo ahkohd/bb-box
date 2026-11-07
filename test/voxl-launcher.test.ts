@@ -23,6 +23,13 @@ if (process.env.FAKE_VOXL_FAILS) {
   console.error("[ERROR voxl] X connect: no display :99");
   process.exit(1);
 }
+if (process.env.FAKE_VOXL_HANGS) {
+  console.error("[ERROR voxl] capture: XShm GetImage failed");
+  process.on("SIGTERM", () => undefined);
+  require("node:fs").writeFileSync(process.env.FAKE_VOXL_HANGS, String(process.pid));
+  http.createServer(() => undefined).listen(port, "127.0.0.1");
+  return;
+}
 http.createServer((request, response) => response.end(request.url === "/stats" ? JSON.stringify({ clients: [] }) : "ok")).listen(port, "127.0.0.1");
 `;
 
@@ -47,7 +54,7 @@ async function world(extra: Record<string, string> = {}) {
     const result = spawnSync("bash", [LAUNCHER, "start"], { env, encoding: "utf8", timeout: 60_000 });
     return { ...result, ms: Date.now() - started };
   };
-  const answers = async () => fetch(`http://127.0.0.1:${port}/healthz`).then((response) => response.ok, () => false);
+  const answers = async () => fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1000) }).then((response) => response.ok, () => false);
   const stopped = async () => {
     const deadline = Date.now() + 15_000;
     while ((await answers()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
@@ -69,19 +76,37 @@ test("a start while an earlier run loop still holds its lock, as one stopping fo
   assert.equal(await stopped(), true, "it stops once it has had no viewer for its idle time");
 });
 
-test("a start that cannot bring voxl up fails within the panel's wait for a first frame, and says why from voxl's log", async () => {
-  const { start } = await world({ FAKE_VOXL_FAILS: "1" });
-  const started = start();
+const firstFrameMs = () => Number(/export const FIRST_FRAME_MS = ([\d_]+);/.exec(readFileSync(PANEL_CLIENT, "utf8"))![1]!.replaceAll("_", ""));
+
+function failedInTime(started: { status: number | null; stderr: string; ms: number }, said: RegExp): void {
   assert.notEqual(started.status, 0);
-  assert.match(started.stderr, /voxl did not answer on 127\.0\.0\.1:\d+ within 5 s: .*no display :99/);
-  const firstFrameMs = Number(/export const FIRST_FRAME_MS = ([\d_]+);/.exec(readFileSync(PANEL_CLIENT, "utf8"))![1]!.replaceAll("_", ""));
-  assert.ok(started.ms < firstFrameMs - 1000, `${started.ms} ms, against the panel's ${firstFrameMs} ms`);
+  assert.match(started.stderr, /voxl did not answer on 127\.0\.0\.1:\d+ within 7 s: its log: /);
+  assert.match(started.stderr, said);
+  assert.ok(started.ms < firstFrameMs() - 1500, `${started.ms} ms, against the panel's ${firstFrameMs()} ms`);
+}
+
+test("a start whose voxl exits at once fails within the panel's wait for a first frame, and says why from voxl's log", async () => {
+  const { start, stopped } = await world({ FAKE_VOXL_FAILS: "1", BBBOX_VOXL_IDLE_SECONDS: "0" });
+  failedInTime(start(), /no display :99/);
+  await stopped();
+});
+
+test("a start whose voxl takes connections and never answers, and outlasts the start, fails within the panel's wait for a first frame, and says why from voxl's log", async () => {
+  const pidFile = join(mkdtempSync(join(tmpdir(), "bb-box-voxl-pid-")), "fake.pid");
+  folders.push(join(pidFile, ".."));
+  const { start, stopped } = await world({ FAKE_VOXL_HANGS: pidFile, BBBOX_VOXL_IDLE_SECONDS: "0" });
+  try {
+    failedInTime(start(), /XShm GetImage failed/);
+  } finally {
+    process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+    await stopped();
+  }
 });
 
 test("the launcher's longest start fits inside the start command's budget, which fits inside the relay's", () => {
   const script = readFileSync(LAUNCHER, "utf8");
-  const lockSeconds = Number(/^start_lock_seconds=(\d+)$/m.exec(script)![1]);
-  const answerSeconds = Number(/^answer_tenths=(\d+)$/m.exec(script)![1]) / 10;
-  assert.ok((lockSeconds + answerSeconds) * 1000 < VOXL_START_TIMEOUT_MS);
+  const budgetMs = Number(/^start_budget_ms=(\d+)$/m.exec(script)![1]);
+  assert.ok(budgetMs < firstFrameMs() - 1500);
+  assert.ok(budgetMs < VOXL_START_TIMEOUT_MS);
   assert.ok(VOXL_START_TIMEOUT_MS < VOXL_CONNECT_MS);
 });

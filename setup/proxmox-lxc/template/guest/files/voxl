@@ -4,8 +4,8 @@ port=${BBBOX_VOXL_PORT:-5981}
 binary=${BBBOX_VOXL_BINARY:-/usr/local/bin/voxl}
 idle_limit_seconds=${BBBOX_VOXL_IDLE_SECONDS:-60}
 check_seconds=${BBBOX_VOXL_CHECK_SECONDS:-5}
-start_lock_seconds=3
-answer_tenths=50
+start_budget_ms=7000
+probe_most_ms=1000
 run_lock_seconds=20
 state=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 [ -d "$state" ] && [ -w "$state" ] || state=/tmp
@@ -14,6 +14,25 @@ wanted=$state/bb-box-voxl.wanted
 
 answers() { curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; }
 
+now_ms() { echo $(($(date +%s%N) / 1000000)); }
+
+seconds_of() { awk -v ms="$1" 'BEGIN { printf "%.3f", ms / 1000 }'; }
+
+left_ms() { echo $(($1 - $(now_ms))); }
+
+answers_before() {
+  local left
+  left=$(left_ms "$1")
+  [ "$left" -gt 0 ] || return 1
+  [ "$left" -le "$probe_most_ms" ] || left=$probe_most_ms
+  curl -fsS -m "$(seconds_of "$left")" -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null
+}
+
+give_up() {
+  echo "voxl did not answer on 127.0.0.1:$port within $((start_budget_ms / 1000)) s: $1 $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')" >&2
+  return 1
+}
+
 viewer_count() {
   local stats
   stats=$(curl -fsS -m 2 "http://127.0.0.1:$port/stats" 2>/dev/null) || { echo 0; return; }
@@ -21,19 +40,22 @@ viewer_count() {
 }
 
 start_unless_answering() {
+  local deadline left
+  deadline=$(($(now_ms) + start_budget_ms))
   touch "$wanted"
-  answers && return 0
+  answers_before "$deadline" && return 0
   exec 9>"$state/bb-box-voxl.lock"
-  flock -w "$start_lock_seconds" 9 || { echo "voxl: another start held the lock for $start_lock_seconds s" >&2; return 1; }
-  if ! answers; then
+  left=$(left_ms "$deadline")
+  [ "$left" -gt 0 ] && flock -w "$(seconds_of "$left")" 9 || { give_up "another start held its lock."; return 1; }
+  if ! answers_before "$deadline"; then
     setsid "$0" run 9>&- </dev/null >>"$log" 2>&1 &
   fi
-  for _ in $(seq 1 "$answer_tenths"); do
-    answers && return 0
+  while [ "$(left_ms "$deadline")" -gt 0 ]; do
+    answers_before "$deadline" && return 0
+    [ "$(left_ms "$deadline")" -gt 100 ] || break
     sleep 0.1
   done
-  echo "voxl did not answer on 127.0.0.1:$port within $((answer_tenths / 10)) s: $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')" >&2
-  return 1
+  give_up "its log:"
 }
 
 watched_since() {
