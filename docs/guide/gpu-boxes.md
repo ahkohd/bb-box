@@ -76,11 +76,11 @@ It prints `0` when CUDA can use the card.
 
 ```sh
 python3 -m venv ~/torch
-~/torch/bin/pip install torch
+~/torch/bin/pip install torch numpy
 ~/torch/bin/python -c 'import torch; a = torch.rand(4096, 4096, device="cuda"); print(torch.cuda.get_device_name(0), (a @ a).sum().item())'
 ```
 
-PyTorch's wheels bring their own CUDA libraries, and download about 3 GB. A PyTorch process takes about 650 MiB of the card's memory before it allocates anything.
+It prints the card's name and a number. PyTorch's wheels bring their own CUDA libraries. They download about 3 GB and take about 5 GB of disk, and pip keeps the download in its cache, so leave about 8 GB free. A PyTorch process takes about 650 MiB of the card's memory before it allocates anything, and this example under 900 MiB in all.
 
 If you need the CUDA toolkit itself, install it from NVIDIA's package repository for Ubuntu 24.04. Choose a CUDA version your host's driver supports: `nvidia-smi` shows the highest, top right. Do not install NVIDIA's driver packages, `nvidia-driver-*` or `cuda-drivers`, from apt. The box already has the driver's libraries, and BB Box cannot update them while those packages are there.
 

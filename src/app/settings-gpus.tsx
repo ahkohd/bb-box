@@ -111,7 +111,7 @@ function CardRow({ card }: { card: SettingsCard }) {
         </span>
       </div>
       <p className="mt-0.5 truncate font-mono text-2xs text-subtle-foreground">{card.uuid}</p>
-      {card.outsideMiB !== null ? <p className="mt-0.5 text-xs text-muted-foreground">{gib(card.outsideMiB)} in use outside bb-box's boxes.</p> : null}
+      {card.outsideMiB !== null ? <p className="mt-0.5 text-xs text-muted-foreground">{gib(card.outsideMiB)} in use outside this install's boxes.</p> : null}
       {card.overWords ? <p className="mt-0.5 text-xs text-warning-text">{card.overWords}</p> : null}
       {card.holders.length ? (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
