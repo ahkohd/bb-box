@@ -1576,6 +1576,7 @@ export interface BackendDriver<C = unknown> {
   readonly sharedKinds?: readonly string[];
   /** In the order the settings page shows them. */
   readonly fields: Readonly<Record<string, FieldDescriptor>>;
+  readonly retiredFields?: readonly string[];
   /** Fields of each host, for a backend whose hosts are set up alike. Hosts have a name and a switch besides. */
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   readonly offWhenEmpty?: readonly string[];

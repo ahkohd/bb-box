@@ -105,7 +105,6 @@ await conformance({
       // desktop's encodes with NVENC (#863).
       selkiesLauncher: "/bin/sh",
       gpuVideoMarker: "/bin/sh",
-      voxlLauncher: "/bin/true",
     }),
   // The backend's search for a free VMID starts where its storage says.
   reuse: async (storage, ref) => storage.set("next-vmid", Number(ref)),
@@ -166,7 +165,7 @@ const dockerSettings = dockerConfig();
 await conformance({
   name: "Docker on a fake host",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh", voxlLauncher: "/bin/true" }),
+  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" }),
   bb: fakeBb(),
   skip: {
     arch: "the fake docker runs commands on the test machine",

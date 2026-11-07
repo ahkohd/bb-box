@@ -16,9 +16,6 @@ import { macClipboardWatchCommand, startClipboardWatch, type ClipboardWatch } fr
 import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
 import { DEVICE_PATHS, SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
-import { VoxlRelay, type OpenVoxl } from "../core/voxl.ts";
-import type { VoxlOffer } from "../backends/voxl.ts";
-import type { VideoStream } from "./contract.ts";
 import { DEVICE_DISPLAY, desktopDisplays, deviceDisplayOf } from "../backends/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { scaleScript } from "../backends/windows.ts";
@@ -174,7 +171,6 @@ export interface Desktops {
   setSharp(boxId: string, on: boolean): Promise<void>;
   /** Whether the box's desktop is switching High resolution on or off now: its viewers hold their last picture until it is done. */
   switching(boxId: string): boolean;
-  voxl(boxId: string): Promise<Exclude<VoxlOffer, "off"> | null>;
   dispose(): Promise<void>;
 }
 
@@ -207,19 +203,6 @@ async function deviceBoxRecord(boxes: Boxes, boxId: string): Promise<BoxRecord> 
   const box = await readyBox(boxes, boxId, "device");
   if (!deviceDisplayOf(box.capabilities.displays)) throw new Error(`Box ${box.name} has no device.`);
   return box;
-}
-
-export function videoStreams(selkies: boolean, voxl: Exclude<VoxlOffer, "off"> | null): VideoStream[] {
-  const streams: VideoStream[] = selkies ? ["selkies"] : [];
-  if (voxl === "chosen") streams.unshift("voxl");
-  if (voxl === "offered") streams.push("voxl");
-  return streams;
-}
-
-async function voxlDisplayOf(boxes: Boxes, boxId: string): Promise<Display> {
-  const found = (await displays(boxes, boxId)).find((each) => each.protocol === "voxl");
-  if (!found) throw new Error("This box's desktop has no voxl stream: its image was built before voxl.");
-  return found;
 }
 
 /** The box's Selkies display (056). */
@@ -818,12 +801,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const keyLog = url.searchParams.get("keylog") === "1" ? (line: string) => bb.log.info(`key log, box ${boxId}, viewer ${viewer.slice(0, 8)}: ${line}`) : undefined;
       const device = url.searchParams.get("display") === DEVICE_DISPLAY.id;
       const selkies = !device && url.searchParams.get("stream") === "selkies";
-      const voxl = !device && url.searchParams.get("stream") === "voxl";
       // A VNC viewer's own stream of the box's pointer (060): it carries no picture and no input, only the pointer messages a
       // video viewer gets, as RFB has no place for where the box's pointer is.
       const pointerOnly = !device && url.searchParams.get("stream") === "pointer";
       let unlistenPointer: (() => void) | null = null;
-      let relay: RfbRelay | SelkiesRelay | VoxlRelay | null = null;
+      let relay: RfbRelay | SelkiesRelay | null = null;
       let shown: Display | null = null;
       const connection: ViewerConnection = {
         viewer,
@@ -836,7 +818,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         relays.delete(relay!);
         if (device) leftDevice(boxId, relay instanceof SelkiesRelay ? relay : null);
         else if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);
-        else if (!voxl) {
+        else {
           rfbViewer(boxId, viewer, -1);
           pointerFor(boxId);
         }
@@ -924,25 +906,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             cursorFor(boxId);
             // As after a restart of bb-box, the person in control may come back by video only.
             pointerFor(boxId);
-          } else if (voxl) {
-            if (!VIEWER_ID.test(viewer)) {
-              socket.close(1008, "The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
-              return;
-            }
-            const open: OpenVoxl = async (signal) => openRoute((await (await voxlDisplayOf(boxes, boxId)).open(signal)).route, signal);
-            relay = new VoxlRelay({
-              viewer: end,
-              open,
-              mayInput: () => control.mayInput(boxId, viewer),
-              keyLog,
-              onSize: (size) => control.seen(boxId, size),
-              onResize: (size) => {
-                control.resized(boxId, viewer, SELKIES_SCREEN);
-                sizeForSelkies(boxId, size).catch((error) => deps.logError("resize the desktop", error));
-              },
-              onEnd,
-            });
-            keepSharp(boxId);
           } else {
             const open: OpenDisplay = VIEWER_ID.test(viewer)
               ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
@@ -995,7 +958,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           }
           relays.add(relay);
           control.attach(boxId, connection);
-          if (!selkies && !device && !voxl) {
+          if (!selkies && !device) {
             rfbViewer(boxId, viewer, 1);
             keepSharp(boxId);
             pointerFor(boxId);
@@ -1003,7 +966,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         },
         async onMessage(socket, data) {
           if (pointerOnly) return;
-          if (relay instanceof SelkiesRelay || relay instanceof VoxlRelay) {
+          if (relay instanceof SelkiesRelay) {
             await relay.receive(data);
             return;
           }
@@ -1155,11 +1118,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       });
     },
     switching: (boxId) => switching.has(boxId),
-    async voxl(boxId) {
-      const found = await voxlDisplayOf(boxes, boxId).catch(() => null);
-      if (!found) return null;
-      return found.opensFirst ? "chosen" : "offered";
-    },
     async clipboard(boxId, viewer) {
       const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
       if (box && !watchingClipboard(box)) {

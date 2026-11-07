@@ -10,6 +10,7 @@ export const dockerDriver: BackendDriver<DockerConfig> = {
   form: "Docker",
   kinds: DOCKER_KINDS,
   fields: DOCKER_FIELDS,
+  retiredFields: ["voxl"],
   offWhenEmpty: ["linux-image", "desktop-image", "wayland-desktop-image"],
   setup: {
     guide: "setup/docker/README.md",

@@ -117,8 +117,8 @@ test("kinds lists only kinds with a template", () => {
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
   assert.deepEqual(
     desktop.capabilities.displays,
-    [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }, { id: "voxl", protocol: "voxl", resizable: true, byChoice: true }],
-    "xrandr resizes the GPU's screen, and video with NVENC is there by choice (#863), and voxl by choice (072)",
+    [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }],
+    "xrandr resizes the GPU's screen, and video with NVENC is there by choice (#863)",
   );
   assert.equal(desktop.capabilities.gpu, true);
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
@@ -128,9 +128,8 @@ test("kinds lists only kinds with a template", () => {
     [
       { id: "desktop", protocol: "rfb", resizable: true },
       { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" },
-      { id: "voxl", protocol: "voxl", resizable: true, byChoice: true },
     ],
-    "Xtigervnc resizes, and Selkies streams it beside (056), and voxl by choice (072)",
+    "Xtigervnc resizes, and Selkies streams it beside (056)",
   );
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
   const wayland = setup({ "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }).backend.kinds().find((kind) => kind.id === "linux-desktop-wayland-cpu")!;

@@ -2,7 +2,7 @@
 # bb-box desktop template, run as root inside the CT after customize-base.sh
 # and before finalize.sh: XFCE on :99 as the box user, Xorg with NVIDIA's
 # driver (or Xtigervnc on the CPU as fallback) served over VNC on port 5900,
-# Selkies' H.264 stream of it on 127.0.0.1:5980 (056), voxl's on 127.0.0.1:5981 on demand (072), Chrome, Mousepad, Ristretto, Evince, Cua Driver, NVIDIA userspace matching
+# Selkies' H.264 stream of it on 127.0.0.1:5980 (056), Chrome, Mousepad, Ristretto, Evince, Cua Driver, NVIDIA userspace matching
 # the host, VirtualGL, GPUI build dependencies and Rust.
 #
 # usage: customize-desktop.sh <build-dir>
@@ -66,15 +66,6 @@ chrome=$(check chrome)
 # Selkies, the desktop's second stream (056): its package holds its own
 # Python, in /opt/selkies.
 selkies=$(check selkies)
-voxl_crate=
-[ -z "$(pin voxl)" ] || voxl_crate=$(check voxl)
-voxl_runtime_packages=
-voxl_build_packages=
-if [ -n "$voxl_crate" ]; then
-  voxl_runtime_packages="libx264-164 libyuv0 libopus0 libpulse0 libxcb1"
-  voxl_build_packages="pkg-config libclang1-18 libx264-dev libyuv-dev libopus-dev libpulse-dev libxcb1-dev esbuild"
-fi
-voxl_rust=1.99.1
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin. A
 # build from a fresh image, as Tart's, has none yet.
@@ -88,10 +79,10 @@ fi
 opts=()
 apt_acquire_options opts
 # shellcheck disable=SC2086
-apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages $voxl_runtime_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
 # shellcheck disable=SC2086
-apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages $voxl_runtime_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
-for package in $desktop_packages $gpui_packages $voxl_runtime_packages tigervncserver virtualgl selkies google-chrome-stable; do
+apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+for package in $desktop_packages $gpui_packages tigervncserver virtualgl selkies google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done
 
@@ -106,7 +97,7 @@ else
 fi
 {
   echo "nvidia=$nvidia"
-  for name in tigervnc virtualgl selkies voxl chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
+  for name in tigervnc virtualgl selkies chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
 } >"$build/extra-release"
 
 # Xorg on the one GPU the CT can see, with no display attached.
@@ -152,10 +143,6 @@ install -m 0755 "$build/guest/files/selkies" /usr/local/libexec/bb-box/selkies
 install -m 0644 "$build/guest/files/chrome-gpu.mjs" /usr/local/libexec/bb-box/chrome-gpu.mjs
 install -m 0644 "$build/guest/files/cua-probe.mjs" /usr/local/libexec/bb-box/cua-probe.mjs
 install -m 0644 "$build/guest/files/selkies-probe.mjs" /usr/local/libexec/bb-box/selkies-probe.mjs
-if [ -n "$voxl_crate" ]; then
-  install -m 0755 "$build/guest/files/voxl" /usr/local/libexec/bb-box/voxl
-  install -m 0644 "$build/guest/files/voxl-probe.mjs" /usr/local/libexec/bb-box/voxl-probe.mjs
-fi
 # Selkies on the GPU path without NvFBC, which never answers on this X screen (#863).
 gcc -O2 -Wall -Werror -shared -fPIC -o /usr/local/lib/bb-box-nofbc.so "$build/guest/files/bb-box-nofbc.c" -ldl ||
   die "bb-box-nofbc did not build"
@@ -427,40 +414,6 @@ ExecStart=/usr/local/bin/cua-driver serve --no-overlay
 Restart=always
 RestartSec=1
 EOF
-
-if [ -n "$voxl_crate" ]; then
-  installed_packages() { dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1 == "ii" { print $2 }' | sort; }
-  packages_before_voxl=$(installed_packages)
-  # shellcheck disable=SC2086
-  apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $voxl_build_packages
-  # shellcheck disable=SC2086
-  apt_install -y -q --no-install-recommends $voxl_build_packages
-  voxl_installed_for_build=$(comm -13 <(echo "$packages_before_voxl") <(installed_packages) | tr '\n' ' ')
-  voxl_work=/var/tmp/bb-box-voxl
-  rm -rf "$voxl_work"
-  install -d -m 0700 "$voxl_work"
-  install -m 0755 "$(check rustup)" "$voxl_work/rustup-init"
-  voxl_env=(env RUSTUP_HOME="$voxl_work/rustup" CARGO_HOME="$voxl_work/cargo"
-    CARGO_TARGET_DIR="$voxl_work/target" PATH="$voxl_work/cargo/bin:/usr/local/bin:/usr/bin:/bin")
-  for attempt in 1 2 3; do
-    "${voxl_env[@]}" "$voxl_work/rustup-init" -y -q --profile minimal --default-toolchain "$voxl_rust" --no-modify-path && break
-    [ "$attempt" -lt 3 ] || die "rustup could not install Rust $voxl_rust to build voxl"
-    sleep 5
-  done
-  tar -xzf "$voxl_crate" -C "$voxl_work"
-  voxl_source=$(find "$voxl_work" -mindepth 1 -maxdepth 1 -type d -name 'voxl-server-*' | head -n 1)
-  [ -n "$voxl_source" ] || die "the voxl crate holds no voxl-server folder"
-  for attempt in 1 2 3; do
-    (cd "$voxl_source" && "${voxl_env[@]}" cargo build --release --locked -q) && break
-    [ "$attempt" -lt 3 ] || die "voxl did not build"
-    sleep 5
-  done
-  install -m 0755 "$voxl_work/target/release/voxl" /usr/local/bin/voxl
-  rm -rf "$voxl_work"
-  # shellcheck disable=SC2086
-  [ -z "$voxl_installed_for_build" ] || apt-get purge -y -q $voxl_installed_for_build
-  /usr/local/bin/voxl --version >/dev/null || die "voxl does not run"
-fi
 
 # Rust for the box user (GPUI and other native work). Projects'
 # rust-toolchain.toml files pull their own toolchains on first use.

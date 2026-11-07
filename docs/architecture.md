@@ -210,8 +210,8 @@ is never logged or sent to the browser. A command transport's `route(port)`
 gives a route to a port inside the box: `ssh -W`, or `docker exec` with
 `socat`.
 
-**Displays.** A display has an ID, a protocol (`rfb`, or `selkies` or
-`voxl` beside it on an X11 desktop), whether it can resize, and `open()`, which
+**Displays.** A display has an ID, a protocol (`rfb`, or `selkies` beside
+it on an X11 CPU desktop), whether it can resize, and `open()`, which
 returns a route and how to sign in: none, a VNC password, or a user and
 password for Apple's authentication. A display may also have:
 
@@ -588,27 +588,6 @@ route and carries messages, not bytes:
   desktop's top left. So when the desktop grew past its video's size, every
   viewer's video stops for 300 ms: Selkies stops a capture no page wants,
   and starts the next at the desktop's size, from a key frame.
-
-**The voxl relay.** An X11 desktop on Docker or Proxmox LXC whose image
-has voxl also has a voxl display
-([072](decisions/072-voxl.md)). A viewer asks for it with `&stream=voxl`.
-The display's `open()` runs the image's launcher, which starts voxl on
-`127.0.0.1:5981` unless it answers; voxl stops a minute after its last
-viewer. The relay (`src/core/voxl.ts`) opens a WebSocket of its own to it
-for each viewer, and translates voxl's protocol into the viewer's:
-
-- a frame's 16-byte header is rewritten in place as the viewer's 12-byte
-  one, with the size from voxl's latest `hello`;
-- the viewer acknowledges each frame it draws, and answers voxl's pings,
-  which pass end to end, so voxl's own rate control sees the whole path;
-- keys, the pointer, the wheel and the clipboard reach voxl only from the
-  viewer with control, and the box's clipboard reaches only that viewer;
-- the viewer's size goes to the backend's resize, and voxl follows the
-  X screen by itself.
-
-The display says `opensFirst` while its backend's `voxl` setting is on, and
-the desktop state lists the box's video streams in the order the viewer
-opens them.
 
 **Each desktop's server.**
 

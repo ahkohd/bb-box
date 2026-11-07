@@ -997,6 +997,24 @@ test("a field a backend does not have names the backend, and the key it has now 
   );
 });
 
+test("a saved voxl setting, from the voxl option the owner withdrew (072), is read and dropped on Docker and Proxmox LXC, never a problem", () => {
+  const { document, problems } = readDraft(
+    {
+      schema: 1,
+      backends: [
+        { id: "docker", type: "docker", enabled: true, fields: { voxl: true } },
+        { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: { voxl: true, "vmid-first": 3000 } },
+      ],
+      kinds: {},
+      general: {},
+    },
+    DRIVERS,
+  );
+  assert.deepEqual(problems, []);
+  assert.deepEqual(document.backends.find((backend) => backend.id === "docker")?.fields, {});
+  assert.deepEqual(document.backends.find((backend) => backend.id === "proxmox-lxc")?.fields, { "vmid-first": 3000 });
+});
+
 test("the configuration takes several Docker backends, one per host, and still one of any other type (042)", () => {
   const docker = (id: string, host?: string) => ({ id, type: "docker", enabled: true, fields: host === undefined ? {} : { host } });
   const problems = (backends: unknown[]) =>
