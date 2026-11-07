@@ -13,6 +13,7 @@ import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import { POINTER_VERB } from "../core/pointer.ts";
+import { VOXL_PING_VERB, VOXL_PONG_VERB } from "../core/voxl-verbs.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
 import { DEVICE_CLIPBOARD_MOST, DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, PASTE_REQUEST_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
@@ -134,6 +135,17 @@ const CLIPBOARD_CHUNK = Math.floor((16 * 1024) / 3) * 3;
 export const CLIPBOARD_MAX_BYTES = 64 * 1024 * 1024;
 /** Selkies' type for markup copied with its plain text: a JSON object of type to content. */
 const FLAVOURS = "application/x-selkies-clipboard-flavours";
+
+async function pngOf(image: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(image);
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
+    bitmap.close();
+  }
+}
 
 /** Whether this browser can show a desktop as video: WebCodecs, which needs a secure context. */
 export function canShowVideo(): boolean {
@@ -363,9 +375,13 @@ export class SelkiesSession implements Kept {
   #drawnSent: string | null = null;
   #drawnSettle: ReturnType<typeof setTimeout> | undefined;
   onDeviceAction?: (control: DeviceControl) => void;
+  readonly #acksEachFrame: boolean;
+  readonly #pastesPngOnly: boolean;
 
-  constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
+  constructor(url: string, options: { readonly device?: { readonly model: string | null }; readonly acksEachFrame?: boolean; readonly pastesPngOnly?: boolean } = {}) {
     this.#url = url;
+    this.#acksEachFrame = options.acksEachFrame ?? false;
+    this.#pastesPngOnly = options.pastesPngOnly ?? false;
     this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), stillsWhileVideoIsSlow: false, offered: [], bootedHere: null, videoWords: null } : null;
     this.#afterPaste.join(tabOf(url));
     this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
@@ -638,7 +654,7 @@ export class SelkiesSession implements Kept {
       if (this.#socket === socket) this.#ended(event.reason);
     };
     clearInterval(this.#ackTimer);
-    this.#ackTimer = setInterval(() => this.#ack(), ACK_MS);
+    if (!this.#acksEachFrame) this.#ackTimer = setInterval(() => this.#ack(), ACK_MS);
     clearInterval(this.#watchTimer);
     this.#watchTimer = setInterval(() => this.#watch(), WATCH_MS);
   }
@@ -858,6 +874,9 @@ export class SelkiesSession implements Kept {
       case "PIPELINE_RESETTING":
         this.#reset();
         break;
+      case VOXL_PING_VERB:
+        if (/^\d{1,20}$/.test(rest)) this.#send(`${VOXL_PONG_VERB},${rest}`);
+        break;
       case POINTER_VERB:
         this.#boxPointer.at(rest);
         this.#drawPointer();
@@ -955,6 +974,7 @@ export class SelkiesSession implements Kept {
       const generation = this.#frameGenerations.get(frame.timestamp) ?? null;
       this.#frameGenerations.delete(frame.timestamp);
       this.#paint(frame, frame.displayWidth, frame.displayHeight, generation);
+      if (this.#acksEachFrame) this.#send(`CLIENT_FRAME_ACK ${frame.timestamp} 0`);
     } finally {
       frame.close();
     }
@@ -1353,12 +1373,18 @@ export class SelkiesSession implements Kept {
       return;
     }
     this.#afterPaste.hold();
-    const bytes = new Uint8Array(await image.arrayBuffer());
+    const sent = this.#pastesPngOnly && image.type !== "image/png" ? await pngOf(image).catch(() => null) : image;
+    if (!sent) {
+      this.#afterPaste.drop();
+      this.onPasteFailed?.(new Error("This browser could not turn the image into a PNG, which the desktop takes."));
+      return;
+    }
+    const bytes = new Uint8Array(await sent.arrayBuffer());
     if (this.#disposed || this.connection.state !== "connected") {
       this.#afterPaste.drop();
       return;
     }
-    this.#putOnBox(image.type || "image/png", bytes);
+    this.#putOnBox(sent.type || "image/png", bytes);
     this.#pressPaste();
     this.onPaste?.(image);
   }

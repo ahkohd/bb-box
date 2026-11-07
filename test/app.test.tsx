@@ -10,7 +10,7 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, BoxEntry, BulkCheck, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, KeepPreview, MachineEntry, PanelState, ForkPreview, ForkStarted, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, SnapshotsTabView, TakeCheck, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxEntry, BulkCheck, MonitorReach, MonitorSnapshot, BoxPageState, BoxResult, BoxSnapshotsView, CheckResult, ConfigState, Contract, DesktopState, KeepPreview, MachineEntry, PanelState, ForkPreview, ForkStarted, ResizeResult, RestorePreview, SnapshotChange, SnapshotRowView, SnapshotsTabView, TakeCheck, ThreadOnBox, VideoStream } from "../src/plugin/contract.ts";
 import type { EndedBox } from "../src/core/box-log.ts";
 import type { Busy } from "../src/monitor/busy.ts";
 import { busyNow, busyUntil, rowLine, rowReasons, rowWords } from "../src/app/row-line.ts";
@@ -548,7 +548,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -579,7 +579,7 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null, access: options.access ?? null }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, ...(options.streams ? { streams: options.streams } : {}), sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "images.list": () => ({ images: options.rebuildable ?? [] }),
@@ -4874,6 +4874,71 @@ test("a device whose first frame came too late for its stills tries its video ag
     expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
   } finally {
     vi.useRealTimers();
+    undo();
+  }
+});
+
+test("a desktop whose backend chose voxl opens through it, acknowledging every frame it draws and answering voxl's pings; unticking Stream with voxl shows Selkies, kept for the box", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.clear();
+    const slot = desktopTab(server([desktopBox()], { video: true, streams: ["voxl", "selkies"] }).handlers);
+    const voxlSocket = () => FakeSocket.made.find((made) => new URL(made.url).searchParams.get("stream") === "voxl");
+    await waitFor(() => expect(voxlSocket()).toBeTruthy());
+    expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(false);
+    const socket = voxlSocket()!;
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    act(() => void socket.onmessage?.({ data: videoFrame(6, false) }));
+    expect(socket.sent.filter((sent) => typeof sent === "string" && sent.startsWith("CLIENT_FRAME_ACK"))).toEqual(["CLIENT_FRAME_ACK 5 0", "CLIENT_FRAME_ACK 6 0"]);
+    act(() => void socket.onmessage?.({ data: "VOXL_PING,987654" }));
+    expect(socket.sent).toContain("VOXL_PONG,987654");
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    const item = within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Stream with voxl" });
+    expect(item.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(item);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    expect(window.sessionStorage.getItem(streamChoiceKey("box_2"))).toBe("selkies");
+    expect(socket.readyState).toBe(3);
+    expect(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Stream with voxl" }).getAttribute("aria-checked")).toBe("false");
+  } finally {
+    window.sessionStorage.clear();
+    undo();
+  }
+});
+
+test("a desktop that offers voxl by choice opens with Selkies and ticking Stream with voxl shows it; a desktop without voxl has no such item", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.clear();
+    const slot = desktopTab(server([desktopBox()], { video: true, streams: ["selkies", "voxl"] }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    expect(FakeSocket.made.some((made) => made.url.includes("stream=voxl"))).toBe(false);
+    act(() => videoSocket().open());
+    act(() => void videoSocket().onmessage?.({ data: videoFrame(1, true) }));
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    const item = within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Stream with voxl" });
+    expect(item.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(item);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=voxl"))).toBe(true));
+    expect(window.sessionStorage.getItem(streamChoiceKey("box_2"))).toBe("voxl");
+
+    cleanup();
+    dropAllKept();
+    forgetStreams();
+    forgetLive();
+    FakeSocket.made = [];
+    window.sessionStorage.clear();
+    const plain = desktopTab(server([desktopBox()], { video: true, streams: ["selkies"] }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    act(() => videoSocket().open());
+    act(() => void videoSocket().onmessage?.({ data: videoFrame(1, true) }));
+    expect(await plain.findByText("The agent has control.")).toBeTruthy();
+    const menu = within(await openDisplay(plain.getByRole("button", { name: "Desktop actions" })));
+    expect(menu.getByRole("menuitemcheckbox", { name: "Show as VNC" })).toBeTruthy();
+    expect(menu.queryByRole("menuitemcheckbox", { name: "Stream with voxl" })).toBeNull();
+  } finally {
+    window.sessionStorage.clear();
     undo();
   }
 });

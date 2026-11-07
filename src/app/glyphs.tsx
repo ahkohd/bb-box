@@ -75,6 +75,16 @@ export function MonitorGlyph(props: Props) {
   );
 }
 
+export function StreamGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M10 7.5v5l4-2.5z" />
+      <path d="M8 20h8M12 16v4" />
+    </Stroked>
+  );
+}
+
 /** High resolution: an HD badge, apart from the monitor of the display's other items. */
 export function HighResolutionGlyph(props: Props) {
   return (

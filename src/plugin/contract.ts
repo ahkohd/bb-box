@@ -93,6 +93,8 @@ export interface ImageFailure {
   readonly reason: string;
 }
 
+export type VideoStream = "selkies" | "voxl";
+
 /** One box's desktop or terminal, for its tab. */
 export interface DesktopState {
   /** Null when the thread has no such box, for example once it is released. */
@@ -111,6 +113,7 @@ export interface DesktopState {
    * Tart Mac, which opens as VNC. Absent from older plugins, which open video.
    */
   readonly videoByDefault?: boolean;
+  readonly streams?: readonly VideoStream[];
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
   readonly sharp?: boolean | null;
   /** Whether High resolution is switching on or off now: the video viewer holds its last picture until the desktop has its new size and scale. Absent from older plugins. */

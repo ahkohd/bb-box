@@ -65,6 +65,7 @@ import {
   type PowerState,
   type ReleaseHooks,
   type IdentitySource,
+  type DisplayCapability,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { endpointOf } from "../../host/relay.ts";
@@ -75,6 +76,7 @@ import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpu
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { VOXL_DISPLAY, VoxlPresence, voxlDisplay } from "../voxl.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
@@ -185,6 +187,7 @@ export interface DockerBackendOptions {
   readonly selkiesLauncher?: string;
   /** Where a Wayland box's image has bb-box-cursor, instead of CURSOR_HELPER: a file the test finds, in tests. */
   readonly cursorHelper?: string;
+  readonly voxlLauncher?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
   readonly now?: () => number;
@@ -458,16 +461,17 @@ function sleep(ms: number): Promise<void> {
  * before #283 cannot.
  */
 export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = true): BoxKind[] {
-  const kinds = kindTable(config.docker && !rootless ? ["docker"] : [], gpuDocker);
+  const kinds = kindTable(config.docker && !rootless ? ["docker"] : [], gpuDocker, config.voxl !== "off");
   return DOCKER_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
 }
 
 /** Kind `id` as a Docker backend offers it once its image is set, with Docker in its boxes or not: for a desktop built on demand. */
-export function dockerKind(id: DockerKind, docker: boolean): BoxKind {
-  return kindTable(docker ? ["docker"] : [], true)[id];
+export function dockerKind(id: DockerKind, docker: boolean, voxl = true): BoxKind {
+  return kindTable(docker ? ["docker"] : [], true, voxl)[id];
 }
 
-function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, BoxKind> {
+function kindTable(docker: string[], gpuDocker: boolean, voxl: boolean): Record<DockerKind, BoxKind> {
+  const withVoxl = (displays: readonly DisplayCapability[]): readonly DisplayCapability[] => (voxl ? [...displays, VOXL_DISPLAY] : displays);
   return {
     linux: {
       id: "linux",
@@ -500,7 +504,7 @@ function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, Box
         command: DOCKER_COMMAND,
         // As in a Proxmox LXC box, x0vncserver on the GPU refuses a viewer's
         // resize, so transports() gives this display a resize that runs xrandr (021).
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        displays: withVoxl([{ id: "desktop", protocol: "rfb", resizable: true }]),
         computerUse: CUA_DRIVER,
         enrol: true,
         device: null,
@@ -519,7 +523,7 @@ function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, Box
         gpu: false,
         features: docker,
         command: DOCKER_COMMAND,
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
+        displays: withVoxl([{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY]),
         computerUse: CUA_DRIVER,
         enrol: true,
         device: null,
@@ -594,6 +598,8 @@ export class DockerBackend implements Backend {
   #knownOs: GuestOs | null = null;
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
+  readonly #voxl: VoxlPresence;
+  readonly #voxlLauncher: string | undefined;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
   readonly #cursor: ImageFile;
   readonly #cursorHelper: string;
@@ -630,6 +636,8 @@ export class DockerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
+    this.#voxlLauncher = options.voxlLauncher;
+    this.#voxl = new VoxlPresence(options.voxlLauncher);
     this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
     this.#cursor = new ImageFile(this.#cursorHelper);
     this.#kinds = dockerKinds(config);
@@ -1461,6 +1469,7 @@ export class DockerBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(guest.ref);
+    this.#voxl.forget(guest.ref);
     this.#cursor.forget(guest.ref);
     const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
@@ -1781,9 +1790,12 @@ export class DockerBackend implements Backend {
     // An image with bb-box-cursor (060): Sway 1.11, whose streams paint no pointer, so none is hidden, and Sway keeps a theme
     // the cursor session and wayvnc send as the pointer's shape. One without keeps #707's hidden theme.
     const sends = wayland && (await this.#cursor.has(guest.ref, command));
-    const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
+    const voxl = (capabilities?.displays ?? []).some((display) => display.protocol === "voxl") && (await this.#voxl.has(guest.ref, command));
+    const displays = (capabilities?.displays ?? []).filter((display) => (video || display.protocol !== "selkies") && (voxl || display.protocol !== "voxl")).map(
       (display): Display =>
-        display.protocol === "selkies"
+        display.protocol === "voxl"
+          ? voxlDisplay(command, this.#config.voxl === "chosen", this.#voxlLauncher)
+          : display.protocol === "selkies"
           ? selkiesDisplay((port) => command.route(port), display)
           : {
               ...display,

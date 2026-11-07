@@ -56,6 +56,7 @@ import {
   type ParsedBackend,
   type ParsedSettings,
 } from "../types.ts";
+import type { VoxlOffer } from "../voxl.ts";
 
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu", "desktop-wayland-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
@@ -90,6 +91,7 @@ export interface LxcConfig {
   readonly desktop: {
     /** The most desktop boxes each GPU runs at once, or null for no limit. */
     readonly perGpu: number | null;
+    readonly voxl: VoxlOffer;
   };
   readonly vmids: VmidRange;
   readonly network: ProxmoxNetwork;
@@ -133,6 +135,7 @@ export const LXC_KEYS = {
   sshPrivateKey: "proxmox-lxc-ssh-private-key",
   sshUser: "proxmox-lxc-ssh-user",
   perGpu: "proxmox-lxc-desktops-per-gpu",
+  voxl: "proxmox-lxc-voxl",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
@@ -296,6 +299,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
       "The most Linux desktops each GPU runs at once. A new one goes to the GPU with the fewest, and is refused when every GPU runs this many. 0 means no limit.",
     default: 0,
   },
+  [LXC_KEYS.voxl]: {
+    type: "boolean",
+    label: "Proxmox LXC: stream desktops with voxl",
+    description:
+      "Shows Linux desktops on X11 through voxl in the viewer, in place of Selkies or VNC. Off, they show as before, and each desktop's Display menu can still pick Stream with voxl. Only desktops from a template built with voxl have it.",
+    default: false,
+  },
   [LXC_KEYS.vmidFirst]: {
     type: "number",
     label: "Proxmox LXC: first box VMID",
@@ -382,6 +392,7 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [flavourKey("desktop", "templates"), "boxes"],
   [flavourKey("desktop-cpu", "templates"), "boxes"],
   [flavourKey("desktop-wayland-cpu", "templates"), "boxes"],
+  [LXC_KEYS.voxl, "boxes"],
   [LXC_KEYS.perGpu, "advanced"],
   [LXC_KEYS.bridge, "advanced"],
   [LXC_KEYS.subnet, "advanced"],
@@ -559,7 +570,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
     config: {
       proxmox,
       flavours,
-      desktop: { perGpu: perGpu > 0 ? perGpu : null },
+      desktop: { perGpu: perGpu > 0 ? perGpu : null, voxl: values[LXC_KEYS.voxl] === true ? "chosen" : "offered" },
       vmids,
       network,
       ssh,
