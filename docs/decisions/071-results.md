@@ -5551,8 +5551,13 @@ reverting the fix alone.
   reference generator does not read, is removed. It changes no behaviour, so
   it has no test.
 
-After the fixes, on the rebased branch: `npm run typecheck` clean, and
-`npm test` as below.
+The fixes for both reviews were run together, on `14376ccb`, on main
+`1eee5617` with unit 13, in `node:26-bookworm`, its tracked files checked
+against this checkout by SHA-256: `npm run typecheck` clean; `npm test`
+exit 0, the node suite 3,753 passed, 0 failed and 304 skipped of 4,057, and
+vitest 507 passed in 6 files. The site built 129 pages, and its link check
+found none of 23,695 links broken. The commit after it adds only these
+numbers.
 
 ### After Fable's review
 
