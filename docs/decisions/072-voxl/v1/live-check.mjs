@@ -1,15 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { inBox } from "./in-box.mjs";
 
 const base = process.env.LIVE_BASE ?? "http://127.0.0.1:7801";
-const { BOX, CONTAINER } = process.env;
+const { BOX } = process.env;
 const results = join(process.env.HOME, "live-results");
 const shots = join(results, "shots");
 mkdirSync(shots, { recursive: true });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const inBox = (script) => execFileSync("docker", ["exec", "-u", "box", "-e", "DISPLAY=:99", "-e", "XAUTHORITY=/run/bb-box/Xauthority", "-e", "XDG_RUNTIME_DIR=/run/user/1000", "-e", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", CONTAINER, "sh", "-c", script], { encoding: "utf8" }).trim();
 const placeWindow = (klass) =>
   until(`the ${klass} window, placed`, () => {
     try {

@@ -1,11 +1,11 @@
-import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { inBox, inBoxLater } from "./in-box.mjs";
 
 const [stream, workload, secondsText = "20", label = `${stream}-${workload}`] = process.argv.slice(2);
 const seconds = Number(secondsText);
-const { BOX, VIEWER, CONTAINER } = process.env;
+const { BOX, VIEWER } = process.env;
 const out = process.env.OUT ?? join(process.env.HOME, "live-results", "measure");
 const proxy = process.env.PROXY ?? "http://127.0.0.1:7000";
 const WARMUP_MS = 4000;
@@ -14,7 +14,6 @@ const CLOCK_TICKS = 100;
 const MARKER_RANGE = 1 << 24;
 mkdirSync(out, { recursive: true });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const inBox = (script) => execFileSync("docker", ["exec", "-u", "box", "-e", "DISPLAY=:99", "-e", "XAUTHORITY=/run/bb-box/Xauthority", "-e", "XDG_RUNTIME_DIR=/run/user/1000", "-e", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", CONTAINER, "sh", "-c", script], { encoding: "utf8" }).trim();
 
 const sceneProfile = `/tmp/scene-profile-${Date.now()}`;
 
@@ -24,16 +23,15 @@ function stopScene() {
 
 function startScene() {
   stopScene();
+  const scene = readFileSync(new URL("./scene.html", import.meta.url)).toString("base64");
+  inBox(`echo ${scene} | base64 -d > /tmp/scene.html`);
   inBox(`rm -rf /tmp/scene-profile-* 2>/dev/null; true`);
   inBox(`(setsid sh -c 'echo $$ > /tmp/scene.pid; exec google-chrome --kiosk --no-first-run --no-default-browser-check --disable-features=Translate --password-store=basic --user-data-dir=${sceneProfile} "file:///tmp/scene.html?work=${workload}"' </dev/null >/tmp/scene.log 2>&1 &)`);
 }
 
 function sampleCpu(durationSeconds) {
   const script = `end=$(( $(date +%s) + ${durationSeconds} )); while [ "$(date +%s)" -lt "$end" ]; do echo "t $(date +%s.%N)"; cat /proc/[0-9]*/stat 2>/dev/null; sleep 1; done`;
-  const child = spawn("docker", ["exec", CONTAINER, "sh", "-c", script], { stdio: ["ignore", "pipe", "ignore"] });
-  let text = "";
-  child.stdout.on("data", (chunk) => (text += chunk));
-  return new Promise((resolve) => child.on("close", () => resolve(text)));
+  return inBoxLater(script, durationSeconds + 60);
 }
 
 function groupOf(command) {

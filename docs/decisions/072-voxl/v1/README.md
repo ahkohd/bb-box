@@ -7,6 +7,8 @@ measurements.
 | File | What it does |
 | --- | --- |
 | `live-setup.sh` | A fresh `npx bb-app` with no account, bb-box installed from a checkout at `~/work/plugin`, the Docker backend with the desktop image built by `setup/docker/build.sh desktop`, a project, a thread and a tool-calling ACP agent (`acp-agent.mjs`, from 069 unit 1b), whose calls `agent-call.sh` makes |
+| `live-setup-lxc.sh`, `add-proxmox-backend.sh` | The same test BB for a Proxmox LXC run, with its ports open only to itself and the lent guests' range (`LENT_RANGE`), and the test backend the lead adds: the lent pool, VMIDs and addresses, one desktop template, the token and key read from files the lead puts on the box |
+| `in-box.mjs` | Runs a command in the desktop's session: `docker exec` when `CONTAINER` is set, else `bb box run` on the test BB |
 | `live-check.mjs` | Drives the panel's desktop view in headless Chromium: the stream it opens, the Display menu, taking control, the pointer and typing, the clipboard both ways, a resize, the wheel and handing back, each seen in the box |
 | `shots.mjs` | The viewer at 1440, 760 and 390 px, light and dark, with and without its Display menu open, and the Docker backend's settings |
 | `scene.html` | The desktop's workload, in Chrome in kiosk mode: a long page of text scrolling 10 px a frame, a full-screen 1080p animation of 40 circles over a changing background, or a still page. Every frame draws the time, `Date.now()` modulo 2^24 ms, as 24 black and white blocks at its top left, with their inverse under them |
