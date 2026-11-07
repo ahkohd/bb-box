@@ -14,7 +14,7 @@ import { OPERATOR, RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcq
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
-import { claimOf, gpuPartsOffered, gpuWhenNotAsked, holdsCard, recordedGpu, userspaceOf, type GpuWhenNotAsked, type NvidiaUserspace } from "../core/gpu.ts";
+import { claimOf, configuredGpu, gpuPartsOffered, gpuWhenNotAsked, holdsCard, recordedGpu, userspaceOf, type GpuWhenNotAsked, type NvidiaUserspace } from "../core/gpu.ts";
 import { USERSPACE_INSTALL_SECONDS, agentUserspaceWords, gpuPartToRetry, readingWords, unfinishedUpdate, updateLeftWords, userspaceState, type UserspaceReading, type UserspaceState, type UserspaceUpdate } from "../core/gpu-userspace.ts";
 import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
@@ -226,6 +226,7 @@ export interface KindView {
   readonly largest: SizeView;
   readonly gpu: boolean;
   readonly gpuWhenNotAsked?: GpuPart;
+  readonly gpuSetting?: GpuPart;
   readonly desktop: boolean;
   /** The OS, which the panel names the kind by; badges say the rest. */
   readonly os: GuestOs;
@@ -416,6 +417,7 @@ export function kindViews(
       largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
       gpuWhenNotAsked: gpuWhenNotAsked(kind.id, gpuDefaults),
+      ...(configuredGpu(kind.id, gpuDefaults) ? { gpuSetting: configuredGpu(kind.id, gpuDefaults)! } : {}),
       desktop: desktopDisplays(kind.capabilities.displays).length > 0,
       os: kind.capabilities.os,
       arch: kind.capabilities.arch,

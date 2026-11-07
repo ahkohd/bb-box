@@ -7,7 +7,7 @@
 // provider's mark or colour.
 
 import { useEffect, type ReactNode } from "react";
-import type { GuestOs, Windowing } from "../backends/types.ts";
+import type { GpuPart, GuestOs, Windowing } from "../backends/types.ts";
 import { platformWord, type DevicePlatform } from "../core/device.ts";
 import type { KindView, OfferView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,12 @@ export function typeAvailable(kinds: readonly KindView[], os: GuestOs, arch: Arc
 }
 
 /** For a desktop of a windowing system: whether a GPU desktop and a CPU one both exist, so GPU is a choice. */
+export function gpuDesktopSetting(kinds: readonly KindView[], wanted: Choice): GpuPart | null {
+  if (!wanted.desktop || wanted.device) return null;
+  const setting = kindsAt(kinds, wanted.os, wanted.arch).find((kind) => kind.desktop && kind.gpu && kind.windowing === wanted.windowing)?.gpuSetting;
+  return setting === "shared" || setting === "whole" ? setting : null;
+}
+
 export function gpuChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch, windowing: Windowing): { readonly none: boolean; readonly gpu: boolean } {
   const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop && kind.windowing === windowing);
   return { none: desktops.some((kind) => !kind.gpu), gpu: desktops.some((kind) => kind.gpu) };

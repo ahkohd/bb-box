@@ -5580,13 +5580,25 @@ above. The other two:
 Fable's wording for the field help is taken: "Empty, it reads
 desktops-per-gpu where that is set, else 4", and the like.
 
+### The Desktop type, the lead's call
+
+Where both a CPU desktop and a GPU desktop are offered, the New box form's
+Desktop type opened on the CPU desktop, as unit 13 built it, whatever
+`linux-desktop`'s setting. The lead decided on 7 November 2026: when that
+setting is set to shared or whole, Desktop opens on the GPU desktop with
+that part; unset, it opens as unit 13 built it, on the CPU desktop with
+None; a remembered choice wins over both. The kind view now carries
+`gpuSetting` only where the setting is set, and a choice in the GPU menu
+this session counts as remembered. Test: `app.test.tsx`, Desktop opens on
+the GPU desktop only when linux-desktop's GPU is set; with the fix
+reverted it opened on None, not Whole card.
+
+Run in `node:26-bookworm` on this change: `npm run typecheck` clean;
+`npm run test:app`, vitest, 508 passed in 6 files; and the full `npm test`,
+exit 0, the node suite 3,753 passed, 0 failed and 304 skipped of 4,057.
+
 ### Still open
 
-- **The Desktop type in the New box form** opens on the CPU desktop where
-  both a CPU and a GPU desktop are offered, as unit 13 built it, so
-  `linux-desktop`'s setting is its first choice only where there is no CPU
-  desktop, or once the GPU desktop is chosen. Whether Desktop should open on
-  the GPU desktop when its setting is shared or whole is for the lead.
 - **Whole cards off leaving a whole box as it is, on Proxmox LXC**, is
   untested live: no card on the node is free for a whole box. It ran live on
   Docker, and on Proxmox LXC in its tests.

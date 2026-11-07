@@ -11787,3 +11787,30 @@ test("071 unit 15, review: the New box form's first GPU is the kind's setting, f
   fireEvent.click(again.getByRole("button", { name: "New box" }));
   expect((await screen.findByRole("combobox", { name: "GPU" })).textContent).toBe("None");
 });
+
+test("071 unit 15, lead: Desktop opens on the GPU desktop with its part only when linux-desktop's GPU is set; unset, it opens on the CPU desktop; a remembered choice wins", async () => {
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["shared", "whole"], host: "pve-1", at: Date.now(), cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, freeForWhole: true }] };
+  const serverKind = kindView("linux", "Linux", "A server.", 2, false);
+  const cpuBase = kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true);
+  const cpuKind: KindView = { ...cpuBase, gpu: false, windowing: "x11" };
+  const gpuBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const gpuOffered = offered(gpuBase, [{ ...gpuBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["shared", "whole"], gpuRoom: room }]);
+  const opensOn = async (gpuKind: KindView) => {
+    const slot = panel(server([], { kinds: [serverKind, cpuKind, gpuKind] }).handlers);
+    await slot.findByText("No boxes yet");
+    fireEvent.click(slot.getByRole("button", { name: "New box" }));
+    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+    return (await screen.findByRole("combobox", { name: "GPU" })).textContent;
+  };
+  expect(await opensOn({ ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "whole", gpuSetting: "whole" })).toBe("Whole card");
+  cleanup();
+  expect(await opensOn({ ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "shared" })).toBe("None");
+  cleanup();
+  const set: KindView = { ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "shared", gpuSetting: "shared" };
+  expect(await opensOn(set)).toBe("Shared");
+  await choose("GPU", "None");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Create box" })).toBeNull());
+  cleanup();
+  expect(await opensOn(set)).toBe("None");
+});
