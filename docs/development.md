@@ -4,6 +4,10 @@ How to build and test bb-box, and how to add a backend. How bb-box works is
 in [the architecture](architecture.md), and why in the
 [decisions](decisions/README.md).
 
+Before you change bb-box, read [AGENTS.md](../AGENTS.md): the layout, the
+commands, and the rules every change follows. Coding agents read it first,
+and `CLAUDE.md` points to it.
+
 ## Build and test
 
 ```sh
@@ -216,14 +220,21 @@ Then open `http://localhost:4321`. A page changes as you save its
 Markdown.
 
 - `npm run build` writes the site, with its search index, to `site/dist`.
-- `npm run check-links` checks every link and asset in `site/dist`, and
-  fails on one that leads nowhere.
+  It also writes, for agents, [llms.txt](https://llmstxt.org/) with a link
+  to each page, `llms-full.txt` with every page in one file, and each
+  page's Markdown at its address with `.md`, such as `/guide/boxes.md`,
+  or `index.html.md`, such as `/guide/boxes/index.html.md`.
+- `npm run check-links` checks every link and asset in `site/dist`, in
+  its Markdown too, and fails on one that leads nowhere or on a page
+  llms.txt does not list.
 - `npm run preview` serves the build, which search needs.
 
 GitHub builds the site and checks its links on each pull request.
 `test/site.test.ts`, part of `npm test`, checks without a build that every
-guide, setup and reference page is on the site and in its sidebar, and
-that every link on it leads to a page or a file.
+guide, setup and reference page is on the site, in its sidebar and in
+llms.txt, that every link on it and in its Markdown leads to a page or a
+file, and that the home page's setup prompt names only commands the CLI
+has.
 
 ### Publishing the site
 
