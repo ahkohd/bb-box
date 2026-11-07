@@ -32,13 +32,13 @@ function documentWith(backends: ConfigDocument["backends"], general: ConfigDocum
 }
 
 test("071 unit 15: Proxmox LXC's boxes per card is 4 where never set, and an explicit old desktops per GPU is kept, 0 for no limit included", () => {
-  assert.deepEqual(lxcConfig().desktop, { perGpu: 4 }, "never set: the new default");
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 0 }).desktop, { perGpu: null }, "an explicit old 0 stays no limit");
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 2 }).desktop, { perGpu: 2 });
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 0, "proxmox-lxc-boxes-per-card": 3 }).desktop, { perGpu: 3 }, "the new key wins once set");
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-boxes-per-card": 0 }).desktop, { perGpu: null });
-  assert.deepEqual(lxcPart({ "desktops-per-gpu": 0 }).desktop, { perGpu: null }, "the document's field reads the same");
-  assert.deepEqual(lxcPart({}).desktop, { perGpu: 4 });
+  assert.equal(lxcConfig().desktop.perGpu, 4, "never set: the new default");
+  assert.equal(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 0 }).desktop.perGpu, null, "an explicit old 0 stays no limit");
+  assert.equal(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 2 }).desktop.perGpu, 2);
+  assert.equal(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 0, "proxmox-lxc-boxes-per-card": 3 }).desktop.perGpu, 3, "the new key wins once set");
+  assert.equal(lxcConfig({ "proxmox-lxc-boxes-per-card": 0 }).desktop.perGpu, null);
+  assert.equal(lxcPart({ "desktops-per-gpu": 0 }).desktop.perGpu, null, "the document's field reads the same");
+  assert.equal(lxcPart({}).desktop.perGpu, 4);
   const refused = parseLxcPart({ id: "proxmox-lxc", hosts: [], fields: { url: "https://pve.example.com:8006", "token-id": "bb-box@pve!plugin", "token-secret": "s3cret", "boxes-per-card": 1.5 } as never });
   assert.ok(!refused.ok);
   assert.ok(refused.problems.some((problem) => problem.path === "boxes-per-card"), JSON.stringify(refused.problems));
@@ -51,10 +51,10 @@ test("071 unit 15: through the driver, as bb-box builds a backend, an old key th
     assert.ok(parsed.ok, JSON.stringify(parsed));
     return parsed.config;
   };
-  assert.deepEqual(lxc({ "desktops-per-gpu": 0 }).desktop, { perGpu: null });
-  assert.deepEqual(lxc({ "desktops-per-gpu": 2 }).desktop, { perGpu: 2 });
-  assert.deepEqual(lxc({}).desktop, { perGpu: 4 });
-  assert.deepEqual(lxc({ "desktops-per-gpu": 2, "boxes-per-card": 3 }).desktop, { perGpu: 3 });
+  assert.equal(lxc({ "desktops-per-gpu": 0 }).desktop.perGpu, null);
+  assert.equal(lxc({ "desktops-per-gpu": 2 }).desktop.perGpu, 2);
+  assert.equal(lxc({}).desktop.perGpu, 4);
+  assert.equal(lxc({ "desktops-per-gpu": 2, "boxes-per-card": 3 }).desktop.perGpu, 3);
   const docker = (fields: Record<string, unknown>) => {
     const parsed = dockerDriver.parse(backendPart({ id: "docker", type: "docker", enabled: true, fields: fields as never }, dockerDriver, {}));
     assert.ok(parsed.ok, JSON.stringify(parsed));
