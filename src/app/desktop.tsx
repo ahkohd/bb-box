@@ -54,6 +54,7 @@ import type { BoxOpens } from "./box-opens.tsx";
 import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
 import { BoxName, useBoxesNav, useListOpens, type BoxesNav, type PageLink } from "./box-nav.tsx";
 import { BoxPage, Loading, NotHere, THREADS_RECHECK_MS, useBoxPage } from "./box-page.tsx";
+import { BoxListSkeleton, BoxRowsSkeleton, LoadFailed, NewBoxButtonSpace, SnapshotsSkeleton, WhileLoading } from "./loading-states.tsx";
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { silentWhy } from "./box-words.ts";
@@ -2160,7 +2161,7 @@ function ScreenChooser({ threadId, action }: { threadId: string; action: ScreenA
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const openScreen = useOpenScreen(threadId);
-  const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
+  const { value: state, error, refresh } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
   const runsOn = state?.runsOn && hasViewer(state.runsOn.box) ? state.runsOn.box : null;
   const offered = screenNeighbours(state).filter((box) => action === DESKTOP_ACTION || box.device);
@@ -2173,7 +2174,12 @@ function ScreenChooser({ threadId, action }: { threadId: string; action: ScreenA
   const noun = action === DEVICE_ACTION ? "device" : "desktop";
   return (
     <div className="p-4">
-      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+      {error ? <LoadFailed what="The boxes" error={error} onRetry={refresh} /> : null}
+      {!state && !error ? (
+        <WhileLoading words="Reading the boxes…">
+          <BoxRowsSkeleton rows={2} className="py-1" />
+        </WhileLoading>
+      ) : null}
       {state && !offered.length ? (
         <EmptyPanel title={`No ${noun} box`}>
           <p className="mt-1">This thread has no {noun} box.</p>
@@ -2225,7 +2231,7 @@ export function BoxesPage({ subPath }: { subPath: string }) {
 
 function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const nav = useBoxesNav();
-  const { value: page, error } = useBoxPage(route.boxId);
+  const { value: page, error, refresh } = useBoxPage(route.boxId);
   const now = useNow(false);
   const name = page?.box?.name ?? null;
   const back = nav.back(route, name);
@@ -2234,7 +2240,7 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const pageLink: PageLink = { href: nav.href(toPage), go: () => (backToPage && "go" in back ? back.go() : nav.go(toPage)) };
   const threadId = route.threadId ?? page?.threadId ?? null;
   if (page && !page.box) return <NotHere page={page} back={nav.back(toPage, null)} now={now} />;
-  if (!threadId) return <Loading back={back} error={error} />;
+  if (!threadId) return <Loading back={back} error={error} onRetry={refresh} />;
   const switchTo = (view: BoxViewName) => nav.go(otherView(route, view), { replace: true });
   const box = page?.box ?? null;
   const otherViews = (shown: BoxViewName) => (box ? <OtherViews box={box} shown={shown} onSwitch={switchTo} /> : null);
@@ -2368,7 +2374,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const pluginId = experimental_usePluginId();
   const { value: all, error, refresh } = useLive<BoxEntry[]>(LIST_KEY, () => rpc.call("allBoxes").then((answer) => withBusyUntil(answer, Date.now())), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
-  const { value: machinesState, refresh: refreshMachines } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
+  const { value: machinesState, error: machinesError, refresh: refreshMachines } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const { value: snapshotsView, error: snapshotsError, refresh: refreshSnapshots } = useLive<SnapshotsTabView>("snapshots.tab", () => rpc.call("snapshots.tab", null), () => true);
   const kinds = machinesState?.kinds ?? [];
   const mineNow = new Map((all ?? []).filter((entry) => entry.owner === "yours").map((entry) => [entry.box.id, entry]));
@@ -2457,6 +2463,8 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const narrowed = !!search.trim() || filtering(kept);
   const listed = tab === "machines" ? machines.length : threads.length;
   const titlesKnown = threadIds.every((threadId) => titleOf(threadId) !== undefined);
+  const listProblem = error ?? machinesError;
+  const waitingForRows = !loaded && !(tab === "machines" ? machineRows.length : threadRows.length);
   const settled = loaded && (!search.trim() || titlesKnown);
   useReturnToPlace(scroller, tab, settled, all, machinesState);
   const ways = rowWays(nav, listOpens, (boxId) => leaveRow(scroller.current, tab, boxId));
@@ -2491,13 +2499,21 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
               with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
           <div className="flex shrink-0 items-center gap-1.5">
             <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
-            {kinds.length ? <NewBox kinds={kinds} make={add} onDemand={onDemand} access={machinesState?.access ?? null} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} cards={(kind) => rpc.call("kind.cards", { kind })} /> : null}
+            {kinds.length ? <NewBox kinds={kinds} make={add} onDemand={onDemand} access={machinesState?.access ?? null} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} cards={(kind) => rpc.call("kind.cards", { kind })} /> : !machinesState && !machinesError ? <NewBoxButtonSpace /> : null}
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
           <SetupProgress empty={false} />
           {tab === "snapshots" ? problemLine : null}
-          {tab === "snapshots" && !snapshotsView ? snapshotsError ? <EmptyPanel role="alert">{snapshotsError}</EmptyPanel> : <EmptyPanel role="status">Reading the snapshots…</EmptyPanel> : null}
+          {tab === "snapshots" && !snapshotsView ? (
+            snapshotsError ? (
+              <LoadFailed what="The snapshots" error={snapshotsError} onRetry={refreshSnapshots} />
+            ) : (
+              <WhileLoading words="Reading the snapshots…">
+                <SnapshotsSkeleton />
+              </WhileLoading>
+            )
+          ) : null}
           {tab === "snapshots" && snapshotsView ? (
             <SnapshotsTabPanel
               view={snapshotsView}
@@ -2511,10 +2527,15 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             />
           ) : null}
           {listed && tab !== "snapshots" ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} counts={counts} split={split} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
-          {error && tab !== "snapshots" ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+          {listProblem && tab !== "snapshots" ? <LoadFailed what="The boxes" error={listProblem} onRetry={refreshBoth} /> : null}
           {tab === "snapshots" ? null : problemLine}
           {tab === "snapshots" ? null : (
           <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto" onScroll={(event) => noteListScroll({ tab, top: event.currentTarget.scrollTop })}>
+            {waitingForRows && !listProblem ? (
+              <WhileLoading words="Reading the boxes…">
+                <BoxListSkeleton threads={tab === "threads"} />
+              </WhileLoading>
+            ) : null}
             {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
             {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box.</EmptyPanel> : null}
             {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}

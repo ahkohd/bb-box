@@ -106,6 +106,41 @@ export function Refused({ words }: { words: string | null }) {
   ) : null;
 }
 
+function TakeFacts({ lines }: { lines: readonly { readonly label: string; readonly value: ReactNode }[] }) {
+  return (
+    <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+      {lines.map((line) => (
+        <TakeFact key={line.label} label={line.label} value={line.value} />
+      ))}
+    </dl>
+  );
+}
+
+function TakeFact({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <>
+      <dt className="font-normal text-muted-foreground">
+        {label}
+        <span className="sr-only">: </span>
+      </dt>
+      <dd className="min-w-0 font-normal text-foreground">{value}</dd>
+    </>
+  );
+}
+
+function withPaths(text: string): ReactNode {
+  const parts = text.split(/((?:~)?\/[^\s,]+)/);
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => (part.startsWith("/") || part.startsWith("~/") ? <code key={index} className="font-mono">{part}</code> : part));
+}
+
+function whileItRuns(whileRunning: "live" | "pauses" | "suspends" | "stopped-only", name: string): string {
+  if (whileRunning === "live") return `${name} keeps running`;
+  if (whileRunning === "pauses") return `${name} pauses for a moment`;
+  if (whileRunning === "suspends") return `${name} suspends for a few seconds`;
+  return `${name} must be stopped`;
+}
+
 export function WarnPanel({ children }: { children: ReactNode }) {
   return <div className="rounded-md border border-surface-warning-border bg-surface-warning px-3 py-2 text-foreground">{children}</div>;
 }
@@ -436,9 +471,14 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
       : memory
         ? `It holds the disk and the memory: a restore brings back its running apps, and the credentials in them.${check?.memory ? ` Up to ${gibWords(check.memory.addsBytes)} more on ${where}.` : ""}`
         : "It holds the disk: files, installed apps and settings.";
-  const timing = check ? ` About ${aboutWords(check.aboutMs)}; ${offer.whileRunning === "live" ? `${box.name} keeps running` : offer.whileRunning === "pauses" ? `${box.name} pauses for a moment` : offer.whileRunning === "suspends" ? `${box.name} suspends for a few seconds` : `${box.name} must be stopped`}.` : "";
-  const picture = view.screen ? (view.pictures ? " A picture of its screen around now is kept with it." : " Pictures are off in Settings, Snapshots.") : "";
-  const price = offer.price ? ` It costs ${snapshotPriceWords(offer.price)} until it is deleted.` : " No charge: it is on the host's own storage.";
+  const facts = [
+    { label: "Holds", value: holdsLine.replace(/^It holds /, "") },
+    ...(offer.excludes ? [{ label: "Leaves out", value: withPaths(`${offer.excludes}.`) }] : []),
+    ...(check ? [{ label: "Takes", value: `About ${aboutWords(check.aboutMs)}; ${whileItRuns(offer.whileRunning, box.name)}.` }] : []),
+    { label: "Snapshots", value: `${view.counted + 1} of ${view.perBox} for ${box.name} after this.` },
+    ...(view.screen ? [{ label: "Picture", value: view.pictures ? "A picture of its screen around now is kept with it." : "Pictures are off in Settings, Snapshots." }] : []),
+    { label: "Cost", value: offer.price ? `It costs ${snapshotPriceWords(offer.price)} until it is deleted.` : "No charge: it is on the host's own storage." },
+  ];
   return (
     <Shell
       title={`Take a snapshot of ${box.name}`}
@@ -467,8 +507,8 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
           <p className="pl-5.5 text-xs leading-snug text-subtle-foreground">Slower, and it holds the running apps with the credentials in them. Without it, a restore starts the box afresh.</p>
         </div>
       ) : null}
-      <AlertDialogDescription id={describedBy} className="text-xs leading-snug text-muted-foreground">
-        {current ? (current.refusal ? null : `${holdsLine}${offer.excludes ? ` It leaves out ${offer.excludes}.` : ""}${timing} ${view.counted + 1} of ${view.perBox} for ${box.name} after this.${picture}${price}`) : "Reading what the backend plans…"}
+      <AlertDialogDescription id={describedBy} asChild className="text-xs leading-snug text-muted-foreground">
+        <div>{current ? (current.refusal ? null : <TakeFacts lines={facts} />) : "Reading what the backend plans…"}</div>
       </AlertDialogDescription>
       <Refused words={refused ?? current?.refusal ?? null} />
     </Shell>

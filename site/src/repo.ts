@@ -1,8 +1,15 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, posix, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+function checkoutAbove(directory: string): string {
+  if (existsSync(join(directory, "site", "astro.config.ts"))) return join(directory, sep);
+  const parent = dirname(directory);
+  if (parent === directory) throw new Error("The site reads bb-box's Markdown from the checkout it is built in, and found no checkout above its code");
+  return checkoutAbove(parent);
+}
+
+export const repoRoot = checkoutAbove(fileURLToPath(new URL(".", import.meta.url)));
 export const repository = "https://github.com/moonstead/bb-box";
 export const repositoryRef = process.env.SITE_REPOSITORY_REF || "main";
 
@@ -13,6 +20,7 @@ export interface Page {
   titleAnchor: string;
   description?: string;
   body: string;
+  markdown: string;
 }
 
 interface Source {
@@ -76,7 +84,7 @@ export function blankedCode(text: string): string {
   return text.replace(/^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, (block) => block.replace(/[^\n]/g, " "));
 }
 
-const inlineText = (markdown: string) =>
+export const inlineText = (markdown: string) =>
   markdown
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/`|\*\*/g, "")
@@ -155,6 +163,7 @@ function pageFrom(source: Source): Page {
     titleAnchor,
     description: frontmatter.description,
     body: withLightTwins(pageBody.trim(), source.file) + "\n",
+    markdown: pageBody.trim() + "\n",
   };
 }
 

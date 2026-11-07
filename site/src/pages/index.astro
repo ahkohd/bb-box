@@ -5,19 +5,19 @@ import darkPoster from "../../../docs/media/demo-poster.jpg";
 import darkVideo from "../../../docs/media/demo.mp4?url";
 import lightPoster from "../../../docs/media/demo-light-poster.jpg";
 import lightVideo from "../../../docs/media/demo-light.mp4?url";
-import { pageUrl } from "../repo.ts";
+import InstallBlock from "../components/InstallBlock.astro";
+import { absoluteAddress, markdownPath } from "../llms.ts";
 import { listUnder } from "../rendered.ts";
+import { pageUrl, readPages } from "../repo.ts";
+import { installCommand, quickStartOnGitHub, setupPrompt } from "../setup-prompt.ts";
+import { startingPoints, trustNote } from "../starting-points.ts";
 
 const base = import.meta.env.BASE_URL;
 const introduction = await getEntry("docs", "start");
 const reasons = listUnder(introduction?.rendered?.html ?? "", "why-bb-box");
 const mark = `<svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>`;
-const ways = [
-  { title: "Quick start", words: "Install the plugin, set up Docker and make a box.", id: "start/quick-start" },
-  { title: "User guide", words: "The Box panel, desktops and devices, the terminal, images, files and settings.", id: "guide" },
-  { title: "Backends", words: "Docker, Proxmox, microsandbox, Tart, SSH host pools and cloud machines.", id: "setup" },
-  { title: "Reference", words: "Every agent tool, bb box command, setting, kind and check.", id: "reference" },
-];
+const command = installCommand(readPages());
+const quickStart = Astro.site ? absoluteAddress(markdownPath(base, "start/quick-start"), { base, site: Astro.site.href }) : quickStartOnGitHub(command);
 ---
 
 <StarlightPage
@@ -28,13 +28,11 @@ const ways = [
     hero: {
       title: `${mark}bb-box`,
       tagline: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
-      actions: [
-        { text: "Make your first box", link: pageUrl(base, "start/quick-start") },
-        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "secondary" },
-      ],
     },
   }}
 >
+  <InstallBlock prompt={setupPrompt(command, quickStart)} guide={pageUrl(base, "start/quick-start")} />
+
   <figure class="demo not-content">
     <video autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo."></video>
     <script is:inline>
@@ -71,13 +69,13 @@ const ways = [
         </li>
       ))}
     </ul>
-    <p class="trust">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
+    <p class="trust">{trustNote}</p>
   </section>
 
   <section class="column not-content" aria-labelledby="find-your-way">
     <h2 id="find-your-way">Find your way</h2>
     <ul class="list">
-      {ways.map((way) => (
+      {startingPoints.map((way) => (
         <li>
           <span class="dash" aria-hidden="true">-</span>
           <span>
@@ -149,21 +147,6 @@ const ways = [
     line-height: 1.5;
     color: var(--muted-foreground);
     text-wrap: pretty;
-  }
-
-  :global([data-has-hero] .hero .actions) {
-    justify-content: flex-start;
-    gap: 0.5rem;
-    margin-top: 1.3125rem;
-  }
-
-  :global([data-has-hero] .hero .sl-link-button) {
-    font-weight: 500 !important;
-    height: auto;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    line-height: 1rem;
   }
 
   .demo {

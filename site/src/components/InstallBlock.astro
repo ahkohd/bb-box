@@ -1,0 +1,203 @@
+---
+interface Props {
+  prompt: string;
+  guide: string;
+}
+
+const { prompt, guide } = Astro.props;
+---
+
+<section class="install not-content" aria-label="Install bb-box">
+  <div class="actions">
+    <button type="button" class="pill primary" data-copy="setup-prompt" hidden>
+      <span class="label">Copy setup prompt</span>
+      <span class="label copied" aria-hidden="true">Copied</span>
+    </button>
+    <a class="pill secondary" href={guide}>Read setup guide</a>
+    <details class="prompt">
+      <summary>
+        View prompt
+        <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+      </summary>
+      <pre id="setup-prompt">{prompt}</pre>
+    </details>
+  </div>
+  <span class="sr-only" role="status"></span>
+</section>
+
+<script>
+  const copiedForMs = 1500;
+
+  function copyBySelection(text: string): boolean {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  }
+
+  async function copyText(text: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return copyBySelection(text);
+    }
+  }
+
+  function showCopied(button: HTMLButtonElement, status: Element | null, timers: Map<HTMLButtonElement, number>): void {
+    button.dataset.copied = "";
+    if (status) status.textContent = "Copied";
+    clearTimeout(timers.get(button));
+    timers.set(
+      button,
+      window.setTimeout(() => {
+        delete button.dataset.copied;
+        if (status) status.textContent = "";
+      }, copiedForMs),
+    );
+  }
+
+  for (const block of document.querySelectorAll(".install")) {
+    const status = block.querySelector("[role=status]");
+    const timers = new Map<HTMLButtonElement, number>();
+    for (const button of block.querySelectorAll<HTMLButtonElement>("button[data-copy]")) {
+      const source = document.getElementById(button.dataset.copy!);
+      if (!source) continue;
+      button.hidden = false;
+      button.addEventListener("click", async () => {
+        if (await copyText(source.textContent ?? "")) showCopied(button, status, timers);
+      });
+    }
+  }
+</script>
+
+<style>
+  .install {
+    max-width: 42rem;
+    margin: 1.3125rem auto 0;
+  }
+
+  .pill {
+    display: inline-grid;
+    flex-shrink: 0;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .pill[hidden] {
+    display: none;
+  }
+
+  .label {
+    grid-area: 1 / 1;
+    font-weight: 500 !important;
+  }
+
+  .copied,
+  [data-copied] .label:not(.copied) {
+    visibility: hidden;
+  }
+
+  [data-copied] .copied {
+    visibility: visible;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .pill {
+    justify-items: center;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500 !important;
+    text-decoration: none;
+  }
+
+  .primary {
+    background-color: var(--foreground);
+    color: var(--sl-color-black);
+  }
+
+  .secondary {
+    background-color: var(--muted);
+    color: var(--foreground);
+  }
+
+  .prompt summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500 !important;
+    color: var(--muted-foreground);
+  }
+
+  .prompt summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .prompt summary:hover,
+  .prompt[open] summary {
+    color: var(--foreground);
+  }
+
+  .chevron {
+    transition: transform 150ms ease;
+  }
+
+  .prompt[open] .chevron {
+    transform: rotate(90deg);
+  }
+
+  .prompt pre {
+    margin: 0.5rem 0 0;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background-color: var(--muted);
+    font-family: var(--__sl-font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.5385;
+    color: var(--sl-color-gray-1);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  @supports selector(::details-content) {
+    .prompt {
+      display: contents;
+    }
+
+    .prompt[open]::details-content {
+      flex-basis: 100%;
+    }
+
+    .prompt pre {
+      margin-top: 0.25rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chevron {
+      transition: none;
+    }
+  }
+</style>

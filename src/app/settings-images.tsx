@@ -10,6 +10,7 @@ import type { Contract, ImageFailure, ImagesStatus } from "../plugin/contract.ts
 import type { RunProgress } from "../plugin/images.ts";
 import type { ImageOptionView } from "../plugin/views.ts";
 import { Badge, message, relativeTime, StatusDot, useLive, type Tone } from "./common.tsx";
+import { ImageRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
 import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./rebuild-now.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
@@ -291,12 +292,18 @@ function StandardImages({ nightly }: { nightly: ReactNode }) {
   const due = dueIn(rows);
   const needing = rows.filter(needsAttention);
   const upToDate = rows.filter((row) => !needsAttention(row));
-  const summary = list === null ? (problem ?? "Reading the images…") : !rows.length ? "No backend that is on has images BB Box rebuilds." : [`${due} of ${plural(rows.length, "image")} due.`, lastRunWords(progress, now)].filter(Boolean).join(" ");
+  const summary = list === null ? (problem ? undefined : "Reading the images…") : !rows.length ? "No backend that is on has images BB Box rebuilds." : [`${due} of ${plural(rows.length, "image")} due.`, lastRunWords(progress, now)].filter(Boolean).join(" ");
   return (
     <Group title="Standard images" description={summary}>
       <Card>
         <Rows>
           {nightly}
+          {list === null && problem ? <LoadFailed what="The standard images" error={problem} onRetry={askAgain} className="rounded-none border-0 border-solid" /> : null}
+          {list === null && !problem ? (
+            <WhileLoading words="Reading the images…">
+              <ImageRowsSkeleton />
+            </WhileLoading>
+          ) : null}
           {needing.map((row) => (
             <StandardImageRow key={row.name} row={row} now={now} running={running} onStarted={askAgain} />
           ))}

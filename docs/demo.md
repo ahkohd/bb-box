@@ -74,7 +74,7 @@ This plays the agent's wait three times faster, holds the last frame for 1.5 sec
 
 - `demo.mp4` from the dark take and `demo-light.mp4` from the light one: H.264 at CRF 12, 1920 by 1200, 30 fps, about 4.5 MB each, `-tune animation`, yuv420p, faststart, no sound. The landing page plays one, muted and looping: the one that matches the page's theme.
 - `demo.webp`, from the dark take: animated WebP at 800 by 500 and 8 fps, which keeps it under 5 MB, for the README, as GitHub plays images in a README but not videos. Its quality steps down from 70 until it is under 5 MB, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
-- `demo-poster.jpg` and `demo-light-poster.jpg`: the desktop with the Monitor open on it, each video's poster while it loads.
+- `demo-poster.jpg` and `demo-light-poster.jpg`: each video's first frame, its poster while it loads, so the page does not jump when the video starts.
 
 ### Check every frame
 
