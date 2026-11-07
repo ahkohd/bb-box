@@ -145,8 +145,12 @@ function ctrlAltIsAltGr(os: GuestOs): boolean {
   return os === "windows";
 }
 
+function shownOf(held: readonly HeldModifier[]): Modifier[] {
+  return MODIFIER_ORDER.filter((modifier) => held.some((each) => each.modifier === modifier));
+}
+
 export function pressOf(key: string | null, held: readonly HeldModifier[], os: GuestOs): KeyPress {
-  const shown = MODIFIER_ORDER.filter((modifier) => held.some((each) => each.modifier === modifier));
+  const shown = shownOf(held);
   if (key !== null && isNamedKey(key)) return { type: "keys", chord: { key, modifiers: shown } };
   const altGr = ctrlAltIsAltGr(os) && shown.includes("ctrl") && shown.includes("alt");
   const makesCharacters = held.some((each) => each.kind === "characters") || altGr;
@@ -245,6 +249,59 @@ export function keysymTypes(keysym: number): boolean {
   return characters || keypadCharacters || (keysym >= UNICODE_KEYSYM && keysym <= UNICODE_KEYSYM + 0x10ffff);
 }
 
+export type Composition =
+  | { readonly kind: "code-point"; readonly digits: number }
+  | { readonly kind: "compose"; readonly keysLeft: number }
+  | { readonly kind: "dead-key" }
+  | { readonly kind: "input-method" };
+
+const XK_MULTI_KEY = 0xff20;
+const XK_DEAD_KEYS = [0xfe50, 0xfe93] as const;
+const XK_INPUT_METHOD_KEYS = [0xff21, 0xff3f] as const;
+const COMPOSE_KEYS_MOST = 3;
+const COMPOSITION_ENDS = ["Enter", "Escape", "Space"];
+const CODE_POINT_DIGIT = /^[0-9A-F]$/;
+const INPUT_METHOD_KEY_NAMES = /^(kanji|henkan(_mode)?|muhenkan|hiragana|katakana|hiragana_katakana|zenkaku|hankaku|zenkaku_hankaku|eisu_toggle|hangul(_\w+)?|kana_lock|kana_shift|eisu_shift|romaji|touroku|massyo)$/i;
+
+const within = (keysym: number, [first, last]: readonly [number, number]) => keysym >= first && keysym <= last;
+
+function compositionOfKeysym(keysym: number): Composition | null {
+  if (keysym === XK_MULTI_KEY) return { kind: "compose", keysLeft: COMPOSE_KEYS_MOST };
+  if (within(keysym, XK_DEAD_KEYS)) return { kind: "dead-key" };
+  return within(keysym, XK_INPUT_METHOD_KEYS) ? { kind: "input-method" } : null;
+}
+
+function compositionOfKeyName(name: string): Composition | null {
+  const lower = name.toLowerCase();
+  if (lower === "multi_key" || lower === "compose") return { kind: "compose", keysLeft: COMPOSE_KEYS_MOST };
+  if (lower.startsWith("dead_")) return { kind: "dead-key" };
+  return INPUT_METHOD_KEY_NAMES.test(lower) ? { kind: "input-method" } : null;
+}
+
+function compositionOfChord(key: string | null, shown: readonly Modifier[], os: GuestOs): Composition | null {
+  if (os !== "linux" || !shown.includes("ctrl") || !shown.includes("shift")) return null;
+  if (key === "U") return { kind: "code-point", digits: 0 };
+  return key === "E" ? { kind: "input-method" } : null;
+}
+
+export function afterComposedKey(composition: Composition, key: string | null): Composition | null {
+  if (key !== null && COMPOSITION_ENDS.includes(key)) return null;
+  switch (composition.kind) {
+    case "code-point":
+      return key !== null && CODE_POINT_DIGIT.test(key) ? { kind: "code-point", digits: composition.digits + 1 } : composition;
+    case "compose":
+      return composition.keysLeft > 1 ? { kind: "compose", keysLeft: composition.keysLeft - 1 } : null;
+    case "dead-key":
+      return null;
+    case "input-method":
+      return composition;
+  }
+}
+
+function codePointCommitted(composition: Composition, held: ReadonlyMap<number, HeldModifier>): boolean {
+  return composition.kind === "code-point" && composition.digits > 0 && ![...held.values()].some((each) => each.modifier === "ctrl" || each.modifier === "shift");
+}
+
 interface Recording {
   readonly offsetMs: number;
   readonly os: GuestOs;
@@ -252,6 +309,7 @@ interface Recording {
   readonly held: Map<number, HeldModifier>;
   lastPointer: { at: number; x: number; y: number; buttons: number } | null;
   typing: { readonly secret: boolean; readonly window: InputArea | null } | null;
+  composing: Composition | null;
 }
 
 export class RecordingInputs {
@@ -263,7 +321,7 @@ export class RecordingInputs {
   }
 
   begin(boxId: string, offsetMs: number, os: GuestOs): void {
-    this.#recordings.set(boxId, { offsetMs, os, events: [], held: new Map(), lastPointer: null, typing: null });
+    this.#recordings.set(boxId, { offsetMs, os, events: [], held: new Map(), lastPointer: null, typing: null, composing: null });
   }
 
   recording(boxId: string): boolean {
@@ -297,7 +355,10 @@ export class RecordingInputs {
         return;
       case "keys": {
         recording.typing = null;
-        const press = agentPress(input.key, input.modifiers, recording.os);
+        const composing = recording.composing;
+        const started = composing ? null : (compositionOfKeyName(input.key) ?? compositionOfChord(keyName(input.key), normalChord(input.key, input.modifiers).modifiers, recording.os));
+        recording.composing = composing ? afterComposedKey(composing, keyName(input.key)) : started;
+        const press = composing || started ? TYPING : agentPress(input.key, input.modifiers, recording.os);
         if (press.type === "typing") this.#push(recording, { at, by: "agent", type: "typing", characters: 1, space: "screen", area: null, secret: true });
         else this.#push(recording, { at, by: "agent", type: "keys", chord: press.chord });
         return;
@@ -331,18 +392,23 @@ export class RecordingInputs {
     if (modifier) {
       if (input.down) recording.held.set(input.keysym, modifier);
       else recording.held.delete(input.keysym);
+      if (recording.composing && codePointCommitted(recording.composing, recording.held)) recording.composing = null;
       return;
     }
     if (!input.down) return;
     const key = keysymKey(input.keysym);
-    if (key === null && !keysymTypes(input.keysym)) return;
-    const press = pressOf(key, [...recording.held.values()], recording.os);
+    const composing = recording.composing;
+    const started = composing ? null : (compositionOfKeysym(input.keysym) ?? compositionOfChord(key, shownOf([...recording.held.values()]), recording.os));
+    recording.composing = composing ? afterComposedKey(composing, key) : started;
+    if (!composing && !started && key === null && !keysymTypes(input.keysym)) return;
+    const press = composing || started ? TYPING : pressOf(key, [...recording.held.values()], recording.os);
     if (press.type === "typing") this.#push(recording, { at, by: "person", type: "typing", characters: 1, space: "picture", area: null, secret: true });
     else this.#push(recording, { at, by: "person", type: "keys", chord: press.chord });
   }
 
   #letGo(recording: Recording, at: number): void {
     recording.held.clear();
+    recording.composing = null;
     const last = recording.lastPointer;
     if (!last?.buttons) return;
     recording.lastPointer = { ...last, at, buttons: 0 };

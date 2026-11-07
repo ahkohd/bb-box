@@ -139,8 +139,15 @@ them:
   The log reads each relay's keys with its desktop's naming.
 - An agent's chord with a modifier bb-box does not know, such as AltGr, is
   typing.
-- Dead keys, compose and the lock keys are not logged. A character they
-  make comes as its own key, which is typing.
+- A composition's keys are typing, whatever is held, and never a pill:
+  GTK's code point entry on Linux, Ctrl+Shift+U and the hex digits after
+  it, until Space, Enter or Escape, or until Ctrl and Shift are let go
+  after a digit; IBus's Ctrl+Shift+E emoji entry, until Enter or Escape;
+  the Compose key and the next 3 keys; a dead key and the next one; and an
+  input method's keys, such as Kanji or Hangul, until Enter or Escape. The
+  key that starts one counts too. Letting go of the held keys ends it, as
+  for modifiers. When in doubt, a key is a count, not a chord.
+- The lock keys are not logged.
 
 Typing shows a pill, and its frame or the text it makes can draw a zoom,
 only when the agent types into an element it named by reference, and that
@@ -211,8 +218,14 @@ for each action. While recording, bb-box hides it, so it draws the same
 pointer on every platform. Cua 0.30 owns the cursor per lifecycle session:
 bb-box starts a session of its own, `bb-box-` and 8 hex digits, sets
 `set_agent_cursor_enabled` false in it, and names it on each call whose
-tool takes a session (38 of Cua 0.30.4's 58 tools). At the stop it sets the
-cursor shown again in the same session and keeps using it, as Cua's element
+tool takes a session (38 of Cua 0.30.4's 58 tools). The hiding lasts as
+long as the capture: at the stop, or at the 5-minute limit if no stop comes
+first, bb-box sets the cursor shown again, and a later connection to the
+driver keeps it shown. A failed or cancelled hide leaves the session unused,
+so the driver's own cursor shows. Whether the cursor stayed hidden for the
+whole capture is kept apart from whether it is hidden now, so a stop after
+the limit still draws bb-box's pointer for that capture. bb-box keeps
+using the session after the capture, as Cua's element
 references belong to the session that read them: ending it made the next
 click on a ref fail. A new connection to the driver starts the session
 again with the cursor as it was, and so does a call the driver refuses as

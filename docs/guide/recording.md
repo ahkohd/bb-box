@@ -16,13 +16,14 @@ bb-box draws its own pointer over the clip, larger than the screen's: an arrow w
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
 - Each shortcut or special key shows in a small pill at the bottom, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
+- Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
 - When the agent types into a field it named, one "Typing" pill shows while it goes on. The pill never shows what was typed.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
 - Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
 
 The pill moves to the top when the pointer is near the bottom of the screen, so it does not cover what was clicked.
 
-On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
+On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
 ![The drawn pointer, dark over the page, in a note being typed in Mousepad, zoomed in, with the Typing pill at the bottom and the step captioned at the top](../media/recording-zoom.png)
 

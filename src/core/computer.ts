@@ -346,6 +346,11 @@ interface DriverSession {
   cursorHidden: boolean;
 }
 
+interface CursorCapture {
+  hiddenThroughout: boolean;
+  readonly ends: ReturnType<typeof setTimeout>;
+}
+
 interface BoxState {
   live: Live | null;
   opening: Promise<Live> | null;
@@ -378,6 +383,7 @@ interface BoxState {
   /** On Linux, windows where the last action could have selected text: a key chord or a double-click. */
   readonly selecting: Set<number>;
   driverSession: DriverSession | null;
+  cursorCapture: CursorCapture | null;
 }
 
 interface Use {
@@ -1537,6 +1543,7 @@ export class Computer {
         titled: new Map(),
         selecting: new Set(),
         driverSession: null,
+        cursorCapture: null,
       };
       this.#boxes.set(boxId, state);
     }
@@ -1560,28 +1567,56 @@ export class Computer {
     });
   }
 
-  hideAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+  hideAgentCursor(box: BoxRecord, captureMs: number, signal?: AbortSignal): Promise<boolean> {
     return this.#queued(box, signal, async (use) => {
+      this.#endCursorCapture(use.state);
       const live = await this.#live(use);
       live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, this.#driverOptions(signal)).catch(() => null));
       if (!live.sessionTools.has("set_agent_cursor_enabled")) return false;
       const joined = use.state.driverSession;
       use.state.driverSession = { name: joined?.name ?? `${DRIVER_SESSION_PREFIX}${randomBytes(4).toString("hex")}`, cursorHidden: true };
-      if (await this.#joinSession(use.state, live, signal)) return true;
-      use.state.driverSession = null;
-      return false;
+      const ends = setTimeout(() => void this.#showCursor(box).catch((error: unknown) => this.#deps.logError("show the agent cursor at the capture's end", error)), Math.max(0, captureMs));
+      ends.unref?.();
+      use.state.cursorCapture = { hiddenThroughout: true, ends };
+      let hidden = false;
+      try {
+        hidden = await this.#joinSession(use.state, live, signal);
+      } finally {
+        if (!hidden) {
+          this.#endCursorCapture(use.state);
+          use.state.driverSession = null;
+        }
+      }
+      return hidden;
     });
   }
 
-  showAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+  async showAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+    const capture = this.#boxes.get(box.id)?.cursorCapture ?? null;
+    await this.#showCursor(box, signal);
+    const state = this.#boxes.get(box.id);
+    if (state?.cursorCapture === capture) this.#endCursorCapture(state);
+    return capture?.hiddenThroughout ?? false;
+  }
+
+  #showCursor(box: BoxRecord, signal?: AbortSignal): Promise<void> {
     return this.#queued(box, signal, async (use) => {
       const session = use.state.driverSession;
-      if (!session?.cursorHidden) return false;
+      if (!session?.cursorHidden) return;
       session.cursorHidden = false;
       const live = use.state.live;
       if (live && !live.mcp.closed) await this.#joinSession(use.state, live, signal).catch(() => false);
-      return true;
     });
+  }
+
+  #endCursorCapture(state: BoxState): void {
+    if (state.cursorCapture) clearTimeout(state.cursorCapture.ends);
+    state.cursorCapture = null;
+  }
+
+  #loseDriverSession(state: BoxState): void {
+    if (state.driverSession?.cursorHidden && state.cursorCapture) state.cursorCapture.hiddenThroughout = false;
+    state.driverSession = null;
   }
 
   #driverOptions(signal?: AbortSignal): { timeoutMs: number; signal?: AbortSignal } {
@@ -1725,7 +1760,7 @@ export class Computer {
           throw new ComputerError("interrupted", FORGOTTEN, "Call box_status to see the box.");
         }
         state.live = live;
-        if (state.driverSession && !(await this.#joinSession(state, live).catch(() => false))) state.driverSession = null;
+        if (state.driverSession && !(await this.#joinSession(state, live).catch(() => false))) this.#loseDriverSession(state);
         return live;
       } catch (error) {
         if (error instanceof BoxError || error instanceof ComputerError) throw error;
@@ -1778,7 +1813,7 @@ export class Computer {
         throw new ComputerError("driver", `${sentence(message)}${unsure}`, "Call computer_observe to see the window, then try again.");
       }
       if (session && sessioned !== args && namedSessionEnded(result) && attempt === 0) {
-        if (!(await this.#joinSession(use.state, live).catch(() => false))) use.state.driverSession = null;
+        if (!(await this.#joinSession(use.state, live).catch(() => false))) this.#loseDriverSession(use.state);
         continue;
       }
       // The driver can end its session by itself, as after a while idle, and keep the connection: every call then

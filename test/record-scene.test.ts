@@ -645,3 +645,65 @@ test("a change that touches the window just acted in, within half a second, is t
   assert.ok(cameraAt(dragged, 5.9).zoom > 1.5, "the dragged window's own move keeps the view on the drag");
   assert.ok(cameraAt(dragged, 6.3).zoom > 1.5, "through its end");
 });
+
+test("keys inside a composition, as GTK's Ctrl+Shift+U and a code point, the Compose key or a dead key, are counted as typing, never as shortcuts, until it is committed or let go (073)", () => {
+  const [XK_U, XK_4, XK_1, XK_2, XK_S, XK_E, XK_SPACE, XK_MULTI_KEY, XK_DEAD_ACUTE] = [0x75, 0x34, 0x31, 0x32, 0x73, 0x65, 0x20, 0xff20, 0xfe51];
+  const held = personKeys("linux", [
+    [XK_CONTROL_L, true],
+    [XK_SHIFT_L, true],
+    [XK_U, true],
+    [XK_U, false],
+    [XK_4, true],
+    [XK_4, false],
+    [XK_1, true],
+    [XK_1, false],
+    [XK_SHIFT_L, false],
+    [XK_CONTROL_L, false],
+    [XK_CONTROL_L, true],
+    [XK_S, true],
+  ]);
+  assert.deepEqual(pressed(held), ["typing", "typing", "typing", "Ctrl+S"], "Ctrl+Shift+U, 4 and 1 type A; once Ctrl and Shift are let go, a shortcut is one again");
+  const committed = personKeys("linux", [
+    [XK_CONTROL_L, true],
+    [XK_SHIFT_L, true],
+    [XK_U, true],
+    [XK_SHIFT_L, false],
+    [XK_CONTROL_L, false],
+    [XK_4, true],
+    [XK_1, true],
+    [XK_SPACE, true],
+    [XK_CONTROL_L, true],
+    [XK_S, true],
+  ]);
+  assert.deepEqual(pressed(committed), ["typing", "typing", "typing", "typing", "Ctrl+S"], "or once Space commits it");
+  const composed = personKeys("linux", [
+    [XK_MULTI_KEY, true],
+    [XK_CONTROL_L, true],
+    [XK_4, true],
+    [XK_1, true],
+    [XK_2, true],
+    [XK_S, true],
+  ]);
+  assert.deepEqual(pressed(composed), ["typing", "typing", "typing", "typing", "Ctrl+S"], "the Compose key's next keys");
+  const dead = personKeys("linux", [
+    [XK_DEAD_ACUTE, true],
+    [XK_CONTROL_L, true],
+    [XK_E, true],
+    [XK_S, true],
+  ]);
+  assert.deepEqual(pressed(dead), ["typing", "typing", "Ctrl+S"], "a dead key's next key");
+  const reset = new RecordingInputs(() => 5_000);
+  reset.begin("box", 0, "linux");
+  for (const [keysym, down] of [[XK_CONTROL_L, true], [XK_SHIFT_L, true], [XK_U, true]] as const) reset.person("box", { type: "key", keysym, down });
+  reset.person("box", { type: "released" });
+  for (const [keysym, down] of [[XK_CONTROL_L, true], [XK_S, true]] as const) reset.person("box", { type: "key", keysym, down });
+  assert.deepEqual(pressed(reset.end("box")!), ["typing", "Ctrl+S"], "letting go of the held keys ends it too");
+  const agent = new RecordingInputs(() => 5_000);
+  agent.begin("box", 0, "linux");
+  for (const [key, modifiers] of [["u", ["ctrl", "shift"]], ["4", ["ctrl", "shift"]], ["1", ["ctrl", "shift"]], ["Return", []], ["s", ["ctrl"]]] as const) agent.acted("box", { type: "keys", key, modifiers });
+  assert.deepEqual(pressed(agent.end("box")!), ["typing", "typing", "typing", "typing", "Ctrl+S"], "the agent's keys too");
+  const windows = new RecordingInputs(() => 5_000);
+  windows.begin("pc", 0, "windows");
+  windows.acted("pc", { type: "keys", key: "u", modifiers: ["ctrl", "shift"] });
+  assert.deepEqual(pressed(windows.end("pc")!), ["Ctrl+Shift+U"], "Windows has no Ctrl+Shift+U entry");
+});

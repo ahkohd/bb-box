@@ -7706,6 +7706,7 @@ test("a person's keys are read as the desktop's server names Command and Option,
 });
 
 const TOOLS_TAKING_NO_SESSION = ["list_windows", "launch_app", "list_apps", "bring_to_front", "kill_app"];
+const A_LONG_CAPTURE_MS = 60_000;
 
 test("while a desktop records, bb-box hides the driver's own agent cursor in a session of its own, names that session on each call that takes one, and shows the cursor again at the stop, in the same session, so its refs stay good (073)", async (t) => {
   const { harness, app, box, tool, file } = await desktopBox();
@@ -7713,7 +7714,7 @@ test("while a desktop records, bb-box hides the driver's own agent cursor in a s
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
   const add = refOf(tree, '"Add"');
   const before = readDesktop(file).calls.length;
-  assert.equal(await app.computer.hideAgentCursor(box), true);
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
   await tool("computer_act", { box: box.name, action: "click", ref: add });
   await tool("computer_windows", { box: box.name });
   const during = readDesktop(file);
@@ -7730,7 +7731,7 @@ test("while a desktop records, bb-box hides the driver's own agent cursor in a s
   assert.ok(!isError(clicked), `a ref read while it recorded still works: ${text(clicked)}`);
   assert.ok(readDesktop(file).calls.slice(after).every((call) => !TOOLS_TAKING_NO_SESSION.includes(call.tool) === (call.args.session === session)), "later calls stay in its session");
   assert.equal(await app.computer.showAgentCursor(box), false, "nothing hidden twice");
-  assert.equal(await app.computer.hideAgentCursor(box), true);
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
   assert.deepEqual(readDesktop(file).agentCursorShownBySession, { [String(session)]: false }, "the next recording hides it in the same session");
 });
 
@@ -7739,7 +7740,7 @@ test("a recording's hidden agent cursor is hidden again in a new session with th
   t.after(() => harness.lifecycle.dispose());
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
   const add = refOf(tree, '"Add"');
-  assert.equal(await app.computer.hideAgentCursor(box), true);
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
   const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
   editDesktop(file, (desktop) => void (desktop.endedNamedSessions = [session]));
   const clicked = await tool("computer_act", { box: box.name, action: "click", ref: add });
@@ -7756,9 +7757,40 @@ test("a recording's hidden agent cursor is hidden again in a new session with th
   editDesktop(file, (desktop) => void (desktop.sessionlessLikeCuaBefore030 = true));
   editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
   await tool("computer_observe", { box: box.name, window: 100 });
-  assert.equal(await app.computer.hideAgentCursor(box), false, "an older driver cannot hide it");
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), false, "an older driver cannot hide it");
   const plain = readDesktop(file).calls.length;
   await tool("computer_act", { box: box.name, action: "click", ref: add });
   assert.ok(readDesktop(file).calls.slice(plain).every((call) => call.args.session === undefined));
   assert.equal(await app.computer.showAgentCursor(box), false, "so the clip keeps the driver's cursor");
+});
+
+test("a recording's hidden agent cursor comes back by itself as its capture ends at the limit, stays shown in a new session with the driver, and its stop still draws bb-box's pointer for that capture (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.hideAgentCursor(box, 150), true);
+  const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], false);
+  await until("the cursor back as the capture ends", async () => readDesktop(file).agentCursorShownBySession?.[session] === true);
+  const starts = () => readDesktop(file).calls.filter((call) => call.tool === "start_session").length;
+  const before = starts();
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(starts(), before + 1, "a new session with the driver");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "which leaves the cursor shown");
+  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout, so its stop draws bb-box's pointer");
+  assert.equal(await app.computer.showAgentCursor(box), false, "and only once");
+});
+
+test("where the driver's agent cursor came back during a capture, its stop keeps the driver's cursor in the clip (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  editDesktop(file, (desktop) => {
+    desktop.sessionlessLikeCuaBefore030 = true;
+    desktop.endedSession = desktop.sessions;
+  });
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.showAgentCursor(box), false);
 });

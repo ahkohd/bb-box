@@ -999,9 +999,12 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
             readings.push({ before, after: Date.now(), box: read?.result.exitCode === 0 ? Number(read.result.stdout.trim()) : NaN });
           }
           const offset = clockOffset(readings);
+          const captureBegan = Date.now();
           const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           if (result.exitCode === RECORD_START_EXITS.started && offset !== null) app.recordings.begin(found.id, offset, os);
-          if (result.exitCode === RECORD_START_EXITS.started && driverDrawsAgentCursor(os) && found.capabilities.computerUse) await app.computer.hideAgentCursor(found, signal).catch(() => false);
+          if (result.exitCode === RECORD_START_EXITS.started && driverDrawsAgentCursor(os) && found.capabilities.computerUse) {
+            await app.computer.hideAgentCursor(found, RECORD_LIMIT_S * 1000 - (Date.now() - captureBegan), signal).catch(() => false);
+          }
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
             [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
@@ -1040,9 +1043,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const clip = onDevice
           ? await stopDeviceRecording(device, found, stills ?? "cut", times, os === "macos" ? "macos" : "linux").finally(() => app.devices.recordingEnded(found.id))
           : await (async () => {
+              const cursorHidden = driverDrawsAgentCursor(os) && found.capabilities.computerUse ? await app.computer.showAgentCursor(found).catch(() => false) : false;
               const prepared = await runLong(recordPrepareScript(stills ?? "cut", os), 4 * 1024 * 1024);
               const inputs = app.recordings.end(found.id);
-              const cursorHidden = driverDrawsAgentCursor(os) && found.capabilities.computerUse ? await app.computer.showAgentCursor(found, signal).catch(() => false) : false;
               if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return null;
               const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
               if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
