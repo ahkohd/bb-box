@@ -267,15 +267,15 @@ test("071 unit 12: the checks after an update's restart: a card listed with CUDA
   assert.equal(desktop({ "nvenc-sessions": "none none" }), "bb-box could not read its card's encoder sessions in the box, so it cannot tell that its video is encoded with NVENC");
 });
 
-function desktopBin(curlAnswersFrom: number | null): { readonly bin: string; readonly pgrepArgs: string } {
+function desktopBin(curlAnswersFrom: number | null, framesFrom: number | null = 2, curlHangs = false): { readonly bin: string; readonly pgrepArgs: string } {
   const bin = tempDir("desktop-check-bin");
   const calls = join(bin, "curl-calls");
   const pgrepArgs = join(bin, "pgrep-args");
-  const answer = curlAnswersFrom === null ? 'printf 000; exit 7' : `n=$(( $(cat "${calls}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${calls}"; if [ "$n" -ge ${curlAnswersFrom} ]; then printf 200; else printf 000; exit 7; fi`;
+  const answer = curlHangs ? 'while [ $# -gt 0 ]; do [ "$1" = -m ] && m=$2; shift; done; sleep "${m:-2}"; printf 000; exit 28' : curlAnswersFrom === null ? 'printf 000; exit 7' : `n=$(( $(cat "${calls}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${calls}"; if [ "$n" -ge ${curlAnswersFrom} ]; then printf 200; else printf 000; exit 7; fi`;
   writeFileSync(join(bin, "curl"), `#!/bin/sh\n${answer}\n`);
   const sessions = join(bin, "sessions");
   const probes = join(bin, "probes");
-  writeFileSync(join(bin, "node"), `#!/bin/sh\necho 1 > "${sessions}"\nsleep 2\necho 0 > "${sessions}"\nn=$(( $(cat "${probes}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${probes}"\nif [ "$n" -ge 2 ]; then echo '{"frames":7,"keys":1,"kbytes":10}'; else echo '{"frames":0,"keys":0,"kbytes":0}'; fi\n`);
+  writeFileSync(join(bin, "node"), `#!/bin/sh\necho 1 > "${sessions}"\nsleep "$3"\necho 0 > "${sessions}"\nn=$(( $(cat "${probes}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${probes}"\nif [ "$n" -ge ${framesFrom ?? 1_000_000} ]; then echo '{"frames":7,"keys":1,"kbytes":10}'; else echo '{"frames":0,"keys":0,"kbytes":0}'; fi\n`);
   writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncat "${sessions}" 2>/dev/null || echo 0\n`);
   writeFileSync(join(bin, "pgrep"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${pgrepArgs}"\n`);
   for (const name of ["curl", "node", "nvidia-smi", "pgrep"]) chmodSync(join(bin, name), 0o755);
@@ -313,6 +313,22 @@ test("071 unit 10, the gate's finding: the desktop's check after a restart waits
   assert.equal(judgeDesktopCheck(await desktopCheck(root, never.bin, 1)), "its desktop's video was not ready 1 s after its start: Selkies on 127.0.0.1:5980 did not answer");
   const empty = tempDir("desktop-check-empty");
   assert.equal(judgeDesktopCheck(await desktopCheck(empty, desktopBin(1).bin, 1)), "its display had not started 1 s after its start");
+});
+
+test("071 unit 10, Astra on a674ddea: the desktop's check keeps within its bound: each try of Selkies and each probe is cut to the time left, so a stream that never flows is judged on time", async () => {
+  const root = tempDir("desktop-check-bound");
+  mkdirSync(join(root, "run", "bb-box"), { recursive: true });
+  writeFileSync(join(root, "run", "bb-box", "display-mode"), "gpu\n");
+  const started = Date.now();
+  const out = await desktopCheck(root, desktopBin(1, null).bin, 5);
+  const elapsed = (Date.now() - started) / 1000;
+  assert.ok(elapsed < 5.6, `it said 5 s, and took ${elapsed.toFixed(2)} s`);
+  assert.equal(judgeDesktopCheck(out), "its desktop's video sent no frames 5 s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent bb-box's probe no video ({\"frames\":0,\"keys\":0,\"kbytes\":0})");
+  const hanging = Date.now();
+  const silent = await desktopCheck(root, desktopBin(null, 2, true).bin, 3);
+  const waited = (Date.now() - hanging) / 1000;
+  assert.ok(waited < 3.6, `a Selkies that never answers is tried only in the time left: it said 3 s, and took ${waited.toFixed(2)} s`);
+  assert.equal(judgeDesktopCheck(silent), "its desktop's video was not ready 3 s after its start: Selkies on 127.0.0.1:5980 did not answer");
 });
 
 test("071 unit 12: bb-box's commands run as root through one wrapper, its quoting kept, and its check runs whole from its script on stdin, writing nothing in the box", { skip: process.getuid?.() !== 0 ? "needs root, as bb-box's commands in a box do" : false }, () => {

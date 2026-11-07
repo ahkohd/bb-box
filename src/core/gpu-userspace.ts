@@ -283,16 +283,18 @@ export const DESKTOP_READY_WAIT_S = 30;
 export const SELKIES_PROCESS = "[s]elkies --addr=127.0.0.1 --port=5980";
 
 export const DESKTOP_GPU_CHECK =
-  `r=\${BB_BOX_ROOT:-}; w=\${BB_BOX_READY_WAIT_S:-${DESKTOP_READY_WAIT_S}}; d=$(( $(date +%s) + w )); ` +
-  `while [ ! -s "$r/run/bb-box/display-mode" ] && [ "$(date +%s)" -lt "$d" ]; do sleep 0.5; done; ` +
-  `s=000; while :; do s=$(curl -s -o /dev/null -m 2 -w '%{http_code}' http://127.0.0.1:5980/); [ "$s" = 200 ] && break; [ "$(date +%s)" -lt "$d" ] || break; sleep 0.5; done; ` +
+  `r=\${BB_BOX_ROOT:-}; w=\${BB_BOX_READY_WAIT_S:-${DESKTOP_READY_WAIT_S}}; d=$(( $(date +%s%3N) + w * 1000 )); ` +
+  `left() { echo $(( d - $(date +%s%3N) )); }; secs() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }; ` +
+  `while [ ! -s "$r/run/bb-box/display-mode" ] && [ "$(left)" -gt 500 ]; do sleep 0.5; done; ` +
+  `s=000; while :; do l=$(left); [ "$l" -gt 0 ] || break; [ "$l" -le 2000 ] || l=2000; s=$(curl -s -o /dev/null -m "$(secs "$l")" -w '%{http_code}' http://127.0.0.1:5980/); [ "$s" = 200 ] && break; [ "$(left)" -gt 500 ] || break; sleep 0.5; done; ` +
   `printf 'ready-wait %s\\n' "$w"; ` +
   `printf 'display-mode %s\\n' "$(cat "$r/run/bb-box/display-mode" 2>/dev/null || echo none)"; ` +
   `printf 'display-reason %s\\n' "$(cat "$r/run/bb-box/display-reason" 2>/dev/null)"; ` +
   `printf 'selkies-http %s\\n' "$s"; ` +
   `sc() { nvidia-smi --query-gpu=encoder.stats.sessionCount --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '; }; ` +
-  `o=$(mktemp); b=$(sc); while :; do timeout 30 node /usr/local/libexec/bb-box/selkies-probe.mjs 5980 3 > "$o" 2>&1 & p=$!; sleep 1.5; m=$(sc); wait "$p"; ` +
-  `v=$(tail -1 "$o"); case "$v" in *'"frames":0,'*) ;; *'"frames":'*) break ;; esac; [ "$(date +%s)" -lt "$d" ] || break; done; ` +
+  `o=$(mktemp); b=$(sc); m=; v=; while :; do l=$(left); [ "$l" -ge 1500 ] || break; t=$(( l - 500 )); [ "$t" -le 3000 ] || t=3000; q=$(( t / 2 )); [ "$q" -le 1000 ] || q=1000; ` +
+  `timeout "$(secs $(( t + 400 )))" node /usr/local/libexec/bb-box/selkies-probe.mjs 5980 "$(secs "$t")" > "$o" 2>&1 & p=$!; sleep "$(secs "$q")"; m=$(sc); wait "$p"; ` +
+  `v=$(tail -1 "$o"); case "$v" in *'"frames":0,'*) ;; *'"frames":'*) break ;; esac; done; ` +
   `printf 'video %s\\n' "$v"; rm -f "$o"; printf 'nvenc-sessions %s %s\\n' "\${b:-none}" "\${m:-none}"; ` +
   `n=no; for p in $(pgrep -u "$(id -un)" -f '${SELKIES_PROCESS}'); do grep -q libnvidia-encode "/proc/$p/maps" 2>/dev/null && n=yes; done; ` +
   `echo "nvenc $n"; echo '${DESKTOP_DONE}'`;

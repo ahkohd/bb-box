@@ -632,3 +632,18 @@ test("071 unit 10, Astra's last check: a release asked while a resize waits on i
     assert.equal(await state.boxes.find(box.id), null);
   }
 });
+
+test("071 unit 10, Astra's last check: a release asked after the guards, while the backend makes its plan again, stops the install before it downloads anything", async () => {
+  const state = world(noUserspace());
+  const box = await made(state, "linux");
+  let releasing: Promise<unknown> = Promise.resolve();
+  state.backend.duringInstall = async () => {
+    releasing = state.boxes.release(THREAD, box.id, "the gate's deadline");
+    for (let i = 0; i < 400 && (await state.boxes.find(box.id))?.state !== "releasing"; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  };
+  const resizing = state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }).catch((error: unknown) => error);
+  assert.ok((await resizing) instanceof Error);
+  assert.ok(await released(releasing, 5000));
+  assert.deepEqual(updateCalls(state.nvidia), ["check"], "no download and no install began");
+  assert.deepEqual(state.backend.order.filter((step) => step === "stop"), []);
+});
