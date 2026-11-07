@@ -291,7 +291,7 @@ export class FakeBackend implements Backend {
    */
   apartInput: FakeSelkies | null = null;
   readonly voxl = new FakeVoxl();
-  sizeByStreamServer = false;
+  resizeInBox: ((size: DisplaySize) => Promise<void | typeof LEFT_TO_STREAM_SERVER>) | null = null;
   voxlChosen = false;
   #voxlPort: Promise<number> | null = null;
   #apartPort: Promise<number> | null = null;
@@ -675,7 +675,7 @@ export class FakeBackend implements Backend {
 
   async #resize(size: DisplaySize): Promise<void | typeof LEFT_TO_STREAM_SERVER> {
     this.resizes.push(size);
-    if (this.sizeByStreamServer) return LEFT_TO_STREAM_SERVER;
+    if (this.resizeInBox) return this.resizeInBox(size);
     this.displayResizing += 1;
     this.mostDisplayResizing = Math.max(this.mostDisplayResizing, this.displayResizing);
     try {

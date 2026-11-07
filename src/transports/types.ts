@@ -158,10 +158,8 @@ export interface Display {
    * may not act on a viewer's SetDesktopSize (021). A display with it is
    * resizable. Core sends the box a SetDesktopSize for the size first, so it
    * may do nothing when the stream server took that, and setting a size the
-   * display already has must succeed. Resolves "stream-server" when it did
-   * nothing because the stream server takes a SetDesktopSize itself, as
-   * Xtigervnc does, so a caller that sent none, as for a video viewer,
-   * sends one. Rejects with the box's reason when the box refuses the size.
+   * display already has must succeed. Rejects with the box's reason when the
+   * box refuses the size.
    */
   resize?(size: DisplaySize, signal?: AbortSignal): Promise<void | typeof LEFT_TO_STREAM_SERVER>;
   /**
