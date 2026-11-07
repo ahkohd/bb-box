@@ -216,6 +216,26 @@ test("071 unit 14: the box page shows the GPU fact and card, and Change opens Re
   await waitFor(() => expect(document.activeElement).toBe(gpu));
 });
 
+test("071 unit 13: Resize shows the plan's words", async () => {
+  const slot = open(
+    page(
+      boxView({
+        resizing: { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+      }),
+    ),
+    snapshot(),
+  );
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  await waitFor(() => expect(card.textContent).toContain("python3"));
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("amber-fox restarts without card 1. Everything running in it stops: python3 (3310) has the GPU open."));
+  expect(dialog.textContent).toContain("shared, card 1 → none");
+  expect(dialog.textContent).toContain("Restart");
+});
+
 test("071 unit 13: Resize shows the GPU change, names a program that has it open, and refuses a card that is not free", async () => {
   const refusal = "No card is free for amber-fox alone. Release one of them, or keep the GPU shared.";
   const slot = open(

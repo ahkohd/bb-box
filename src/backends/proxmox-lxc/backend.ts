@@ -4649,7 +4649,7 @@ export class ProxmoxLxcBackend implements Backend {
     for (const card of cards) {
       const load = loadOf(card, { lines: view.lines, memory: view.memory, installId: this.#context.installId, reserved, vmid: null, gone });
       const wholeBy = load.whole ? holderWords(namer.guest(load.whole.vmid), namer, { to: "agent", threadId: null }) : null;
-      rooms.push({ index: card.index, boxes: load.boxes, whole: load.whole !== null, freeMiB: load.freeMiB, totalMiB: view.memory.get(card.uuid)?.totalMiB ?? null, wholeBy, freeForWhole: await free(card) });
+      rooms.push({ index: card.index, boxes: load.boxes, own: load.own, whole: load.whole !== null, freeMiB: load.freeMiB, totalMiB: view.memory.get(card.uuid)?.totalMiB ?? null, wholeBy, freeForWhole: await free(card) });
     }
     return rooms;
   }

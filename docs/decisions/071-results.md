@@ -5175,8 +5175,7 @@ on a card under 6 minutes; card figures are card-wide.
 ## Unit 13: the New box form and Resize for a GPU
 
 Built on main `1a3dae81`. Section 13's New box form, and Resize's GPU rows
-in place of "Changing the GPU comes later." The live gate has not been run.
-There are no screenshots, and nothing here reached a node.
+in place of "Changing the GPU comes later."
 
 ### What it does
 
@@ -5195,7 +5194,11 @@ There are no screenshots, and nothing here reached a node.
   while the cards are read or the line is a refusal.
 - A provider that cannot take the choice says why on its row, in place of
   the memory reason: "Reading its cards…", or "Card 0 is quiet-elm's; card
-  1 has 2 boxes." None leaves the memory reason.
+  1 has 2 boxes." None leaves the memory reason. A card counts as full when
+  this install's own boxes on it reach the per-card limit. Boxes on the
+  card that are not this install's sit in the shared-with count and do not
+  fill that limit. When a room does not say how many are this install's,
+  every box on the card counts, as before.
 - The old None / 1 GPU menu stays for a desktop whose offers have no card
   parts. It still switches the CPU desktop and the GPU desktop.
 - Resize, for a box that has a GPU or a backend that can change one, shows
@@ -5215,28 +5218,69 @@ There are no screenshots, and nothing here reached a node.
 
 ### What was run
 
-On a Linux box, Node 24.21.0:
+On the Linux box that held the test BB, Node 24.21.0:
 
-- `tsc` clean.
-- `test/gpu-form.test.ts`, 2 tests: the line's height, None, Shared, Whole
-  card, a card partly in use outside bb-box, a refusal for one provider and
-  for two, reading, a Docker host that cannot add a GPU, whole cards off,
-  and the Resize ways line with the programs named in the confirmation.
-- `test/boxes.test.ts`, the unit 11 refusal: a check with `reportPlan`
-  returns the person's words, and a check without it still throws.
-- vitest, the new form test, the new Resize test, and the three older tests
-  beside them: 5 passed. The form test holds the card read, then checks
-  None, Shared, the refusal and that Create with None sends no GPU.
-  Resize's test chooses None, sees the plan and python3 (3310), then Whole
-  card, sees the refusal, the link, and Resize disabled.
-- Reverting the None sentence to other words fails `test/gpu-form.test.ts`.
-  Putting the sentence back passes it.
+- `test/gpu-form.test.ts`, 4 tests. One asserts only the line's height
+  class. One asserts that guests outside this install do not fill a card.
+  The others cover None, Shared, Whole card, a card partly in use outside
+  bb-box, a refusal for one provider and for two, reading, a Docker host
+  that cannot add a GPU, whole cards off, and the Resize ways line with the
+  programs named in the confirmation.
+- vitest, three form tests and two Resize tests: 5 passed. One form test
+  asserts only that the line on screen has `h-[3lh]`, `sm:h-[2lh]`,
+  `overflow-hidden`, `text-xs` and `leading-snug`. One asserts only that a
+  refusal stays on the line and Create stays off. One Resize test asserts
+  only the plan's words, including "Everything running in it stops". The
+  other two cover the rest of the form and the refusal link.
+- Reverting the height class to `text-xs` fails the height test. Reverting
+  the refusal sentence fails the refusal test. Reverting the plan sentence
+  out of the dialog fails the plan-words test. Each was restored, and the
+  tests then passed.
 
 ### The live gate
 
-Not run. No separate BB, no screenshots, no `nvidia-smi`. Whole-card rows
-are untested live. Shared rows on Proxmox are untested live. There are no
-node blocks.
+A separate BB, `npx bb-app` 0.48.1 with no account, its own data folder,
+bound to 127.0.0.1:38990. bb-box installed from this branch. The Proxmox
+LXC backend was the one added for this gate. Whole cards started off.
+Both cards were held by guests outside bb-box, so a whole card was never
+placed. That row is untested live. Shared was the live path, and one GPU
+guest was the most held at once. It was released at the end.
+
+The room reported five and four boxes on the two cards, and none of them
+this install's, under a limit of two. Before the own-count fix the form
+called both cards full. After it, Shared placed, and the line said card 1,
+shared with 4 boxes, 94.7 GiB free.
+
+Playwright in that box, at 390, 760 and 1440 px, light and dark. The line's
+height was read from the element's box: 50 px at 390 and 33 px at 760 and
+1440, the same for reading, None, Shared and the refusal. `scrollHeight`
+equaled `clientHeight` on each, and the shots show the sentences whole.
+The refusal shot is Whole card, which the room refused: the host has no
+free card, and the provider row names how many boxes each card has. Create
+stayed off. Whole card was offered by turning whole cards on for those
+shots, then back off before anything was placed.
+
+Resize, on the one shared guest:
+
+- Running, None: the row said shared, card 1, to none, Restart, and
+  "Everything running in it stops." The confirmation was "Restart … to
+  change its GPU?" with "Restart and resize". Not applied from that dialog.
+- Running, Whole card: "No card is free for it alone", naming the guests
+  outside bb-box on each card, and Resize stayed off. Not applied.
+- Stopped, None: "While stopped", and "Nothing starts now." Applied from
+  the CLI while it stayed stopped, in 1.0 s.
+- `nvidia-smi -L` while it held the card listed the card. After the
+  removal, `nvidia-smi -L` could not talk to a driver. Putting the shared
+  card back needed a restart, took 9.2 s, and `nvidia-smi -L` listed the
+  card again.
+
+The dialogs were shot at the same three widths, light and dark. None of
+those dialogs scrolled (`scrollHeight` within 2 px of `clientHeight`), and
+the sentences were whole. Enrolment failed, as a BB with no account
+cannot join a box, so the confirmation did not name a program: the Monitor
+had no reading for that machine.
+
+No node command was run from here.
 
 ### Deviations from the note
 

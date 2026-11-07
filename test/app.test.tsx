@@ -1318,6 +1318,53 @@ test("071 unit 11: the New box form says where every box can open every card, fo
   expect(screen.getByText(reach).tagName).toBe("P");
 });
 
+test("071 unit 13: the GPU line keeps its height on screen", async () => {
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["none", "shared"], host: "pve-1", cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_227, totalMiB: 24_576 }] };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared"], gpuRoom: room }] };
+  const slot = panel(server([], { kinds: [linux], holdCards: hold }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText(/Reading the cards on pve-1/);
+  expect(line.className).toContain("h-[3lh]");
+  expect(line.className).toContain("overflow-hidden");
+  expect(line.className).toContain("sm:h-[2lh]");
+  expect(line.className).toContain("text-xs");
+  expect(line.className).toContain("leading-snug");
+  release();
+});
+
+test("071 unit 13: a refusal stays on the GPU line", async () => {
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared", "whole"],
+    host: "pve-1",
+    cards: [
+      { index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, wholeBy: "quiet-elm", freeForWhole: false },
+      { index: 1, boxes: 2, whole: false, freeMiB: 18_227, totalMiB: 24_576, freeForWhole: false },
+    ],
+  };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room }] };
+  const slot = panel(server([], { kinds: [linux] }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  await choose("GPU", "Whole card");
+  const line = await screen.findByText("pve-1 has no free card now: see below.");
+  expect(line.getAttribute("data-gpu-state")).toBe("refused");
+  expect(screen.getByText("Card 0 is quiet-elm's; card 1 has 2 boxes")).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.getByText("pve-1 has no free card now: see below.").getAttribute("data-gpu-state")).toBe("refused");
+  expect(submitButton().disabled).toBe(true);
+});
+
 test("071 unit 13: the New box form offers None, Shared and Whole card, and the line keeps its height while the cards are read", async () => {
   let release: () => void = () => {};
   const hold = new Promise<void>((resolve) => {

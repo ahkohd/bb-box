@@ -28,8 +28,30 @@ function offer(patch: Partial<GpuFormOffer> = {}): GpuFormOffer {
 
 const kind = { os: "linux", arch: "x86_64", desktop: false, windowing: "x11" as const };
 
-test("071 unit 13: the GPU line keeps one height, and each state says what the note says", () => {
+test("071 unit 13: the GPU line keeps one height", () => {
   assert.equal(GPU_LINE_CLASS, "h-[3lh] overflow-hidden text-xs leading-snug sm:h-[2lh]");
+});
+
+test("071 unit 13: guests outside this install do not fill a card", () => {
+  const crowded = offer({
+    gpuRoom: room(
+      [card({ index: 0, boxes: 5, own: 0, freeMiB: 97_026, totalMiB: 97_887 }), card({ index: 1, boxes: 3, own: 0, freeMiB: 97_056, totalMiB: 97_887 })],
+      { limit: 2, parts: ["none", "shared"], wholeOff: true },
+    ),
+  });
+  const shared = gpuFormLine([crowded], "shared", NOW);
+  assert.equal(shared.state, "shared");
+  assert.equal(shared.blocked, false);
+  assert.match(shared.words, /^Card 1 on pve-1, shared with 3 boxes; 94\.8 GiB free when read, 20 s ago\. Boxes on a card share its memory\.$/);
+  const ours = offer({ gpuRoom: room([card({ index: 0, boxes: 5, own: 2 })], { limit: 2, parts: ["none", "shared"] }) });
+  assert.equal(gpuFormLine([ours], "shared", NOW).state, "refused");
+  assert.equal(gpuRowReason(ours, "shared"), "Card 0 is full");
+  const counted = offer({ gpuRoom: room([card({ index: 0, boxes: 2 })], { limit: 2, parts: ["none", "shared"] }) });
+  assert.equal(gpuFormLine([counted], "shared", NOW).state, "refused");
+  assert.equal(gpuRowReason(counted, "shared"), "Card 0 is full");
+});
+
+test("071 unit 13: the GPU line keeps one height, and each state says what the note says", () => {
   assert.deepEqual(GPU_MENU_LABELS, { none: "None", shared: "Shared", whole: "Whole card" });
   const held = offer();
   assert.equal(gpuMenuShows(kind, [held]), true);

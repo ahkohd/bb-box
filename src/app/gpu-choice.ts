@@ -130,8 +130,12 @@ function placedCard(offer: GpuFormOffer, gpu: GpuPart): CardRoom | null {
 
 function canShare(card: CardRoom, room: GpuRoom): boolean {
   if (card.whole || card.wholeBy) return false;
-  if (room.limit && card.boxes >= room.limit) return false;
+  if (full(card, room)) return false;
   return card.freeMiB === null || card.freeMiB >= (room.neededMiB ?? 0);
+}
+
+function full(card: CardRoom, room: GpuRoom): boolean {
+  return typeof room.limit === "number" && (card.own ?? card.boxes) >= room.limit;
 }
 
 function canWhole(card: CardRoom, room: GpuRoom): boolean {
@@ -169,7 +173,7 @@ function shortBlocks(offer: GpuFormOffer, gpu: GpuPart): string | null {
 function shortCard(card: CardRoom, room: GpuRoom, gpu: GpuPart): string {
   const name = cardTitle(card);
   if (card.whole || card.wholeBy) return card.wholeBy ? `${name} is ${possessive(card.wholeBy)}` : `${name} is held whole`;
-  if (room.limit && card.boxes >= room.limit) return `${name} is full`;
+  if (full(card, room)) return `${name} is full`;
   if (card.freeMiB !== null && card.freeMiB < (room.neededMiB ?? 0)) return `${name} is short of memory`;
   if (gpu === "whole" || card.boxes > 0) return `${name} has ${card.boxes === 1 ? "1 box" : `${card.boxes} boxes`}`;
   return `${name} has no room`;
