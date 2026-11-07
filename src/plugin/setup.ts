@@ -94,6 +94,7 @@ import { registerSnapshotTools } from "./snapshot-tools.ts";
 import { TurnHold } from "./turn-hold.ts";
 import { ReachCheck } from "../core/reach.ts";
 import { byBbBox, type Actor } from "../core/box-log.ts";
+import { RecordingInputs } from "../core/record-input.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -170,6 +171,7 @@ export interface BbBox {
   /** Desktop viewers and who controls each desktop's input. */
   readonly desktops: Desktops;
   readonly devices: DeviceServers;
+  readonly recordings: RecordingInputs;
   readonly terminals: Terminals;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
@@ -1028,7 +1030,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
   });
+  const recordings = new RecordingInputs();
   const computing = new Computer({
+    onInput: (box, input, sentAt) => recordings.acted(box.id, input, sentAt),
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);
@@ -1094,6 +1098,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     staleMs: options.controlStaleMs,
     reconnectMs: options.controlReconnectMs,
     pause: (boxId) => computing.pause(boxId),
+    recordInput: (boxId, input) => recordings.person(boxId, input),
     controlChanged: (boxId) => devices.controlChanged(boxId),
     openDevice: async (box) => {
       await devices.ensure(box).catch((error) => logError(`device server of box ${box.name}`, error));
@@ -1522,6 +1527,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     desktops: desktop,
     devices,
+    recordings,
     terminals: terminal,
     computer: computing,
     deviceComputer: deviceComputing,

@@ -24,6 +24,7 @@ import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display 
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
+import type { PersonInput } from "../core/record-input.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -140,6 +141,7 @@ export interface DesktopDeps {
   logError(operation: string, error: unknown): void;
   /** Stops the agent's computer use before a person takes control (015). */
   pause?(boxId: string): Promise<void>;
+  recordInput?(boxId: string, input: PersonInput): void;
   /** How long a holder's viewer may be gone before the agent has control again. */
   readonly staleMs?: number;
   /** How long a holder's viewer has to connect again after the box ended its connection. */
@@ -868,6 +870,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               open,
               mayInput: () => control.mayInput(boxId, viewer),
               keyLog,
+              onInput: (input) => deps.recordInput?.(boxId, input),
               onSize: (size) => {
                 control.seen(boxId, size);
                 frameSizes.set(boxId, size);
@@ -917,6 +920,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               open,
               mayInput: () => control.mayInput(boxId, viewer),
               keyLog,
+              onInput: (input) => deps.recordInput?.(boxId, input),
               onServerRestart: (why, error) => {
                 void boxes
                   .find(boxId)

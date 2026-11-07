@@ -824,7 +824,8 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   const said = text(stopped);
   const name = /\$BB_THREAD_STORAGE\/(recordings\/[^ ]+)\.mp4/.exec(said)?.[1];
   assert.ok(name, said);
-  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of still stretches cut, played 2x, 1280x720, 1 KB\. It reached the 5-minute limit/);
+  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of still stretches cut, played 2x, 1280x720, 1 KB, framed\. It reached the 5-minute limit/);
+  assert.match(said, /Making it took \d+\.\d s: \d+\.\d s to stop and find the still stretches, \d+\.\d s to plan, \d+\.\d s to draw the pills, \d+\.\d s to draw the rest and encode, and \d+\.\d s to copy it here\./, "what each part of the stop cost");
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
   assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video id="clip" src="${name.split("/").pop()}.mp4"`));
@@ -7610,4 +7611,29 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   assert.match((await harness.behavior.runCli(["snapshot", "fork", box.id, record!.id, "--check"])).stdout ?? "", /^Forking "old image" \(sn\w+\) of box .*, its box was released \d{4}-\d{2}-\d{2}, taken .* would make one of your machines/);
   assert.match((await harness.behavior.runCli(["snapshot", "delete", box.id, record!.id])).stdout ?? "", /its held copy, guest copy\d, is deleted\./);
   assert.equal(app.snapshotStore.records().length, 0);
+});
+
+test("while a desktop box records, its computer use is logged for the clip: clicks where they land, chords, and typing as a count, never its text (073)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const field = refOf(tree, '"New task"');
+  const add = refOf(tree, '"Add"');
+  await tool("computer_type", { box: box.name, ref: field, text: "before the recording" });
+  assert.equal(app.recordings.end(box.id), null, "nothing is logged while no recording runs");
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
+  await tool("computer_type", { box: box.name, window: 100, keys: "ctrl+s" });
+  await tool("computer_act", { box: box.name, action: "click", ref: add });
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters}` : event.type === "keys" ? `keys ${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["typing 8", "typing 0", "keys ctrl+S", "click"],
+  );
+  const typed = events[0]!;
+  assert.ok(typed.type === "typing" && typed.area && typed.area.width === 600 && !typed.secret, "the field's frame, for the zoom");
+  const clicked = events.at(-1)!;
+  assert.ok(clicked.type === "click" && clicked.button === "left" && clicked.count === 1 && clicked.area?.width === 80, "the button's frame");
+  assert.ok(clicked.type === "click" && clicked.x === clicked.area!.x + 40 && clicked.y === clicked.area!.y + 20, "at its centre");
+  assert.doesNotMatch(JSON.stringify(events), /milk/, "the text typed is not in the log");
 });

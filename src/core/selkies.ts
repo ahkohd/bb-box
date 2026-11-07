@@ -24,6 +24,7 @@
 import type { ByteChannel } from "../transports/types.ts";
 import { BoxWebSocket, WebSocketError, type Message } from "./websocket.ts";
 import { DEVICE_ANSWER_VERB, DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB, DEVICE_VIEW_VERB } from "./device.ts";
+import type { PersonInput } from "./record-input.ts";
 
 const PATH = "/api/websockets";
 /** Selkies' RECONNECT_DEBOUNCE_MS, with a margin. */
@@ -70,6 +71,19 @@ export function classify(text: string): Kind {
   if (INPUT_VERBS.has(first)) return "input";
   if (first === DEVICE_REQUEST_VERB) return "device";
   return "drop";
+}
+
+export function personInput(text: string): PersonInput | null {
+  const fields = text.split(",");
+  if (fields[0] === "m" && fields.length >= 4) {
+    const [x, y, buttons] = fields.slice(1, 4).map(Number);
+    return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(buttons) ? { type: "pointer", x: x!, y: y!, buttons: buttons! } : null;
+  }
+  if ((fields[0] === "kd" || fields[0] === "ku") && fields.length >= 2) {
+    const keysym = Number(fields[1]);
+    return Number.isInteger(keysym) ? { type: "key", keysym, down: fields[0] === "kd" } : null;
+  }
+  return null;
 }
 
 /** A pointer message without its sequence number: one connection carries every holder's, so a new holder's low numbers are not stale. */
@@ -351,6 +365,7 @@ export interface SelkiesRelayOptions {
   readonly open: OpenStream;
   /** Whether input from this viewer reaches the box now. */
   mayInput(): boolean;
+  onInput?(input: PersonInput): void;
   /** The desktop's size, from the first frame and each change. */
   onSize?(size: { readonly width: number; readonly height: number }): void;
   /** The viewer with control asked for its size (Selkies' `r,<W>x<H>`). The relay does not pass it on: bb-box sets the size. */
@@ -600,6 +615,8 @@ export class SelkiesRelay {
         }
         if (key) this.#options.keyLog?.(`to the box: ${message}, held [${[...this.#held].join(" ")}], at ${Date.now() % 100_000} ms`);
         this.#track(message);
+        const input = personInput(message);
+        if (input) this.#options.onInput?.(input);
         const pointer = verb(message) === "m" || verb(message) === "m2";
         if (pointer && this.#options.pointerApart?.()) {
           this.#pointerSent = true;

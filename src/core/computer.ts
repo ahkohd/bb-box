@@ -14,6 +14,7 @@ import type { Owner } from "./control.ts";
 import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
+import { isSecretTyping, normalChord, type ActedInput, type InputArea } from "./record-input.ts";
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
@@ -111,6 +112,7 @@ export interface ComputerResult {
 }
 
 export interface ComputerDeps {
+  onInput?(box: BoxRecord, input: ActedInput, sentAt: number): void;
   /** Starts `script` in the box through its command transport's spawn. */
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
   /**
@@ -374,6 +376,7 @@ interface Use {
   readonly state: BoxState;
   readonly box: BoxRecord;
   readonly signal?: AbortSignal;
+  typedInput?: { readonly input: ActedInput; readonly sentAt: number } | null;
 }
 
 interface Read {
@@ -811,6 +814,10 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
+function toArea(rect: Rect): InputArea {
+  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+}
+
 function describe(role: string, label: string): string {
   return label ? `${role} '${label}'` : role;
 }
@@ -1106,12 +1113,14 @@ export class Computer {
       const watch = target.screen || inPopup ? await this.#watch(use, target.screen ?? null) : null;
       // An element Cua cannot click as an element is clicked at its centre (048).
       const centre = step.tool === "click" && target.element?.frame ? cannotInject : undefined;
+      const sentAt = Date.now();
       let { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value", centre);
       let elsewhere = landedElsewhere(result);
       const byPosition = !!result.isError && !elsewhere;
       let before = target.snapshot;
       if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
       elsewhere ??= landedElsewhere(result);
+      this.#noteAct(use, input, target, sentAt);
       const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
@@ -1122,6 +1131,48 @@ export class Computer {
       const told = forward == null || seen.hints.some((hint) => hint.includes(`computer_observe with window ${forward} `));
       return { text: [...lines, ...seen.parts].join("\n\n"), hints: told ? seen.hints : [`Call computer_observe with window ${forward} to act in what came in front.`, ...seen.hints] };
     });
+  }
+
+  #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
+    if (!this.#deps.onInput) return;
+    const area = target.element?.frame ?? null;
+    const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
+    if (input.action === "set_value") {
+      const value = input.value ?? "";
+      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: isSecretTyping(target.element?.role ?? null, target.element?.label ?? null, value) }, sentAt);
+      return;
+    }
+    if (!point) return;
+    if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point }, sentAt);
+    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null }, sentAt);
+  }
+
+  #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
+    const window = target.snapshot?.window;
+    const x = num(target.args.x);
+    const y = num(target.args.y);
+    if (!window || x === undefined || y === undefined) return null;
+    const held = use.state.images.get(window.id);
+    const scaleX = held ? window.width / held.width : 1;
+    const scaleY = held ? window.height / held.height : 1;
+    return { x: window.x + x * scaleX, y: window.y + y * scaleY };
+  }
+
+  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null): void {
+    if (!this.#deps.onInput) return;
+    const typed = text ?? "";
+    const input: ActedInput = keys
+      ? { type: "keys", chord: normalChord(keys.key, keys.modifiers) }
+      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: isSecretTyping(element?.role ?? null, element?.label ?? null, typed) };
+    use.typedInput = { input, sentAt: Date.now() };
+  }
+
+  #typingDone(use: Use): void {
+    const pending = use.typedInput;
+    use.typedInput = null;
+    if (!pending || !this.#deps.onInput) return;
+    this.#deps.onInput(use.box, pending.input, pending.sentAt);
+    if (pending.input.type === "typing") this.#deps.onInput(use.box, { type: "typing", characters: 0, area: null, secret: pending.input.secret }, Date.now());
   }
 
   /** Types text, or presses a key chord, into a reference, a window's focused element, or whatever has the focus. */
@@ -1160,6 +1211,7 @@ export class Computer {
     } else {
       throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
     }
+    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null);
     const count = input.text?.length ?? 0;
     const what = keys ? `Pressed ${input.keys!.trim()}` : `Typed ${count} character${count === 1 ? "" : "s"}`;
     const tool = keys ? "press_key" : "type_text";
@@ -1169,6 +1221,7 @@ export class Computer {
       const watch = await this.#watch(use, null);
       if (popup && !watch.popups.has(popup.window.id)) throw this.#closed(use.state, popup);
       await this.#deliver(use, tool, { scope: "desktop", ...typed }, true);
+      this.#typingDone(use);
       const where = popup ? `for ${popup.what ?? "the popup"} (window ${popup.window.id})` : "into whatever has the focus";
       const seen = await this.#settle(use, watch, { element: null, right: false });
       return { text: [`${what} with the real keyboard, ${where}.`, ...seen.parts].join("\n\n"), hints: seen.hints };
@@ -1243,6 +1296,7 @@ export class Computer {
 
   /** What typing said, and what changed in the window since `before`. */
   async #typed(use: Use, said: string, before: Snapshot | null, readBack: string | null, args: Json): Promise<ComputerResult> {
+    this.#typingDone(use);
     if (!before) return { text: said, hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null }, late: true });
     return { text: [said, ...changed.parts].join("\n\n"), hints: changed.hints };

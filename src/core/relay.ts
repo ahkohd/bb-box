@@ -10,6 +10,7 @@
 // pointer and clipboard go there instead.
 
 import { openRoute } from "../transports/route.ts";
+import type { PersonInput } from "./record-input.ts";
 import type { ByteChannel, Display, DisplayAuth, DisplayInput, DisplayOpened } from "../transports/types.ts";
 import {
   ClientParser,
@@ -98,6 +99,7 @@ export interface RelayOptions {
   onInputError?(error: Error): void;
   /** Each key as it goes to the box, and by which way, for a viewer that asked for the key log (a diagnostic). */
   keyLog?(line: string): void;
+  onInput?(input: PersonInput): void;
   /** The box's clipboard text changed, as the display's own input reports it. */
   onClipboard?(text: string): void;
   /** The display's server had lost the desktop, as `why` says, and the relay restarted it and ends, so the viewer connects to the new one. */
@@ -351,6 +353,8 @@ export class RfbRelay {
         logKey("dropped, as the viewer has no control");
         continue;
       }
+      if (message.type === "pointer") this.#options.onInput?.({ type: "pointer", x: message.x, y: message.y, buttons: message.mask & 7 });
+      else if (key) this.#options.onInput?.({ type: "key", keysym: key.keysym, down: key.down });
       if (connection.input && isInput(message) && (connection.inputTakes === "wheel" || connection.inputTakes === "characters")) {
         // A character the stream server would type wrong or not at all goes
         // to the display's input as itself, down and up.

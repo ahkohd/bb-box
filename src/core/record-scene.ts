@@ -1,0 +1,272 @@
+import { cornerArt, pointerArt, pressArt, ringArt, type Art, type Pointer } from "./record-art.ts";
+import type { InputArea, InputEvent } from "./record-input.ts";
+import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
+import {
+  CLIP_FPS,
+  RING_FRAMES_PER_STAGE,
+  RING_S,
+  RING_STAGES,
+  cameraAt,
+  cameraMoves,
+  planCamera,
+  planPointer,
+  type CameraKey,
+  type ChangedRegion,
+  type PlacedClick,
+  type PlacedScroll,
+  type PlacedTyping,
+  type PointerPlan,
+  type PointerSample,
+  type Scene,
+  type Span,
+  type View,
+} from "./record-motion.ts";
+
+export type PointerMode = "drawn" | "shown";
+
+export interface SceneFacts {
+  readonly pointer: PointerMode;
+  readonly screen: { readonly width: number; readonly height: number } | null;
+  readonly samples: readonly PointerSample[];
+  readonly changes: readonly ChangedRegion[];
+  readonly luma: number | null;
+  readonly lag: number;
+  readonly keys: KeyStyle;
+  readonly agentCursor?: boolean;
+  readonly inputs?: readonly InputEvent[];
+}
+
+export interface SceneOptions {
+  readonly zoom: boolean;
+  readonly frame: boolean;
+}
+
+export interface FrameLayout {
+  readonly inset: number;
+  readonly radius: number;
+  readonly background: string;
+}
+
+export interface ScenePlan {
+  readonly source: { readonly width: number; readonly height: number };
+  readonly content: { readonly width: number; readonly height: number };
+  readonly pointer: PointerPlan;
+  readonly drawsPointer: boolean;
+  readonly camera: readonly CameraKey[];
+  readonly zooms: boolean;
+  readonly frame: FrameLayout | null;
+  readonly pills: readonly KeyPill[];
+  readonly kept: readonly Span[];
+  readonly art: readonly Art[];
+  readonly pointerArt: Pointer | null;
+  readonly pointerHeight: number;
+  readonly ringKinds: readonly ("left" | "right")[];
+}
+
+export const DARK_BACKGROUND = "161618";
+export const LIGHT_BACKGROUND = "ececee";
+export const FRAME_INSET_SHARE = 0.035;
+export const FRAME_RADIUS_SHARE = 0.01;
+export const PILL_KEPT_S = 1;
+export const RING_KEPT_S = 0.15;
+export const CLIP_WIDTH_MOST = 1280;
+
+const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+
+function scaled(area: InputArea | null, scale: number): InputArea | null {
+  return area ? { x: area.x * scale, y: area.y * scale, width: area.width * scale, height: area.height * scale } : null;
+}
+
+export function sceneOf(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number): { readonly scene: Scene; readonly keys: readonly PlacedKeys[]; readonly keyTyping: readonly PlacedKeyTyping[] } {
+  const zero = start + facts.lag;
+  const onScreen = facts.screen && facts.screen.width > 0 ? size.width / facts.screen.width : 1;
+  const time = (at: number) => round3(at - zero);
+  const inside = (at: number) => at >= -1 && at <= length + 1;
+  const inputs = (facts.inputs ?? []).filter((input) => inside(input.at - zero));
+  const spaceScale = (space: "screen" | "picture") => (space === "screen" ? onScreen : 1);
+  const sampled = facts.samples.map((sample) => ({ at: time(sample.at), x: sample.x * onScreen, y: sample.y * onScreen, buttons: sample.buttons }));
+  const person = inputs.flatMap((input) => (input.type === "pointer" ? [{ at: time(input.at), x: input.x, y: input.y, buttons: input.buttons }] : []));
+  const samples = (sampled.length ? sampled : person).filter((sample) => inside(sample.at));
+  const clicks: PlacedClick[] = inputs.flatMap((input) => {
+    if (input.type !== "click") return [];
+    const scale = spaceScale(input.space);
+    return [{ at: time(input.at), x: input.x * scale, y: input.y * scale, button: input.button, count: input.count, area: scaled(input.area, scale) }];
+  });
+  const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space) }] : []));
+  const typing: PlacedTyping[] = inputs.flatMap((input) => (input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret }] : []));
+  const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
+  return {
+    scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },
+    keys,
+    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret })),
+  };
+}
+
+export function contentSize(source: { readonly width: number; readonly height: number }, frame: boolean): { readonly clip: { width: number; height: number }; readonly content: { width: number; height: number }; readonly inset: number } {
+  const width = Math.min(CLIP_WIDTH_MOST, source.width || CLIP_WIDTH_MOST);
+  if (!frame) {
+    const height = source.width ? even((source.height * width) / source.width) : 720;
+    return { clip: { width, height }, content: { width, height }, inset: 0 };
+  }
+  const inset = even(width * FRAME_INSET_SHARE);
+  const contentWidth = width - inset * 2;
+  const contentHeight = source.width ? even((source.height * contentWidth) / source.width) : 720;
+  return { clip: { width, height: contentHeight + inset * 2 }, content: { width: contentWidth, height: contentHeight }, inset };
+}
+
+export function backgroundFor(luma: number | null): string {
+  return luma !== null && luma >= 128 ? LIGHT_BACKGROUND : DARK_BACKGROUND;
+}
+
+export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
+  const { scene, keys, keyTyping } = sceneOf(facts, size, start, length);
+  const pointer = planPointer(scene);
+  const camera = options.zoom ? planCamera(scene, pointer) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
+  const zooms = camera.some((key) => key.view.zoom > 1);
+  const pills = planKeyPills(keys, keyTyping, facts.keys, length);
+  const drawsPointer = facts.pointer === "drawn" && pointer.frames.length > 0 && pointer.visibleFrom !== null;
+  const kept: Span[] = [
+    ...(drawsPointer ? pointer.glides : []),
+    ...pointer.rings.map((ring) => ({ from: ring.at - RING_KEPT_S, to: ring.at + RING_S })),
+    ...pointer.drags,
+    ...pills.map((pill) => ({ from: pill.from, to: pill.from + PILL_KEPT_S })),
+    ...(zooms ? cameraMoves(camera) : []),
+  ].map((span) => ({ from: round3(Math.max(0, span.from)), to: round3(Math.min(length, span.to)) }));
+  const { content, inset } = contentSize(size, options.frame);
+  const pointerHeight = Math.max(16, Math.round(size.height / 30));
+  const ringKinds = (["left", "right"] as const).filter((kind) => pointer.rings.some((ring) => ring.kind === kind));
+  const pointerImage = drawsPointer ? pointerArt(pointerHeight) : null;
+  const frame = options.frame ? { inset, radius: Math.max(4, Math.round(contentSize(size, true).clip.width * FRAME_RADIUS_SHARE)), background: backgroundFor(facts.luma) } : null;
+  const art: Art[] = [
+    ...ringKinds.flatMap((kind) => Array.from({ length: RING_STAGES }, (_, stage) => ringArt(pointerHeight, stage, kind))),
+    ...(drawsPointer && pointer.drags.length ? [pressArt(pointerHeight)] : []),
+    ...(pointerImage ? [pointerImage] : []),
+    ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
+  ];
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: pointerImage, pointerHeight, ringKinds };
+}
+
+const ringTarget = (kind: "left" | "right", stage: number) => `overlay@ring${kind[0]}${stage}`;
+
+export function sceneCommands(plan: ScenePlan): string {
+  const lines: { at: number; order: number; text: string }[] = [];
+  const at = (frame: number) => round3(frame / CLIP_FPS);
+  const art = (name: string) => plan.art.find((each) => each.name === name)!;
+  if (plan.drawsPointer && plan.pointerArt) {
+    const press = plan.pointer.drags.length ? art("press.png") : null;
+    let last: { x: number; y: number } | null = null;
+    plan.pointer.frames.forEach((frame, index) => {
+      if (last && last.x === frame.x && last.y === frame.y) return;
+      last = frame;
+      const parts = [`overlay@pointer x ${frame.x - plan.pointerArt!.hotX}`, `overlay@pointer y ${frame.y - plan.pointerArt!.hotY}`];
+      if (press) parts.push(`overlay@press x ${frame.x - Math.round(press.width / 2)}`, `overlay@press y ${frame.y - Math.round(press.height / 2)}`);
+      lines.push({ at: at(index), order: 1, text: parts.join(", ") });
+    });
+    lines.push({ at: plan.pointer.visibleFrom ?? 0, order: 2, text: "overlay@pointer enable 1" });
+    if (press) {
+      for (const drag of plan.pointer.drags) {
+        lines.push({ at: drag.from, order: 2, text: "overlay@press enable 1" }, { at: drag.to, order: 0, text: "overlay@press enable 0" });
+      }
+    }
+  }
+  for (const ring of plan.pointer.rings) {
+    for (let stage = 0; stage < RING_STAGES; stage++) {
+      const image = art(`ring-${ring.kind}-${stage}.png`);
+      const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
+      const target = ringTarget(ring.kind, stage);
+      lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}, ${target} enable 1` });
+      lines.push({ at: round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS), order: 0, text: `${target} enable 0` });
+    }
+  }
+  return lines
+    .filter((line) => line.at >= 0)
+    .sort((a, b) => a.at - b.at || a.order - b.order)
+    .map((line) => `${line.at.toFixed(3)} ${line.text};`)
+    .join("\n")
+    .concat(lines.length ? "\n" : "");
+}
+
+function piecewise(keys: readonly CameraKey[], value: (view: View) => number, geometric: boolean): string {
+  const constant = (view: View) => `${Math.round(value(view) * 1000) / 1000}`;
+  const parts = keys.map((key, index) => {
+    const after = keys[index + 1];
+    const from = key.at.toFixed(3);
+    if (!after) return `gte(it,${from})*${constant(key.view)}`;
+    const to = after.at.toFixed(3);
+    const range = `gte(it,${from})*lt(it,${to})`;
+    const a = value(key.view);
+    const b = value(after.view);
+    if (Math.abs(a - b) < 0.0005) return `${range}*${constant(key.view)}`;
+    const u = `clip((it-${from})/${(after.at - key.at).toFixed(3)},0,1)`;
+    const eased = `if(lt(${u},0.5),4*${u}*${u}*${u},1-pow(2-2*${u},3)/2)`;
+    return geometric ? `${range}*${a}*pow(${Math.round((b / a) * 100000) / 100000},${eased})` : `${range}*(${a}+${Math.round((b - a) * 1000) / 1000}*${eased})`;
+  });
+  return parts.length === 1 ? parts[0]!.replace(/^gte\(it,0\.000\)\*/, "") : parts.join("+");
+}
+
+export function zoomFilter(plan: ScenePlan): string {
+  const { width, height } = plan.content;
+  if (!plan.zooms) return `scale=${width}:${height}:flags=bicubic`;
+  const z = piecewise(plan.camera, (view) => view.zoom, true);
+  const x = piecewise(plan.camera, (view) => view.x, false);
+  const y = piecewise(plan.camera, (view) => view.y, false);
+  return `zoompan=z='max(1,${z})':x='clip((${x})-iw/zoom/2,0,iw-iw/zoom)':y='clip((${y})-ih/zoom/2,0,ih-ih/zoom)':d=1:s=${width}x${height}:fps=${CLIP_FPS}`;
+}
+
+export function sceneHead(plan: ScenePlan, firstInput: number): { readonly graph: string; readonly last: string } {
+  const lines: string[] = [];
+  let label = "h0";
+  const commands = plan.drawsPointer || plan.pointer.rings.length;
+  lines.push(`[0:v]setpts=PTS-STARTPTS,fps=${CLIP_FPS}${commands ? ",sendcmd=f=pointer.cmd" : ""}[${label}]`);
+  let step = 0;
+  const into = () => `h${++step}`;
+  plan.art.forEach((art, index) => {
+    if (art.name === "corner.png") return;
+    const input = firstInput + index;
+    const ring = /^ring-(left|right)-(\d)\.png$/.exec(art.name);
+    const target = ring ? ringTarget(ring[1] as "left" | "right", Number(ring[2])) : art.name === "press.png" ? "overlay@press" : "overlay@pointer";
+    const next = into();
+    lines.push(`[${label}][${input}:v]${target}=x=0:y=0:enable=0[${next}]`);
+    label = next;
+  });
+  const zoomed = into();
+  lines.push(`[${label}]${zoomFilter(plan)}[${zoomed}]`);
+  return { graph: lines.join(";\n"), last: zoomed };
+}
+
+export function frameTail(plan: ScenePlan, from: string, cornerInput: number, clip: { readonly width: number; readonly height: number }): { readonly graph: string; readonly last: string } {
+  if (!plan.frame) return { graph: "", last: from };
+  const { inset, radius, background } = plan.frame;
+  const { width, height } = plan.content;
+  const right = inset + width - radius;
+  const bottom = inset + height - radius;
+  const lines = [
+    `[${from}]pad=${clip.width}:${clip.height}:${inset}:${inset}:color=0x${background}[f0]`,
+    `[${cornerInput}:v]split=4[k0][k1][k2][k3]`,
+    "[k1]hflip[k1f]",
+    "[k2]vflip[k2f]",
+    "[k3]hflip,vflip[k3f]",
+    `[f0][k0]overlay=${inset}:${inset}[f1]`,
+    `[f1][k1f]overlay=${right}:${inset}[f2]`,
+    `[f2][k2f]overlay=${inset}:${bottom}[f3]`,
+    `[f3][k3f]overlay=${right}:${bottom}[f4]`,
+  ];
+  return { graph: lines.join(";\n"), last: "f4" };
+}
+
+export function pointerOnClip(plan: ScenePlan, t: number): { readonly x: number; readonly y: number } | null {
+  if (!plan.pointer.frames.length) return null;
+  const frame = plan.pointer.frames[Math.min(plan.pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))]!;
+  const view = cameraAt(plan.camera, t);
+  const width = plan.source.width / view.zoom;
+  const height = plan.source.height / view.zoom;
+  const left = Math.min(plan.source.width - width, Math.max(0, view.x - width / 2));
+  const top = Math.min(plan.source.height - height, Math.max(0, view.y - height / 2));
+  return { x: ((frame.x - left) / width) * plan.content.width, y: ((frame.y - top) / height) * plan.content.height };
+}
+
+export function bundle(plan: ScenePlan, texts: readonly (readonly [string, string])[]): Buffer {
+  const files: [string, Buffer][] = [["pointer.cmd", Buffer.from(sceneCommands(plan))], ...texts.map(([name, text]): [string, Buffer] => [name, Buffer.from(text)]), ...plan.art.map((art): [string, Buffer] => [art.name, art.png])];
+  return Buffer.from(files.map(([name, data]) => `${name}\t${data.toString("base64")}\n`).join(""));
+}
