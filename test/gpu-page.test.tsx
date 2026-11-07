@@ -327,6 +327,50 @@ test("071 unit 13: a resize that changes the GPU names it when it has finished",
   );
 });
 
+test("071 unit 13: a resize that moves a box onto another card names that card", () => {
+  expect(
+    resizedNow(
+      "2 cores · 4 GiB · 16 GiB disk",
+      {
+        from: "shared",
+        to: "shared",
+        way: "restart",
+        stopped: false,
+        installs: null,
+        words: "GPU: shared, card 0 → shared, card 1 · Restart.",
+        fromIndex: 0,
+        toIndex: 1,
+        refusal: null,
+        others: [],
+        changed: null,
+      },
+      true,
+      true,
+    ),
+  ).toBe("It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 1 now, after a restart.");
+});
+
+test("071 unit 13: a resize onto a whole card says that card to itself", () => {
+  const size = "2 cores · 4 GiB · 16 GiB disk";
+  const gpu = {
+    from: "shared" as const,
+    to: "whole" as const,
+    way: "live" as const,
+    stopped: false,
+    installs: null,
+    words: "GPU: shared → whole, card 0 · Live.",
+    fromIndex: 0,
+    toIndex: 0,
+    refusal: null,
+    others: [],
+    changed: null,
+  };
+  expect(resizedNow(size, gpu, true, false)).toBe("It has 2 cores · 4 GiB · 16 GiB disk and card 0 to itself now, changed live.");
+  expect(resizedNow(size, { ...gpu, to: "shared", from: "none", fromIndex: null, words: "GPU: none → shared, card 0 · Live." }, true, false)).toBe(
+    "It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 0 now, changed live.",
+  );
+});
+
 test("071 unit 13: Resize shows the plan's words", async () => {
   const slot = open(
     page(

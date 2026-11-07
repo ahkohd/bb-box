@@ -49,12 +49,12 @@ function words(size: SizeView, ways: Resizing | null): string {
 
 function gpuNowWords(gpu: GpuChangeView): string {
   if (gpu.to === "none") return "no GPU";
-  const named = gpuPartWords(gpu.to);
-  return gpu.toIndex === null ? named : `${named} on card ${gpu.toIndex}`;
+  if (gpu.to === "whole") return gpu.toIndex === null ? gpuPartWords(gpu.to) : `card ${gpu.toIndex} to itself`;
+  return gpu.toIndex === null ? gpuPartWords(gpu.to) : `${gpuPartWords(gpu.to)} on card ${gpu.toIndex}`;
 }
 
 export function resizedNow(size: string, gpu: GpuChangeView | null | undefined, changed: boolean, restart: boolean): string {
-  const named = gpu && gpu.from !== gpu.to ? ` and ${gpuNowWords(gpu)}` : "";
+  const named = gpu && (gpu.from !== gpu.to || gpu.fromIndex !== gpu.toIndex) ? ` and ${gpuNowWords(gpu)}` : "";
   const how = changed ? (restart ? ", after a restart" : ", changed live") : "";
   return `It has ${size}${named} now${how}.`;
 }
