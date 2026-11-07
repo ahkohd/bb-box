@@ -54,6 +54,8 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/guest/files/selkies",
   "proxmox-lxc/template/guest/files/selkies-probe.mjs",
   "proxmox-lxc/template/guest/files/vnc-password",
+  "proxmox-lxc/template/guest/files/voxl",
+  "proxmox-lxc/template/guest/files/voxl-probe.mjs",
   "proxmox-lxc/template/guest/finalize.sh",
   "proxmox-lxc/template/guest/image-record.sh",
   "proxmox-lxc/template/guest/install-bb-app.sh",

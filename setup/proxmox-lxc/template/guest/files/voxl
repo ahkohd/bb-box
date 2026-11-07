@@ -1,0 +1,63 @@
+#!/bin/bash
+set -u
+port=5981
+idle_limit_seconds=${BBBOX_VOXL_IDLE_SECONDS:-60}
+state=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+[ -d "$state" ] && [ -w "$state" ] || state=/tmp
+log=$state/bb-box-voxl.log
+
+answers() { curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; }
+
+viewer_count() {
+  local stats
+  stats=$(curl -fsS -m 2 "http://127.0.0.1:$port/stats" 2>/dev/null) || { echo 0; return; }
+  grep -o '"inflight"' <<<"$stats" | wc -l
+}
+
+start_unless_answering() {
+  answers && return 0
+  exec 9>"$state/bb-box-voxl.lock"
+  flock -w 20 9 || { echo "voxl: another start held the lock for 20 s" >&2; return 1; }
+  if ! answers; then
+    setsid "$0" run 9>&- </dev/null >>"$log" 2>&1 &
+  fi
+  for _ in $(seq 1 200); do
+    answers && return 0
+    sleep 0.1
+  done
+  echo "voxl did not answer on 127.0.0.1:$port within 20 s: $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')" >&2
+  return 1
+}
+
+run_until_unwatched() {
+  exec 8>"$state/bb-box-voxl.run"
+  flock -n 8 || exit 0
+  if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
+  export DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
+  : >"$log"
+  local pid= watched_at
+  watched_at=$(date +%s)
+  trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null; exit 0' TERM INT
+  while :; do
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+      [ -z "$pid" ] || { wait "$pid" 2>/dev/null; sleep 1; }
+      /usr/local/bin/voxl --addr=127.0.0.1 --port=$port --enable-basic-auth=false \
+        --enable-resize=false --audio-enabled=false --microphone-enabled=false \
+        --file-transfers=none --title="bb-box desktop" &
+      pid=$!
+    fi
+    sleep 5
+    [ "$(viewer_count)" -eq 0 ] || watched_at=$(date +%s)
+    if [ $(($(date +%s) - watched_at)) -ge "$idle_limit_seconds" ]; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      exit 0
+    fi
+  done
+}
+
+case "${1:-}" in
+  start) start_unless_answering ;;
+  run) run_until_unwatched ;;
+  *) echo "usage: voxl start|run" >&2; exit 2 ;;
+esac

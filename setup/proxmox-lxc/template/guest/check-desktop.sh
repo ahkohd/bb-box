@@ -45,6 +45,14 @@ t "Selkies video" sh -c 'out=$(node /usr/local/libexec/bb-box/selkies-probe.mjs 
     [ -n "$nvenc" ] || { echo "not on NVENC: $out"; exit 1; }
     echo "NVENC, $out"
   else echo "x264, $out"; fi'
+if [ -x /usr/local/bin/voxl ]; then
+  t "voxl video" sh -c '/usr/local/libexec/bb-box/voxl start || exit 1
+    out=$(node /usr/local/libexec/bb-box/voxl-probe.mjs 5981 3) || exit 1
+    echo "$out" | grep -q "\"frames\":[1-9]" || { echo "no frames: $out"; exit 1; }
+    echo "$(/usr/local/bin/voxl --version), $out"'
+else
+  s "voxl video" "this image has no voxl"
+fi
 if [ -c /dev/nvidiactl ]; then
   t "nvidia-smi" nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total --format=csv,noheader
 else
