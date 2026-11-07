@@ -24,7 +24,7 @@ import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize } from "../../transports/types.ts";
+import { LEFT_TO_STREAM_SERVER, MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
   type GuestOs,
   BackendError,
@@ -2604,13 +2604,14 @@ export class DockerBackend implements Backend {
    * Back on the CPU it does nothing: Xtigervnc has taken the viewer's
    * SetDesktopSize.
    */
-  async #resize(command: DockerTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+  async #resize(command: DockerTransport, size: DisplaySize, signal?: AbortSignal): Promise<void | typeof LEFT_TO_STREAM_SERVER> {
     const { width, height } = wholeSize(size);
-    const script = `[ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ] || ${DISPLAY_ENV} xrandr --fb ${width}x${height}`;
+    const script = `if [ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ]; then echo ${LEFT_TO_STREAM_SERVER}; else ${DISPLAY_ENV} xrandr --fb ${width}x${height}; fi`;
     const result = await command.run(script, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
+    if (result.stdout.trim() === LEFT_TO_STREAM_SERVER) return LEFT_TO_STREAM_SERVER;
   }
 
   /**

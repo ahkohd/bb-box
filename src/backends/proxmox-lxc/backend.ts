@@ -205,7 +205,7 @@ import { VOXL_DISPLAY, VoxlPresence, voxlDisplay } from "../voxl.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
+import { LEFT_TO_STREAM_SERVER, MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
 import {
   FLAVOUR_KINDS,
   LXC_FLAVOURS,
@@ -5463,13 +5463,14 @@ export class ProxmoxLxcBackend implements Backend {
    * the CPU it does nothing: Xtigervnc has taken the viewer's SetDesktopSize,
    * and an older size that lands after a newer one disconnects its output.
    */
-  async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+  async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void | typeof LEFT_TO_STREAM_SERVER> {
     const { width, height } = wholeSize(size);
-    const script = `[ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ] || ${DISPLAY_ENV} xrandr --fb ${width}x${height}`;
+    const script = `if [ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ]; then echo ${LEFT_TO_STREAM_SERVER}; else ${DISPLAY_ENV} xrandr --fb ${width}x${height}; fi`;
     const result = await command.run(script, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
+    if (result.stdout.trim() === LEFT_TO_STREAM_SERVER) return LEFT_TO_STREAM_SERVER;
   }
 
   /**

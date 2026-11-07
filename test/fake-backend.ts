@@ -67,6 +67,7 @@ import { openTerminal } from "../src/transports/terminal.ts";
 import { IDENTITY_STATE, IDENTITY_TOOL } from "../src/core/identity.ts";
 import { machineSizeOf } from "../src/core/gpu.ts";
 import {
+  LEFT_TO_STREAM_SERVER,
   TransportError,
   type BoxPointer,
   type ByteChannel,
@@ -290,6 +291,7 @@ export class FakeBackend implements Backend {
    */
   apartInput: FakeSelkies | null = null;
   readonly voxl = new FakeVoxl();
+  sizeByStreamServer = false;
   voxlChosen = false;
   #voxlPort: Promise<number> | null = null;
   #apartPort: Promise<number> | null = null;
@@ -671,8 +673,9 @@ export class FakeBackend implements Backend {
     return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell, identity.tool, identity.root, identity.bin), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
   }
 
-  async #resize(size: DisplaySize): Promise<void> {
+  async #resize(size: DisplaySize): Promise<void | typeof LEFT_TO_STREAM_SERVER> {
     this.resizes.push(size);
+    if (this.sizeByStreamServer) return LEFT_TO_STREAM_SERVER;
     this.displayResizing += 1;
     this.mostDisplayResizing = Math.max(this.mostDisplayResizing, this.displayResizing);
     try {

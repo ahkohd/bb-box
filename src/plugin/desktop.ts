@@ -23,7 +23,7 @@ import { DEVICE_DISPLAY, desktopDisplays, deviceDisplayOf } from "../backends/ty
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
-import type { BoxPointer, ByteChannel, Display } from "../transports/types.ts";
+import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
@@ -332,7 +332,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // SetDesktopSize first, even when the backend resizes: a GPU desktop
       // can come back on the CPU after a stop and start, and take it (021).
       await restoreSize(displayOpener(shown), size, screen);
-      if (shown.resize) await resizes.request(boxId, (each) => shown.resize!(each), size);
+      if (shown.resize) {
+        await resizes.request(
+          boxId,
+          async (each) => {
+            await shown.resize!(each);
+          },
+          size,
+        );
+      }
       await followSize(boxId, shown).catch((error) => deps.logError("have the video follow the desktop's size", error));
     },
   });
@@ -712,7 +720,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       boxId,
       async (each) => {
         if (shown.resize) {
-          await shown.resize(each);
+          if ((await shown.resize(each)) === LEFT_TO_STREAM_SERVER) await restoreSize(displayOpener(shown), each, SELKIES_SCREEN);
           await followSize(boxId, shown, each);
           return;
         }
@@ -963,7 +971,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 // The SetDesktopSize still reaches the box, which answers the viewer.
                 const resize = shown?.resize;
                 if (resize) {
-                  resizes.request(boxId, (each) => resize(each), size).catch((error) => deps.logError("resize the desktop", error));
+                  resizes
+                    .request(
+                      boxId,
+                      async (each) => {
+                        await resize(each);
+                      },
+                      size,
+                    )
+                    .catch((error) => deps.logError("resize the desktop", error));
                 }
                 // Video viewers of the same desktop follow, once the box has taken the size.
                 if (selkiesBoxes.has(boxId)) {

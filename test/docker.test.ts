@@ -1045,7 +1045,7 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   const [gpuDisplay] = (await backend.transports(gpu, "linux-desktop")).displays;
   assert.deepEqual(gpuDisplay?.minSize, { width: 800, height: 600 });
   writeFileSync(join(fake.root, "containers", gpu.ref, "run", "bb-box", "display-mode"), "cpu\n");
-  await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal());
+  assert.equal(await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal()), "stream-server", "on the CPU, Xtigervnc takes the size by SetDesktopSize (072)");
   await assert.rejects(gpuDisplay!.resize!({ width: 0, height: 800 }, signal()), /cannot be 0 by 800 pixels/);
 });
 

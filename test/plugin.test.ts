@@ -4077,6 +4077,25 @@ test("a video display the backend resizes, as the GPU desktop with xrandr, takes
   await session.close();
 });
 
+test("a video viewer's resize of a desktop its backend leaves to the stream server, as a GPU desktop drawn by the CPU, reaches the VNC server as SetDesktopSize (072)", async (t) => {
+  const { harness, app, world } = await start(undefined, { resize: "backend", kinds: [FAKE_VOXL_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_VOXL_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const backend = world.backend!;
+  backend.sizeByStreamServer = true;
+  backend.rfb.acceptResize = true;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=voxl`);
+  await until("the viewer's own voxl client", async () => backend.voxl.clients[0]);
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await session.receive("r,1024x768");
+  await until("the backend's resize", async () => backend.resizes.some((size) => size.width === 1024 && size.height === 768));
+  await until("the size on the VNC server", async () => backend.rfb.width === 1024 && backend.rfb.height === 768);
+  await session.close();
+});
+
 test("a video display told a size first, as Selkies on Sway, hears it before the backend resizes the desktop, and the size the desktop kept after a resize that fails (the owner's note of 18 October 2026)", async (t) => {
   const kind: BoxKind = {
     ...FAKE_SELKIES_KIND,

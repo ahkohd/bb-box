@@ -158,10 +158,12 @@ export interface Display {
    * may not act on a viewer's SetDesktopSize (021). A display with it is
    * resizable. Core sends the box a SetDesktopSize for the size first, so it
    * may do nothing when the stream server took that, and setting a size the
-   * display already has must succeed. Rejects with the box's reason when the
-   * box refuses the size.
+   * display already has must succeed. Resolves "stream-server" when it did
+   * nothing because the stream server takes a SetDesktopSize itself, as
+   * Xtigervnc does, so a caller that sent none, as for a video viewer,
+   * sends one. Rejects with the box's reason when the box refuses the size.
    */
-  resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
+  resize?(size: DisplaySize, signal?: AbortSignal): Promise<void | typeof LEFT_TO_STREAM_SERVER>;
   /**
    * Starts the display's server again, for one that stopped answering a
    * viewer's sign-in: wayvnc 0.7.2 can freeze there (#411). A sign-in that
@@ -204,6 +206,8 @@ export interface Display {
    */
   readonly minSize?: DisplaySize;
 }
+
+export const LEFT_TO_STREAM_SERVER = "stream-server";
 
 /** The smallest size a viewer sets a Linux or Windows desktop to: their apps are hard to use below it. */
 export const MIN_DESKTOP: DisplaySize = { width: 800, height: 600 };
