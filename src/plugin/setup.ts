@@ -1699,6 +1699,16 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: joins.every((check) => check.status !== "fail"), summary: "Boxes that did not join BB at their first try, and what bb-box does about them.", checks: joins, notes: [] },
         });
       }
+      const userspaceChecks = await boxes.userspaceChecks(signal).catch((error: unknown) => {
+        logError("check NVIDIA's userspace in boxes", error);
+        return [];
+      });
+      if (userspaceChecks.length) {
+        sections.push({
+          title: "NVIDIA userspace",
+          report: { ok: true, summary: "NVIDIA's userspace in each box with a GPU, against its host's driver. bb-box never updates it by itself: bb box gpu update does, when a person asks.", checks: userspaceChecks, notes: [] },
+        });
+      }
       const spareChecks = await boxes.spareChecks();
       if (spareChecks.length) {
         sections.push({

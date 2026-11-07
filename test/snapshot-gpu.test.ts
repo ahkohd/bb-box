@@ -8,6 +8,7 @@ import { snapshotLine } from "../src/core/snapshot.ts";
 import { openBoxFiles } from "../src/plugin/attached-files.ts";
 import { rowOf } from "../src/plugin/snapshot-card.ts";
 import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "../src/plugin/snapshot-store.ts";
+import { fakeNvidia, updateCalls, withFakeNvidia } from "./fake-nvidia.ts";
 import { tempDir } from "./helpers.ts";
 import { record } from "./snapshot-fixtures.ts";
 import { COMMAND, armedWorld, readyBox, standing } from "./snapshot-world.ts";
@@ -56,6 +57,7 @@ test("a take through the real store keeps the GPU claim and userspace, shows the
   const box = await readyBox(state);
   const withGpu = (await state.boxes.update(box, () => ({ nvidiaUserspace: GPU.userspace })))!;
   const backend: Backend = state.backend;
+  withFakeNvidia(backend, fakeNvidia({ file: GPU.userspace, library: GPU.userspace }));
   backend.readGpuClaim = async () => ({ part: GPU.part, card: GPU.card, index: GPU.index, generation: 1 });
   backend.gpuRestoreFacts = async () => ({ held: await backend.readGpuClaim!(withGpu.guest!), driver: "580.142" });
   const taken = (await state.snapshots.take(COMMAND, withGpu, standing(withGpu), { name: "GPU snapshot" })).snapshot!;
@@ -65,4 +67,52 @@ test("a take through the real store keeps the GPU claim and userspace, shows the
   const check = await state.snapshots.checkRestore(COMMAND, withGpu, standing(withGpu), taken.id);
   assert.match(check.userspaceNote ?? "", /userspace 570\.86, and the host's driver is now 580\.142: nvidia-smi will fail/);
   assert.match(snapshotGpuWords(null), /GPU not recorded/);
+});
+
+test("071 unit 12: a take reads the box's userspace now, whatever its record says; a restore to a snapshot with an older userspace reads the box again, and the doctor names it; nothing updates it", async () => {
+  const state = armedWorld();
+  const nvidia = fakeNvidia({ file: "570.86", library: "570.86" });
+  withFakeNvidia(state.backend, nvidia);
+  const backend: Backend = state.backend;
+  const rollback = backend.rollbackSnapshot!.bind(backend);
+  const disks = new Map<string, string>();
+  backend.rollbackSnapshot = async (guest, ref, hooks) => {
+    await rollback(guest, ref, hooks);
+    const kept = disks.get(ref.id);
+    if (kept) nvidia.file = nvidia.library = kept;
+  };
+  const plain = await readyBox(state);
+  const box = (await state.boxes.update(plain, () => ({ size: { ...plain.size!, gpu: "shared" as const }, nvidiaUserspace: "580.142" })))!;
+  const older = (await state.snapshots.take(COMMAND, box, standing(box), { name: "older userspace" })).snapshot!;
+  disks.set(older.id, "570.86");
+  assert.equal(state.store.record(older.id)?.gpu?.userspace, "570.86", "read from the box, not the record's 580.142");
+
+  nvidia.file = nvidia.library = "580.142";
+  const updated = await state.boxes.readUserspace(box);
+  assert.equal(updated.nvidiaUserspace, "580.142");
+  assert.equal((await state.boxes.userspaceChecks()).some((check) => check.id === `gpu-userspace.${box.name}`), false);
+
+  await state.snapshots.restore(COMMAND, updated, standing(updated), older.id);
+  const restored = (await state.boxes.find(box.id))!;
+  assert.equal(restored.state, "ready");
+  assert.equal(restored.nvidiaUserspace, "570.86", "read again after the restore");
+  const named = (await state.boxes.userspaceChecks()).find((check) => check.id === `gpu-userspace.${box.name}`);
+  assert.equal(named?.status, "warn");
+  assert.equal(named?.detail, `Box ${box.name} has NVIDIA's userspace 570.86, and the host's driver is 580.142: nvidia-smi and CUDA fail in it until its userspace is updated.`);
+  assert.deepEqual(updateCalls(nvidia), [], "neither the take, the restore nor the doctor updates it");
+});
+
+test("071 unit 12: a restore's start settles an update that failed after its install, once the box it brings back has the host's driver", async () => {
+  const state = armedWorld();
+  const nvidia = fakeNvidia({ file: "580.142", library: "580.142" });
+  withFakeNvidia(state.backend, nvidia);
+  const plain = await readyBox(state);
+  const box = (await state.boxes.update(plain, () => ({ size: { ...plain.size!, gpu: "shared" as const } })))!;
+  const matching = (await state.snapshots.take(COMMAND, box, standing(box), { name: "matching" })).snapshot!;
+  const failed = (await state.boxes.update(box, () => ({ userspaceUpdate: { from: "570.86", to: "580.142", at: state.now, state: "failed" as const, step: "check" as const, ms: 1, error: "nvidia-smi in it listed no card" } })))!;
+  await state.boxes.readUserspace(failed);
+  assert.equal((await state.boxes.find(box.id))?.userspaceUpdate?.state, "failed", "a reading with no start leaves it named");
+  await state.snapshots.restore(COMMAND, failed, standing(failed), matching.id);
+  assert.equal((await state.boxes.find(box.id))?.userspaceUpdate?.state, "done");
+  assert.deepEqual(updateCalls(nvidia), []);
 });

@@ -1,5 +1,9 @@
-import { PluginCliError, cliCommand, type PluginCliResult } from "@get-bb/plugin-sdk";
-import { BoxError, describeError } from "../core/boxes.ts";
+import { PluginCliError, cliCommand, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
+import { BoxError, OPERATOR, describeError, type BoxRecord, type UserspaceUpdateAnswer } from "../core/boxes.ts";
+import { BY_COMMAND } from "../core/box-log.ts";
+import { fromOf } from "../core/gpu-userspace.ts";
+import type { Caller } from "../core/snapshot.ts";
+import type { ThreadOnBox } from "./contract.ts";
 import type { GpuMarkGuest, GpuMarking } from "../backends/types.ts";
 import type { BbBox } from "./setup.ts";
 
@@ -93,8 +97,82 @@ async function guard(action: string, task: () => Promise<PluginCliResult>): Prom
   }
 }
 
+const COMMAND: Caller = { is: "command" };
+
+function ownerOf(options: { readonly machine?: boolean; readonly thread?: string }, ctx: PluginCliContext): string {
+  if (options.machine) return OPERATOR;
+  const threadId = options.thread ?? ctx.threadId;
+  if (!threadId) throw new PluginCliError("No thread.", { code: "missing_required", hint: "Run this in a BB thread, or pass --thread <id> or --machine." });
+  return threadId;
+}
+
+function workingWords(threads: readonly ThreadOnBox[]): string | null {
+  const working = threads.filter((thread) => thread.running);
+  if (!working.length) return null;
+  const named = working.map((thread) => (thread.title ? `"${thread.title}"` : thread.id));
+  const list = named.length < 2 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+  return `${working.length === 1 ? "A thread is" : `${working.length} threads are`} working on it, ${list}: the restart ends ${working.length === 1 ? "its" : "their"} work, so bb-box refuses it unless --force.`;
+}
+
+function snapshotOffered(app: BbBox, box: BoxRecord): boolean {
+  return app.snapshots.offerFor(app.snapshots.backendOf(box.backend), box.kind) !== null;
+}
+
+async function checkWords(app: BbBox, box: BoxRecord, answer: UserspaceUpdateAnswer): Promise<string> {
+  if (!answer.needed) return answer.words;
+  const working = workingWords(await app.threadsOn(box).catch(() => []));
+  const snapshot = snapshotOffered(app, box) ? "--snapshot takes a snapshot of it first, so you can restore it." : null;
+  return [answer.words, working, snapshot, "Changes nothing (--check)."].filter(Boolean).join(" ");
+}
+
 export function gpuCommands(app: BbBox) {
   return {
+    "gpu update": cliCommand({
+      summary:
+        "Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). bb-box checks the box first: bb-box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. " +
+        "Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. bb-box never updates a box's userspace by itself; bb box doctor names the boxes that need it.",
+      positionals: [{ name: "box", description: "The box's name or ID. Several, with spaces between, are updated one at a time.", required: true, variadic: true }],
+      options: {
+        thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
+        machine: { type: "boolean", description: "The boxes are your machines, from bb box machines, not a thread's." },
+        check: { type: "boolean", description: "Only say what it would do, and what stops; it changes nothing." },
+        force: { type: "boolean", description: "Restart it even while threads are working on it, which ends their work." },
+        snapshot: { type: "boolean", description: "Take a snapshot of the box first, where its provider takes snapshots, so it can be restored." },
+        json: { type: "boolean", description: "Print JSON." },
+      },
+      run: ({ positionals, options }, ctx) =>
+        guard("Updating NVIDIA's userspace", async () => {
+          const owner = ownerOf(options, ctx);
+          const refs = positionals.box as string[];
+          const results: { box: string; ok: boolean; words: string }[] = [];
+          for (const ref of refs) {
+            try {
+              const box = await app.boxes.get(owner, ref);
+              const plan = await app.boxes.updateUserspace(owner, box.id, { check: true, signal: ctx.signal });
+              if (options.check) {
+                results.push({ box: plan.box.name, ok: true, words: await checkWords(app, plan.box, plan) });
+                continue;
+              }
+              if (!plan.needed) {
+                results.push({ box: plan.box.name, ok: true, words: plan.words });
+                continue;
+              }
+              await app.checkRestart(plan.box, options.force === true);
+              const taken = options.snapshot ? await app.snapshots.take(COMMAND, plan.box, { box: { id: plan.box.id, threadId: plan.box.threadId }, runsOn: false }, { note: `Taken by bb box gpu update before it installed NVIDIA's userspace ${plan.to} over ${fromOf(plan.from)}.` }) : null;
+              const done = await app.boxes.updateUserspace(owner, box.id, { who: BY_COMMAND, checkRestart: (found) => app.checkRestart(found, options.force === true).then(() => undefined), signal: ctx.signal });
+              const before = taken?.snapshot ? `Took snapshot "${taken.snapshot.name}" first. ` : "";
+              results.push({ box: done.box.name, ok: true, words: `${before}${done.words}` });
+            } catch (error) {
+              if (error instanceof PluginCliError) throw error;
+              results.push({ box: ref, ok: false, words: `${describeError(error, "Updating NVIDIA's userspace")}${error instanceof BoxError ? ` (${error.code})` : ""}` });
+            }
+          }
+          const exitCode = results.some((result) => !result.ok) ? 1 : 0;
+          if (options.json) return { exitCode, stdout: `${JSON.stringify(results, null, 2)}\n` };
+          const text = results.map((result) => (refs.length > 1 ? `${result.box}: ${result.words}` : result.words)).join("\n");
+          return exitCode ? { exitCode, stdout: "", stderr: `${text}\n` } : { exitCode, stdout: `${text}\n` };
+        }),
+    }),
     "gpu mark": cliCommand({
       summary:
         "Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.<card's UUID>.g<N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. " +

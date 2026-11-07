@@ -3981,3 +3981,315 @@ operation that is not cancelled runs as before.
 
 - A switch made by one install is not seen by another on the same host; the
   doctor warns where two installs have GPU boxes there.
+
+## Unit 12: the userspace update after a driver change
+
+Built on main `07b96c95`, on branch `u71-12`, and rebased onto main
+`6ef653f5`. Section 6's update of a box's NVIDIA userspace after the host's
+driver changes, as a person's operation on its own, and the reading of each
+box's userspace that it rests on. No helper or template change. Nothing
+updates a box's userspace by itself: only `bb box gpu update`, which a person
+runs. Its gate passed on the node on `476dd54d`, after two rounds of reviews
+by Astra and Fable, whose last checks said go.
+
+### What it does
+
+- **Each box's userspace is read.** bb-box reads NVIDIA's userspace in a box
+  with a GPU, on a backend whose boxes keep it on their own disks (Proxmox
+  LXC), after its acquire, after each start bb-box makes, after each restore,
+  during and after an update, and in the doctor for each running box. A
+  reading is the version file, `/usr/share/bb-box/nvidia-version`, and the
+  version of the `libnvidia-ml.so.1` it finds; the record keeps both
+  (`userspaceRead`), with the host's driver as bb-box knew it then, and
+  `nvidiaUserspace` becomes the library's version. Where the two disagree,
+  the userspace is half-installed. A snapshot's take reads the box itself,
+  whatever the record says, so a userspace changed in the box since is the
+  one recorded.
+- **The host's driver** comes from the backend (`Backend.nvidiaHost`). On
+  Proxmox LXC it is the driver the node's GPU helper reports now; with no
+  helper, it is read then from a running box of the install, never a value a
+  desktop saw at an earlier start; where the helper is not reporting, or there
+  is no helper and no running box shows the driver, bb-box says why and
+  updates nothing. Docker does not offer it:
+  NVIDIA's Container Toolkit gives each box the host's own userspace.
+- **`bb box gpu update <box>`**, for one box or several, one at a time. Before
+  anything changes it refuses a box that is stopped ("Start box X first"),
+  has no GPU, or is on a backend that keeps no userspace in its boxes, and a
+  host whose driver bb-box cannot tell. It reads the box's userspace and
+  stops there when it is the host's driver and its last update finished. It
+  then runs one check in the box, as root: x86_64, bb-box's own Linux image
+  (Ubuntu 24.04 with its image record), 2 GiB free in `/var/tmp`, no
+  `nvidia-*`, `libnvidia-*` or `cuda-drivers` package from apt in any state
+  but not installed or configuration files only (held, unpacked and
+  half-installed ones count), a list of packages it could read, the box seeing
+  the host's driver as the helper reports it, and the processes that have a
+  `/dev/nvidia*` node open. `--check` says what it would do: "bb-box installs
+  NVIDIA's userspace 580.142 in lone-pine, over 570.86, then restarts it.
+  Everything running in it stops: python3 (3310) has the GPU open.", names
+  threads working on the box, and offers `--snapshot` where the backend
+  snapshots. It is refused while a person holds the box's desktop and, unless
+  `--force`, while threads work on it, as a resize's restart is (061), and
+  asked again just before the restart, so a thread that began working during
+  the download stops the update before it restarts the box. The check's
+  script comes on stdin: `--check`, and a refusal, write nothing in the box;
+  the update's files go in with the download.
+- **The steps**, recorded on the box (`userspaceUpdate`) before the first:
+  `fetch`, the installer for exactly the host's driver downloaded in the box
+  from NVIDIA and checked against NVIDIA's SHA-256 (one already there and
+  matching is kept); `install`, with `nvidia-userspace.sh`, the same script
+  and flags as the templates, no kernel modules, which writes the version
+  file and the drivers' unit; for a desktop, `DISPLAY_MODE=auto`; then
+  `restart`, a stop and a start through the backend, so the start gate and
+  the card check run as for any start; then `check`: the userspace read
+  again is the host's driver, `nvidia-smi` lists the claimed card and
+  `cuInit` returns 0, and for a desktop its display is on the GPU and its
+  video comes from NVENC. The installer and its files are removed once
+  installed. The restart's stop and start are in the box log, by the person's
+  command.
+- **One update at a time, in the box.** The update's script holds a lock,
+  `/run/bb-box-nvidia-update.lock`, with `flock` while it downloads and
+  installs, and NVIDIA's installer keeps it as the script's child, so it is
+  held for as long as any of them runs, even after bb-box has gone. The
+  kernel drops the lock when its last holder exits, so a dead installer
+  leaves none behind. While it is held, a reading of the box says so: the
+  reading is not recorded, an update cut short stays `unknown`, the doctor
+  says "An earlier update of NVIDIA's userspace is still running in box X:
+  bb-box reads its userspace once it ends, and starts no other update until
+  then.", and a new update, `--check` and Update again included, is refused
+  before any check. The script refuses too, should one get past. The box's
+  record keeps when a reading last saw the lock held, until a reading sees it
+  free, so `bb box status`, the box's view and an agent's `box_status` say the
+  same and offer no Update again meanwhile.
+- **When it does not finish.** A failed download changes nothing in the box.
+  A failed install leaves the box running, not restarted, and reads it: a
+  half-installed userspace is named, with "run bb box gpu update X again". A
+  failed restart or check leaves the box with its disk, says what happened,
+  and keeps the update named as not finished until Update again. When bb-box
+  stops in the middle, the update is `unknown`: it was cut short. The next
+  sweep, or the doctor, reads the box again where it runs, and the update
+  becomes failed with what the box had; an install that had finished is left
+  at its restart. A box left starting or stopping by the cut is settled from
+  its power first. The box is never released for it. A failed update stops
+  being named once a reading shows the host's driver as read then, after a
+  start bb-box made since the update, a restore's included, or after a
+  download that failed: the update is then done, and no update reinstalls a
+  box that matches. The start is kept on the update's record, so a reading
+  that comes later, after the start's own reading failed, still counts it.
+- **The doctor**, a section of its own: `gpu-userspace` counts the boxes with
+  a GPU whose userspace is the host's driver; `gpu-userspace.<box>` warns for
+  each that is not, that is half-installed, or whose last update did not
+  finish, with the command: "Box lone-pine has NVIDIA's userspace 570.86, and
+  the host's driver is 580.142: nvidia-smi and CUDA fail in it until its
+  userspace is updated." and "Fix: Update it: bb box gpu update lone-pine
+  --thread <thread>". A stopped box is named as bb-box last read it, and one
+  never read as "not checked". Spares are left out.
+- **What a person and an agent see.** `bb box status` adds a line with the
+  same words and the command. An agent's `box_status` and `box_acquire` say
+  "nvidia-smi in lone-pine fails: its NVIDIA userspace is 570.86 and the
+  host's driver 580.142. Ask the user to update it.", or that it is
+  half-installed and to ask the user to update it again. No agent tool
+  updates it. The box's view (`bb box status --json` and the panel's) carries
+  the reading, the update and a notice with its action, `update` or
+  `update-again`, for unit 14's page.
+- `setup/proxmox-lxc/README.md` says what to do after a driver change.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` with `--init`, as CI runs them, on
+the branch's last commit, after the reviews' round:
+
+- `tsc` clean, and `node scripts/reference.ts --check` clean after the
+  reference was written again (the new command and the two new checks).
+- The node suite as root, rebased on main `6ef653f5`, run alone: 3,889
+  tests, 3,468 passed, 111 failed, 310 skipped. Each failure is one of main's
+  in the same container (3,849 tests, 3,425 passed, 114 failed, 310 skipped,
+  run beside two other runs at a load of about 60 on 8 cores): identity reset
+  scripts that find none of the container's eth interfaces, the snapshot,
+  fork and keep tests built on them, the Android image check and
+  `setup-mac.sh`, as unit 11 found. Four of main's pass here: three
+  timing-bound under that load, and one of the Android image check's. vitest:
+  471 passed, as on that main.
+- The new files as the box user: 42 passed, and the one that needs root
+  skipped.
+- `test/gpu-userspace.test.ts`, 21 tests, through `Boxes` with the fake
+  backend, a card and a fake NVIDIA userspace in its box: the check and the
+  update over an older userspace, with its steps in order, the restart's
+  guard asked twice and the restart in the box log; the refusals before
+  anything changes; an install that leaves a half-installed userspace, and
+  Update again; bb-box stopping mid-install, then its sweep; an earlier
+  update still running, which leaves the update unknown, refuses a new one
+  and is settled once it ends; a crash that left the update running and the
+  box starting, read first by the doctor; nothing updated by an acquire, a
+  start, a stop, the sweep or the doctor, and the doctor's words for a
+  running box, a stopped one and one never read, and why it did not read a
+  running one; the doctor reading a change bb-box did not make; a check
+  after the restart that fails, that cannot run, and an install that changed
+  nothing; the guard refusing just before the restart; a restart that fails;
+  a failed update settled by a matching reading, against the host's driver
+  read then, and after a start whose own reading failed; a held lock in
+  status with no Update again, and an update not read since it was cut short
+  sending the person to the doctor; a desktop's check on the
+  GPU; a person's machine and a spare; and the CLI: `--check`, the restart's
+  guard and `--force`, `--snapshot`, and several boxes.
+- `test/gpu-userspace-scripts.test.ts`, 14 tests: the update script on a fake
+  root (its check, apt packages installed, held, unpacked, half-installed and
+  not installed, a list it cannot read, an `os-release` that is missing; the
+  download against NVIDIA's SHA-256 from a `file://` mirror, a mismatch,
+  another driver and a version that is not one; the install, a desktop set to
+  auto, its files removed, and a failed install; the lock, held by an
+  installer's child left running, refusing a second fetch and install, seen
+  by a reading and by the check, and gone once its holder is killed), the
+  files bb-box puts in the box with the download, the root wrapper and the
+  whole check from stdin as root, and the judges and words.
+- `test/gpu-userspace-proxmox.test.ts`, 3 tests: Proxmox LXC's host driver
+  from the real helper on unit 2's fake node, read again when it changes,
+  none for a kind it does not offer, why it cannot tell, and with no helper
+  read each time from a running box of the install.
+- `test/snapshot-gpu.test.ts`: a take reads the box rather than its record;
+  a restore to a snapshot with an older userspace reads the box again and
+  the doctor names it, with nothing updated; a restore's start settles an
+  update that failed after its install. Its earlier take test gives its fake
+  box a userspace to read.
+- Each rule was reverted on its own on the box, and its tests failed: 94
+  reverts, by a harness that patches each rule out, runs its tests and puts
+  it back. Two of them, the abort of an update when bb-box stops and the
+  refusal of a new one meanwhile, fail by their test's timeout.
+- `shellcheck` on the update script: clean. Each block of the node steps
+  passes `bash -n` and `shellcheck`, with its shared definitions.
+
+### The gate on the node, first run
+
+Run by the lead on the node and by the builder on a test BB, on 6 November
+2026 (UTC), on `af0d2f6b` before the lock below. The test BB was a fresh
+`npx bb-app@0.48.1` on a Proxmox LXC box, with no account, bb-box installed
+from `git archive af0d2f6b`, live checks off, its server the systemd unit
+`tbb`, and iptables letting only the box itself and the lent addresses reach
+its two ports. Its thread's agent was a script that calls bb-box's tools as
+an agent does. The lead added its Proxmox LXC backend: the test pool,
+production's Linux template (NVIDIA 580.142), the lent VMIDs and addresses,
+desktops per GPU 2, no desktop templates and no warm boxes. One test GPU
+guest, T1, a shared server; no load but `nvidia-smi` and `cuInit`.
+
+| Step | Evidence |
+| --- | --- |
+| 0 (22:42) | The helper 0.4.3 with writes on, serving the test pool; driver 580.142; both cards about 97 GiB free; 38 guests in `u5-check.sh`'s baseline |
+| A (22:43) | T1 made shared on card 1, its claim g1 granted, ready in 5.3 s; its record and the box both 580.142, file and library; no update files. On the node: T1 the one lent VMID, the server set of lines on card 1's `/dev/nvidia0` |
+| B (22:43 to 22:44) | 570.195.03 installed in T1 from NVIDIA, SHA-256 checked; `nvidia-smi` exits 18, "Driver/library version mismatch". The doctor: "Box T1 has NVIDIA's userspace 570.195.03, and the host's driver is 580.142: nvidia-smi and CUDA fail in it until its userspace is updated.", Fix "Update it: bb box gpu update T1 --thread <thread>"; `bb box status` the same; an agent's `box_status` "nvidia-smi in T1 fails: its NVIDIA userspace is 570.195.03 and the host's driver 580.142. Ask the user to update it."; no agent tool updates it |
+| C (22:44) | Snapshot "older": shared, card 1, userspace 570.195.03 |
+| D (22:44 to 22:45) | `--check`: "bb-box installs NVIDIA's userspace 580.142 in T1, over 570.195.03, then restarts it. Everything running in it stops." The update: "Updated NVIDIA's userspace in box T1 from 570.195.03 to 580.142, and restarted it, in 34 s. nvidia-smi in it lists card 1, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB, and CUDA's driver initialises." (33,719 ms by its record, download included). On the node: the helper stopped and started T1; its marker, claim g1 and lines unchanged; no mismatch |
+| E (22:45 to 22:47) | The restore's check: "This snapshot has NVIDIA's userspace 570.195.03, and the host's driver is now 580.142: nvidia-smi will fail in the box until its userspace is updated." After the restore the doctor names T1. After the doctor, a stop and start, and the test BB's restart: still 570.195.03, the last update still D's, no update files, the installer's log untouched |
+| F (22:47 to 22:48) | The test BB killed at 22:48:04 with NVIDIA's installer running in T1. Its sweep at its start read T1 at 22:48:08, 570.195.03, and named the update cut short with Update again. See the finding below |
+| G (22:49) | Update again: "Updated NVIDIA's userspace in box T1 from half-installed (libraries 580.142, version file 570.195.03) to 580.142, and restarted it, in 22 s." The doctor names nothing |
+| H (22:49 to 22:50) | T1 released; no lent VMID in use or holding a card; no mismatch; the helper wrote no guest outside the lent VMIDs; `u5-compare.sh`: no GPU guest changed but production's three it started (power starts only) |
+
+**The finding.** The kill did not stop the installer in T1: it ran on past
+the sweep's reading and installed the 580.142 libraries, and the script
+around it never wrote the version file. At 22:48:58 T1 had libraries 580.142
+and a version file 570.195.03 and no NVIDIA process; the doctor, which reads
+running boxes again, named it half-installed. For about 50 s the record was
+out of date, and an Update again in that window would have run a second
+installer beside the first. The lock above closes it, and the gate's step F
+now waits for the lock to clear, says what bb-box said meanwhile, and checks
+from the node that the installer has ended.
+
+### After the first review
+
+Astra said no-go, with three findings; the lead decided they go in this round
+with the lock. Fable's review was still running.
+
+| Finding | Fix |
+| --- | --- |
+| The apt guard passed held, unpacked and half-installed NVIDIA packages (high) | The script lists every package's state with `dpkg-query` and counts any `nvidia-*`, `libnvidia-*` or `cuda-drivers*` package not in `not-installed` or `config-files`, or with a `reinstreq` flag, naming its state; a list it cannot read refuses the update |
+| An aborted command does not stop the installer, and a retry could overlap it (high) | The lock above, held by the installer itself, checked by every reading and every update |
+| The gate's sweep step could pass with no sweep run (medium) | Step E runs `bb box sweep`, which answers only once a sweep has finished, and reads T1 after its report; step F the same once the lock has cleared |
+
+Fable then said no-go, with seven findings; the lead decided they go in the
+same round.
+
+| Finding | Fix |
+| --- | --- |
+| No guard against an installer that runs on after bb-box is cut off, which the updated gate steps already assert (high) | The lock above, at the path and with the words the steps expect; the update's check reports it too |
+| A failed update outranked a fresh reading that matches, for ever, and an update then reinstalled a box that matched (medium) | A reading after a start bb-box makes, a restore's included, or after a download that failed, that shows the host's driver settles the update as done |
+| The restart's guard ran minutes before the restart (low) | It is asked before anything changes and again just before the stop; refused then, the update is left at its restart, with Update again |
+| `--check` wrote the update's scripts into the box (low) | The check's script comes on stdin; the files go in with the download |
+| A failed restart said "with its disk as it was" after its install (low) | "with the new userspace on its disk" |
+| The doctor's "not checked" assumed a stopped box (low) | A running box it did not read says why: bb-box was working on it, or could not read the host's driver |
+| With no helper, Proxmox gave the driver a desktop saw at an earlier start (low) | It reads the driver from a running box of the install each time, or says why it cannot |
+
+Astra's re-review said no-go, with two medium findings and a low one; the
+lead decided all three go in this round.
+
+| Finding | Fix |
+| --- | --- |
+| A failed update was settled against its own target, not the host's driver, so after a failed download and a host back on the box's driver it reinstalled the same version (medium) | It is settled against the host's driver as the reading found it |
+| Only the reading made at a start counted it, so a start whose reading failed was lost, and later matching readings never settled the update (medium) | A start is kept on the failed update's record (`restartedSince`) before its reading, and every later reading counts it |
+| The held lock reached the doctor but not status, which still offered Update again (low) | The box's record keeps when a reading saw the lock held (`userspaceRunningSeenAt`); status, the view and `box_status` say an earlier update is still running, with no action, until a reading sees the lock free |
+
+Fable's re-review said go, with one low finding, which the lead put in this
+round: for an update cut short and not read since, `bb box status` told the
+person to update again, which the lock may refuse. Status now says that `bb
+box doctor` reads the box and says whether that update is still running and
+when to update it again, with no action; an agent is told to ask the user.
+
+### The gate on the node, second run
+
+Run by the lead on the node and by the builder on the same test BB, on 7
+November 2026 (UTC), on `476dd54d`, after every review's fixes: the lock,
+the apt guard, the sweep's evidence and the re-reviews'. The test BB had
+bb-box installed from `git archive 476dd54d`, and the same backend: the test
+pool, production's Linux template (NVIDIA 580.142), the lent VMIDs and
+addresses, desktops per GPU 2. One test GPU guest, T1, a shared server on CT
+3241; no load but `nvidia-smi` and `cuInit`; both cards idle at the end.
+
+| Step | Evidence |
+| --- | --- |
+| 0 (before 00:17) | The helper 0.4.3 with writes on, driver 580.142, 42 guests in `u5-check.sh`'s baseline, both cards over 96 GiB free; the lent VMIDs free. The first run's files kept apart |
+| A (00:17) | T1 made shared on card 0, claim g1 granted, ready in 12.4 s (clone 3.2, start 4.2, network 2.6 s); its record and the box 580.142, file and library; no update files; `nvidia-smi -L` lists card 0. On the node: T1 the one lent VMID, holding card 0 running, with the server set of lines (`/dev/nvidia1`, `nvidiactl`, `nvidia-uvm`, `nvidia-uvm-tools`) and no desktop nodes |
+| B (00:18:07 to 00:18:54) | 570.195.03 installed in T1 from NVIDIA, SHA-256 checked; `nvidia-smi` exits 18, "Driver/library version mismatch". The doctor: "Box T1 has NVIDIA's userspace 570.195.03, and the host's driver is 580.142: nvidia-smi and CUDA fail in it until its userspace is updated.", Fix "Update it: bb box gpu update T1 --thread <thread>"; `bb box status` the same; an agent's `box_status` "nvidia-smi in T1 fails: its NVIDIA userspace is 570.195.03 and the host's driver 580.142. Ask the user to update it."; no agent tool updates it; no update record |
+| C (00:18:54) | Snapshot "older": shared, card 0, userspace 570.195.03, read from the box |
+| D (00:18:57 to 00:21:42) | `--check`: "bb-box installs NVIDIA's userspace 580.142 in T1, over 570.195.03, then restarts it. Everything running in it stops.", with `--snapshot` offered and "Changes nothing (--check)". The update: "Updated NVIDIA's userspace in box T1 from 570.195.03 to 580.142, and restarted it, in 158 s. nvidia-smi in it lists card 0, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB, and CUDA's driver initialises." 158,287 ms by its record, most of it NVIDIA's download: T1's installer log ends at 00:21:24 (34 s in all in the first run). On the node: T1's marker (g1, shared, card 0), claim and lines as at A; no mismatch; the helper's journal has one stop and one start of T1 for the restart |
+| E (00:22:26 to 00:23:39) | The restore's check: "Its GPU stays as it is now: shared, card 0." and "This snapshot has NVIDIA's userspace 570.195.03, and the host's driver is now 580.142: nvidia-smi will fail in the box until its userspace is updated." After the restore the doctor names T1 with 570.195.03 against 580.142. After the doctor, a stop and start, the test BB's restart and `bb box sweep`, whose report came back (all counts 0): still 570.195.03, the last update still D's, no update files, the installer's log untouched |
+| F (00:23:45 to 00:24:13) | The test BB killed at 00:23:59 with NVIDIA's installer running in T1. At 00:24:02 the lock in T1 was held: the doctor said "An earlier update of NVIDIA's userspace is still running in box T1: bb-box reads its userspace once it ends, and starts no other update until then."; T1's update stayed `unknown`; a new update said "Not changed: an earlier update of NVIDIA's userspace is still running in box T1: … Run this again once it has ended: bb box doctor says when it has." (`try_again`). The lock was free by 00:24:07, with no installer running. `bb box sweep` then read T1: libraries 580.142, version file 570.195.03, half-installed; the update failed at its install step, "bb-box restarted before the update finished. When bb-box read the box again, it had a half-installed NVIDIA userspace: NVIDIA's libraries 580.142 and a version file that says 570.195.03."; status and the doctor: "Update it again: bb box gpu update T1 --thread <thread>". On the node: no NVIDIA installer process in T1 and no update lock held; T1's version file 570.195.03 and library 580.142; NVIDIA's installer log ends at "Running post-install sanity check:", so the installer ended before its sanity check finished |
+| G (00:24:44 to 00:26:04) | Update again: "Updated NVIDIA's userspace in box T1 from half-installed (libraries 580.142, version file 570.195.03) to 580.142, and restarted it, in 57 s. nvidia-smi in it lists card 0, shared, …, and CUDA's driver initialises." The update done; T1 580.142, file and library; no update files; the doctor: "1 box with a GPU has NVIDIA's userspace for its host's driver." |
+| H (00:26) | T1 released with its snapshots. On the node: no lent VMID in use or holding a card; no mismatch; the helper wrote no guest outside the lent VMIDs; `u5-compare.sh`: 8 GPU guests of 42 before and 8 of 43 after, no guest changed but production's own power actions (one stopped and deleted, two started); both cards idle |
+
+So the lock did what the first run found was missing: the installer bb-box's
+kill left running kept the lock for about 5 s after the test BB was back,
+bb-box read nothing as settled meanwhile and refused a second update, and it
+read and named the half-installed userspace only once the installer had
+ended.
+
+Limits: one node and one server; the cards loaded nothing; a desktop's
+update is tested with the fake backend only. The kill's timing decides what
+the installer leaves; both runs left a half-installed userspace.
+
+### Deviations from the note
+
+- Where it is offered: `bb box gpu update` and the doctor, and `bb box
+  status`. The box's page ("Update NVIDIA's userspace…") and the settings'
+  list of cards are units 14 and 15; the box's view already carries the
+  notice and its action.
+- The installer is always downloaded in the box from NVIDIA and checked
+  against NVIDIA's SHA-256. The host's artifacts are not used: bb-box's token
+  cannot read the node's files.
+- The snapshot offered first is `--snapshot`, taken before the update, not a
+  dialog's choice.
+- The update has no box log events of its own, as new event kinds need a
+  migration of the box log's table: it is recorded on the box and in the
+  server's log, and its restart's stop and start are in the box log.
+- The doctor's check is bb-box's own, per box, `gpu-userspace.<box>`, with a
+  summary, not `proxmox.gpu-userspace`: the boxes are bb-box's records, and
+  the templates' part stays in each template's image check, as unit 7 left
+  it. It reads each running box with a GPU at each run: one short command a
+  box.
+- A box with no GPU is refused: nothing in it uses the userspace. Adding a GPU
+  to a box without the host's userspace is unit 10's.
+- The desktop's check after the restart reads its display mode and probes
+  Selkies' video for NVENC, as `bb-box-check-desktop`'s two lines do, not
+  the whole of that check.
+
+### Still open
+
+- A desktop's update is tested with the fake backend only: the gate is on a
+  server, as a GPU desktop's display can take more of a card than the gate's
+  256 MiB allows.

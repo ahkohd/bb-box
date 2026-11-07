@@ -46,6 +46,7 @@ import {
   type KindCapabilities,
   type LeasedAddressNow,
   type MachineNature,
+  type NvidiaHost,
   type PowerState,
   type ReleaseHooks,
   type ResizePlan,
@@ -58,6 +59,7 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type ByteChannel, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
+import type { CheckId } from "./checks.ts";
 import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
@@ -94,7 +96,38 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import {
+  DESKTOP_GPU_CHECK,
+  USERSPACE_READ,
+  fetchCommand,
+  fromOf,
+  halfInstalled,
+  installCommand,
+  judgeAnyCard,
+  judgeDesktopCheck,
+  judgeReading,
+  judgeUpdateCheck,
+  lastLines,
+  matchesDriver,
+  planWords,
+  readingWords,
+  restartedSinceUpdate,
+  settledUpdate,
+  stillRunningWords,
+  UPDATE_CHECK,
+  updateScriptText,
+  updateLeftWords,
+  userspaceOfReading,
+  updateRunning,
+  userspaceState,
+  type GpuProcess,
+  type UserspaceReading,
+  type UserspaceState,
+  type UserspaceUpdate,
+  type UserspaceUpdateStep,
+} from "./gpu-userspace.ts";
+import { CARD_CHECK_COMMAND, judgeCardCheck } from "../backends/card-check.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -187,6 +220,9 @@ export interface BoxRecord {
    */
   readonly size?: RecordedSize;
   readonly nvidiaUserspace?: NvidiaUserspace | null;
+  readonly userspaceRead?: UserspaceReading | null;
+  readonly userspaceUpdate?: UserspaceUpdate | null;
+  readonly userspaceRunningSeenAt?: number | null;
   /** Set by the backend's claim, before it makes or changes anything. */
   readonly guest: Guest | null;
   readonly state: BoxState;
@@ -254,6 +290,76 @@ export interface ResizeRecord {
   /** It restarted the box. */
   readonly restart: boolean;
   readonly error: string | null;
+}
+
+export interface UserspaceUpdateOptions {
+  readonly check?: boolean;
+  readonly who?: Actor;
+  readonly checkRestart?: (box: BoxRecord) => Promise<void>;
+  readonly signal?: AbortSignal;
+}
+
+export interface UserspaceUpdateAnswer {
+  readonly box: BoxRecord;
+  readonly needed: boolean;
+  readonly changed: boolean;
+  readonly from: UserspaceReading;
+  readonly to: string;
+  readonly processes: readonly GpuProcess[];
+  readonly words: string;
+}
+
+const USERSPACE_READ_MS = 15_000;
+const UPDATE_CHECK_MS = 60_000;
+const FETCH_MS = 31 * 60_000;
+const INSTALL_MS = 10 * 60_000;
+const CARD_CHECK_MS = 30_000;
+const DESKTOP_CHECK_MS = 60_000;
+
+function isRunResult(value: unknown): value is RunResult {
+  return typeof value === "object" && value !== null && "exitCode" in value && "stdout" in value;
+}
+
+function updateCommandFor(box: BoxRecord): string {
+  const owner = box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`;
+  return `bb box gpu update ${box.name}${owner}`;
+}
+
+function userspaceCheck(box: BoxRecord, state: UserspaceState, unread: string | null, hostUnknown: string | null, notReadNow: string | null): DoctorCheck {
+  const id: CheckId = `gpu-userspace.${box.name}`;
+  const name = `NVIDIA userspace in ${box.name}`;
+  const update = updateCommandFor(box);
+  const stopped = box.state === "stopped";
+  const fixWhenRunning = (fix: string) => (stopped ? `Start ${box.name}, then ${fix}` : `${fix.charAt(0).toUpperCase()}${fix.slice(1)}`);
+  const read = box.userspaceRead;
+  const asRead = stopped && read ? ` It is stopped: this is as bb-box read it at ${new Date(read.at).toISOString().slice(0, 16).replace("T", " ")} UTC.` : "";
+  if (unread) return { id, name, status: "warn", detail: `${unread.replace(/\.$/, "")}.`, fix: "Run bb box doctor again; if it lasts, look at the box with bb box status." };
+  switch (state.is) {
+    case "updating":
+      return { id, name, status: "ok", detail: `bb-box is updating NVIDIA's userspace in ${box.name} to ${state.update.to} now, at its ${state.update.step} step.`, fix: null };
+    case "running":
+      return { id, name, status: "warn", detail: `${stillRunningWords(box.name)}.`, fix: "Wait for it to end, then run bb box doctor again." };
+    case "unfinished":
+      return { id, name, status: "warn", detail: `${updateLeftWords(box.name, state.update)} nvidia-smi and CUDA may fail in it.`, fix: fixWhenRunning(`update it again: ${update}`) };
+    case "half":
+      return { id, name, status: "warn", detail: `Box ${box.name} has ${readingWords(state.reading)}, so nvidia-smi and CUDA may fail in it.${asRead}`, fix: fixWhenRunning(`update it again: ${update}`) };
+    case "differs":
+      return {
+        id,
+        name,
+        status: "warn",
+        detail: `Box ${box.name} has ${state.version === "none" ? "no NVIDIA userspace" : `NVIDIA's userspace ${state.version}`}, and the host's driver is ${state.driver}: nvidia-smi and CUDA fail in it until its userspace is updated.${asRead}`,
+        fix: fixWhenRunning(`update it: ${update}`),
+      };
+    case "not-checked":
+      return stopped
+        ? { id, name, status: "ok", detail: `Box ${box.name} is stopped, and bb-box has not read its NVIDIA userspace yet: it does when ${box.name} next starts.`, fix: null }
+        : { id, name, status: "ok", detail: `bb-box has not read NVIDIA's userspace in box ${box.name} yet, and did not now, as ${notReadNow ?? `the box is ${box.state}`}: the doctor reads it at its next run.`, fix: null };
+    case "driver-unknown":
+      return { id, name, status: "warn", detail: `Box ${box.name} has ${state.version === "none" ? "no NVIDIA userspace" : `NVIDIA's userspace ${state.version}`}, and bb-box cannot tell the host's driver: ${hostUnknown ?? "its backend does not say"}`, fix: "Run bb box doctor again once the host's driver is known." };
+    case "matches":
+      return { id, name, status: "ok", detail: `Box ${box.name} has NVIDIA's userspace ${state.version}, the host's driver.`, fix: null };
+  }
 }
 
 /** What a resize did, or with `check`, would do (061). */
@@ -899,6 +1005,7 @@ export class Boxes {
   readonly #work = new Map<string, Promise<unknown>>();
   /** Acquires running in this process, so a release can cancel them. */
   readonly #acquiring = new Map<string, AbortController>();
+  readonly #updating = new Map<string, AbortController>();
   /** Reconnects of BB machines after a start or a claim in this process, while they run. */
   readonly #reconnects = new Map<string, Promise<void>>();
   /** By box, the jobs whose results bb-box has, which its next command removes, and whether a command has pruned old ones since this process started (#405). */
@@ -2546,7 +2653,7 @@ export class Boxes {
     }
     // A release waiting behind this task releases the guest next.
     if (next.state !== "ready") return;
-    await this.#enrol(next);
+    await this.#enrol(await this.#readUserspaceOrLog(next, signal, true));
   }
 
   /**
@@ -2865,27 +2972,29 @@ export class Boxes {
   /** Stops a box to free memory while keeping its disk. */
   async stop(threadId: string, ref: string, signal?: AbortSignal, who: Actor = UNKNOWN_ACTOR): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
-    return this.#chain(box.id, async () => {
-      const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
-      const { stop } = this.#stopStart(current);
-      if (current.state === "stopped") return current;
-      this.#require(current, "ready");
-      const reading = await this.#forkSafetyAtStop(current, signal);
-      this.#require((await this.#move(current, "stopping")) ?? { ...current, state: "releasing" }, "stopping");
-      this.#event(current, "stop-asked", who);
-      try {
-        await stop(current.guest!, signal);
-      } catch (error) {
-        const observation = await this.#observedAfterFailure(current, signal, true);
-        this.#event(current, "stop-failed", who, { words: describeError(error, "Stopping the box"), observed: observation });
-        if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: "bb-box found it stopped after its stop failed." });
-        throw error;
-      }
-      const kept = reading ? await this.#keptAtStop(current, reading, signal) : null;
-      const stopped = (await this.#move(current, "stopped", undefined, undefined, kept ? { stopForkSafety: kept } : {})) ?? current;
-      this.#event(current, "stopped", who);
-      return stopped;
-    });
+    return this.#chain(box.id, () => this.#stop(box, signal, who));
+  }
+
+  async #stop(box: BoxRecord, signal?: AbortSignal, who: Actor = UNKNOWN_ACTOR): Promise<BoxRecord> {
+    const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
+    const { stop } = this.#stopStart(current);
+    if (current.state === "stopped") return current;
+    this.#require(current, "ready");
+    const reading = await this.#forkSafetyAtStop(current, signal);
+    this.#require((await this.#move(current, "stopping")) ?? { ...current, state: "releasing" }, "stopping");
+    this.#event(current, "stop-asked", who);
+    try {
+      await stop(current.guest!, signal);
+    } catch (error) {
+      const observation = await this.#observedAfterFailure(current, signal, true);
+      this.#event(current, "stop-failed", who, { words: describeError(error, "Stopping the box"), observed: observation });
+      if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: "bb-box found it stopped after its stop failed." });
+      throw error;
+    }
+    const kept = reading ? await this.#keptAtStop(current, reading, signal) : null;
+    const stopped = (await this.#move(current, "stopped", undefined, undefined, kept ? { stopForkSafety: kept } : {})) ?? current;
+    this.#event(current, "stopped", who);
+    return stopped;
   }
 
   async #keptAtStop(box: BoxRecord, reading: ForkSafety, signal?: AbortSignal): Promise<StoppedForkSafety | null> {
@@ -2946,9 +3055,10 @@ export class Boxes {
       throw error;
     }
     timings["start.total"] = this.#now() - began;
-    const started = (await this.#move(current, "ready", timings, changed)) ?? current;
+    const moved = (await this.#move(current, "ready", timings, changed)) ?? current;
     this.#event(current, "started", who);
-    if (started.state === "ready") await this.#markIdentityAgain(started, signal);
+    if (moved.state === "ready") await this.#markIdentityAgain(moved, signal);
+    const started = await this.#readUserspaceOrLog(moved, signal, true);
     if (started.state === "ready" && started.restoredAt) {
       await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
       return (await this.#read(started.threadId, started.id)) ?? started;
@@ -3121,6 +3231,233 @@ export class Boxes {
       return { guest: { ...current.guest, size }, ...(size ? { size: withRecordedGpu(size, current.size) } : {}), resize: { ...current.resize, state: "failed", error } };
     });
     this.#deps.log?.(`${describeBox(box)}: ${error}`);
+  }
+
+  async readUserspace(box: BoxRecord, signal?: AbortSignal, started = false): Promise<BoxRecord> {
+    return this.#readUserspace(box, signal, undefined, started);
+  }
+
+  async #readUserspaceOrLog(box: BoxRecord, signal?: AbortSignal, started = false): Promise<BoxRecord> {
+    try {
+      return await this.#readUserspace(box, signal, undefined, started);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#deps.log?.(`${describeBox(box)}: ${describeError(error, "Reading NVIDIA's userspace in it")}`);
+      return (await this.#read(box.threadId, box.id)) ?? box;
+    }
+  }
+
+  #readsUserspace(box: BoxRecord): boolean {
+    return hasGpuPart(box.kind) && holdsCard(recordedGpu(box)) && !!this.#deps.backends.get(box.backend)?.nvidiaHost;
+  }
+
+  async #userspaceHost(box: BoxRecord, signal?: AbortSignal): Promise<NvidiaHost | null> {
+    const backend = this.#deps.backends.get(box.backend);
+    return backend?.nvidiaHost ? backend.nvidiaHost(box.kind, signal) : null;
+  }
+
+  async #readUserspace(box: BoxRecord, signal?: AbortSignal, known?: NvidiaHost | null, started = false): Promise<BoxRecord> {
+    const current = started ? ((await this.update(box, (latest) => restartedSinceUpdate(latest.userspaceUpdate))) ?? box) : box;
+    if (current.state !== "ready" || !current.guest || !this.#readsUserspace(current)) return current;
+    const host = known !== undefined ? known : await this.#userspaceHost(current, signal);
+    if (!host) return current;
+    return (await this.#readingIn(current, host.driver, signal)).box;
+  }
+
+  async #readingIn(box: BoxRecord, driver: string | null, signal?: AbortSignal): Promise<{ readonly box: BoxRecord; readonly reading: UserspaceReading; readonly running: boolean }> {
+    const result = await this.runOwn(box, USERSPACE_READ, { timeoutMs: USERSPACE_READ_MS, maxOutputBytes: 2048, signal });
+    const reading = result.exitCode === 0 ? judgeReading(result.stdout, driver, this.#now()) : null;
+    if (!reading) throw new BoxError("unreachable", `bb-box could not read NVIDIA's userspace in box ${box.name}: ${lastLines(`${result.stdout}\n${result.stderr}`) || `exit code ${result.exitCode}`}.`);
+    if (updateRunning(result.stdout)) return { box: (await this.update(box, () => ({ userspaceRunningSeenAt: reading.at }))) ?? box, reading, running: true };
+    const recorded = await this.update(box, (current) => ({ nvidiaUserspace: userspaceOfReading(reading), userspaceRead: reading, userspaceRunningSeenAt: null, ...settledUpdate(current.userspaceUpdate, reading) }));
+    return { box: recorded ?? box, reading, running: false };
+  }
+
+  async #userspaceUpdateCutShort(box: BoxRecord, signal?: AbortSignal): Promise<void> {
+    let cut: BoxRecord | null = box;
+    if (box.userspaceUpdate?.state === "updating") {
+      const error = "bb-box restarted before the update finished.";
+      cut = await this.update(box, (current) => (current.userspaceUpdate?.state === "updating" ? { userspaceUpdate: { ...current.userspaceUpdate, state: "unknown", ms: null, error } } : {}));
+      this.#deps.log?.(`${describeBox(box)}: an update of NVIDIA's userspace was cut short: ${error}`);
+    }
+    if (!cut) return;
+    const settled = cut.state === "stopping" || cut.state === "starting" ? ((await this.#observe(cut, { signal, moving: true })) ?? cut) : cut;
+    if (settled.state === "ready") await this.#readUserspaceOrLog(settled, signal);
+  }
+
+  async updateUserspace(threadId: string, ref: string, options: UserspaceUpdateOptions = {}): Promise<UserspaceUpdateAnswer> {
+    const box = await this.get(threadId, ref);
+    if (this.#disposed) throw new BoxError("restarting", "bb-box is stopping, as for an update. Try again once it is back.");
+    return this.#chain(box.id, () => this.#updateUserspace(box, options));
+  }
+
+  async #updateUserspace(box: BoxRecord, options: UserspaceUpdateOptions): Promise<UserspaceUpdateAnswer> {
+    let current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
+    const name = current.name;
+    if (!hasGpuPart(current.kind)) throw new BoxError("unsupported", `Box ${name} is a ${current.kind} box, which has no NVIDIA userspace. bb-box changed nothing.`);
+    if (!holdsCard(recordedGpu(current))) throw new BoxError("unsupported", `Box ${name} has no GPU, so nothing in it uses NVIDIA's userspace. bb-box changed nothing.`);
+    const backend = this.#backend(current);
+    const host = backend.nvidiaHost ? await backend.nvidiaHost(current.kind, options.signal) : null;
+    if (!host) throw new BoxError("unsupported", `${current.backendLabel} keeps no NVIDIA userspace in its boxes, so box ${name} has none to update. bb-box changed nothing.`);
+    if (current.state === "stopped") throw new BoxError("not_ready", `Start box ${name} first: NVIDIA's userspace is updated in a running box. Nothing changed.`);
+    this.#require(current, "ready");
+    if (host.refused) throw new BoxError("unsupported", `Not changed: ${host.refused.why.replace(/\.$/, "")}.${host.refused.fix ? ` ${host.refused.fix}` : ""}`);
+    const driver = host.driver;
+    const before = await this.#readingIn(current, driver, options.signal);
+    if (before.running) throw new BoxError("try_again", `Not changed: ${stillRunningWords(name).replace(/^A/, "a")}. Run this again once it has ended: bb box doctor says when it has.`);
+    current = before.box;
+    const reading = before.reading;
+    if (userspaceState(reading, current.userspaceUpdate, driver).is === "matches") {
+      return { box: current, needed: false, changed: false, from: reading, to: driver, processes: [], words: `Box ${name} already has NVIDIA's userspace ${driver}, the host's driver. bb-box changed nothing.` };
+    }
+    const checked = await this.runOwn(current, UPDATE_CHECK, { stdin: updateScriptText(), timeoutMs: UPDATE_CHECK_MS, maxOutputBytes: 64 * 1024, signal: options.signal });
+    const verdict = judgeUpdateCheck(`${checked.stdout}\n${checked.stderr}`, driver);
+    if (!verdict.ok) throw new BoxError("unsupported", `Not changed: box ${name} ${verdict.why}.`);
+    const plan = planWords(name, reading, driver, verdict.processes);
+    if (options.check) return { box: current, needed: true, changed: false, from: reading, to: driver, processes: verdict.processes, words: plan };
+    await options.checkRestart?.(current);
+    const who = options.who ?? UNKNOWN_ACTOR;
+    const began = this.#now();
+    const record: UserspaceUpdate = { from: fromOf(reading), to: driver, at: began, state: "updating", step: "fetch", ms: null, error: null };
+    current = (await this.update(current, () => ({ userspaceUpdate: record }))) ?? current;
+    this.#deps.log?.(`Updating NVIDIA's userspace in ${describeBox(current)} from ${record.from} to ${driver}.`);
+    const controller = new AbortController();
+    this.#updating.set(current.id, controller);
+    const stepTo = async (step: UserspaceUpdateStep) => {
+      current = (await this.update(current, (latest) => (latest.userspaceUpdate?.at === began ? { userspaceUpdate: { ...latest.userspaceUpdate, step } } : {}))) ?? current;
+    };
+    const ended = async (step: UserspaceUpdateStep, why: string, read: boolean): Promise<UserspaceReading | null> => {
+      const cut = this.#disposed;
+      const after = read && !cut ? await this.#readingIn((await this.#read(current.threadId, current.id)) ?? current, driver).then((found) => (found.running ? null : found.reading), () => null) : null;
+      const state = cut ? ("unknown" as const) : ("failed" as const);
+      current = (await this.update(current, (latest) => (latest.userspaceUpdate?.at === began ? { userspaceUpdate: { ...latest.userspaceUpdate, step, state, ms: cut ? null : this.#now() - began, error: why } } : {}))) ?? current;
+      this.#deps.log?.(`${describeBox(current)}: the update of NVIDIA's userspace to ${driver} ${cut ? "was cut short" : "failed"} while at its ${step} step: ${why}`);
+      return after;
+    };
+    try {
+      const fetched = await this.runOwn(current, fetchCommand(driver), { timeoutMs: FETCH_MS, maxOutputBytes: 16 * 1024, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal }).catch((error: unknown) => error);
+      if (!isRunResult(fetched) || fetched.exitCode !== 0) {
+        const why = isRunResult(fetched) ? lastLines(fetched.stderr || fetched.stdout) || `exit code ${fetched.exitCode}` : describeError(fetched, "Downloading");
+        await ended("fetch", why, false);
+        throw new BoxError("failed", `Not changed: bb-box could not download NVIDIA's installer ${driver} into box ${name}: ${why.replace(/\.$/, "")}. Nothing in it changed.`);
+      }
+      await stepTo("install");
+      const installed = await this.runOwn(current, installCommand(), { timeoutMs: INSTALL_MS, maxOutputBytes: 64 * 1024, signal: controller.signal }).catch((error: unknown) => error);
+      if (!isRunResult(installed) || installed.exitCode !== 0) {
+        const why = isRunResult(installed) ? lastLines(installed.stderr || installed.stdout) || `exit code ${installed.exitCode}` : describeError(installed, "Installing");
+        const after = await ended("install", why, true);
+        const now = after ? ` It has ${readingWords(after)} now${halfInstalled(after) ? `: run bb box gpu update ${name} again` : ""}.` : "";
+        throw new BoxError("failed", `bb-box could not install NVIDIA's userspace ${driver} in box ${name}: ${why.replace(/\.$/, "")}.${now} It goes on running, and was not restarted.`);
+      }
+      await stepTo("restart");
+      try {
+        await options.checkRestart?.((await this.#read(current.threadId, current.id)) ?? current);
+      } catch (error) {
+        await ended("restart", describeError(error, "Checking the restart"), false);
+        throw new BoxError(
+          error instanceof BoxError ? error.code : "failed",
+          `bb-box installed NVIDIA's userspace ${driver} in box ${name}, but did not restart it: ${describeError(error, "Checking the restart").replace(/\.$/, "")}. Its programs keep the old libraries until it restarts. Run bb box gpu update ${name} again once it can restart.`,
+        );
+      }
+      try {
+        await this.#stop(current, controller.signal, who);
+        current = await this.#start(current, controller.signal, false, who);
+      } catch (error) {
+        await ended("restart", describeError(error, "Restarting the box"), false);
+        const now = (await this.#read(current.threadId, current.id)) ?? current;
+        throw new BoxError("failed", `bb-box installed NVIDIA's userspace ${driver} in box ${name}, but could not restart it: ${describeError(error, "Restarting the box").replace(/\.$/, "")}. It is ${now.state} now, with the new userspace on its disk. Run bb box gpu update ${name} again once it runs.`);
+      }
+      await stepTo("check");
+      const problem = await this.#checkUpdated(current, driver, controller.signal).catch((error: unknown) => describeError(error, "Checking the box"));
+      if (problem) {
+        await ended("check", problem, true);
+        throw new BoxError("failed", `bb-box installed NVIDIA's userspace ${driver} in box ${name} and restarted it, but its check after the restart failed: ${problem.replace(/\.$/, "")}. It goes on running. Run bb box gpu update ${name} again, or bb box doctor.`);
+      }
+      const ms = this.#now() - began;
+      current = (await this.update(current, (latest) => (latest.userspaceUpdate?.at === began ? { userspaceUpdate: { ...latest.userspaceUpdate, state: "done", step: "check", ms, error: null } } : {}))) ?? current;
+      this.#deps.log?.(`Updated NVIDIA's userspace in ${describeBox(current)} from ${record.from} to ${driver} in ${ms} ms.`);
+      const fact = current.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value;
+      return {
+        box: current,
+        needed: true,
+        changed: true,
+        from: reading,
+        to: driver,
+        processes: verdict.processes,
+        words: `Updated NVIDIA's userspace in box ${name} from ${record.from} to ${driver}, and restarted it, in ${Math.round(ms / 1000)} s. nvidia-smi in it lists ${fact ?? "its card"}, and CUDA's driver initialises.`,
+      };
+    } finally {
+      this.#updating.delete(current.id);
+    }
+  }
+
+  async userspaceChecks(signal?: AbortSignal): Promise<DoctorCheck[]> {
+    const boxes = (await this.all()).filter((box) => box.threadId !== SPARES && box.guest && (box.state === "ready" || box.state === "stopped" || box.userspaceUpdate?.state === "updating") && this.#readsUserspace(box));
+    if (!boxes.length) return [];
+    const hosts = new Map<string, Promise<NvidiaHost | { readonly failed: string } | null>>();
+    const hostOf = (box: BoxRecord) => {
+      const key = `${box.backend}\n${currentKindId(box.kind)}`;
+      let host = hosts.get(key);
+      if (!host) {
+        host = this.#userspaceHost(box, signal).catch((error: unknown) => ({ failed: describeError(error, "Reading the host's NVIDIA driver") }));
+        hosts.set(key, host);
+      }
+      return host;
+    };
+    let matching = 0;
+    const checks = await Promise.all(
+      boxes.map(async (box): Promise<DoctorCheck | null> => {
+        const host = await hostOf(box);
+        if (!host) return null;
+        const driver = "failed" in host ? null : host.driver;
+        if (box.userspaceUpdate?.state === "updating" && !this.#work.has(box.id)) await this.#userspaceUpdateCutShort(box, signal);
+        let current = (await this.#read(box.threadId, box.id)) ?? box;
+        let unread: string | null = null;
+        let running = false;
+        if (current.state === "ready" && !this.#work.has(box.id) && !("failed" in host)) {
+          const before = current;
+          current = await this.#readingIn(before, host.driver, signal).then(
+            (found) => {
+              running = found.running;
+              return found.box;
+            },
+            (error: unknown) => {
+              unread = describeError(error, "Reading it");
+              return before;
+            },
+          );
+        }
+        const notReadNow = current.state !== "ready" ? null : this.#work.has(box.id) ? "bb-box is working on it" : "failed" in host ? `bb-box could not read the host's driver: ${host.failed.replace(/\.$/, "")}` : null;
+        const state = userspaceState(current.userspaceRead, current.userspaceUpdate, driver, running);
+        if (state.is === "matches" && !unread) {
+          matching++;
+          return null;
+        }
+        return userspaceCheck(current, state, unread, "failed" in host ? host.failed : host.refused ? `${host.refused.why.replace(/\.$/, "")}.${host.refused.fix ? ` ${host.refused.fix}` : ""}` : null, notReadNow);
+      }),
+    );
+    const named = checks.filter((check): check is DoctorCheck => check !== null);
+    const summary: DoctorCheck = {
+      id: "gpu-userspace",
+      name: "NVIDIA userspace",
+      status: "ok",
+      detail: `${matching === 1 ? "1 box" : `${matching} boxes`} with a GPU ${matching === 1 ? "has" : "have"} NVIDIA's userspace for ${matching === 1 ? "its" : "their"} host's driver.${named.length ? ` ${named.length === 1 ? "1 box needs" : `${named.length} boxes need`} a look, below.` : ""} bb-box never updates a box's userspace by itself.`,
+      fix: null,
+    };
+    return [summary, ...named];
+  }
+
+  async #checkUpdated(box: BoxRecord, driver: string, signal: AbortSignal): Promise<string | null> {
+    const { reading } = await this.#readingIn(box, driver, signal);
+    if (!matchesDriver(reading, driver)) return `it has ${readingWords(reading)} after its restart`;
+    const card = claimOf(box)?.card?.replace(/^GPU-/i, "").toLowerCase() ?? null;
+    const ran = await this.runOwn(box, CARD_CHECK_COMMAND, { timeoutMs: CARD_CHECK_MS, maxOutputBytes: 8192, signal });
+    const output = `${ran.stdout}\n${ran.stderr}`;
+    const judged = card ? judgeCardCheck(output, card, driver) : judgeAnyCard(output);
+    if (!judged.ok) return judged.why;
+    if (currentKindId(box.kind) !== "linux-desktop") return null;
+    const desktop = await this.runOwn(box, DESKTOP_GPU_CHECK, { timeoutMs: DESKTOP_CHECK_MS, maxOutputBytes: 8192, signal });
+    return judgeDesktopCheck(`${desktop.stdout}\n${desktop.stderr}`);
   }
 
   /** Refuses a live shrink of a box's memory to `memoryMiB` when the box uses more than that, less a margin (061). */
@@ -3728,6 +4065,7 @@ export class Boxes {
           if (record) {
             seen.add(record.id);
             if (record.resize?.state === "resizing" && !this.#work.has(record.id)) await this.#resizeCutShort(record, guest);
+            if ((record.userspaceUpdate?.state === "updating" || record.userspaceUpdate?.state === "unknown") && !this.#work.has(record.id)) await this.#userspaceUpdateCutShort(record, signal);
             if (!this.#work.has(record.id)) await this.#observe(record, { signal, power: guest.power });
             // A ready box whose guest still has what its start lowered, as when bb-box restarted while it started (#888).
             // A spare keeps it until a box takes it.
@@ -3924,6 +4262,7 @@ export class Boxes {
   async dispose(): Promise<void> {
     this.#disposed = true;
     for (const controller of this.#acquiring.values()) controller.abort(new BoxError("released", "bb-box is stopping."));
+    for (const controller of this.#updating.values()) controller.abort(new BoxError("restarting", "bb-box is stopping."));
     await this.idle();
   }
 }
