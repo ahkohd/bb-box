@@ -78,9 +78,25 @@ checks give its public key; the templates must then be built with it.
 | Field | What it takes |
 | --- | --- |
 | `linux-templates`, `desktop-cpu-templates`, `desktop-wayland-cpu-templates` | VMIDs, separated by spaces or commas. Empty offers none of that kind |
-| `desktop-templates` | One line per GPU desktop template: its VMID and its GPU's ID, such as `9101 GPU-<uuid>`. Use `--field-file` or `--add-line` |
+| `desktop-templates` | One line per GPU desktop template: its VMID. On a host without the GPU helper, a space and the GPU its device lines name, such as `9101 GPU-<uuid>`. Use `--field-file` or `--add-line` |
+| `boxes-per-card` | The most boxes running on one card, 4 unless set, 0 for no limit. Unset, the replaced `desktops-per-gpu` is read, 0 included |
+| `whole-cards` | A card to itself for a box: needs `bb-box-gpu` 0.4.3 or later. Unset, `general.wholeCards` says, off unless set |
+| `gpu-memory-mib` | The memory a card must have free for a new server, 1024 unless set |
 | `bridge`, `subnet`, `gateway`, `addresses` | Must match `/etc/bb-box/bb-box.env` when it changed them |
 | `vmid-first`, `vmid-last` | The VMIDs boxes take. Keep other guests out of the range |
+
+## GPU boxes
+
+On a host with NVIDIA cards and its driver, the GPU helper gives each Linux
+box and desktop its card: none, shared or a whole card. Ask the person
+first: it runs as root on the host, and once its writes are on, bb-box's
+token can give a box in its pool a card's device nodes. Follow "The GPU
+helper" in `setup/proxmox-lxc/README.md`: build the templates on the host
+with its driver, run `host/setup-gpu.sh`, which starts in a dry run, mark
+running GPU desktops with `bb box gpu mark`, and after a day turn writes on
+with `host/setup-gpu.sh --writes on --check`, then `--writes on`. Then set
+the backend's GPUs fields above. Prove it with
+`bb box acquire linux --gpu shared` and `nvidia-smi -L` in the box.
 
 ## Proxmox QEMU
 

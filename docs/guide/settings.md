@@ -55,6 +55,8 @@ Every setting is also in the [configuration reference](../reference/configuratio
 
 A secret, such as a password or an API token, never shows its value. Its field says whether it is set, and you can replace or clear it.
 
+A backend with NVIDIA cards, Proxmox LXC or Docker, has a GPUs section: boxes per card, whole cards, and the GPU memory a new box needs, then the list of its cards and the boxes on each. Whole cards is a switch, and saves at once; the rest waits for **Save**. These set limits and defaults only, and a lower limit stops nothing that runs. See [GPU boxes](gpu-boxes.md#settings).
+
 A backend with several hosts lists them under Hosts. A new box goes to the first host in the list with room. Each host has its own switch.
 
 A backend with standard images lists them under Images, each with its state and age, and **Try again** on one whose last rebuild failed. **Open the Images page** goes to all of them.
@@ -83,6 +85,8 @@ Select a kind's row to open its page. **Make default** makes it the default at o
 - Default: the size a box gets when no one says.
 - Where it runs: each backend that makes the kind, in the order a new box tries them, with whether it makes it now. Where a backend keeps warm boxes of the kind, **Warm** sets how many wait ready there, so a new box is ready at once. Other backends say why they keep none: most make each box when a thread asks, and shared iOS hosts keep slots ready instead.
 - Spares to keep: ready boxes that are already BB machines and belong to no thread, so a thread can have one at once. See [spare boxes](spares.md).
+
+The Linux and Linux desktop kinds, where a backend has cards, have **GPU when not asked for**: None, Shared or Whole card. It is a menu that saves at once, apart from the form. See [GPU boxes](gpu-boxes.md#settings).
 
 The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md).
 

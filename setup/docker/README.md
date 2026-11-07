@@ -192,13 +192,14 @@ fields, press Check, then Save and turn on.
 | --- | --- | --- |
 | `host` | empty | `unix:///path/to/docker.sock`, `ssh://user@host`, `tcp://host:port`, `wsl://distro` for Docker in WSL, or `bb:<machine ID>` for a BB machine. Empty uses the `docker` CLI's own default: `DOCKER_HOST`, its current context, or the local socket. `wsl://` reaches the daemon through `wsl.exe` and `docker system dial-stdio`. Do not use `tcp://127.0.0.1` on Windows: WSL's localhost forwarder drops attached output |
 | `machine-docker-host` | empty | For `bb:<machine ID>`: where Docker is on that machine (`wsl://distro`, a unix socket or `tcp://host:port`). Sent when the relay opens, instead of the machine's `DOCKER_HOST`. On a Windows machine set `wsl://<distro>` |
-| `machine-docker-host` | empty | For `bb:<machine ID>`: where Docker is on that machine (`wsl://distro`, a unix socket or `tcp://host:port`). Sent when the relay opens, instead of the machine's `DOCKER_HOST`. On a Windows machine set `wsl://<distro>` |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
 | `wayland-desktop-image` | `bbbox/linux-desktop-wayland:1` | The image of linux-desktop-wayland-cpu boxes. Empty turns them off |
 | `privileged` | on | Each box is a privileged container with a Docker daemon of its own. Off, boxes have no Docker |
-| `gpu-desktops` | off | GPU boxes: offers linux boxes with a GPU and linux-desktop boxes, on the cards the NVIDIA Container Toolkit lists |
-| `desktops-per-gpu` | 4 | Boxes per card: the most boxes on one card, servers and desktops, running or stopped, of every install |
+| `gpus` | off | GPU boxes: offers linux boxes with a GPU and linux-desktop boxes, on the cards the NVIDIA Container Toolkit lists. Unset, the replaced `gpu-desktops` is read |
+| `boxes-per-card` | 4 | Boxes per card: the most boxes on one card, servers and desktops, running or stopped, of every install. At least 1. Unset, the replaced `desktops-per-gpu` is read |
+| `whole-cards` | unset | Whether a box may have a card to itself. Unset, the install-wide option `general.wholeCards` says, which is off unless set |
+| `gpu-memory-mib` | 1024 | The memory a card must have free, when last read, for a new server to be placed on it. A desktop needs 384 MiB |
 | `network` | `bbbox` | The network bb-box makes for its boxes, on which they reach the internet but not each other |
 | `boxes` | 10 | The most bb-box containers on the host, running or stopped, of every bb-box install that uses it |
 | `reserve-memory-mib` | 4096 | A new box is refused when the host would have less memory than this left, after the limits of the running boxes |
@@ -261,15 +262,24 @@ the Docker host:
    set `"features": {"cdi": true}` in `/etc/docker/daemon.json` and restart
    Docker.
 4. Check that `docker info` lists the cards under Discovered Devices, then turn
-   on `gpu-desktops`, GPU boxes.
+   on **GPU boxes** in the backend's GPUs section in BB Box's settings, or
+   with `bb box backend set docker --field gpus=true`.
+5. Check it worked, from BB, then in the box:
+
+   ```sh
+   bb box acquire linux --gpu shared
+   nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"
+   ```
 
 bb-box reads each card's UUID, model and memory with `nvidia-smi` in a
 short-lived container given the cards, never loading them. If that fails, a
 card the spec names by index still takes shared boxes, but no whole one. A shared box goes
-to the card with the fewest boxes, then the most memory free, and needs 1,024
-MiB free on it for a server or 384 MiB for a desktop, when last read. A whole
-box goes to a card no box holds, of any install, where whole cards are on
-(`bb box option set general.wholeCards=true`). A stopped box keeps its card.
+to the card with the fewest boxes, then the most memory free, and needs
+`gpu-memory-mib` free on it for a server, 1,024 MiB unless set, or 384 MiB
+for a desktop, when last read. A whole box goes to a card no box holds, of
+any install, where whole cards are on: the **Whole cards** switch in the
+backend's GPUs section, or `bb box backend set docker --field
+whole-cards=true`. A stopped box keeps its card.
 
 bb-box sets `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` to the box's
 card in the container's environment and in `/etc/environment`, so CUDA in

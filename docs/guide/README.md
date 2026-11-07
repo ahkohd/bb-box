@@ -9,6 +9,7 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [The Box panel and the Boxes page](boxes.md): see a thread's boxes and every box you have, and act on them
 - [Making a box](making-a-box.md): choose its system, type, image, size and where it runs
 - [Resizing a box](resizing.md): give a box more or fewer cores, more or less memory, or a larger disk
+- [GPU boxes](gpu-boxes.md): give a Linux box an NVIDIA card, shared or whole, for compute, training and desktops drawn on the GPU
 - [Snapshots](snapshots.md): save a box's state, restore it with an undo, fork it into a new box, and keep it past the box's release
 - [Desktops](desktops.md): watch a desktop, take control, copy and paste, hand back, and show it as video
 - [Device boxes](devices.md): iPhones and iPads in the iOS Simulator, and Android phones and tablets in the emulator, to test apps on
