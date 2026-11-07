@@ -149,9 +149,12 @@ test("071 unit 13: a ready spare of this GPU does not fill its card, and None do
 
 test("071 unit 13: the GPU form adds no doc comments, and the acquire helpers sit inside registerRpc", () => {
   const gpu = readFileSync(new URL("../src/app/gpu-choice.ts", import.meta.url), "utf8");
+  const form = readFileSync(new URL("../src/app/new-box.tsx", import.meta.url), "utf8");
   const rpc = readFileSync(new URL("../src/plugin/rpc.ts", import.meta.url), "utf8");
   const contract = readFileSync(new URL("../src/plugin/contract.ts", import.meta.url), "utf8");
   assert.equal(gpu.includes("The line under the GPU menu keeps this height"), false);
+  assert.equal(form.includes("The GPU the person last chose"), false);
+  assert.equal(form.includes("A fresh reading of the kind's cards"), false);
   assert.equal(rpc.includes("The form's size, with its GPU taken off"), false);
   assert.equal(contract.includes("A GPU change the Resize dialog shows"), false);
   assert.equal(contract.includes("A fresh reading of one kind's cards"), false);

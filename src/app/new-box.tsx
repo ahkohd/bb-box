@@ -80,7 +80,6 @@ interface Remembered {
   readonly size?: Choice2;
   /** The custom fields a person edited, by kind. */
   readonly custom?: Readonly<Record<string, Fields>>;
-  /** The GPU the person last chose, by kind. Absent until they choose. */
   readonly gpu?: Readonly<Record<string, GpuPart>>;
 }
 
@@ -218,7 +217,6 @@ export function NewBox({
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   rooms?: (kind: string, size?: SizeRequest) => Promise<readonly OfferRoom[]>;
-  /** A fresh reading of the kind's cards. While it is out, the GPU line says it is reading. */
   cards?: (kind: string) => Promise<readonly { readonly backend: string; readonly room: GpuRoom | null }[]>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
