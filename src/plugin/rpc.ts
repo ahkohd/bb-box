@@ -19,7 +19,7 @@ import type { BbBox } from "./setup.ts";
 import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
-import { desktopDisplays } from "../backends/types.ts";
+import { desktopDisplays, type GpuPart, type GpuResize } from "../backends/types.ts";
 import { videoStreams } from "./desktop.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, readableState, unreadReason } from "./monitor.ts";
@@ -162,6 +162,30 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     return task();
   };
 
+  /** The form's size, with its GPU taken off for box_acquire, which asks for a GPU beside the size. */
+function sizeAndGpu(size: (SizeRequest & { readonly gpu?: GpuPart }) | undefined): { size?: SizeRequest; gpu?: GpuPart } {
+  if (!size) return {};
+  const { gpu, ...rest } = size;
+  return { ...(Object.keys(rest).length ? { size: rest } : {}), ...(gpu !== undefined ? { gpu } : {}) };
+}
+
+function gpuChangeView(gpu: GpuResize | null | undefined) {
+  if (!gpu) return null;
+  return {
+    from: gpu.from,
+    to: gpu.to,
+    way: gpu.way,
+    stopped: gpu.stopped,
+    installs: gpu.installs,
+    words: gpu.words,
+    fromIndex: gpu.fromCard?.index ?? null,
+    toIndex: gpu.toCard?.index ?? null,
+    refusal: gpu.refusal?.person ?? (gpu.way === "no" ? gpu.words : null),
+    others: gpu.others,
+    changed: gpu.changedSinceAgreed?.person ?? null,
+  };
+}
+
   /** Threads working on a box, which a restart for a resize would stop: the panel names them and asks. */
   class Working extends Error {
     readonly threads: readonly ThreadOnBox[];
@@ -186,6 +210,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const answer = await boxes.resize(threadId, box.id, options.size ?? {}, {
         check: options.check === true,
         restart: options.restart === true,
+        reportPlan: true,
         by: "the panel",
         who: BY_PERSON,
         beforeRestart: async (found) => {
@@ -195,10 +220,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         },
       });
       const gib = (part: string, value: number | null) => (value !== null && part === "memory" ? value / 1024 : value);
+      const gpu = gpuChangeView(answer.plan?.gpu);
       const plan = answer.plan && {
         parts: answer.plan.parts.map((part) => ({ part: part.part, from: gib(part.part, part.from), to: gib(part.part, part.to)!, way: part.way })),
         room: { ok: answer.plan.room.ok, message: answer.plan.room.message },
         downSeconds: answer.plan.downSeconds,
+        ...(gpu ? { gpu } : {}),
       };
       const machine = options.check ? null : await app.machineCores(answer).catch(() => null);
       return { ...empty, ...picker, box: app.view(answer.box), from: sizeView(answer.from), to: sizeView(answer.to), plan, changed: answer.changed, machine, error: null };
@@ -230,7 +257,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand, desktopProblem: app.desktopProblem(threadId), access };
     },
     acquire: ({ threadId, kind, size, on, image, device, dedicated, shared }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}), who: BY_PERSON })),
+      change("Acquiring a box", async () => {
+        const asked = sizeAndGpu(size);
+        return boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, ...asked, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}), who: BY_PERSON });
+      }),
     images: async ({ threadId, projectId }) => app.imageOptions(projectId ?? (threadId ? await app.projectOf(threadId).catch(() => null) : null)),
     release: ({ threadId, box, force, deleteKept }) =>
       guarded(threadId, box, force, () =>
@@ -441,7 +471,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return { machines, kinds: kinds.filter((kind) => kind.enrol), desktopOnDemand, desktopProblem: app.desktopProblem(OPERATOR), access };
     },
     "machines.add": ({ kind, size, name, on }) =>
-      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}), who: BY_PERSON })),
+      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...sizeAndGpu(size), ...(name ? { name } : {}), ...(on ? { on } : {}), who: BY_PERSON })),
     "machines.remove": ({ box, force, deleteKept }) =>
       guarded(OPERATOR, box, force, () =>
         change("Removing the machine", async () => {
@@ -462,6 +492,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     kinds: () => app.kinds(),
     provider: ({ backend }) => app.providerProfile(backend),
     rooms: ({ kind, size }) => app.offerRooms(kind, size),
+    "kind.cards": ({ kind }) => app.kindCards(kind),
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),

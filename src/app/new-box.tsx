@@ -20,7 +20,9 @@ import { message } from "./common.tsx";
 import { LargestLine, type AskedParts } from "./largest-line.tsx";
 import { withoutRaiseLargest } from "../core/largest-words.ts";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
-import type { GuestOs, Windowing } from "../backends/types.ts";
+import type { GpuPart, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
+import { gpuWhenNotAsked } from "../core/gpu.ts";
+import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, type GpuFormOffer } from "./gpu-choice.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 export const ROOMS_CHECK_MS = 300;
@@ -40,6 +42,7 @@ export interface SizeRequest {
   readonly cores?: number;
   readonly memoryGiB?: number;
   readonly diskGiB?: number;
+  readonly gpu?: GpuPart;
 }
 
 type Choice2 = string;
@@ -77,6 +80,8 @@ interface Remembered {
   readonly size?: Choice2;
   /** The custom fields a person edited, by kind. */
   readonly custom?: Readonly<Record<string, Fields>>;
+  /** The GPU the person last chose, by kind. Absent until they choose. */
+  readonly gpu?: Readonly<Record<string, GpuPart>>;
 }
 
 function remembered(key: string): Remembered {
@@ -167,6 +172,18 @@ export function useDesktopProblemShownOnce(desktopProblem: { readonly message: s
   }, [desktopProblem]);
 }
 
+function formOffer(offer: OfferView, room: GpuRoom | null, unread: boolean): GpuFormOffer {
+  return {
+    host: offer.hosts[0] || offer.label,
+    label: offer.label,
+    gpuParts: offer.gpuParts,
+    gpuRoom: unread ? null : room,
+    unread,
+    reachesEveryCard: !!offer.cardReach,
+    canAddGpu: offer.resizing?.gpu ? offer.resizing.gpu.add !== "no" : true,
+  };
+}
+
 /** Why a typed name will not do, or null when it will; an empty name lets bb-box pick one. */
 export function nameProblem(name: string): string | null {
   if (!name) return null;
@@ -184,6 +201,7 @@ export function NewBox({
   primary = false,
   profile,
   rooms,
+  cards,
   askForImage,
   images = [],
 }: {
@@ -199,6 +217,8 @@ export function NewBox({
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   rooms?: (kind: string, size?: SizeRequest) => Promise<readonly OfferRoom[]>;
+  /** A fresh reading of the kind's cards. While it is out, the GPU line says it is reading. */
+  cards?: (kind: string) => Promise<readonly { readonly backend: string; readonly room: GpuRoom | null }[]>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
   /**
@@ -230,6 +250,9 @@ export function NewBox({
   // Custom fields belong to a kind: edited ones are kept per kind, and a
   // kind without edits starts from its own preset in view.
   const [edited, setEdited] = useState<Readonly<Record<string, Fields>>>(() => (last.custom && typeof last.custom === "object" ? last.custom : {}));
+  const [gpuByKind, setGpuByKind] = useState<Readonly<Record<string, GpuPart>>>(() => (last.gpu && typeof last.gpu === "object" ? last.gpu : {}));
+  const [cardRooms, setCardRooms] = useState<ReadonlyMap<string, GpuRoom | null> | null>(null);
+  const [cardsFailed, setCardsFailed] = useState(false);
   const [making, setMaking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /** The Provider step's filters: what the boxes are, and the machine they run on. */
@@ -315,10 +338,48 @@ export function NewBox({
   const blockedWhy = (offer: OfferView) => roomsHere?.get(offer.backend) ?? null;
   const filtered = offersShown(offers, filter, effectiveRunsOn);
   const shown = [...filtered.filter((offer) => blockedWhy(offer) === null), ...filtered.filter((offer) => blockedWhy(offer) !== null)];
+  const cardParts = (offer: OfferView) => offer.gpuParts?.some((part) => part !== "none") ?? false;
+  const asForm = (offer: OfferView): GpuFormOffer => {
+    if (cards !== undefined && cardRooms === null && !cardsFailed) return formOffer(offer, null, true);
+    if (cardRooms) return formOffer(offer, cardRooms.get(offer.backend) ?? null, false);
+    return formOffer(offer, offer.gpuRoom, offer.gpuRoom === null && cardParts(offer));
+  };
+  const cardMenu = gpuMenuShows(kind, shown.map((offer) => formOffer(offer, offer.gpuRoom, false)));
+  const menuParts = gpuMenuParts(shown.map(asForm));
+  const gpuDefault = kind ? gpuWhenNotAsked(kind.id) : "none";
+  const rememberedGpu = kind ? gpuByKind[kind.id] : undefined;
+  const chosenGpu: GpuPart = rememberedGpu && menuParts.includes(rememberedGpu) ? rememberedGpu : menuParts.includes(gpuDefault) ? gpuDefault : (menuParts[0] ?? "none");
+  const readCards = useRef(cards);
+  readCards.current = cards;
+  useEffect(() => {
+    const read = readCards.current;
+    if (!open || !cardMenu || !read || !kindId) {
+      if (!open) {
+        setCardRooms(null);
+        setCardsFailed(false);
+      }
+      return;
+    }
+    let stale = false;
+    setCardRooms(null);
+    setCardsFailed(false);
+    read(kindId).then(
+      (rows) => {
+        if (!stale) setCardRooms(new Map(rows.map((row) => [row.backend, row.room])));
+      },
+      () => {
+        if (!stale) setCardsFailed(true);
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [open, cardMenu, kindId, cards !== undefined]);
   const takers = shown.filter((offer) => blockedWhy(offer) === null);
   // One offer is no choice: its row stands alone, checked, and nothing goes as `on` (044's first with room is that one).
   const choiceless = offers.length <= 1;
   const onOffer = choiceless ? (shown[0] ?? null) : (takers.find((offer) => offer.backend === on) ?? null);
+  const gpuLine = cardMenu ? gpuFormLine((onOffer ? [onOffer] : filtered).map(asForm), chosenGpu, Date.now()) : null;
   const presets = kind?.presets ?? [];
   const choices: Choice2[] = [...presets.map((preset) => preset.name), CUSTOM];
   const size: Choice2 = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
@@ -414,12 +475,13 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
+      const sized = sharedChosen ? undefined : cardMenu && chosenGpu !== gpuDefault ? { ...(request ?? {}), gpu: chosenGpu } : request;
       const refused = buildsFirst
-        ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined)
-        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, placementAsked);
+        ? await onDemand!.build(kind.id, sized, machine && typedName ? typedName : undefined)
+        : await make(kind.id, sized, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, placementAsked);
       setProblem(refused === null ? null : withoutRaiseLargest(refused));
       if (!refused) {
-        remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
+        remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(gpuByKind).length ? { gpu: gpuByKind } : {}), ...(Object.keys(edited).length ? { custom: edited } : {}) });
         setName("");
         setOpen(false);
       }
@@ -604,7 +666,7 @@ export function NewBox({
             </>
           )}
           {kind && !sharedChosen ? (
-            <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
+            <FormSection title="Resources" description={`Configure the box's cores, memory${cardMenu || gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {
                   const own = presets.find((item) => item.name === candidate) ?? null;
@@ -630,7 +692,27 @@ export function NewBox({
                 </div>
               ) : null}
               {!preset && largest ? <LargestLine kind={kind.id} largest={largest} asked={askedParts(fields)} onFollow={() => setOpen(false)} /> : null}
-              {gpuChoice ? (
+              {cardMenu ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">GPU</p>
+                  <MenuSelect
+                    label="GPU"
+                    value={chosenGpu}
+                    options={menuParts.map((part) => ({ value: part, label: GPU_MENU_LABELS[part] }))}
+                    onChange={(value) => {
+                      if (!kind) return;
+                      const part = value as GpuPart;
+                      const next = { ...gpuByKind, [kind.id]: part };
+                      setGpuByKind(next);
+                      remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, gpu: next, ...(Object.keys(edited).length ? { custom: edited } : {}) });
+                      setProblem(null);
+                    }}
+                  />
+                  <p data-gpu-line data-gpu-state={gpuLine?.state} aria-live="polite" className={cn(GPU_LINE_CLASS, gpuLine?.state === "refused" ? "text-warning-text" : "text-muted-foreground")}>
+                    {gpuLine?.words}
+                  </p>
+                </div>
+              ) : gpuChoice ? (
                 // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">GPU</p>
@@ -700,7 +782,7 @@ export function NewBox({
                   among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
-                  unavailable={blockedWhy(offer)}
+                  unavailable={(cardMenu ? gpuRowReason(asForm(offer), chosenGpu) : null) ?? blockedWhy(offer)}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
@@ -743,7 +825,7 @@ export function NewBox({
               Boxes will not join BB yet. <JoinHelp words={access.message} />
             </p>
           ) : null}
-          <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+          <div className="flex items-center justify-between gap-3 pt-1">
             {standing ? (
               <p role={problem ? "alert" : undefined} className={cn("min-w-0 text-xs leading-snug", problem ? "text-destructive-text" : "text-muted-foreground")}>
                 {standing}
@@ -764,7 +846,7 @@ export function NewBox({
             ) : (
               <span />
             )}
-            <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
+            <Button type="submit" size="sm" className="shrink-0 font-normal" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null || gpuLine?.blocked === true}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
               {machine && !primary ? (buildsFirst ? "Build and add" : "Add machine") : buildsFirst ? "Build and create" : "Create box"}
             </Button>

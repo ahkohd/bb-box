@@ -812,6 +812,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       opens={opens}
       resizing={resizing}
       resizeAt={resizeAt}
+      monitorId={page.monitor.is === "read" ? page.monitor.machineId : null}
       onResizing={(open) => {
         if (open) setResizeAt("size");
         setResizing(open);

@@ -12,7 +12,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import { providerName } from "../core/provider-name.ts";
 import { joinChecks, joiningWords } from "../core/join-tries.ts";
-import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
+import type { BackendDriver, DoctorReport, GpuMarking, GpuRoom, GuestOs, MachineAccess } from "../backends/types.ts";
 import { recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { chromePin, imageProgram, pinsDigest, type ImageFacts } from "../backends/images.ts";
@@ -238,6 +238,7 @@ export interface BbBox {
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
+  kindCards(kindId: string): Promise<{ readonly backend: string; readonly room: GpuRoom | null }[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   gpuMark(options: { readonly check: boolean; readonly undo: boolean; readonly on?: string }, signal?: AbortSignal): Promise<GpuMarking[]>;
   /**
@@ -1606,6 +1607,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         room: first ? await boxes.room(backendId, first.kind.id, signal).catch(() => null) : null,
         status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
       };
+    },
+    async kindCards(kindId) {
+      const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);
+      return Promise.all(
+        offered.map(async ({ backend, kind }) => ({
+          backend: backend.id,
+          room: backend.gpuRoom ? await backend.gpuRoom(kind.id).catch(() => null) : null,
+        })),
+      );
     },
     async offerRooms(kindId, size) {
       const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);

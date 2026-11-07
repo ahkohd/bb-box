@@ -9,9 +9,9 @@ import { isMachineName } from "../core/names.ts";
 import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
+import type { GpuPart, GpuRoom, ResizeWay, SizePart } from "../backends/types.ts";
 import type { GpuMate } from "./gpu-page.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
-import type { ResizeWay, SizePart } from "../backends/types.ts";
 import type { EndedBox } from "../core/box-log.ts";
 import type { BoxSnapshotsView, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
 import type { BulkCheck, BulkDone, SnapshotsTabView } from "./snapshots-tab.ts";
@@ -148,6 +148,26 @@ export interface BoxResult {
   readonly threads?: readonly ThreadOnBox[];
 }
 
+/** A GPU change the Resize dialog shows, from the plan a check or a resize made. */
+export interface GpuChangeView {
+  readonly from: GpuPart;
+  readonly to: GpuPart;
+  readonly way: ResizeWay;
+  readonly stopped: boolean;
+  readonly installs: string | null;
+  readonly words: string;
+  readonly fromIndex: number | null;
+  readonly toIndex: number | null;
+  readonly refusal: string | null;
+  readonly others: readonly { readonly box: string | null; readonly name: string; readonly stopped: boolean }[];
+  readonly changed: string | null;
+}
+
+export interface KindCards {
+  readonly backend: string;
+  readonly room: GpuRoom | null;
+}
+
 /** What a resize did, or with `check`, would do (061); or why it did nothing. */
 export interface ResizeResult {
   /** The box as it is now; null when it could not be found. */
@@ -160,6 +180,7 @@ export interface ResizeResult {
     readonly parts: readonly { readonly part: SizePart; readonly from: number | null; readonly to: number; readonly way: ResizeWay }[];
     readonly room: { readonly ok: boolean; readonly message: string | null };
     readonly downSeconds: number | null;
+    readonly gpu?: GpuChangeView | null;
   } | null;
   /** It changed the box. */
   readonly changed: boolean;
@@ -235,7 +256,8 @@ const whole = z.number().int().positive().optional();
  * A preset, and any parts of a custom size (028). Leave the key out for the
  * kind's default: RPC input must be JSON, so `size: undefined` is refused.
  */
-const size = z.object({ preset: z.string().min(1).optional(), cores: whole, memoryGiB: whole, diskGiB: whole });
+const gpuPart = z.enum(["none", "shared", "whole"]);
+const size = z.object({ preset: z.string().min(1).optional(), cores: whole, memoryGiB: whole, diskGiB: whole, gpu: gpuPart.optional() });
 /**
  * A resize (061): parts left out keep what the box has. `check` only plans it. `restart` allows a part that needs one, once the
  * person has said yes; `force` restarts the box though threads work on it. A person holding the desktop's control is not
@@ -332,6 +354,8 @@ export const contract = defineRpcContract({
   /** A provider's profile for the form's (i): data the plugin has, and one capacity call to the provider. Asked only when opened. */
   provider: { input: z.object({ backend: z.string().min(1) }), output: z.custom<ProviderProfile>() },
   rooms: { input: z.object({ kind: z.string().min(1), size: size.optional() }), output: z.custom<OfferRoom[]>() },
+  /** A fresh reading of one kind's cards, for the New box form's GPU line. */
+  "kind.cards": { input: z.object({ kind: z.string().min(1) }), output: z.custom<KindCards[]>() },
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */
   thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },

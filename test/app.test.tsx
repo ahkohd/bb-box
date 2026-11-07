@@ -548,7 +548,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -671,6 +671,11 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       changes.push(`rooms ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
       const blocked = typeof options.rooms === "function" ? options.rooms(size) : (options.rooms ?? {});
       return ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, available: !blocked[offer.backend], reason: blocked[offer.backend] ?? null }));
+    },
+    "kind.cards": async ({ kind }) => {
+      changes.push(`kind.cards ${kind}`);
+      if (options.holdCards) await options.holdCards;
+      return ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, room: offer.gpuRoom }));
     },
     provider: ({ backend }) => {
       asked.push(backend);
@@ -1311,6 +1316,55 @@ test("071 unit 11: the New box form says where every box can open every card, fo
   expect(screen.getByText(reach).tagName).toBe("P");
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
   expect(screen.getByText(reach).tagName).toBe("P");
+});
+
+test("071 unit 13: the New box form offers None, Shared and Whole card, and the line keeps its height while the cards are read", async () => {
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const at = Date.now() - 20_000;
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared", "whole"],
+    host: "pve-1",
+    at,
+    neededMiB: 512,
+    cards: [
+      { index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, wholeBy: "quiet-elm", freeForWhole: false },
+      { index: 1, boxes: 2, whole: false, freeMiB: 18_227, totalMiB: 24_576, freeForWhole: false },
+    ],
+  };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room }] };
+  const { handlers, changes } = server([], { kinds: [linux], holdCards: hold });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText(/Reading the cards on pve-1/);
+  expect(line.getAttribute("data-gpu-state")).toBe("reading");
+  expect(line.className).toContain("h-[3lh]");
+  expect(line.className).toContain("sm:h-[2lh]");
+  expect(submitButton().disabled).toBe(true);
+  release();
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("none"));
+  expect(line.textContent).toBe("No GPU. You can add one later with Resize.");
+  expect(await optionsOf("GPU")).toEqual(["None", "Shared", "Whole card"]);
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(line.textContent).toMatch(/^Card 1 on pve-1, shared with 2 boxes; 17\.8 GiB free when read, \d+ s ago\. Boxes on a card share its memory\.$/));
+  expect(line.getAttribute("data-gpu-state")).toBe("shared");
+  await choose("GPU", "Whole card");
+  await waitFor(() => expect(line.textContent).toBe("pve-1 has no free card now: see below."));
+  expect(line.getAttribute("data-gpu-state")).toBe("refused");
+  expect(screen.getByText("Card 0 is quiet-elm's; card 1 has 2 boxes")).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  await choose("GPU", "None");
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("none"));
+  fireEvent.click(submitButton());
+  await waitFor(() => expect(changes).toContain("acquire linux"));
+  expect(changes.some((change) => change.startsWith("acquire linux {"))).toBe(false);
+  expect(changes).toContain("kind.cards linux");
 });
 
 test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {

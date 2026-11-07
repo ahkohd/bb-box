@@ -3137,6 +3137,7 @@ export class Boxes {
     options: {
       readonly restart?: boolean;
       readonly check?: boolean;
+      readonly reportPlan?: boolean;
       readonly beforeRestart?: (box: BoxRecord) => Promise<void>;
       /** Who asked, for the log: "the tool", "the CLI" or "the panel". */
       readonly by?: string;
@@ -3179,7 +3180,7 @@ export class Boxes {
   async #resize(
     box: BoxRecord,
     request: SizeRequest & { readonly gpu?: GpuPart },
-    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly who?: Actor; readonly signal?: AbortSignal },
+    options: { readonly restart?: boolean; readonly check?: boolean; readonly reportPlan?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly who?: Actor; readonly signal?: AbortSignal },
     queued: boolean,
   ): Promise<ResizeAnswer> {
     if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
@@ -3222,10 +3223,17 @@ export class Boxes {
       if (gpuChanges) {
         const gpu = plan.gpu;
         if (!gpu) throw new BoxError("unsupported", ...gpuFixedWords(current));
-        if (gpu.refusal) throw new BoxError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
-        if (gpu.way === "no") throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} bb-box changed nothing.`);
+        if (gpu.refusal || gpu.way === "no") {
+          if (options.check && options.reportPlan) {
+            await this.#rememberGpuPlan(current.id, gpu);
+            return { box: current, from, to, plan, changed: false };
+          }
+          if (gpu.refusal) throw new BoxError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
+          throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} bb-box changed nothing.`);
+        }
         if (gpu.changedSinceAgreed) {
           await this.#rememberGpuPlan(current.id, gpu);
+          if (options.reportPlan) return { box: current, from, to, plan, changed: false };
           throw new BoxError(gpu.way === "restart" && !options.restart ? "needs_restart" : "try_again", gpu.changedSinceAgreed.person, gpu.changedSinceAgreed.agent);
         }
         if (gpu.way === "restart" && !gpu.stopped) {

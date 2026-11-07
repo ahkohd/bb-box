@@ -89,6 +89,7 @@ export function BoxMenu({
   opens,
   resizing,
   resizeAt = "size",
+  monitorId = null,
   onResizing,
   place = "row",
   onBoxesPage,
@@ -102,6 +103,7 @@ export function BoxMenu({
   opens: BoxOpens;
   resizing: boolean;
   resizeAt?: "size" | "gpu";
+  monitorId?: string | null;
   onResizing: (resizing: boolean) => void;
   place?: MenuPlace;
   onBoxesPage?: () => void;
@@ -278,7 +280,7 @@ export function BoxMenu({
           </AlertDialogContent>
         </AlertDialog>
       ) : null}
-      <ResizeDialog box={resizing ? box : null} threadId={thread?.threadId} at={resizeAt} onClose={() => onResizing(false)} />
+      <ResizeDialog box={resizing ? box : null} threadId={thread?.threadId} at={resizeAt} monitorId={monitorId} onClose={() => onResizing(false)} />
       <AlertDialog open={confirmingForget} onOpenChange={setConfirmingForget}>
         <AlertDialogContent>
           <AlertDialogHeader>
