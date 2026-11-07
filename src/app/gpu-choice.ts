@@ -52,7 +52,6 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
     const words = offer && !offer.canAddGpu ? `No GPU, and none can be added later on ${offer.label}.${offer.reachesEveryCard ? ` ${DOCKER_REACH}` : ""}` : `No GPU. You can add one later with Resize.${reach}`;
     return { words, blocked: false, state: "none" };
   }
-  if (offers.some((offer) => offer.failed)) return { words: "The cards could not be read.", blocked: true, state: "failed" };
   if (pending(offers)) return { words: readingWords(offers.map((offer) => offer.host)), blocked: true, state: "reading" };
   for (const offer of offers) {
     const card = placedCard(offer, gpu);
@@ -73,6 +72,7 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
     const host = spare.gpuRoom?.host || spare.host;
     return { words: `A ready box on ${host} has this GPU, so Create takes that box.`, blocked: false, state: gpu === "whole" ? "whole" : "shared" };
   }
+  if (offers.some((offer) => offer.failed)) return { words: "The cards could not be read.", blocked: true, state: "failed" };
   return { words: refusedWords(offers, gpu), blocked: true, state: "refused" };
 }
 

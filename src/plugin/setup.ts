@@ -12,7 +12,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import { providerName } from "../core/provider-name.ts";
 import { joinChecks, joiningWords } from "../core/join-tries.ts";
-import type { BackendDriver, DoctorReport, GpuMarking, GpuRoom, GuestOs, MachineAccess } from "../backends/types.ts";
+import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
 import { recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { chromePin, imageProgram, pinsDigest, type ImageFacts } from "../backends/images.ts";
@@ -66,7 +66,8 @@ import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOff
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
-import type { DesktopOnDemandView, ThreadOnBox } from "./contract.ts";
+import type { DesktopOnDemandView, KindCards, ThreadOnBox } from "./contract.ts";
+import { kindCardReads } from "./kind-cards.ts";
 import { threadOnBox } from "./thread-on-box.ts";
 import { dockerKind } from "../backends/docker/backend.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
@@ -238,7 +239,7 @@ export interface BbBox {
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
-  kindCards(kindId: string): Promise<{ readonly backend: string; readonly room: GpuRoom | null }[]>;
+  kindCards(kindId: string): Promise<KindCards[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   gpuMark(options: { readonly check: boolean; readonly undo: boolean; readonly on?: string }, signal?: AbortSignal): Promise<GpuMarking[]>;
   /**
@@ -1610,12 +1611,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     async kindCards(kindId) {
       const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);
-      return Promise.all(
-        offered.map(async ({ backend, kind }) => ({
-          backend: backend.id,
-          room: backend.gpuRoom ? await backend.gpuRoom(kind.id).catch(() => null) : null,
-        })),
-      );
+      return kindCardReads(offered);
     },
     async offerRooms(kindId, size) {
       const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);

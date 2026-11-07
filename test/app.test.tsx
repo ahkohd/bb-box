@@ -18,6 +18,7 @@ import { busyWords } from "../src/app/box-words.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DoctorReport, GpuRoom } from "../src/backends/types.ts";
+import { kindCardReads } from "../src/plugin/kind-cards.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
@@ -548,7 +549,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -676,7 +677,9 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       changes.push(`kind.cards ${kind}`);
       if (options.holdCards) await options.holdCards;
       if (options.cardsFail) throw new Error("The cards did not answer.");
-      return ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, room: offer.gpuRoom }));
+      const offers = (options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? [];
+      if (options.cardFailed) return kindCardReads(offers.map((offer) => ({ backend: { id: offer.backend, gpuRoom: async () => Promise.reject(new Error("The cards did not answer.")) }, kind: { id: kind } })));
+      return offers.map((offer) => ({ backend: offer.backend, room: offer.gpuRoom, failed: false }));
     },
     provider: ({ backend }) => {
       asked.push(backend);
@@ -1538,6 +1541,40 @@ test("071 unit 13: a failed card reading can be retried, and None does not wait 
   expect(failed.getAttribute("data-gpu-state")).toBe("failed");
   expect(submitButton().disabled).toBe(true);
   options.cardsFail = false;
+  offer.gpuRoom = room;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("shared"));
+  expect(submitButton().disabled).toBe(false);
+});
+
+test("071 unit 13: a provider whose card reading fails in the RPC shape can be retried, and None stays usable", async () => {
+  const failed = await kindCardReads([{ backend: { id: "fake", gpuRoom: async () => Promise.reject(new Error("The cards did not answer.")) }, kind: { id: "linux" } }]);
+  expect(failed).toEqual([{ backend: "fake", room: null, failed: true }]);
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared"],
+    host: "pve-1",
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  };
+  const linux = kindView("linux", "Linux", "A server.", 2, false);
+  const offer = { ...linux.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared"] as const, gpuRoom: null };
+  linux.offers = [offer];
+  const options: { kinds: KindView[]; cardFailed?: boolean } = { kinds: [linux], cardFailed: true };
+  const slot = panel(server([], options).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText("No GPU. You can add one later with Resize.");
+  expect(line.getAttribute("data-gpu-state")).toBe("none");
+  expect(submitButton().disabled).toBe(false);
+  expect(screen.queryByText(/no card with room/)).toBeNull();
+  await choose("GPU", "Shared");
+  const failure = await screen.findByText("The cards could not be read.");
+  expect(failure.getAttribute("data-gpu-state")).toBe("failed");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  expect(screen.queryByText(/no card with room/)).toBeNull();
+  options.cardFailed = false;
   offer.gpuRoom = room;
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("shared"));

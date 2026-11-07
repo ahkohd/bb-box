@@ -217,7 +217,7 @@ export function NewBox({
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   rooms?: (kind: string, size?: SizeRequest) => Promise<readonly OfferRoom[]>;
-  cards?: (kind: string) => Promise<readonly { readonly backend: string; readonly room: GpuRoom | null }[]>;
+  cards?: (kind: string) => Promise<readonly { readonly backend: string; readonly room: GpuRoom | null; readonly failed?: boolean }[]>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
   /**
@@ -250,7 +250,7 @@ export function NewBox({
   // kind without edits starts from its own preset in view.
   const [edited, setEdited] = useState<Readonly<Record<string, Fields>>>(() => (last.custom && typeof last.custom === "object" ? last.custom : {}));
   const [gpuByKind, setGpuByKind] = useState<Readonly<Record<string, GpuPart>>>(() => (last.gpu && typeof last.gpu === "object" ? last.gpu : {}));
-  const [cardRooms, setCardRooms] = useState<ReadonlyMap<string, GpuRoom | null> | null>(null);
+  const [cardRooms, setCardRooms] = useState<ReadonlyMap<string, { readonly room: GpuRoom | null; readonly failed: boolean }> | null>(null);
   const [cardsFailed, setCardsFailed] = useState(false);
   const [cardTry, setCardTry] = useState(0);
   const [making, setMaking] = useState(false);
@@ -341,8 +341,9 @@ export function NewBox({
   const cardParts = (offer: OfferView) => offer.gpuParts?.some((part) => part !== "none") ?? false;
   const asForm = (offer: OfferView): GpuFormOffer => {
     if (cards !== undefined && cardRooms === null && !cardsFailed) return formOffer(offer, null, true);
-    if (cardsFailed && offer.gpuRoom === null && cardParts(offer)) return formOffer(offer, null, false, true);
-    if (cardRooms) return formOffer(offer, cardRooms.get(offer.backend) ?? null, false);
+    const read = cardRooms?.get(offer.backend);
+    if (read?.failed || (cardsFailed && offer.gpuRoom === null && cardParts(offer))) return formOffer(offer, null, false, true);
+    if (cardRooms) return formOffer(offer, read?.room ?? null, false);
     return formOffer(offer, offer.gpuRoom, cards === undefined && offer.gpuRoom === null && cardParts(offer));
   };
   const cardMenu = gpuMenuShows(kind, shown.map((offer) => formOffer(offer, offer.gpuRoom, false)));
@@ -367,7 +368,7 @@ export function NewBox({
     setCardsFailed(false);
     read(kindId).then(
       (rows) => {
-        if (!stale) setCardRooms(new Map(rows.map((row) => [row.backend, row.room])));
+        if (!stale) setCardRooms(new Map(rows.map((row) => [row.backend, { room: row.failed ? null : row.room, failed: row.failed === true }])));
       },
       () => {
         if (!stale) setCardsFailed(true);

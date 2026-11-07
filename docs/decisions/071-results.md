@@ -5288,7 +5288,7 @@ A later review of the form and the dialog changed four behaviours, and the tests
 
 - None is in the GPU menu when an offer's parts include it, or when a CPU desktop of the same windowing is offered beside it. Choosing None then acquires that CPU kind (`linux-desktop-cpu` on Docker and on a Proxmox desktop whose parts are shared, or shared and whole). A GPU desktop with no CPU desktop does not offer None.
 - A ready spare of the kind's default GPU, at the default size, does not fill the card, so Create stays on. A spare of another GPU still does. First with room names a card only on a provider the size can use.
-- A card reading that fails stays failed, with Retry. None does not wait on a reading, and Create stays on.
+- A card reading that fails stays failed, with Retry. The cards RPC says which provider failed, instead of an empty room, and None does not wait on a reading.
 - The line's height follows the form's width (`@container` and `@sm:h-[2lh]`), not the window. Resize does not check again when the opening size snaps to the box's preset, so Resize stays on while that plan is shown.
 - The remembered GPU and the cards callback have no doc comments. The names `gpu` and `cards` carry that.
 

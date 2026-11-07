@@ -165,6 +165,7 @@ export interface GpuChangeView {
 export interface KindCards {
   readonly backend: string;
   readonly room: GpuRoom | null;
+  readonly failed: boolean;
 }
 
 /** What a resize did, or with `check`, would do (061); or why it did nothing. */
