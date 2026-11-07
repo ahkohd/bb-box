@@ -439,8 +439,8 @@ export function resizeGpuParameter(wholeCards: boolean) {
     .optional()
     .describe(
       wholeCards
-        ? "The box's GPU: none, shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; adding a GPU, removing it or moving the box to another card restarts it on Proxmox LXC and cannot be done on Docker. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change."
-        : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. Adding a GPU or removing it restarts the box on Proxmox LXC and cannot be done on Docker. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change.",
+        ? "The box's GPU: none, shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; adding a GPU, removing it or moving the box to another card restarts it on Proxmox LXC and cannot be done on Docker. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change."
+        : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. Adding a GPU or removing it restarts the box on Proxmox LXC and cannot be done on Docker. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change.",
     );
 }
 
@@ -1131,7 +1131,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         });
         const hints = check ? [`Call box_resize without check to make the change.`] : [`Call box_status with box "${answer.box.name}" to see it.`];
         const machine = check ? null : await app.machineCores(answer);
-        return `${resizeText(answer, check === true)}${machine ? `\n${machine}` : ""}${next(...hints)}`;
+        return `${resizeText(answer, check === true, "agent")}${machine ? `\n${machine}` : ""}${next(...hints)}`;
       } catch (error) {
         return failure(error, "Resizing the box");
       }

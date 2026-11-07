@@ -3,19 +3,19 @@
 
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
-import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
+import { currentKindId, kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
 import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type CardClaim, type GpuPart, type MachineSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Snapshotting, type Windowing } from "../backends/types.ts";
 import { offerSnapshotWords } from "./snapshot-words.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { OPERATOR, RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
+import { OPERATOR, RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type KindChange, type ResizeAnswer, type UserspaceInstalled } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
 import { claimOf, gpuPartsOffered, holdsCard, recordedGpu, userspaceOf, type NvidiaUserspace } from "../core/gpu.ts";
-import { agentUserspaceWords, readingWords, updateLeftWords, userspaceState, type UserspaceReading, type UserspaceState, type UserspaceUpdate } from "../core/gpu-userspace.ts";
+import { USERSPACE_INSTALL_SECONDS, agentUserspaceWords, gpuPartToRetry, readingWords, unfinishedUpdate, updateLeftWords, userspaceState, type UserspaceReading, type UserspaceState, type UserspaceUpdate } from "../core/gpu-userspace.ts";
 import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -672,15 +672,34 @@ function cardReachOf(reach: string | null): { readonly cardReach?: string } {
 
 export interface UserspaceNotice {
   readonly words: string;
-  readonly action: "update" | "update-again" | null;
+  readonly action: "update" | "update-again" | "resize-again" | null;
 }
 
 function boxUserspaceState(box: BoxRecord): UserspaceState {
   return userspaceState(box.userspaceRead, box.userspaceUpdate, box.userspaceRead?.hostDriver ?? null, typeof box.userspaceRunningSeenAt === "number");
 }
 
+function installNoticeOf(box: BoxRecord): UserspaceNotice | null {
+  if (!unfinishedUpdate(box.userspaceUpdate)) return null;
+  const state = boxUserspaceState(box);
+  switch (state.is) {
+    case "updating":
+      return { words: `bb-box is installing NVIDIA's userspace ${state.update.to} in it, to add its GPU, at its ${state.update.step} step.`, action: null };
+    case "running":
+      return { words: "An earlier install of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other until then.", action: null };
+    case "half":
+      return { words: `It has ${readingWords(state.reading)}, and no GPU.`, action: "resize-again" };
+    case "unfinished":
+      return state.update.state === "unknown"
+        ? { words: `${updateLeftWords(box.name, state.update)} Its GPU was not added. bb box doctor reads it, and says whether that install is still running.`, action: null }
+        : { words: `${updateLeftWords(box.name, state.update)} Its GPU was not added.`, action: "resize-again" };
+    default:
+      return null;
+  }
+}
+
 export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
-  if (!holdsCard(recordedGpu(box))) return null;
+  if (!holdsCard(recordedGpu(box))) return installNoticeOf(box);
   const state = boxUserspaceState(box);
   switch (state.is) {
     case "differs":
@@ -708,14 +727,19 @@ export function userspaceFixLine(box: BoxRecord): string | null {
   if (!notice) return null;
   if (!notice.action) return `NVIDIA userspace: ${notice.words}`;
   const owner = box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`;
-  const command = `bb box gpu update ${box.name}${owner}`;
-  return `NVIDIA userspace: ${notice.words} ${notice.action === "update-again" ? "Update it again" : "Update it"}${box.state === "stopped" ? ` once it runs` : ""}: ${command}`;
+  const command = notice.action === "resize-again" ? `bb box resize ${box.name} --gpu ${gpuPartToRetry(box.resize)} --restart${owner}` : `bb box gpu update ${box.name}${owner}`;
+  const asked = notice.action === "resize-again" ? "Resize it again" : notice.action === "update-again" ? "Update it again" : "Update it";
+  return `NVIDIA userspace: ${notice.words} ${asked}${box.state === "stopped" ? ` once it runs` : ""}: ${command}`;
 }
 
 export function gpuLine(box: BoxRecord): string | null {
   const part = recordedGpu(box);
   const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? null;
-  if (!holdsCard(part)) return fact;
+  if (!holdsCard(part)) {
+    const install = installNoticeOf(box);
+    if (!install) return fact;
+    return `${install.words}${install.action === "resize-again" ? ` Call box_resize with gpu ${gpuPartToRetry(box.resize)} and restart true to try again, or ask the user.` : " Ask the user."}`;
+  }
   const card = fact ?? part;
   if (/: (nvidia-smi in it|CUDA's driver|CUDA in it)/.test(card)) return `${card}. Ask the user${/NVIDIA userspace is/.test(card) ? " to update its NVIDIA userspace" : ""}.`;
   const userspaceWords = agentUserspaceWords(box.name, boxUserspaceState(box));
@@ -1042,7 +1066,7 @@ function sizeWithGpu(size: ResizeAnswer["from"], gpuChanges: boolean): string {
   return gpuChanges ? `${describeSize(size)}, GPU ${size.gpu}` : describeSize(size);
 }
 
-export function resizeText(answer: ResizeAnswer, checked: boolean): string {
+export function resizeText(answer: ResizeAnswer, checked: boolean, audience: "person" | "agent" = "person"): string {
   const { box, plan } = answer;
   const gpu = plan?.gpu && answer.from.gpu !== answer.to.gpu ? plan.gpu : null;
   const from = sizeWithGpu(answer.from, gpu !== null);
@@ -1053,11 +1077,14 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
   const restart = ways("restart");
   const lines: string[] = [];
   const stopped = gpu?.stopped === true;
+  const desktop = currentKindId(answer.becomes?.to ?? box.kind) === "linux-desktop";
   if (checked) {
     lines.push(`Resizing box ${box.name} from ${from} to ${to} would change:`);
     if (live.length) lines.push(stopped ? `- now, while it stays stopped: ${live.join("; ")}` : `- live, while everything in it runs on: ${live.join("; ")}`);
     if (restart.length) lines.push(`- with a restart${plan.downSeconds !== null ? ` of about ${plan.downSeconds} s` : ""}, which ends everything running in it: ${restart.join("; ")}`);
     if (gpu) lines.push(gpu.words);
+    if (gpu?.installs) lines.push(installsWords(gpu.installs, desktop));
+    if (answer.becomes) lines.push(becomesWords(answer.becomes, answer.to.gpu, false));
     lines.push(plan.room.ok ? "Its host has room for it." : `Its host has no room for it: ${plan.room.message ?? "no reason given"}`);
     return lines.join("\n");
   }
@@ -1066,8 +1093,31 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
   if (live.length) lines.push(stopped ? `While it stayed stopped: ${live.join("; ")}.` : `Live, with everything in it still running: ${live.join("; ")}.`);
   if (restart.length) lines.push(`With a restart, which ended what was running in it: ${restart.join("; ")}.`);
   if (gpu) lines.push(gpu.words);
+  if (answer.installed) lines.push(installedWords(box, answer.installed, desktop, audience));
+  if (answer.becomes) lines.push(becomesWords(answer.becomes, answer.to.gpu, true));
   if (plan.parts.some((part) => part.part === "cores" && part.way === "live")) lines.push("New cores can take up to 15 s to show in the box.");
   return lines.join("\n");
+}
+
+function installsWords(driver: string, desktop: boolean): string {
+  return `It has no NVIDIA userspace for the host's driver ${driver}, which a card needs, so bb-box installs it first, while it runs with no GPU, then restarts it with the card: about ${USERSPACE_INSTALL_SECONDS} s more${desktop ? ". Its desktop is set to draw on the GPU" : ""}. If the install fails, it goes on running with no GPU, as it was.`;
+}
+
+function installedWords(box: BoxRecord, installed: UserspaceInstalled, desktop: boolean, audience: "person" | "agent"): string {
+  const over = installed.from === "none" ? "where it had none" : `over ${installed.from}`;
+  if (installed.problem) {
+    const fix = audience === "agent" ? "Ask the user to update it again." : `Update it again: bb box gpu update ${box.name}${box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`}`;
+    return `bb-box installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart, but its check after the restart failed: ${installed.problem.replace(/\.$/, "")}. ${fix}`;
+  }
+  const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? "its card";
+  return `bb-box installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart. nvidia-smi in it lists ${fact}, and CUDA's driver initialises.${desktop ? " Its desktop is drawn by the GPU, and its video encoded with NVENC." : ""}`;
+}
+
+function becomesWords(becomes: KindChange, gpu: GpuPart, done: boolean): string {
+  const card = gpu === "whole" ? "a whole card" : "a shared GPU";
+  return done
+    ? `It is now a GPU desktop: a ${becomes.to} box with ${card}, no longer ${becomes.from}.`
+    : `It becomes a GPU desktop: a ${becomes.to} box with ${card}, no longer ${becomes.from}.`;
 }
 
 /**

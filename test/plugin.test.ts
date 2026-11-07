@@ -7246,6 +7246,27 @@ test("071 unit 8: box_acquire takes gpu whole and box_fork too; the provider's r
   assert.match(fork, /Fork it with gpu shared or none, or ask the user\. bb-box copied nothing\./);
 });
 
+test("071 unit 10: box_resize gives an agent its own words when the check after an install failed, and no person's command", async (t) => {
+  const { harness, app, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const card = { card: "GPU-0", index: 0, model: "Fake RTX", memoryMiB: 24_576 };
+  const gpu = { from: "none", to: "shared", way: "restart", card, fromCard: null, toCard: card, stopped: false, installs: "580.142", others: [], words: "GPU: none → shared, card 0 · Restart.", refusal: null } as const;
+  const answer = {
+    box,
+    from: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "none" },
+    to: { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" },
+    plan: { parts: [], room: { ok: true, message: null, warm: null, hosts: [] }, downSeconds: 15, gpu },
+    changed: true,
+    installed: { driver: "580.142", from: "none", problem: "its desktop came up on the CPU" },
+  } as const;
+  (app.boxes as unknown as { resize: () => Promise<typeof answer> }).resize = async () => answer;
+  const said = text(await tool("box_resize", { box: box.name, gpu: "shared", restart: true }));
+  assert.match(said, /but its check after the restart failed: its desktop came up on the CPU\. Ask the user to update it again\./, said);
+  assert.doesNotMatch(said, /bb box gpu update/, "an agent is not given the person's command");
+});
+
 test("071 unit 8, round 2: while whole cards are off, the schemas agents get for box_acquire and box_fork and the CLI's help offer no whole card, and once they are on they do, from the next session", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());

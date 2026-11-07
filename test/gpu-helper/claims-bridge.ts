@@ -48,6 +48,7 @@ export interface BackendOptions {
   readonly readyTimeoutMs?: number;
   readonly titles?: Readonly<Record<string, string>>;
   readonly wholeCards?: boolean;
+  readonly settings?: Readonly<Record<string, unknown>>;
 }
 
 let bridges = 0;
@@ -155,6 +156,7 @@ export class ClaimsBridge {
       "proxmox-lxc-vmid-last": first + 49,
       ...(options.perGpu !== undefined ? { "proxmox-lxc-desktops-per-gpu": options.perGpu } : {}),
       ...(options.warm !== undefined ? { "proxmox-lxc-desktop-warm": options.warm } : {}),
+      ...options.settings,
     });
     this.#configs.push(config);
     const shipped = testContext(options.storage ?? new MemoryStorage(), options.install ?? INSTALL, { id: "proxmox-lxc", warm: { "linux-desktop": options.warm ?? 0 } });

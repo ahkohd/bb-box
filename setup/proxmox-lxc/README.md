@@ -633,6 +633,14 @@ Its fix is the `build.sh` command that rebuilds the template.
   the box and checks its card. Everything running in the box stops, so bb-box
   never does this by itself. `--check` says what it would do first, and
   `--snapshot` takes a snapshot of the box before it.
+- **Adding a GPU to a box without the host's userspace**, such as a
+  `linux-desktop-cpu` box or a server made before its template had it:
+  `bb box resize <box> --gpu shared --restart` installs NVIDIA's userspace
+  for the host's driver in the running box first, the same way, then restarts
+  it with the card, in about 60 s more. It refuses a box with NVIDIA or CUDA
+  packages from apt, or one that is stopped, before anything changes. A
+  `linux-desktop-cpu` box becomes a `linux-desktop` with the GPU, which needs
+  a GPU desktop template in `desktop-templates`.
 - **After a bb-box update that adds a privilege**, run `host/setup-token.sh`
   again: it changes the role in place and keeps the token. Run
   `host/setup-host.sh` again if the update says so.

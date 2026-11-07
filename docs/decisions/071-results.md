@@ -4744,3 +4744,331 @@ failed; it was fixed before the step ran.
   steps here drive.
 - The Resize dialog with the GPU, and the move confirmation naming the
   programs with the GPU open: unit 13.
+
+## Unit 10: adding a GPU to a box without the host's userspace
+
+Built on main `1a3dae81`, on branch `u71-10`, after units 9 and 12. Section
+6's Resize to a GPU on a box whose NVIDIA userspace is not the host's driver,
+on Proxmox LXC. It replaces unit 9's refusal with one restart that installs
+the userspace first, and installs it with unit 12's path: the update script,
+its lock in the box, its apt guard and its checks. No helper or template
+change. The gate on the node has not run yet: its steps are in the report to
+the lead.
+
+### What it does
+
+- **The plan.** None to shared or whole on a running box whose version file,
+  `/usr/share/bb-box/nvidia-version`, is not the host's driver as the GPU
+  helper reports it (none, another version, or a half-installed one that
+  says another) is a restart that installs the host's driver's userspace
+  first. `GpuResize.installs` names the version. The words:
+
+  > GPU: none → shared, card 1 · Restart. Amber-fox restarts, gets NVIDIA's
+  > userspace 580.142 and card 1 (96 GiB), with no other box on it now, in
+  > about 75 s. Everything running in it stops. Its desktop is then drawn by
+  > the GPU.
+
+  and, in the check, for a person and an agent alike:
+
+  > It has no NVIDIA userspace for the host's driver 580.142, which a card
+  > needs, so bb-box installs it first, while it runs with no GPU, then
+  > restarts it with the card: about 60 s more. Its desktop is set to draw on
+  > the GPU. If the install fails, it goes on running with no GPU, as it was.
+
+  A box whose version file is the host's driver gets a plain restart, as in
+  unit 9. The plan's time down stays the restart's, 15 s or the box's own
+  measured restart: the box runs during the install.
+- **Before anything changes**, in the check and in the resize, bb-box reads
+  the box's userspace and records it, then runs unit 12's check in the box,
+  its script on stdin, which writes nothing there: x86_64, bb-box's own Linux
+  image (Ubuntu 24.04 with its image record), 2 GiB free in `/var/tmp`, no
+  `nvidia-*`, `libnvidia-*` or `cuda-drivers` package from apt in any state
+  but not installed or configuration files only, a package list it could
+  read, and the box seeing the host's driver. A box that fails it is refused
+  with the check's words:
+
+  > Not changed: amber-fox has nvidia-driver-570 from apt, which NVIDIA's
+  > installer would conflict with. Remove it, or make a new box with a GPU.
+
+  and to an agent, "Not resized: … bb-box changed nothing." A reason with no
+  action of its own adds "Make a new box with the GPU it needs", or for an
+  agent "Acquire a new box with the GPU it needs, or ask the user". A box
+  still running an earlier update is told to try again once it has ended
+  (`try_again`).
+- **A stopped box that needs it** is refused, as section 6's table has it,
+  where its template's record has no userspace for the host's driver or
+  another version: "Start swift-owl first: NVIDIA's userspace 580.142, which
+  a card needs, is installed in a running box. Nothing changes." A stopped
+  box from a template with it changes while stopped, as unit 9 has it. A
+  host whose helper reports no driver, or one that is not a version, is
+  refused for each audience; bb-box never installs "none".
+- **The order**, section 6's. The backend makes the plan again under the
+  card lock, from the box as it is then, and holds the card for the box with
+  a reservation, so a box made meanwhile goes to another card. Then it asks
+  the core to install (`ResizeOptions.installUserspace`); a resize that
+  would install with no way to is refused before anything changes. The core
+  records the install on the box as unit 12's update (`userspaceUpdate`,
+  from the box's reading to the host's driver), downloads NVIDIA's installer
+  for exactly that driver in the box, checked against NVIDIA's SHA-256, and
+  installs it with `nvidia-userspace.sh`, no kernel modules, under the
+  update's lock; for a desktop it sets `DISPLAY_MODE=auto`. The box has no
+  device nodes yet, so nothing in it changes, and its record stays ready, so
+  `box_run` goes on meanwhile. The restart's guard (061) is asked again, as
+  unit 12 asks it. The backend then says its restart begins
+  (`ResizeOptions.restarting`), from when the record is starting, and
+  restarts the box: one stop, the cores and memory, the marker, the helper's
+  grant and the card's lines, one start with unit 7's check after start. A
+  box that has the userspace by the time the backend makes its plan again
+  restarts with no install, and is starting from its stop all the same. The core then
+  checks it as unit 12 does: the userspace read again is the host's driver,
+  `nvidia-smi` lists the claimed card and `cuInit` returns 0, and for a
+  desktop its display is on the GPU and its video from NVENC.
+- **The result**, after the plan's words:
+
+  > bb-box installed NVIDIA's userspace 580.142 in it, where it had none,
+  > before the restart. nvidia-smi in it lists card 1, shared, NVIDIA RTX
+  > PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB, and CUDA's driver
+  > initialises. Its desktop is drawn by the GPU, and its video encoded with
+  > NVENC.
+
+  The box log's resize says "with NVIDIA's userspace 580.142 installed
+  first" once it ran, and a restart refused for want of `restart: true`
+  names the install too.
+- **When it does not finish.** A download that fails changes nothing, and an
+  install that fails leaves the box running with no GPU, as it was, not
+  restarted, and says what it has now; either lets the card go. A guard that
+  refuses after the install leaves the box running with no GPU and the new
+  userspace, and its next resize is a plain restart. A restart that fails
+  after the install leaves the update failed at its restart step, which a
+  start bb-box makes and a matching reading then settle, as unit 12 has it.
+  A check after the restart that fails leaves the GPU added and the update
+  failed at its check: the result says so, with "Update it again: bb box gpu
+  update amber-fox --thread …" for a person and "Ask the user to update it
+  again." for an agent, and status and the doctor name it as unit 12 does.
+  bb-box stopping mid-install leaves the update `unknown`, as unit 12's.
+- **A desktop made from the CPU template.** A `linux-desktop-cpu` box, which
+  section 1 makes a `linux-desktop` with no GPU, is resized to shared or
+  whole through the `linux-desktop` offer, and on success its record becomes
+  kind `linux-desktop` with that kind's label and capabilities, and the GPU
+  part. The check says "It becomes a GPU desktop: a linux-desktop box with a
+  shared GPU, no longer linux-desktop-cpu." and the result "It is now a GPU
+  desktop: …". A resize left holding a card, stopped or running, records the
+  new kind too; one left with no card keeps its kind. Back to none it stays
+  `linux-desktop` with no GPU. Where its backend offers no GPU desktop, it is
+  refused: "Not resized: Proxmox LXC offers no linux-desktop box with a GPU,
+  so box pale-moss, a desktop drawn by the CPU, cannot become a GPU desktop
+  there. List a GPU desktop template in BB Box's settings, or make a new
+  linux-desktop box with a GPU." The helper already gives a
+  `linux-desktop-cpu` guest a desktop's set of lines, and the CPU template
+  has the GPU path's Xorg configuration, Selkies and VirtualGL, so the
+  install's `DISPLAY_MODE=auto` is all it lacks.
+- **The guest's kind tag.** On Proxmox LXC, a marker that holds a card turns
+  the guest's `kind.linux-desktop-cpu` tag into `kind.linux-desktop`, in the
+  same config write, so a record bb-box restores from the guest's tags reads
+  `linux-desktop`, as the record does. Back to none it stays
+  `kind.linux-desktop`. A new claim that is not granted asks the old marker
+  back with the guest's old kind tag. The marker a restore writes for the
+  claim it keeps does the same, so a rollback to a snapshot from before the
+  GPU was added, which brings back the old tag, gets `kind.linux-desktop`
+  again with the card. A swap's new guest takes its tags from the box's
+  record, as it did.
+- **The plan made again.** A plan that now installs where the plan agreed to
+  did not, or installs another version, is a change, and the caller is asked
+  again, as unit 9 has it: "when you checked, lone-pine would get card 0 with
+  a restart; now it would get NVIDIA's userspace 580.142 and card 0 with a
+  restart." One that no longer needs the install goes ahead as a plain
+  restart.
+- **Every GPU restart** a resize makes now reads the box's userspace after
+  it, as each start bb-box makes does (unit 12).
+- Unit 12's update and the resize's install share the steps: the record,
+  the download and the install, and the check after the restart.
+  `box_resize`'s and `bb box resize --gpu`'s descriptions say a box without
+  the userspace gets it in the same restart, about 60 s more, and that a
+  `linux-desktop-cpu` box becomes a GPU desktop.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root with `--init`, as CI runs
+them:
+
+- `tsc` clean, and `node scripts/reference.ts --check` clean after the
+  reference was written again (the two descriptions).
+- The node suite on the branch's first full commit, `843a7fdd`: 3,965 tests,
+  3,543 passed, 112 failed, 310 skipped. Each failure is one of main's in the
+  same container, by name: main `1a3dae81`'s same 11 files there, 281 tests,
+  fail the same 112, identity reset scripts that find none of the
+  container's interfaces and the snapshot, fork and keep tests built on them,
+  the Android image check and a Mac host's check, as units 9, 11 and 12
+  found. vitest: 478 passed.
+- On the last commit, after the restart's hook: the GPU files, `boxes`,
+  `plugin`, `proxmox-lxc` and `docker-gpus` suites: 926 tests, 916 passed,
+  6 failed, 4 skipped. The 6 are `gpu-restore`'s, among main's 112 above.
+- `test/gpu-add-userspace-proxmox.test.ts`, 10 tests, against the real helper
+  0.4.3 on unit 2's fake node through unit 5's bridge: the plan and its words
+  for a running server with no userspace, with another version, and with the
+  host's; the order, the install asked once while the box runs with no lines
+  and nothing stopped, with its card held (a box made during the install goes
+  to the other card), the restart said to begin before any power action,
+  then one stop and one start; an install that fails,
+  with nothing stopped, no marker, no lines and the card let go; no way to
+  install; a stopped box told to start first, from a template with none and
+  with another version; a host that reports no driver; a desktop from the CPU
+  template resized as a `linux-desktop`, with a desktop's set of lines and its
+  kind tag `kind.linux-desktop`, read back from its tags, and kept back at
+  none; its claim not granted, its old marker and kind tag asked back, the tag
+  changed only in the marker's write; a rollback's old kind tag made
+  `linux-desktop` again with the claim kept; the plan made again both ways.
+- `test/gpu-add-userspace.test.ts`, 11 tests, through `Boxes` with a fake
+  backend that installs through the core, and unit 12's fake userspace: the
+  check, a refusal for want of `restart: true` naming the install, the
+  resize, its order, the record ready during the install and starting at the
+  stop, the guard asked twice, unit 12's calls in the box, the record, the
+  words for each audience and the box log; a box that has the userspace by
+  the backend's plan, which restarts with no install; a restart that fails
+  after the install; a `linux-desktop-cpu` box that becomes a GPU desktop, its display
+  checked, and back to none; its resize left holding a card or none; a
+  desktop whose display comes up on the CPU after the install; no GPU
+  desktop on its backend; the apt guard, too little disk and an update still
+  running, in the check and the resize, with nothing stopped; a failed
+  install and a failed download; the guard refusing after the install, and
+  the next resize settling it; the plan comparison.
+- `test/plugin.test.ts`: `box_resize` gives an agent its own words when the
+  check after an install failed. `test/gpu-resize.test.ts`: unit 9's refusal
+  of a box with no userspace is now the plan that installs it, and a stopped
+  box's words are unit 10's.
+- Each rule was reverted on its own on the box, by a harness that patches it
+  out, runs its tests and puts it back, and its tests failed: 52 reverts on
+  the last commit, 25 in the core, 7 in its words, 16 in the backend and its
+  plan's words, 3 in the plans' comparison and its words, and one in
+  `box_resize`.
+  Two passed at first, on `de69ebfa`: a test of a resize left holding a card
+  was missing, and one rule guarded a branch no box can reach, which went.
+  Unit 12's harness was run again over the shared steps: 94 reverts, three
+  rewritten for the code they patch, two of them moved by the shared steps
+  and one already stale on main; each fails its tests.
+- The node steps' blocks pass `bash -n` and `shellcheck`, with their shared
+  definitions.
+- S2's apt install brought three more NVIDIA packages as dependencies; S3's
+  purge now removes every installed `nvidia-*`, `libnvidia-*` and
+  `cuda-drivers` package.
+
+### The node steps
+
+The gate runs on a test BB from this branch, before the merge, on the lent
+VMIDs and the test pool, through the lead: the steps are in the report to the
+lead. Both cards are held by guests outside bb-box, so shared is all the gate
+can use. D: a `linux-desktop-cpu` box from production's CPU desktop
+template, measured on the CPU (display path, GL renderer, `glxgears` and
+Selkies' video for 10 s); stopped, told to start first; the check for a
+person and an agent; refused without a restart; then resized to shared with
+the install, as a person, and measured again on the GPU (display path,
+renderer, `glxgears`, Selkies' video with NVIDIA's encoder loaded and the
+card's encoder figures, card-wide, and Xorg's NVIDIA nodes), with the node
+checking its claim, its desktop set of lines, its kind tag, one stop and one
+start, and NVIDIA's installer log written before the stop. As the lead
+decided, D holds its place on a card for at most 6 minutes, and its active
+GPU work, the drawing and the NVENC stream, takes under 60 s; the card's
+memory used is read card-wide before, during and after. S: a `linux` box from production's Linux template, its userspace
+removed with NVIDIA's uninstaller; with `libnvidia-common-570` from apt,
+refused for a person and an agent, in the check and the resize, with nothing
+stopped; with it removed, resized to shared with the install through an
+agent: `nvidia-smi` lists one card and `cuInit` returns 0. None to whole with
+the install waits for a free card.
+
+### The gate on the node, first run
+
+Run by the lead on the node and by the builder on a test BB, on 7 November
+2026 (UTC), on `ee820d4f`. The test BB was a fresh `npx bb-app@0.49.0` on a
+Proxmox LXC box, with no account, bb-box installed from `git archive
+ee820d4f`, live checks off, its server the systemd unit `tbb`, and iptables
+letting only the box itself and the lent addresses reach its two ports. Its
+thread's agent was a script that calls bb-box's tools as an agent does. The
+lead added its Proxmox LXC backend: the test pool, the lent VMIDs and
+addresses, production's Linux template (NVIDIA 580.142), its two per-card
+GPU desktop templates (580.142) and its CPU desktop template (no NVIDIA),
+desktops per GPU 2, no warm boxes, whole cards off. Both cards were held by
+guests outside bb-box throughout, so only shared was used. Times are the test
+BB's box's clock, UTC.
+
+| Step | Evidence |
+| --- | --- |
+| 0 | The helper 0.4.3 with writes on, driver 580.142; the Linux template and both GPU desktop templates with 580.142, the CPU desktop template with none; the lent VMIDs free; both cards about 96.9 GiB free with no encoder session; 44 guests in `u5-check.sh`'s baseline |
+| A | The backend added with no failure; the doctor's GPU helper check ok; `linux` and `linux-desktop` resize a GPU with a restart, whole cards off |
+| D1 | D, `linux-desktop-cpu` on CT 3240, cloned from the CPU desktop template, its kind tag `kind.linux-desktop-cpu`: no version file, no `libnvidia-ml`, no `nvidia-smi`, `DISPLAY_MODE=cpu`. On the CPU: display mode cpu, renderer llvmpipe (LLVM 20.1.2), `glxgears` 2,676 FPS, Selkies 616 frames in 10 s, x264. Stopped: "Start hardy-coral first: NVIDIA's userspace 580.142, which a card needs, is installed in a running box. Nothing changes.", and the agent's words; started again, unchanged. On the node: no card's lines or marker, one stop |
+| D2 | The check, for a person and an agent: "GPU: none → shared, card 1 · Restart. Hardy-coral restarts, gets NVIDIA's userspace 580.142 and card 1 (96 GiB), shared with 4 other boxes, in about 75 s. Everything running in it stops. Its desktop is then drawn by the GPU.", the install's line and "It becomes a GPU desktop: a linux-desktop box with a shared GPU, no longer linux-desktop-cpu."; without `--restart`, refused naming the install; nothing changed, the userspace recorded as none |
+| D3 | Card 0 at 260 MiB used, card 1 at 265 MiB, card-wide, no encoder session |
+| D4 (03:59:39 to 04:00:08) | The resize, as a person, in 28,746 ms, the download and install included: "It is now a GPU desktop: a linux-desktop box with a shared GPU, no longer linux-desktop-cpu." The record `linux-desktop`, shared on card 1, its claim g1 granted, its userspace 580.142, file and library. But bb-box's check after the restart failed: "its desktop's video sent no frames (no answer from Selkies on 127.0.0.1:5980)": see the finding below. Measured by hand then, inside the window: display mode gpu, `DISPLAY_MODE=auto`; renderer "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition/PCIe/SSE2"; `glxgears` 4,709 FPS; Xorg holding 14 `/dev/nvidia*` handles; Selkies with NVIDIA's encoder loaded, 545 frames and 1,146 KB in 10 s; card-wide while it streamed, 1 encoder session at 61 FPS, 1,869 µs, 3 % encoder use; active GPU work 13 s. On the node: its desktop set of lines on card 1, its kind tag `kind.linux-desktop`, one stop and one start, NVIDIA's installer log written 3 s before the stop; card 1 at 337 MiB used with D on it, card-wide |
+| D5 | D released at 04:01:01, after holding its place for 78 s; card 1 back to 265 MiB used, no encoder session |
+| S1 | S, `linux` on CT 3241, cloned from the Linux template with 580.142; NVIDIA's uninstaller removed it: no version file, no `libnvidia-ml`, no `nvidia-smi` |
+| S2 | `libnvidia-common-570` from apt brought `libnvidia-common-580`, `nvidia-firmware-580-580.178.04` and `nvidia-kernel-common-580` with it. The check and the resize were refused for a person, "Not changed: clear-valley has libnvidia-common-570, libnvidia-common-580, nvidia-firmware-580-580.178.04, nvidia-kernel-common-580 from apt, which NVIDIA's installer would conflict with. Remove them, or make a new box with a GPU.", and for an agent, "Not resized: … bb-box changed nothing."; PID 1's start time the same before and after. On the node: no stop or start, no card's marker or lines |
+| S3 | The four packages purged. The agent's check: "… gets NVIDIA's userspace 580.142 and card 1 (96 GiB), shared with 4 other boxes, in about 75 s. …", and no GPU-desktop line for a server. Its resize with `restart: true` in 26,088 ms, 25,780 ms of it the install and its check: "bb-box installed NVIDIA's userspace 580.142 in it, where it had none, before the restart. nvidia-smi in it lists card 1, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB, and CUDA's driver initialises." In S: `nvidia-smi -L` lists card 1, driver 580.142, `cuInit` returns 0; the doctor names nothing. On the node: shared on card 1, g1 granted, the server set of lines, one stop and one start, the installer's log 2 s before the stop |
+
+S was released at 04:05:12, rather than held through the fixes below. Step H
+runs at the end of the second run.
+
+**The finding.** The check after a restart, unit 12's for a desktop and so
+this unit's, read Selkies' video at once after the start, before Selkies
+answered. It had been tested only on the fake backend. It now waits, up to
+30 s, for the display to start and for Selkies to answer, then judges the
+video, and says which was not ready when it times out (below).
+
+### After the gate's first run and Astra's review
+
+The lead asked for the guest's kind tag (above) before the gate. Astra's
+review said no-go, with two high findings and three medium; the lead decided
+all go in this round with the gate's finding. Each has a test that fails with
+it reverted, on a box.
+
+| Finding | Fix |
+| --- | --- |
+| The check after a restart read Selkies' video before Selkies answered (the gate) | The check waits, with one bound of 30 s, for the display's mode and for Selkies to answer on 127.0.0.1:5980, then judges its video; timed out, it says "its display had not started 30 s after its start" or "its desktop's video was not ready 30 s after its start: Selkies on 127.0.0.1:5980 did not answer". The check's time is 90 s |
+| A box whose version file already says the host's driver skipped the in-box lock, so a resize could restart it while an earlier installer still ran (Astra 1, high) | Every GPU change that restarts a running box reads the box first, and refuses while an update or install still runs in it, with or without an install, in the check and the resize |
+| A resize cut short by bb-box stopping kept the record's old kind and GPU part, though the guest held a card and `kind.linux-desktop` (Astra 2, high) | The sweep's settling of a GPU resize cut short asks the backend for the claim it holds (`readGpuClaim`) and records that claim and GPU part, and the kind that goes with a card, its label and capabilities |
+| An install cut short on a box with no GPU yet was never read again, nor named by the doctor or a notice (Astra 3) | A box with an unfinished install is read like one with a GPU: by the sweep, the doctor and status. Its words say its GPU was not added, and its fix is a resize, "Resize it again: bb box resize amber-fox --gpu shared --restart --thread …", or for an agent "Call box_resize with gpu shared and restart true to try again, or ask the user." The doctor counts only boxes with a GPU as having the host's userspace |
+| The NVENC evidence could come from any process with NVIDIA's encoder loaded, or another guest's session (Astra 4) | The check after a restart, and the gate's measurement, look for the encoder only in Selkies' own process, by its command line. D4's node block streams from D itself and finds the encoder session's process on the node, in D's cgroup, with Selkies' command line and NVIDIA's encoder loaded |
+| D4's six-minute limit was checked only between commands, and a failed check left D on its card (Astra 5) | D4 starts a watchdog, a transient unit on the test BB's box, that releases D at 6 minutes unless D5 has, and D4 releases D at once when any of its checks fails |
+
+Fable's review said go, with five lows; the lead decided all go in this
+round.
+
+| Finding | Fix |
+| --- | --- |
+| A check in the box that did not finish, or that found an update started meanwhile, was refused with "Make a new box with the GPU it needs" | Both are transient: "Not changed: amber-fox did not finish bb-box's check. Try again in a minute.", `try_again` |
+| The resize's words for an update still running sent the person to the doctor, which reads no box without a card | They say "Resize it again once it has ended." |
+| A stopped box was judged by its template's record, though its own last reading may say otherwise | Where the box is stopped and its own last reading is not the host's driver, the core says to start it first before its backend plans; the template's record is used only where the box has no reading |
+| The box log's resize said it installed the userspace even where the backend's plan made again found it there | The request's words name no install; the resize's words say "with NVIDIA's userspace 580.142 installed first" only when it ran |
+| The gate's card-wide encoder sessions could be another guest's | It is for the record; the proof is D's own Selkies process |
+
+### Deviations from the note
+
+- A `linux-desktop-cpu` box resized to a GPU becomes a `linux-desktop`
+  record: kind, label, capabilities and GPU part. Section 1 makes
+  `linux-desktop-cpu` another name for a `linux-desktop` with no GPU, and
+  refuses `linux-desktop-cpu` with a GPU, so the lead decided the record
+  takes the kind the box now is, and so does the guest's kind tag. The
+  guest's description keeps its `kind linux-desktop-cpu` line: bb-box and the
+  helper read the tag first.
+- What the plan judges by in a running box is its version file, as unit 9's
+  plan does; the install's check and the reading after it are unit 12's. A
+  half-installed box whose version file says the host's driver gets a plain
+  restart, and the doctor then names it as unit 12 does.
+- The plan's time down is the restart's, not the restart and the install:
+  the box runs during the install. The words give about 75 s in all.
+- The install's record is unit 12's `userspaceUpdate`, so an install that
+  does not finish is named by status and the doctor once the box holds a
+  card. A box left with no GPU, as after a failed install, is not read by
+  the doctor, as unit 12 reads only boxes with a GPU; the resize's own words
+  say what happened.
+- The installer is downloaded in the box from NVIDIA, as unit 12's is: bb-box
+  cannot read the node's artifacts.
+- The dialog's "Restart, install NVIDIA's userspace 580.65.06 and add the
+  GPU" button is unit 13's.
+- The gate's box "made without the userspace" is a box from production's
+  Linux template whose userspace the gate removes with NVIDIA's uninstaller:
+  production has no Linux template without it.
+
+### Still open
+
+- The gate on the node.
+- None to whole with the install, which needs a free card, as unit 9's W and
+  unit 8's G1 do.
