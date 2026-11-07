@@ -18,7 +18,7 @@ import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
-import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Chapter } from "../core/record.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -515,6 +515,35 @@ export function acquireParameters(wholeCards: boolean) {
   });
 }
 
+export interface StopTimings {
+  stopping: number;
+  planning: number;
+  drawing: number;
+  encoding: number;
+  copying: number;
+}
+
+export function timingWords(timings: StopTimings, total: number): string {
+  const seconds = (value: number) => `${value.toFixed(1)} s`;
+  return `Making it took ${seconds(total)}: ${seconds(timings.stopping)} to stop and find the still stretches, ${seconds(timings.planning)} to plan, ${seconds(timings.drawing)} to draw the pills, ${seconds(timings.encoding)} to draw the rest and encode, and ${seconds(timings.copying)} to copy it here.`;
+}
+
+export function sceneWords(plan: ClipPlan): string[] {
+  const scene = plan.scene;
+  if (!scene) return [];
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const clicks = new Set(scene.pointer.rings.map((ring) => Math.round(ring.at * 10))).size;
+  const zooms = scene.camera.filter((key, index) => key.view.zoom > 1 && (index === 0 || scene.camera[index - 1]!.view.zoom === 1)).length;
+  const keys = plan.overlays.filter((overlay) => overlay.look === "key").length;
+  return [
+    ...(scene.drawsPointer ? ["the pointer drawn"] : []),
+    ...(clicks ? [count(clicks, "click", "clicks") + " shown"] : []),
+    ...(keys ? [count(keys, "key pill", "key pills")] : []),
+    ...(zooms ? [count(zooms, "zoom", "zooms")] : []),
+    ...(scene.frame ? ["framed"] : []),
+  ];
+}
+
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
   const registerTool = toolsForPurposes(bb);
   const runWaitMs = options.runWaitMs ?? RUN_WAIT_MS;
@@ -927,7 +956,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field bb-box cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
     presentation: { label: { pending: "Recording the screen", completed: "Recorded the screen" } },
     parameters: z.object({
       box: boxParam,
@@ -940,8 +969,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .optional()
         .describe("With stop: the clip plays this many times faster. Defaults to 1."),
       stills: z.enum(["cut", "keep"]).optional().describe("With stop: cut each still stretch to half a second (the default), or keep it."),
+      zoom: z.boolean().optional().describe("With stop: zoom in gently where you click, drag and type, and out between (the default), or false for the whole screen throughout."),
+      frame: z.boolean().optional().describe("With stop: show the screen inset on a plain background with rounded corners (the default), or false for the screen edge to edge."),
     }),
-    async execute({ box: ref, action, text, passed, position, speed, stills }, { threadId, signal }) {
+    async execute({ box: ref, action, text, passed, position, speed, stills, zoom, frame }, { threadId, signal }) {
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
@@ -961,7 +992,19 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `${said.text}${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
         }
         if (action === "start") {
+          const readings: ClockReading[] = [];
+          for (let probe = 0; probe < 2; probe++) {
+            const before = Date.now();
+            const read = await boxes.run(owner, found.id, boxClockScript(os), { timeoutMs: 15_000, signal, waitForEnrolment: false }).catch(() => null);
+            readings.push({ before, after: Date.now(), box: read?.result.exitCode === 0 ? Number(read.result.stdout.trim()) : NaN });
+          }
+          const offset = clockOffset(readings);
+          const captureBegan = Date.now();
           const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
+          if (result.exitCode === RECORD_START_EXITS.started && offset !== null) app.recordings.begin(found.id, offset, os);
+          if (result.exitCode === RECORD_START_EXITS.started && driverDrawsAgentCursor(os) && found.capabilities.computerUse) {
+            await app.computer.hideAgentCursor(found, RECORD_LIMIT_S * 1000 - (Date.now() - captureBegan), signal).catch(() => false);
+          }
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
             [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
@@ -994,19 +1037,31 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (!storage) throw new BoxError("unsupported", "BB gives no storage folder for this thread, so there is nowhere to put the clip.");
         const times = speed ?? 1;
         const noRecording = { content: [{ type: "text" as const, text: `Box ${found.name} has no recording.${next(`Call box_record with box "${found.name}" and action "start" to begin one.`)}` }], isError: true };
-        const runLong = (script: string) => boxes.run(owner, found.id, script, { timeoutMs: 240_000, signal, session, maxOutputBytes: 256 * 1024, waitForEnrolment: false });
+        const runLong = (script: string, maxOutputBytes = 256 * 1024) => boxes.run(owner, found.id, script, { timeoutMs: 240_000, signal, session, maxOutputBytes, waitForEnrolment: false });
+        const stopBegan = Date.now();
+        const timings: StopTimings = { stopping: 0, planning: 0, drawing: 0, encoding: 0, copying: 0 };
         const clip = onDevice
           ? await stopDeviceRecording(device, found, stills ?? "cut", times, os === "macos" ? "macos" : "linux").finally(() => app.devices.recordingEnded(found.id))
           : await (async () => {
-              const prepared = await runLong(recordPrepareScript(stills ?? "cut", os));
+              const cursorHidden = driverDrawsAgentCursor(os) && found.capabilities.computerUse ? await app.computer.showAgentCursor(found).catch(() => false) : false;
+              const prepared = await runLong(recordPrepareScript(stills ?? "cut", os), 4 * 1024 * 1024);
+              const inputs = app.recordings.end(found.id);
               if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return null;
               const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
               if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
               app.devices.recordingEnded(found.id);
-              const plan = planClip(facts, times);
+              timings.stopping = (Date.now() - stopBegan) / 1000;
+              const planBegan = Date.now();
+              const plan = planClip(withAgentCursorHidden(withInputs(facts, inputs), cursorHidden), times, { zoom: zoom ?? true, frame: frame ?? true });
+              const drawing = sceneBundle(plan);
+              timings.planning = (Date.now() - planBegan) / 1000;
+              if (drawing) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${SCENE_BUNDLE}`, drawing, { signal });
+              const makeBegan = Date.now();
               const { result } = await runLong(recordMakeScript(plan, os));
               const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
               if (!said) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+              timings.drawing = said.drawing ?? 0;
+              timings.encoding = said.encoding ?? (Date.now() - makeBegan) / 1000 - timings.drawing;
               return { plan, made: { ...said, ended: facts.ended }, words: "" };
             })();
         if (!clip) return noRecording;
@@ -1025,7 +1080,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const page = file(`${name}.html`);
           await bb.sdk.files.write({ hostId: page.hostId, path: page.path, rootPath: page.rootPath, content: Buffer.from(html).toString("base64"), contentEncoding: "base64", createParents: true });
         };
+        const copyBegan = Date.now();
         await put(storage);
+        timings.copying = (Date.now() - copyBegan) / 1000;
         // A thread's line resolves in the storage folder of the thread it is in: a parent that passes on its child's
         // report shows the clip only with a copy in its own (the owner's note of 19 October 2026).
         const parents = await app.ancestorStorages(id, RECORD_PARENTS, signal).catch(() => []);
@@ -1044,14 +1101,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ...(cut >= 0.5 ? [`${cut.toFixed(1)} s of still stretches cut`] : []),
           ...(times > 1 ? [`played ${times}x`] : []),
           `${made.size}, ${Math.max(1, Math.round(made.bytes / 1024))} KB`,
+          ...sceneWords(plan),
           ...(chapters.length ? [`${chapters.length} step${chapters.length === 1 ? "" : "s"} captioned${chapters.some((chapter) => chapter.result?.passed === false) ? `, ${chapters.filter((chapter) => chapter.result?.passed === false).length} failed` : ""}`] : []),
         ];
+        const took = onDevice ? "" : ` ${timingWords(timings, (Date.now() - stopBegan) / 1000)}`;
         const steps = made.captions === false ? " The box could not draw the step captions, so the clip has none." : "";
         const limit = made.ended === "limit" ? ` It reached the ${RECORD_LIMIT_S / 60}-minute limit and ended by itself.` : "";
         const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4${copied ? `, and in the storage folder of its parent thread${copied === 1 ? "" : `s, ${copied} of them`}` : ""}.`;
         const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size) + (chapters.length ? 16 + chapters.length * 46 : 0)}"}`;
         const shows = copied ? "this thread and in its parent threads, which have a copy, so a parent can pass the line on" : "this thread only";
-        return `Recorded box ${found.name}${onDevice ? "'s device" : ""}: ${parts.join(", ")}.${limit}${deviceWords}${steps} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
+        return `Recorded box ${found.name}${onDevice ? "'s device" : ""}: ${parts.join(", ")}.${limit}${deviceWords}${steps}${took} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
       } catch (error) {
         return failure(error, "Recording the screen");
       }

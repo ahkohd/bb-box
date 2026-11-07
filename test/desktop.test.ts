@@ -22,6 +22,7 @@ import {
 } from "../src/core/rfb.ts";
 import type { DisplayAuth, DisplayInput, DisplayInputEvents, DisplayOpened } from "../src/transports/types.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
+import { RecordingInputs, type PersonInput } from "../src/core/record-input.ts";
 import { tartTypesAsCharacter } from "../src/core/mac-input.ts";
 import { windowsTypesAsCharacter } from "../src/backends/windows.ts";
 
@@ -1155,4 +1156,43 @@ test("a box that stops or goes gives control back and forgets its size", async (
   assert.deepEqual(value.view("box1"), { owner: "agent", holder: null });
   await value.handBack("box1");
   assert.deepEqual(restores, [], "a new desktop has nothing to restore");
+});
+
+test("a recording forgets the keys a viewer held when the relay lets them go, and when the viewer or the box ends its connection, so a later key is not a shortcut (073)", async () => {
+  const inputs = new RecordingInputs(() => 5_000);
+  inputs.begin("box", 0, "linux");
+  const keys: PersonInput[] = [];
+  const onInput = (input: PersonInput) => {
+    if (input.type === "key") keys.push(input);
+    inputs.person("box", input);
+  };
+  const server = new FakeRfb();
+  const typed = async (relay: ReturnType<typeof relayTo>, messages: Uint8Array[]) => {
+    const before = keys.length;
+    await relay.relay.receive(messages.reduce(concat));
+    await until("the keys to reach the recording", () => keys.length === before + messages.length);
+  };
+  const first = relayTo(server, { onInput });
+  await first.init();
+  first.give(true);
+  await typed(first, [keyEvent(true, 0xffe3), keyEvent(true, 0x61), keyEvent(false, 0x61)]);
+  await first.relay.release();
+  await typed(first, [keyEvent(true, 0x61), keyEvent(false, 0x61), keyEvent(true, 0xffe3)]);
+  await first.relay.close();
+  const second = relayTo(server, { onInput });
+  await second.init();
+  second.give(true);
+  await typed(second, [keyEvent(true, 0x61), keyEvent(false, 0x61), keyEvent(true, 0xffe3)]);
+  await server.connections.at(-1)!.end();
+  await until("the box to end it", () => second.ends.length === 1);
+  const third = relayTo(server, { onInput });
+  await third.init();
+  third.give(true);
+  await typed(third, [keyEvent(true, 0x61)]);
+  const events = inputs.end("box")!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "keys" ? `${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["ctrl+A", "typing", "typing", "typing"],
+  );
+  await third.relay.close();
 });

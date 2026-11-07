@@ -333,7 +333,9 @@ case "$*" in
   *list_devices*) printf '[AVFoundation indev @ 0x1] [0] Capture screen 0\n' >&2 ;;
   *x11grab* | *"-f avfoundation"*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
   *"print(tw)"*) ${options.ffmpeg8 ? `printf '[Eval @ 0x5a1] 120.000000\\n    Last message repeated 1 times\\n' >&2` : `printf '120.000000\\n' >&2`} ;;
-  *"-f null"*) printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2 ;;
+  *"-f null"*)
+    printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2
+    case "$out" in *grid.raw) head -c 288 /dev/zero | tr '\\000' '\\310' > "$out" ;; esac ;;
   *) printf mp4data > "$out" ;;
 esac
 `,

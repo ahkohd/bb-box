@@ -1,7 +1,9 @@
 # 059: Agents record their desktop box with box_record
 
 Status: accepted, 16 October 2026 (#707). Linux X11 desktops first, then
-Wayland, then macOS on Tart, then Windows.
+Wayland, then macOS on Tart, then Windows. Extended by
+[073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md),
+which draws a pointer, clicks, keys and zooms, and frames the screen.
 
 ## Context
 

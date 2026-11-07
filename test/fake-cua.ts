@@ -112,6 +112,10 @@ export interface FakeDesktop {
   wayland?: boolean;
   /** Cua is on macOS. */
   mac?: boolean;
+  sessionlessLikeCuaBefore030?: boolean;
+  endedNamedSessions?: string[];
+  agentCursorShownBySession?: Record<string, boolean>;
+  cursorShowsRefused?: number;
   /** How many more launches by name Windows' shell cannot look up yet, as just after a box starts. */
   lookupBusy?: number;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
@@ -384,6 +388,10 @@ function shotSize(width: number, height: number, max: number | undefined): { wid
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
+const LIFECYCLE_TOOLS = ["start_session", "set_agent_cursor_enabled", "end_session"];
+const TOOLS_TAKING_SESSION = ["get_window_state", "get_desktop_state", "click", "scroll", "type_text", "press_key", "set_value", "set_window_frame", ...LIFECYCLE_TOOLS];
+const TOOLS_WITHOUT_SESSION = ["list_windows", "launch_app", "list_apps", "bring_to_front", "kill_app"];
+
 export class FakeCua {
   readonly #file: string | null;
   #memory: FakeDesktop;
@@ -417,8 +425,10 @@ export class FakeCua {
     return result;
   }
 
+  #callSession = "";
+
   #token(window: FakeWindow, key: string): string {
-    return `${this.#prefix}|${window.id}|${this.#reads.get(window.id) ?? 0}|${key}`;
+    return `${this.#prefix}|${window.id}|${this.#reads.get(window.id) ?? 0}|${key}|${this.#callSession}`;
   }
 
   #window(desktop: FakeDesktop, args: Args): FakeWindow | Result {
@@ -444,6 +454,40 @@ export class FakeCua {
     };
   }
 
+  tools(): { name: string; inputSchema: { type: "object"; properties: Record<string, unknown> } }[] {
+    const sessions = !this.#load().sessionlessLikeCuaBefore030;
+    const names = [...TOOLS_WITHOUT_SESSION, ...(sessions ? TOOLS_TAKING_SESSION : TOOLS_TAKING_SESSION.filter((name) => !LIFECYCLE_TOOLS.includes(name)))];
+    return names.map((name) => ({ name, inputSchema: { type: "object", properties: sessions && TOOLS_TAKING_SESSION.includes(name) ? { session: { type: "string" } } : {} } }));
+  }
+
+  #lifecycle(tool: string, args: Args): Result | null {
+    const session = typeof args.session === "string" ? args.session : null;
+    const desktop = this.#load();
+    if (session !== null && (desktop.sessionlessLikeCuaBefore030 || !TOOLS_TAKING_SESSION.includes(tool))) return text(`${tool} takes no session.`, { code: "invalid_arguments" }, true);
+    if (!LIFECYCLE_TOOLS.includes(tool) && !(session !== null && desktop.endedNamedSessions?.includes(session))) return null;
+    if (desktop.sessionlessLikeCuaBefore030) return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
+    if (tool === "start_session") {
+      this.#change((changed) => void (changed.endedNamedSessions = (changed.endedNamedSessions ?? []).filter((name) => name !== session)));
+      return text(`Session '${session ?? "implicit"}' is active.`, { active: true, session: session ?? "implicit" });
+    }
+    if (session !== null && desktop.endedNamedSessions?.includes(session)) return text(`session has ended; tool call '${tool}' was rejected. Call start_session with session '${session}' to start it again, or use a new session label.`, undefined, true);
+    if (tool === "set_agent_cursor_enabled") {
+      if (args.enabled === true && (desktop.cursorShowsRefused ?? 0) > 0) {
+        this.#change((changed) => void (changed.cursorShowsRefused = (changed.cursorShowsRefused ?? 1) - 1));
+        return text("The agent cursor's overlay is not ready.", { code: "overlay_unavailable" }, true);
+      }
+      this.#change((changed) => void (changed.agentCursorShownBySession = { ...changed.agentCursorShownBySession, [session ?? ""]: args.enabled === true }));
+      return text(`Agent cursor for session '${session}' ${args.enabled === true ? "enabled" : "disabled"}.`);
+    }
+    this.#change((changed) => {
+      const left = { ...changed.agentCursorShownBySession };
+      delete left[session ?? ""];
+      changed.agentCursorShownBySession = left;
+      changed.endedNamedSessions = [...(changed.endedNamedSessions ?? []), session ?? ""];
+    });
+    return text(`Session '${session}' ended.`);
+  }
+
   async call(tool: string, args: Args): Promise<Result> {
     const delay = this.#change((desktop) => {
       desktop.calls.push({ tool, args });
@@ -457,6 +501,9 @@ export class FakeCua {
     });
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (this.#load().endedSession === this.#session) return text(`Session 'mcp-${this.#session}' has ended; tool call '${tool}' was rejected.`, undefined, true);
+    this.#callSession = typeof args.session === "string" ? args.session : "";
+    const lifecycle = this.#lifecycle(tool, args);
+    if (lifecycle) return lifecycle;
     switch (tool) {
       case "list_windows":
         return this.#listWindows();
@@ -606,8 +653,9 @@ export class FakeCua {
   /** The element a token names, in the window as it is now. */
   #element(desktop: FakeDesktop, window: FakeWindow, token: unknown): Node | Result {
     if (typeof token !== "string") return text("Give element_token or x and y.", { code: "invalid_arguments" }, true);
-    const [prefix, id, read, key] = token.split("|");
+    const [prefix, id, read, key, session] = token.split("|");
     if (prefix !== this.#prefix) return text("element_token is not from this session. Call get_window_state again.", { code: "stale_token" }, true);
+    if (session && desktop.endedNamedSessions?.includes(session)) return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);
     if (Number(id) !== window.id) return text("element_token belongs to another window.", { code: "invalid_arguments" }, true);
     if (Number(read) !== this.#reads.get(window.id)) {
       return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);
@@ -937,6 +985,8 @@ function serve(socket: string): void {
       if (message.id === undefined) continue;
       if (message.method === "initialize") {
         send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "cua-driver", version: "test" } } });
+      } else if (message.method === "tools/list") {
+        send({ jsonrpc: "2.0", id: message.id, result: { tools: cua.tools() } });
       } else if (message.method === "tools/call") {
         void cua
           .call(message.params?.name ?? "", message.params?.arguments ?? {})

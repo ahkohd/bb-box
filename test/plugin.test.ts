@@ -824,7 +824,8 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   const said = text(stopped);
   const name = /\$BB_THREAD_STORAGE\/(recordings\/[^ ]+)\.mp4/.exec(said)?.[1];
   assert.ok(name, said);
-  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of still stretches cut, played 2x, 1280x720, 1 KB\. It reached the 5-minute limit/);
+  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of still stretches cut, played 2x, 1280x720, 1 KB, framed\. It reached the 5-minute limit/);
+  assert.match(said, /Making it took \d+\.\d s: \d+\.\d s to stop and find the still stretches, \d+\.\d s to plan, \d+\.\d s to draw the pills, \d+\.\d s to draw the rest and encode, and \d+\.\d s to copy it here\./, "what each part of the stop cost");
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
   assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video id="clip" src="${name.split("/").pop()}.mp4"`));
@@ -7610,4 +7611,212 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   assert.match((await harness.behavior.runCli(["snapshot", "fork", box.id, record!.id, "--check"])).stdout ?? "", /^Forking "old image" \(sn\w+\) of box .*, its box was released \d{4}-\d{2}-\d{2}, taken .* would make one of your machines/);
   assert.match((await harness.behavior.runCli(["snapshot", "delete", box.id, record!.id])).stdout ?? "", /its held copy, guest copy\d, is deleted\./);
   assert.equal(app.snapshotStore.records().length, 0);
+});
+
+test("while a desktop box records, its computer use is logged for the clip: clicks where they land, chords, and typing as a count, never its text (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const field = refOf(tree, '"New task"');
+  const add = refOf(tree, '"Add"');
+  await tool("computer_type", { box: box.name, ref: field, text: "before the recording" });
+  assert.equal(app.recordings.end(box.id), null, "nothing is logged while no recording runs");
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
+  await tool("computer_type", { box: box.name, window: 100, keys: "ctrl+s" });
+  await tool("computer_act", { box: box.name, action: "click", ref: add });
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters}` : event.type === "keys" ? `keys ${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["typing 8", "typing 0", "keys ctrl+S", "click"],
+  );
+  const typed = events[0]!;
+  assert.ok(typed.type === "typing" && typed.area && typed.area.width === 600 && !typed.secret, "the field's frame, for the zoom");
+  const clicked = events.at(-1)!;
+  assert.ok(clicked.type === "click" && clicked.button === "left" && clicked.count === 1 && clicked.area?.width === 80, "the button's frame");
+  assert.ok(clicked.type === "click" && clicked.x === clicked.area!.x + 40 && clicked.y === clicked.area!.y + 20, "at its centre");
+  const tasks = readDesktop(file).windows.find((window) => window.id === 100)!;
+  assert.ok(clicked.type === "click" && typed.type === "typing", "a click and typing");
+  assert.deepEqual([clicked.window, typed.window], [0, 1].map(() => ({ x: tasks.x, y: tasks.y, width: tasks.width, height: tasks.height })), "the window each was in, so the clip can tell what an action changed itself");
+  assert.doesNotMatch(JSON.stringify(events), /milk/, "the text typed is not in the log");
+});
+
+test("typing whose field bb-box cannot tell, into a window's focused element or as a single key, is logged as secret, so the clip shows no pill and draws no zoom for it (073)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const field = refOf(tree, '"New task"');
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
+  await tool("computer_type", { box: box.name, window: 100, text: "4711" });
+  await tool("computer_type", { box: box.name, window: 100, keys: "5" });
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters}${event.secret ? " secret" : ""}` : event.type)),
+    ["typing 8", "typing 0", "typing 4 secret", "typing 0 secret", "typing 1 secret"],
+  );
+});
+
+test("a change of a desktop's control lets go of the keys a recording holds down, so a person's next key is not a shortcut (073)", async (t) => {
+  const { harness, app, box } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  app.recordings.begin(box.id, 0, "linux");
+  app.recordings.person(box.id, { type: "key", keysym: 0xffe3, down: true });
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  app.recordings.person(box.id, { type: "key", keysym: 0x61, down: true });
+  assert.deepEqual(
+    app.recordings.end(box.id)!.map((event) => event.type),
+    ["typing"],
+  );
+});
+
+test("a person's keys are read as the desktop's server names Command and Option, so on a Mac whose server takes Alt as Command, Option types and Command is a shortcut (073)", async (t) => {
+  const base = FAKE_KINDS[1]!;
+  const altCommand: BoxKind = {
+    ...base,
+    capabilities: { ...base.capabilities, displays: base.capabilities.displays.map((display) => (display.protocol === "rfb" ? { ...display, macKeys: "alt-command" as const } : display)) },
+  };
+  const { harness, app, box, world } = await desktopBox({ kind: altCommand });
+  t.after(() => harness.lifecycle.dispose());
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the box's server", async () => world.backend!.rfb.connections.length === 1);
+  const [rfb] = world.backend!.rfb.connections;
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  app.recordings.begin(box.id, 0, "macos");
+  const key = (down: boolean, keysym: number) => Uint8Array.of(4, down ? 1 : 0, 0, 0, (keysym >>> 24) & 0xff, (keysym >>> 16) & 0xff, (keysym >>> 8) & 0xff, keysym & 0xff);
+  const keys = [key(true, 0xffe7), key(true, 0x61), key(false, 0x61), key(false, 0xffe7), key(true, 0xffe9), key(true, 0x63)];
+  for (const each of keys) await session.receive(each);
+  await until("the keys to reach the box", async () => rfb!.received.byteLength === keys.length * 8);
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "keys" ? `${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["typing", "super+C"],
+  );
+});
+
+const TOOLS_TAKING_NO_SESSION = ["list_windows", "launch_app", "list_apps", "bring_to_front", "kill_app"];
+const A_LONG_CAPTURE_MS = 60_000;
+
+test("while a desktop records, bb-box hides the driver's own agent cursor in a session of its own, names that session on each call that takes one, and shows the cursor again at the stop, in the same session, so its refs stay good (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const add = refOf(tree, '"Add"');
+  const before = readDesktop(file).calls.length;
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  await tool("computer_act", { box: box.name, action: "click", ref: add });
+  await tool("computer_windows", { box: box.name });
+  const during = readDesktop(file);
+  const session = during.calls.find((call) => call.tool === "start_session")?.args.session;
+  assert.match(String(session), /^bb-box-[0-9a-f]{8}$/);
+  assert.deepEqual(during.agentCursorShownBySession, { [String(session)]: false }, "its cursor hidden");
+  const named = during.calls.slice(before).filter((call) => !["start_session", "set_agent_cursor_enabled"].includes(call.tool));
+  assert.ok(named.some((call) => call.tool === "click"), "the click was done");
+  for (const call of named) assert.equal(call.args.session, TOOLS_TAKING_NO_SESSION.includes(call.tool) ? undefined : session, `${call.tool} carries the session only where it takes one`);
+  assert.equal(await app.computer.showAgentCursor(box), true);
+  assert.deepEqual(readDesktop(file).agentCursorShownBySession, { [String(session)]: true }, "its cursor shows again at the stop");
+  const after = readDesktop(file).calls.length;
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: add });
+  assert.ok(!isError(clicked), `a ref read while it recorded still works: ${text(clicked)}`);
+  assert.ok(readDesktop(file).calls.slice(after).every((call) => !TOOLS_TAKING_NO_SESSION.includes(call.tool) === (call.args.session === session)), "later calls stay in its session");
+  assert.equal(await app.computer.showAgentCursor(box), false, "nothing hidden twice");
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  assert.deepEqual(readDesktop(file).agentCursorShownBySession, { [String(session)]: false }, "the next recording hides it in the same session");
+});
+
+test("a recording's hidden agent cursor is hidden again in a new session with the driver, and in its own session if the driver ended it; a driver with no sessions keeps its cursor (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const add = refOf(tree, '"Add"');
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
+  editDesktop(file, (desktop) => void (desktop.endedNamedSessions = [session]));
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: add });
+  assert.ok(!isError(clicked), text(clicked));
+  const calls = readDesktop(file).calls;
+  assert.equal(calls.filter((call) => call.tool === "start_session").length, 2, "its session started again once the driver refused a call in it");
+  assert.ok(calls.some((call) => call.tool === "click" && call.args.session === session), "and the click was done in it");
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(readDesktop(file).calls.filter((call) => call.tool === "start_session").length, 3, "hidden again in the driver's new session");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], false);
+  assert.equal(await app.computer.showAgentCursor(box), true);
+
+  editDesktop(file, (desktop) => void (desktop.sessionlessLikeCuaBefore030 = true));
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), false, "an older driver cannot hide it");
+  const plain = readDesktop(file).calls.length;
+  await tool("computer_act", { box: box.name, action: "click", ref: add });
+  assert.ok(readDesktop(file).calls.slice(plain).every((call) => call.args.session === undefined));
+  assert.equal(await app.computer.showAgentCursor(box), false, "so the clip keeps the driver's cursor");
+});
+
+test("a recording's hidden agent cursor comes back by itself as its capture ends at the limit, stays shown in a new session with the driver, and its stop still draws bb-box's pointer for that capture (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.hideAgentCursor(box, 150), true);
+  const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], false);
+  await until("the cursor back as the capture ends", async () => readDesktop(file).agentCursorShownBySession?.[session] === true);
+  const starts = () => readDesktop(file).calls.filter((call) => call.tool === "start_session").length;
+  const before = starts();
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(starts(), before + 1, "a new session with the driver");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "which leaves the cursor shown");
+  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout, so its stop draws bb-box's pointer");
+  assert.equal(await app.computer.showAgentCursor(box), false, "and only once");
+});
+
+test("where the driver's agent cursor came back during a capture, its stop keeps the driver's cursor in the clip (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  editDesktop(file, (desktop) => {
+    desktop.sessionlessLikeCuaBefore030 = true;
+    desktop.endedSession = desktop.sessions;
+  });
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(await app.computer.showAgentCursor(box), false);
+});
+
+test("showing the hidden agent cursor again waits for the driver to confirm it, tries again after a short wait, and once more as bb-box next connects to the driver (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox({ computer: { cursorRestoreRetryMs: [50, 100, 150] } });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  const shows = () => readDesktop(file).calls.filter((call) => call.tool === "set_agent_cursor_enabled" && call.args.enabled === true).length;
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
+  editDesktop(file, (desktop) => void (desktop.cursorShowsRefused = 2));
+  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], false, "the driver refused to show it");
+  await until("the cursor shown on a later try", async () => readDesktop(file).agentCursorShownBySession?.[session] === true);
+  assert.equal(shows(), 3);
+
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  editDesktop(file, (desktop) => void (desktop.cursorShowsRefused = 100));
+  const before = shows();
+  assert.equal(await app.computer.showAgentCursor(box), true);
+  await until("every try refused", async () => shows() === before + 4);
+  editDesktop(file, (desktop) => {
+    desktop.cursorShowsRefused = 0;
+    desktop.endedSession = desktop.sessions;
+  });
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "shown as bb-box next connects");
 });

@@ -24,6 +24,7 @@ import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display 
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
+import type { MacKeys, PersonInput } from "../core/record-input.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -140,6 +141,7 @@ export interface DesktopDeps {
   logError(operation: string, error: unknown): void;
   /** Stops the agent's computer use before a person takes control (015). */
   pause?(boxId: string): Promise<void>;
+  recordInput?(boxId: string, input: PersonInput, macKeys?: MacKeys): void;
   /** How long a holder's viewer may be gone before the agent has control again. */
   readonly staleMs?: number;
   /** How long a holder's viewer has to connect again after the box ended its connection. */
@@ -190,6 +192,11 @@ async function displays(boxes: Boxes, boxId: string): Promise<readonly Display[]
   const found = (await boxes.transports(box)).displays.filter((each) => each.id !== DEVICE_DISPLAY.id);
   if (!found.length || !desktopDisplays(box.capabilities.displays).length) throw new Error(`Box ${box.name} has no desktop.`);
   return found;
+}
+
+async function rfbMacKeys(boxes: Boxes, boxId: string): Promise<MacKeys> {
+  const box = await readyBox(boxes, boxId, "desktop");
+  return desktopDisplays(box.capabilities.displays)[0]?.macKeys ?? null;
 }
 
 /** The RFB display: the box's first. Control and sizes go through it. */
@@ -280,6 +287,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const control = new Control({
     changed(boxId) {
       changed(boxId);
+      deps.recordInput?.(boxId, { type: "released" });
       deps.controlChanged?.(boxId);
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
       if (control.view(boxId).owner === "human") {
@@ -868,6 +876,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               open,
               mayInput: () => control.mayInput(boxId, viewer),
               keyLog,
+              onInput: (input) => deps.recordInput?.(boxId, input),
               onSize: (size) => {
                 control.seen(boxId, size);
                 frameSizes.set(boxId, size);
@@ -907,8 +916,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             // As after a restart of bb-box, the person in control may come back by video only.
             pointerFor(boxId);
           } else {
+            let macKeys: MacKeys = null;
             const open: OpenDisplay = VIEWER_ID.test(viewer)
-              ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
+              ? async (signal) => {
+                  macKeys = await rfbMacKeys(boxes, boxId);
+                  return displayOpener((shown = await display(boxes, boxId)))(signal);
+                }
               : async () => {
                   throw new Error("The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
                 };
@@ -917,6 +930,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               open,
               mayInput: () => control.mayInput(boxId, viewer),
               keyLog,
+              onInput: (input) => deps.recordInput?.(boxId, input, macKeys),
               onServerRestart: (why, error) => {
                 void boxes
                   .find(boxId)

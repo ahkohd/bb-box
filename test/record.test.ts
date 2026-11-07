@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Prepared } from "../src/core/record.ts";
+import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
@@ -20,7 +20,7 @@ function stop(home: string, speed: 1 | 2 | 4, stills: "cut" | "keep", darwin = f
   const prepared = run(recordPrepareScript(stills), home, {}, true, darwin);
   if (prepared.status !== 0) return { prepared, made: null, plan: null };
   const facts = parsePrepared(prepared.stdout)!;
-  const plan = planClip(facts, speed);
+  const plan = planClip(facts, speed, { zoom: true, frame: false });
   return { prepared, facts, plan, made: run(recordMakeScript(plan), home, {}, true, darwin) };
 }
 
@@ -36,13 +36,19 @@ test("box_record starts once, refuses no display, and stop makes the clip with s
   assert.ok(existsSync(join(home, RECORD_DIR, "pid")));
   assert.match(readFileSync(join(home, RECORD_DIR, "start"), "utf8"), /^\d+\.\d{3}\n$/);
   assert.equal(run(recordStartScript(), home, display).status, RECORD_START_EXITS.running, "one at a time");
-  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /-f x11grab -framerate 15 -i :99 -t 300 /);
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /-f x11grab -draw_mouse 1 -framerate 15 -i :99 -t 300 /);
 
   const { prepared, facts, made } = stop(home, 2, "cut");
   assert.equal(prepared.status, 0, prepared.stderr);
-  assert.deepEqual({ ...facts!, start: null }, { ended: "stopped", recorded: 10, width: 1280, height: 720, start: null, position: "top", cuts: [[1.5, 6], [8.5, 10]], events: [] });
+  const { scene, ...plain } = facts!;
+  assert.deepEqual({ ...plain, start: null }, { ended: "stopped", recorded: 10, width: 1280, height: 720, start: null, position: "top", cuts: [[1.5, 6], [8.5, 10]], events: [] });
+  assert.equal(scene?.pointer, "shown", "no display to sample, so the screen's own pointer stays in the picture");
+  assert.deepEqual(scene?.brightness?.map((grid) => [grid.at, grid.cells.length, grid.cells[0]]), [[0, 144, 200], [1, 144, 200]], "the brightness under the pointer, a grid a second");
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /-map \[grid\] -f rawvideo -pix_fmt gray \S+\/grid\.raw/);
   assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
-  assert.deepEqual(parseRecordResult(made!.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: true });
+  const { drawing, encoding, ...result } = parseRecordResult(made!.stdout)!;
+  assert.deepEqual(result, { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: true });
+  assert.ok(drawing! >= 0 && encoding! >= 0, "the time each part took");
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
   assert.ok(encoded.includes("select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='(((T-STARTT)-(clip((T-STARTT)-1.500,0,4.5)+clip((T-STARTT)-8.500,0,1.5)))/2)/TB',fps=15,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,scale='min(1280,iw)':-2[v0]"), encoded);
   assert.match(encoded, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -filter_complex /, "the speed and the cut drawn as marks");
@@ -83,7 +89,7 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
   assert.equal(run(recordStepScript("step", "Typing a line"), home).status, RECORD_STEP_EXITS.saved);
   const prepared = run(recordPrepareScript("cut"), home);
   assert.equal(prepared.status, 0, prepared.stderr);
-  const made = run(recordMakeScript(planClip(parsePrepared(prepared.stdout)!, 1)), home, {}, true, false, true);
+  const made = run(recordMakeScript(planClip(parsePrepared(prepared.stdout)!, 1, { zoom: true, frame: false })), home, {}, true, false, true);
   assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
   assert.equal(parseRecordResult(made.stdout)?.captions, true, "the pills are measured and drawn");
   assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /-i \S+\/pill-0\.png .*-filter_complex .*\[1:v\]overlay=/, "the step's pill over the clip");
@@ -156,9 +162,11 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   const start = recordStartScript("windows", "bottom");
   assert.match(start, /Join-Path \$HOME '\.local\\state\\bb-box\\recording'/);
   assert.match(start, /Start-Process \$ffmpeg -WindowStyle Hidden -PassThru -RedirectStandardError "\$d\\log"/);
-  assert.match(start, /-f gdigrab -framerate 15 -draw_mouse 1 -i desktop -t 300 -c:v libx264 -preset ultrafast -crf 0 /);
+  assert.match(start, /-f gdigrab -framerate 15 -draw_mouse ' \+ \$draw \+ ' -i desktop -t 300 -c:v libx264 -preset ultrafast -crf 0 /);
+  assert.match(start, /\$draw = if \(\$mode -eq 'drawn'\) \{ 0 \} else \{ 1 \}/, "the screen's own pointer left out only where the sampler runs");
   assert.match(start, /exit 4 }/);
-  assert.match(start, /Set-Content "\$d\\position" 'bottom'\nSet-Content "\$d\\start" \(Now\)/);
+  assert.match(start, /Set-Content "\$d\\position" 'bottom'/);
+  assert.ok(start.indexOf('Set-Content "$d\\start" (Now)') > start.indexOf("Set-Content \"$d\\pointer-mode\" $mode"), "the start is the moment ffmpeg starts, after the sampler");
   assert.match(start, /CultureInfo\]::InvariantCulture/);
 
   const step = recordStepScript("fail", "Saving   kept the draft", "windows");
@@ -170,6 +178,9 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   assert.match(prepare, /if \('cut' -eq 'cut'\)/);
   assert.match(prepare, /-vf freezedetect=n=0\.0001:d=1 -map 0:v -f null -/);
   assert.match(prepare, /"start":\{3\},"position":"\{4\}","cuts":\[\{5\}\]/);
+  assert.ok(prepare.includes("$grid = Join-Path $d 'grid.raw'"), "the grid's path, as a backslash before an interpolation would hide it");
+  assert.match(prepare, /-map '\[grid\]' -f rawvideo -pix_fmt gray \$grid 2>&1/);
+  assert.ok(prepare.includes("'G {0} {1}' -f ($i / 144), [BitConverter]::ToString($cells, $i, 144)"), "each second's grid as a line, as on Linux and macOS");
   assert.match(recordPrepareScript("keep", "windows"), /if \('keep' -eq 'cut'\)/);
   const prepared = parsePrepared(`{"ended":"stopped","recorded":20.5,"size":"1280x800","start":100.000,"position":"bottom","cuts":[[3.500,9.000]]}\r\n100.500\tstep\t${Buffer.from("It opens Notepad").toString("base64")}\r\n102.000\tpass\t${Buffer.from("Notepad is open").toString("base64")}\r\n`);
   assert.deepEqual(prepared?.events.map((event) => event.text), ["It opens Notepad", "Notepad is open"]);
@@ -197,4 +208,30 @@ test("box_record's page plays the clip beside it by its name, and its height fol
   const listed = recordPage("Box a", "a.mp4", [{ at: 65.5, real: 125, text: "Open <it>", result: { passed: false, text: "It failed" } }]);
   assert.match(listed, /<a href="#" data-at="65\.5"><span class="at">2:05<\/span><span><span style="color:#4f8df5">▶<\/span> Open &#60;it&#62;<br><span style="color:#ff453a">✗<\/span> It failed<\/span><\/a>/);
   assert.match(listed, /v\.currentTime = Number\(a\.dataset\.at\)/);
+});
+
+test("a clip with a drawn pointer, rings and a frame is made from the drawing the plugin puts in the box, its graph read from a file (073)", { skip }, () => {
+  const home = tempDir("record-scene");
+  const dir = join(home, RECORD_DIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "capture.mkv"), "capture");
+  const prepared: Prepared = {
+    ...PREPARED,
+    cuts: [],
+    events: [{ at: 1001, kind: "step", text: "It saves the note" }],
+    scene: { pointer: "drawn", screen: null, samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], changes: [], luma: 50, lag: 0, keys: "pc", inputs: [{ at: 1004, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 640, y: 400, area: null }, { at: 1006, by: "agent", type: "keys", chord: { key: "S", modifiers: ["ctrl"] } }] },
+  };
+  const plan = planClip(prepared, 1);
+  assert.equal(plan.fps, 30);
+  assert.deepEqual(plan.scene!.art.map((art) => art.name), ["ring-left-light-0.png", "ring-left-light-1.png", "ring-left-light-2.png", "ring-left-light-3.png", "ring-left-light-4.png", "ring-left-light-5.png", "pointer-light.png", "corner.png"]);
+  const missing = run(recordMakeScript(plan), home);
+  assert.equal(missing.status, RECORD_STOP_EXITS.failed, "no drawing, no clip");
+  assert.match(missing.stderr, /drawing was not delivered/);
+  writeFileSync(join(dir, SCENE_BUNDLE), sceneBundle(plan)!);
+  const made = run(recordMakeScript(plan), home);
+  assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
+  const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
+  assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-light-0.png"), encoded);
+  assert.match(encoded, /-i pointer-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
+  for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "pointer-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
 });

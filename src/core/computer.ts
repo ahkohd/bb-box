@@ -6,7 +6,7 @@
 // or closed, and refuses everything while a person holds the box's desktop.
 // The agent never sees Cua's own words for what went wrong.
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { ByteChannel, GuestOs } from "../transports/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
@@ -14,6 +14,7 @@ import type { Owner } from "./control.ts";
 import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
+import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
@@ -34,6 +35,8 @@ const IDLE_MS = 10 * 60_000;
 const PAUSE_WAIT_MS = 3_000;
 const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
+const DRIVER_SESSION_PREFIX = "bb-box-";
+const CURSOR_RESTORE_RETRY_MS: readonly number[] = [250, 1_000, 4_000];
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
 const FINDER_WINDOW_WAIT_MS = 3_000;
@@ -111,6 +114,7 @@ export interface ComputerResult {
 }
 
 export interface ComputerDeps {
+  onInput?(box: BoxRecord, input: ActedInput, sentAt: number): void;
   /** Starts `script` in the box through its command transport's spawn. */
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
   /**
@@ -143,6 +147,7 @@ export interface ComputerDeps {
   logError(operation: string, error: unknown): void;
   readonly idleMs?: number;
   readonly pauseWaitMs?: number;
+  readonly cursorRestoreRetryMs?: readonly number[];
   readonly callTimeoutMs?: number;
   readonly launchWaitMs?: number;
   /** How long a launch asks again while Windows cannot look an app's name up yet. */
@@ -335,6 +340,18 @@ interface Live {
   readonly generation: number;
   /** Why bb-box closed it; null while open, or when it ended by itself. */
   reason: string | null;
+  sessionTools: ReadonlySet<string> | null;
+}
+
+interface DriverSession {
+  readonly name: string;
+  cursorHidden: boolean;
+  driverHasCursorHidden: boolean | null;
+}
+
+interface CursorCapture {
+  hiddenThroughout: boolean;
+  readonly ends: ReturnType<typeof setTimeout>;
 }
 
 interface BoxState {
@@ -368,12 +385,15 @@ interface BoxState {
   readonly titled: Map<number, string>;
   /** On Linux, windows where the last action could have selected text: a key chord or a double-click. */
   readonly selecting: Set<number>;
+  driverSession: DriverSession | null;
+  cursorCapture: CursorCapture | null;
 }
 
 interface Use {
   readonly state: BoxState;
   readonly box: BoxRecord;
   readonly signal?: AbortSignal;
+  typedInput?: { readonly input: ActedInput; readonly sentAt: number } | null;
 }
 
 interface Read {
@@ -811,6 +831,14 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
+function toArea(rect: Rect): InputArea {
+  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+}
+
+function typedField(element: Element | null | undefined): TypedField | null {
+  return element ? { role: element.role, name: element.label } : null;
+}
+
 function describe(role: string, label: string): string {
   return label ? `${role} '${label}'` : role;
 }
@@ -942,6 +970,20 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /** A driver's answer that its session has ended, which every later call in it gets too (#662). */
 function sessionEnded(result: McpResult): boolean {
   return !!result.isError && /\bSession '[^']*' has ended\b/i.test(rawText(result));
+}
+
+function namedSessionEnded(result: McpResult): boolean {
+  return !!result.isError && /\bsession has ended\b/i.test(rawText(result));
+}
+
+interface ListedTool {
+  readonly name?: unknown;
+  readonly inputSchema?: { readonly properties?: Record<string, unknown> };
+}
+
+function toolsTakingSession(listed: unknown): ReadonlySet<string> {
+  const tools = (listed as { tools?: readonly ListedTool[] } | null)?.tools ?? [];
+  return new Set(tools.flatMap((tool) => (typeof tool.name === "string" && tool.inputSchema?.properties && "session" in tool.inputSchema.properties ? [tool.name] : [])));
 }
 
 export class Computer {
@@ -1106,12 +1148,14 @@ export class Computer {
       const watch = target.screen || inPopup ? await this.#watch(use, target.screen ?? null) : null;
       // An element Cua cannot click as an element is clicked at its centre (048).
       const centre = step.tool === "click" && target.element?.frame ? cannotInject : undefined;
+      const sentAt = Date.now();
       let { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value", centre);
       let elsewhere = landedElsewhere(result);
       const byPosition = !!result.isError && !elsewhere;
       let before = target.snapshot;
       if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
       elsewhere ??= landedElsewhere(result);
+      this.#noteAct(use, input, target, sentAt);
       const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
@@ -1122,6 +1166,49 @@ export class Computer {
       const told = forward == null || seen.hints.some((hint) => hint.includes(`computer_observe with window ${forward} `));
       return { text: [...lines, ...seen.parts].join("\n\n"), hints: told ? seen.hints : [`Call computer_observe with window ${forward} to act in what came in front.`, ...seen.hints] };
     });
+  }
+
+  #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
+    if (!this.#deps.onInput) return;
+    const area = target.element?.frame ?? null;
+    const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
+    const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
+    if (input.action === "set_value") {
+      const value = input.value ?? "";
+      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), window }, sentAt);
+      return;
+    }
+    if (!point) return;
+    if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point, window }, sentAt);
+    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, window }, sentAt);
+  }
+
+  #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
+    const window = target.snapshot?.window;
+    const x = num(target.args.x);
+    const y = num(target.args.y);
+    if (!window || x === undefined || y === undefined) return null;
+    const held = use.state.images.get(window.id);
+    const scaleX = held ? window.width / held.width : 1;
+    const scaleY = held ? window.height / held.height : 1;
+    return { x: window.x + x * scaleX, y: window.y + y * scaleY };
+  }
+
+  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null, window: Rect | null): void {
+    if (!this.#deps.onInput) return;
+    const typed = text ?? "";
+    const input: ActedInput = keys
+      ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
+      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), window: window ? toArea(window) : null };
+    use.typedInput = { input, sentAt: Date.now() };
+  }
+
+  #typingDone(use: Use): void {
+    const pending = use.typedInput;
+    use.typedInput = null;
+    if (!pending || !this.#deps.onInput) return;
+    this.#deps.onInput(use.box, pending.input, pending.sentAt);
+    if (pending.input.type === "typing") this.#deps.onInput(use.box, { type: "typing", characters: 0, area: null, secret: pending.input.secret }, Date.now());
   }
 
   /** Types text, or presses a key chord, into a reference, a window's focused element, or whatever has the focus. */
@@ -1140,8 +1227,10 @@ export class Computer {
     let readBack: string | null = null;
     let popup: Popup | undefined;
     let target: Target | null = null;
+    let typedWindow: Rect | null = null;
     if (input.ref !== undefined) {
       const { snapshot, element } = await this.#element(use, input.ref);
+      typedWindow = snapshot.window;
       popup = use.state.popups.get(snapshot.window.id);
       args = { pid: snapshot.window.pid, window_id: snapshot.window.id, ...this.#token(snapshot, element) };
       label = `${element.ref} (${describe(element.role, element.label)})`;
@@ -1154,12 +1243,14 @@ export class Computer {
     } else if (input.window !== undefined) {
       popup = use.state.popups.get(input.window);
       const window = popup?.window ?? (await this.#window(use, input.window));
+      typedWindow = window;
       args = { pid: window.pid, window_id: window.id };
       label = `window ${window.id}`;
       before = use.state.snapshots.get(window.id) ?? null;
     } else {
       throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
     }
+    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null, typedWindow);
     const count = input.text?.length ?? 0;
     const what = keys ? `Pressed ${input.keys!.trim()}` : `Typed ${count} character${count === 1 ? "" : "s"}`;
     const tool = keys ? "press_key" : "type_text";
@@ -1169,6 +1260,7 @@ export class Computer {
       const watch = await this.#watch(use, null);
       if (popup && !watch.popups.has(popup.window.id)) throw this.#closed(use.state, popup);
       await this.#deliver(use, tool, { scope: "desktop", ...typed }, true);
+      this.#typingDone(use);
       const where = popup ? `for ${popup.what ?? "the popup"} (window ${popup.window.id})` : "into whatever has the focus";
       const seen = await this.#settle(use, watch, { element: null, right: false });
       return { text: [`${what} with the real keyboard, ${where}.`, ...seen.parts].join("\n\n"), hints: seen.hints };
@@ -1243,6 +1335,7 @@ export class Computer {
 
   /** What typing said, and what changed in the window since `before`. */
   async #typed(use: Use, said: string, before: Snapshot | null, readBack: string | null, args: Json): Promise<ComputerResult> {
+    this.#typingDone(use);
     if (!before) return { text: said, hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null }, late: true });
     return { text: [said, ...changed.parts].join("\n\n"), hints: changed.hints };
@@ -1452,6 +1545,8 @@ export class Computer {
         lastNaming: null,
         titled: new Map(),
         selecting: new Set(),
+        driverSession: null,
+        cursorCapture: null,
       };
       this.#boxes.set(boxId, state);
     }
@@ -1473,6 +1568,87 @@ export class Computer {
         throw error;
       }
     });
+  }
+
+  hideAgentCursor(box: BoxRecord, captureMs: number, signal?: AbortSignal): Promise<boolean> {
+    return this.#queued(box, signal, async (use) => {
+      this.#endCursorCapture(use.state);
+      const live = await this.#live(use);
+      live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, this.#driverOptions(signal)).catch(() => null));
+      if (!live.sessionTools.has("set_agent_cursor_enabled")) return false;
+      const joined = use.state.driverSession;
+      use.state.driverSession = { name: joined?.name ?? `${DRIVER_SESSION_PREFIX}${randomBytes(4).toString("hex")}`, cursorHidden: true, driverHasCursorHidden: joined?.driverHasCursorHidden ?? null };
+      const ends = setTimeout(() => void this.#showCursor(box).catch((error: unknown) => this.#deps.logError("show the agent cursor at the capture's end", error)), Math.max(0, captureMs));
+      ends.unref?.();
+      use.state.cursorCapture = { hiddenThroughout: true, ends };
+      let hidden = false;
+      try {
+        hidden = await this.#joinSession(use.state, live, signal);
+      } finally {
+        if (!hidden) {
+          this.#endCursorCapture(use.state);
+          use.state.driverSession = null;
+        }
+      }
+      return hidden;
+    });
+  }
+
+  async showAgentCursor(box: BoxRecord): Promise<boolean> {
+    const capture = this.#boxes.get(box.id)?.cursorCapture ?? null;
+    await this.#showCursor(box);
+    const state = this.#boxes.get(box.id);
+    if (state?.cursorCapture === capture) this.#endCursorCapture(state);
+    return capture?.hiddenThroughout ?? false;
+  }
+
+  #showCursor(box: BoxRecord): Promise<void> {
+    return this.#queued(box, undefined, async (use) => {
+      const session = use.state.driverSession;
+      if (!session) return;
+      session.cursorHidden = false;
+      await this.#confirmCursorShown(box, use, session, 0);
+    });
+  }
+
+  async #confirmCursorShown(box: BoxRecord, use: Use, session: DriverSession, attempt: number): Promise<void> {
+    const pending = () => use.state.driverSession === session && !session.cursorHidden && session.driverHasCursorHidden !== false;
+    if (!pending()) return;
+    const live = await this.#live(use).catch(() => null);
+    if (live && pending()) await this.#joinSession(use.state, live).catch(() => false);
+    const wait = (this.#deps.cursorRestoreRetryMs ?? CURSOR_RESTORE_RETRY_MS)[attempt];
+    if (!pending() || wait === undefined) return;
+    const again = setTimeout(() => {
+      void this.#queued(box, undefined, (later) => this.#confirmCursorShown(box, later, session, attempt + 1)).catch((error: unknown) => this.#deps.logError("show the agent cursor again", error));
+    }, wait);
+    again.unref?.();
+  }
+
+  #endCursorCapture(state: BoxState): void {
+    if (state.cursorCapture) clearTimeout(state.cursorCapture.ends);
+    state.cursorCapture = null;
+  }
+
+  #loseDriverSession(state: BoxState): void {
+    if (state.driverSession?.cursorHidden && state.cursorCapture) state.cursorCapture.hiddenThroughout = false;
+    state.driverSession = null;
+  }
+
+  #driverOptions(signal?: AbortSignal): { timeoutMs: number; signal?: AbortSignal } {
+    return { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal };
+  }
+
+  async #joinSession(state: BoxState, live: Live, signal?: AbortSignal): Promise<boolean> {
+    const session = state.driverSession;
+    if (!session) return false;
+    const options = this.#driverOptions(signal);
+    live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, options).catch(() => null));
+    if (!live.sessionTools.has("start_session")) return false;
+    if ((await live.mcp.call("start_session", { session: session.name }, options)).isError) return false;
+    const hidden = session.cursorHidden;
+    if ((await live.mcp.call("set_agent_cursor_enabled", { session: session.name, enabled: !hidden }, options)).isError) return false;
+    session.driverHasCursorHidden = hidden;
+    return true;
   }
 
   async screenPicture(box: BoxRecord, longestEdge: number, signal?: AbortSignal): Promise<{ readonly data: string; readonly mimeType: string }> {
@@ -1594,7 +1770,7 @@ export class Computer {
             if (live.reason === null) this.#deps.logError(`computer-use session with box ${box.name}`, error);
           },
         });
-        live = { mcp, generation, reason: null };
+        live = { mcp, generation, reason: null, sessionTools: null };
         state.generation = generation;
         if (state.forgotten) {
           live.reason = FORGOTTEN;
@@ -1602,6 +1778,7 @@ export class Computer {
           throw new ComputerError("interrupted", FORGOTTEN, "Call box_status to see the box.");
         }
         state.live = live;
+        if (state.driverSession && !(await this.#joinSession(state, live).catch(() => false))) this.#loseDriverSession(state);
         return live;
       } catch (error) {
         if (error instanceof BoxError || error instanceof ComputerError) throw error;
@@ -1628,8 +1805,10 @@ export class Computer {
       gate();
       const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
       let result: McpResult;
+      const session = use.state.driverSession;
+      const sessioned = session && live.sessionTools?.has(name) ? { ...args, session: session.name } : args;
       try {
-        result = await live.mcp.call(name, args, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
+        result = await live.mcp.call(name, sessioned, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
       } catch (error) {
         if (error instanceof McpError) {
           throw new ComputerError("driver", `bb-box's request to the desktop failed: ${sentence(error.message)}`, "This is probably a bb-box bug: tell the user.");
@@ -1650,6 +1829,10 @@ export class Computer {
         void live.mcp.close(live.reason);
         const message = error instanceof Error ? error.message : String(error);
         throw new ComputerError("driver", `${sentence(message)}${unsure}`, "Call computer_observe to see the window, then try again.");
+      }
+      if (session && sessioned !== args && namedSessionEnded(result) && attempt === 0) {
+        if (!(await this.#joinSession(use.state, live).catch(() => false))) this.#loseDriverSession(use.state);
+        continue;
       }
       // The driver can end its session by itself, as after a while idle, and keep the connection: every call then
       // answers that the session has ended (#662). A new session takes over, for a read at once.
