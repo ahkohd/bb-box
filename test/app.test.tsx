@@ -55,6 +55,7 @@ import { forgetStandardImages } from "../src/app/settings-images.tsx";
 import { forgetFindQuery } from "../src/app/settings-find.tsx";
 import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } from "../src/app/settings-find-index.ts";
 import { problemPath } from "../src/app/settings-paths.ts";
+import { LOADING_SHOWN_AFTER_MS } from "../src/app/loading-states.tsx";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
 import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import { SavedTick } from "../src/app/settings-parts.tsx";
@@ -11750,4 +11751,267 @@ test("071 unit 15, lead: Desktop opens on the GPU desktop with its part only whe
   await waitFor(() => expect(screen.queryByRole("button", { name: "Create box" })).toBeNull());
   cleanup();
   expect(await opensOn(set)).toBe("None");
+});
+
+function gate(): { readonly opened: Promise<void>; readonly open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+function skeletonRows(): Element[] {
+  return Array.from(document.querySelectorAll("[data-skeleton-row]"));
+}
+
+function loadingShown(): boolean {
+  return document.querySelector("[data-loading]") !== null;
+}
+
+async function passTime(ms: number): Promise<void> {
+  await act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+}
+
+async function waitRealTime(ms: number): Promise<void> {
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+}
+
+const LAYOUT_CLASSES = /^(grid|grid-cols-.*|items-start|gap-3|py-3)$/;
+
+function layoutOf(element: Element): string[] {
+  return (element.getAttribute("class") ?? "").split(/\s+/).filter((name) => LAYOUT_CLASSES.test(name)).sort();
+}
+
+test("polish P1: the Boxes page shows 3 to 5 skeleton rows shaped as its box rows only after 150 ms while its lists load, with no pulse under reduced motion, then the rows", async () => {
+  vi.useFakeTimers();
+  const lists = gate();
+  const { handlers } = server([box()]);
+  const slow: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    allBoxes: async (input) => {
+      await lists.opened;
+      return handlers.allBoxes!(input);
+    },
+    "machines.list": async (input) => {
+      await lists.opened;
+      return handlers["machines.list"]!(input);
+    },
+  };
+  const list = boxesPage(slow);
+  await passTime(LOADING_SHOWN_AFTER_MS - 1);
+  expect(loadingShown(), "no skeleton before the delay, so a fast load does not flash").toBe(false);
+  expect(skeletonRows()).toHaveLength(0);
+  await passTime(1);
+  expect(list.getByText("Reading the boxes…").closest('[role="status"]')).toBeTruthy();
+  const rows = skeletonRows();
+  expect(rows.length).toBeGreaterThanOrEqual(3);
+  expect(rows.length).toBeLessThanOrEqual(5);
+  const bars = Array.from(list.container.querySelectorAll("[data-loading] .animate-pulse"));
+  expect(bars.length).toBeGreaterThan(0);
+  for (const bar of bars) expect(bar.getAttribute("class")).toContain("motion-reduce:animate-none");
+  const skeletonLayout = layoutOf(rows[0]!);
+  await act(async () => lists.open());
+  await passTime(10);
+  expect(list.getByText("calm-otter")).toBeTruthy();
+  expect(loadingShown()).toBe(false);
+  expect(skeletonRows()).toHaveLength(0);
+  expect(skeletonLayout).toEqual(layoutOf(list.container.querySelector("[data-resource-row]")!));
+});
+
+test("polish P1: the Snapshots tab shows skeleton snapshot rows after 150 ms, saying it reads them to screen readers, then the snapshots", async () => {
+  vi.useFakeTimers();
+  const answer = gate();
+  const { handlers } = server([box()], {
+    tab: async () => {
+      await answer.opened;
+      return tabView();
+    },
+  });
+  const list = renderSlot(app.navPanels[0]!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  await passTime(LOADING_SHOWN_AFTER_MS - 1);
+  expect(loadingShown()).toBe(false);
+  await passTime(1);
+  expect(list.getByText("Reading the snapshots…").closest('[role="status"]')).toBeTruthy();
+  expect(skeletonRows().length).toBeGreaterThanOrEqual(3);
+  await act(async () => answer.open());
+  await passTime(10);
+  expect(list.getByRole("region", { name: "calm-otter's snapshots" })).toBeTruthy();
+  expect(loadingShown()).toBe(false);
+});
+
+test("polish P1: an empty list after its skeleton keeps the empty-state words it had, on each tab", async () => {
+  vi.useFakeTimers();
+  const lists = gate();
+  const { handlers } = server([]);
+  const slow: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    allBoxes: async (input) => {
+      await lists.opened;
+      return handlers.allBoxes!(input);
+    },
+  };
+  const list = boxesPage(slow);
+  await passTime(LOADING_SHOWN_AFTER_MS);
+  expect(skeletonRows().length).toBeGreaterThanOrEqual(3);
+  await act(async () => lists.open());
+  await passTime(LOADING_SHOWN_AFTER_MS);
+  expect(list.getByText("You have no machines. New box adds one: a box of your own that shows in BB's machine list.")).toBeTruthy();
+  expect(skeletonRows()).toHaveLength(0);
+  fireEvent.click(list.getByRole("tab", { name: "Threads" }));
+  expect(list.getByText("No thread has a box.")).toBeTruthy();
+  fireEvent.click(list.getByRole("tab", { name: "Snapshots" }));
+  await passTime(10);
+  expect(list.getByText("No snapshots yet. Take one from a box's page.")).toBeTruthy();
+  expect(skeletonRows()).toHaveLength(0);
+  expect(loadingShown()).toBe(false);
+});
+
+test("polish P1: a Boxes page list that does not load says so with Try again, which loads it, and never leaves a skeleton", async () => {
+  let machinesFailures = 1;
+  const { handlers } = server([]);
+  const flaky: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    "machines.list": (input) => {
+      if (machinesFailures-- > 0) throw new Error("BB's server did not answer.");
+      return handlers["machines.list"]!(input);
+    },
+  };
+  const list = boxesPage(flaky);
+  const alert = await list.findByRole("alert");
+  expect(within(alert).getByText("The boxes did not load.")).toBeTruthy();
+  expect(within(alert).getByText("BB's server did not answer.")).toBeTruthy();
+  await waitRealTime(LOADING_SHOWN_AFTER_MS + 50);
+  expect(skeletonRows()).toHaveLength(0);
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(await list.findByText("You have no machines. New box adds one: a box of your own that shows in BB's machine list.")).toBeTruthy();
+  expect(list.queryByRole("alert")).toBeNull();
+  cleanup();
+  forgetLive();
+
+  let tabFailures = 1;
+  const snapshots = server([box()], {
+    tab: () => {
+      if (tabFailures-- > 0) throw new Error("bb-box cannot read snapshots.db.");
+      return tabView();
+    },
+  });
+  const tab = renderSlot(app.navPanels[0]!, { subPath: "snapshots" }, { rpc: snapshots.handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  const failed = await tab.findByRole("alert");
+  expect(within(failed).getByText("The snapshots did not load.")).toBeTruthy();
+  expect(within(failed).getByText("bb-box cannot read snapshots.db.")).toBeTruthy();
+  fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+  expect(await tab.findByRole("button", { name: "Select" })).toBeTruthy();
+  expect(tab.queryByRole("alert")).toBeNull();
+});
+
+test("polish P1: a box's page shows a skeleton of its header after 150 ms while it loads, and Try again when it does not load", async () => {
+  vi.useFakeTimers();
+  const answer = gate();
+  const { handlers } = server([box()]);
+  const slow: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    boxPage: async (input) => {
+      await answer.opened;
+      return handlers.boxPage!(input);
+    },
+  };
+  const page = boxPageAt(slow, "box/box_1");
+  await passTime(LOADING_SHOWN_AFTER_MS - 1);
+  expect(loadingShown()).toBe(false);
+  await passTime(1);
+  expect(page.getByText("Loading the box").closest('[role="status"]')).toBeTruthy();
+  expect(skeletonRows().length).toBeGreaterThan(0);
+  await act(async () => answer.open());
+  await passTime(10);
+  expect(page.getByRole("heading", { level: 1 }).textContent).toContain("calm-otter");
+  expect(loadingShown()).toBe(false);
+  cleanup();
+  forgetLive();
+  vi.useRealTimers();
+
+  let failures = 1;
+  const flaky: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    boxPage: (input) => {
+      if (failures-- > 0) throw new Error("BB's server did not answer.");
+      return handlers.boxPage!(input);
+    },
+  };
+  const again = boxPageAt(flaky, "box/box_1");
+  const alert = await again.findByRole("alert");
+  expect(within(alert).getByText("This box did not load.")).toBeTruthy();
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect((await again.findByRole("heading", { level: 1 })).textContent).toContain("calm-otter");
+});
+
+test("polish P1: BB Box's settings show skeleton rows after 150 ms while the configuration loads, and Try again when it does not load", async () => {
+  vi.useFakeTimers();
+  const answer = gate();
+  const { handlers } = server([]);
+  const slot = settings({
+    ...handlers,
+    "config.get": async (input) => {
+      await answer.opened;
+      return handlers["config.get"]!(input);
+    },
+  });
+  await passTime(LOADING_SHOWN_AFTER_MS - 1);
+  expect(loadingShown()).toBe(false);
+  await passTime(1);
+  expect(slot.getByText("Reading BB Box's settings…").closest('[role="status"]')).toBeTruthy();
+  expect(skeletonRows().length).toBeGreaterThanOrEqual(3);
+  await act(async () => answer.open());
+  await passTime(10);
+  expect(slot.getByText("Fake host is not working")).toBeTruthy();
+  expect(loadingShown()).toBe(false);
+  cleanup();
+  forgetLive();
+  vi.useRealTimers();
+
+  let failures = 1;
+  const flaky = settings({
+    ...handlers,
+    "config.get": (input) => {
+      if (failures-- > 0) throw new Error("BB's server did not answer.");
+      return handlers["config.get"]!(input);
+    },
+  });
+  const alert = await flaky.findByRole("alert");
+  expect(within(alert).getByText("BB Box's settings did not load.")).toBeTruthy();
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(await flaky.findByText("Fake host is not working")).toBeTruthy();
+});
+
+test("polish P1: the Images page shows skeleton rows under Standard images while they load, and Try again when they do not load", async () => {
+  const images: ImagesStatus["images"] = [{ name: "fake/linux", kind: "linux", backend: "fake", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null, outcome: null }];
+  const answer = gate();
+  const { handlers } = server([], { rebuildable: images });
+  const slow = settings({
+    ...handlers,
+    "images.list": async (input) => {
+      await answer.opened;
+      return handlers["images.list"]!(input);
+    },
+  }, "#option/images");
+  const reading = await slow.findByText("Reading the images…", { selector: ".sr-only" });
+  expect(reading.closest('[role="status"]')).toBeTruthy();
+  expect(skeletonRows().length).toBeGreaterThanOrEqual(2);
+  answer.open();
+  expect(await slow.findByText("1 of 1 image due.", { exact: false })).toBeTruthy();
+  await waitFor(() => expect(loadingShown()).toBe(false));
+  cleanup();
+
+  let failures = 1;
+  const flaky = settings({
+    ...handlers,
+    "images.list": (input) => {
+      if (failures-- > 0) throw new Error("bb-box could not list the images.");
+      return handlers["images.list"]!(input);
+    },
+  }, "#option/images");
+  const alert = await flaky.findByRole("alert");
+  expect(within(alert).getByText("The standard images did not load.")).toBeTruthy();
+  expect(within(alert).getByText("bb-box could not list the images.")).toBeTruthy();
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(await flaky.findByText("1 of 1 image due.", { exact: false })).toBeTruthy();
+  expect(flaky.queryByRole("alert")).toBeNull();
 });

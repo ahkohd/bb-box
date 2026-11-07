@@ -480,9 +480,16 @@ with a terminal, the bare tab opens it straight away.
 - **No backend on**: "BB Box is not set up yet. Set a backend up in its
   settings and turn it on." with an "Open BB Box settings" button that goes
   to the plugin's settings page. No "New box" button.
-- **Loading**: BB's skeleton rows, shown only after 200 ms so a fast load
-  does not flash.
-- **Could not load**: the error in BB's empty panel with "Try again".
+- **Loading**: BB's skeleton rows, shown only after 150 ms so a fast load
+  does not flash (the owner, 7 November 2026). They have the real rows'
+  height and shape: the icon, the name line, the status line and the
+  action icons' space, so the list does not jump when the rows come. They
+  pulse gently, and not at all under reduced motion. The Boxes page's
+  tabs, a box's page, the settings pages and the Images page show the
+  same while they load, each in its own shape.
+- **Could not load**: a line saying what did not load, such as "The boxes
+  did not load.", the error under it, and "Try again", in BB's empty
+  panel. Never an empty list, and never a skeleton that stays.
 
 ### Live updates
 
