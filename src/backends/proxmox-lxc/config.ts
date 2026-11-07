@@ -57,7 +57,6 @@ import {
   type ParsedBackend,
   type ParsedSettings,
 } from "../types.ts";
-import type { VoxlOffer } from "../voxl.ts";
 
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu", "desktop-wayland-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
@@ -91,7 +90,6 @@ export interface LxcConfig {
   readonly flavours: Readonly<Record<LxcFlavour, LxcFlavourConfig>>;
   readonly desktop: {
     readonly perGpu: number | null;
-    readonly voxl: VoxlOffer;
   };
   readonly gpuMemoryMiB: number;
   readonly vmids: VmidRange;
@@ -138,7 +136,6 @@ export const LXC_KEYS = {
   sshPrivateKey: "proxmox-lxc-ssh-private-key",
   sshUser: "proxmox-lxc-ssh-user",
   perGpu: "proxmox-lxc-desktops-per-gpu",
-  voxl: "proxmox-lxc-voxl",
   boxesPerCard: "proxmox-lxc-boxes-per-card",
   wholeCards: "proxmox-lxc-whole-cards",
   gpuMemoryMiB: "proxmox-lxc-gpu-memory-mib",
@@ -303,13 +300,6 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Proxmox LXC: desktops per GPU (replaced)",
     description: `Replaced by boxes per card, and read only while that is unset: a value set here is kept, 0 for no limit included. Empty in both, a card runs at most ${BOXES_PER_CARD} boxes.`,
   },
-  [LXC_KEYS.voxl]: {
-    type: "boolean",
-    label: "Proxmox LXC: stream desktops with voxl",
-    description:
-      "Shows Linux desktops on X11 through voxl in the viewer, in place of Selkies or VNC. Off, they show as before, and each desktop's Display menu can still pick Stream with voxl. Only desktops from a template built with voxl have it.",
-    default: false,
-  },
   [LXC_KEYS.vmidFirst]: {
     type: "number",
     label: "Proxmox LXC: first box VMID",
@@ -417,7 +407,6 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [flavourKey("desktop", "templates"), "boxes"],
   [flavourKey("desktop-cpu", "templates"), "boxes"],
   [flavourKey("desktop-wayland-cpu", "templates"), "boxes"],
-  [LXC_KEYS.voxl, "boxes"],
   [LXC_KEYS.boxesPerCard, "gpus"],
   [LXC_KEYS.wholeCards, "gpus"],
   [LXC_KEYS.gpuMemoryMiB, "gpus"],
@@ -610,7 +599,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
     config: {
       proxmox,
       flavours,
-      desktop: { perGpu: perGpu > 0 ? perGpu : null, voxl: values[LXC_KEYS.voxl] === true ? "chosen" : "offered" },
+      desktop: { perGpu: perGpu > 0 ? perGpu : null },
       gpuMemoryMiB,
       vmids,
       network,

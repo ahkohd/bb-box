@@ -205,7 +205,6 @@ import {
 } from "./gpu-servers.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
 import { CURSOR_HELPER, GPU_VIDEO_MARKER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
-import { VOXL_DISPLAY, VoxlPresence, voxlDisplay } from "../voxl.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
@@ -330,7 +329,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       // x0vncserver refuses a viewer's resize on a screen with no RandR outputs
       // (006), so transports() gives this display a resize that runs xrandr (021).
       // Video with NVENC (#863), by choice: a box of an image built before has none.
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }, VOXL_DISPLAY],
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
       computerUse: CUA_DRIVER,
       enrol: true,
       device: null,
@@ -350,7 +349,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       gpu: false,
       features: ["docker"],
       command: SSH_COMMAND,
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY, VOXL_DISPLAY],
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
       computerUse: CUA_DRIVER,
       enrol: true,
       device: null,
@@ -478,7 +477,6 @@ export interface LxcBackendOptions {
   readonly cursorHelper?: string;
   /** Where a GPU desktop's image has what gives it video, instead of GPU_VIDEO_MARKER: a file the test finds, in tests. */
   readonly gpuVideoMarker?: string;
-  readonly voxlLauncher?: string;
   /** Replaces the TCP check for port 22, for tests. */
   readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
@@ -997,8 +995,6 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #keyFile = new KeyFile();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
-  readonly #voxl: VoxlPresence;
-  readonly #voxlLauncher: string | undefined;
   /** Whether each GPU desktop's image has video with NVENC (#863). */
   readonly #gpuVideo: ImageFile;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
@@ -1072,8 +1068,6 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
-    this.#voxlLauncher = options.voxlLauncher;
-    this.#voxl = new VoxlPresence(options.voxlLauncher);
     this.#gpuVideo = new ImageFile(options.gpuVideoMarker ?? GPU_VIDEO_MARKER, "-e");
     this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
     this.#cursor = new ImageFile(this.#cursorHelper);
@@ -2260,7 +2254,6 @@ export class ProxmoxLxcBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(presenceKey(guest));
-    this.#voxl.forget(presenceKey(guest));
     this.#gpuVideo.forget(presenceKey(guest));
     this.#cursor.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
@@ -3157,12 +3150,9 @@ export class ProxmoxLxcBackend implements Backend {
     // An image with bb-box-cursor (060): Sway 1.11, whose streams paint no pointer, so none is hidden, and Sway keeps a theme
     // the cursor session and wayvnc send as the pointer's shape. One without keeps #707's hidden theme.
     const sends = wayland && (await this.#cursor.has(presenceKey(guest), command));
-    const voxl = (capabilities?.displays ?? []).some((display) => display.protocol === "voxl") && (await this.#voxl.has(presenceKey(guest), command));
-    const displays = (capabilities?.displays ?? []).filter((display) => (video || display.protocol !== "selkies") && (voxl || display.protocol !== "voxl")).map(
+    const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
       (display): Display =>
-        display.protocol === "voxl"
-          ? voxlDisplay(command, this.#config.desktop.voxl === "chosen", this.#voxlLauncher)
-          : display.protocol === "selkies"
+        display.protocol === "selkies"
           ? selkiesDisplay((port) => command.route(port), display)
           : {
               ...display,

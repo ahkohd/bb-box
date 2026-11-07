@@ -35,7 +35,7 @@ import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState, SnapshotsTabView, VideoStream } from "../plugin/contract.ts";
+import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState, SnapshotsTabView } from "../plugin/contract.ts";
 import { SnapshotsTabPanel } from "./snapshots-tab.tsx";
 import type { BoxView } from "../plugin/views.ts";
 import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, rememberedLive, message, Notice, OPERATOR, ReleasedNotice, deviceModelOf, RowTitle, boxTitleBadges, systemName, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
@@ -101,7 +101,7 @@ import {
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
-import { ActivityGlyph, BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, StreamGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { ActivityGlyph, BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./screens.ts";
 import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
@@ -139,7 +139,7 @@ export function streamChoiceKey(boxId: string): string {
 /** How long the note that video did not start stays, to be read. */
 const FALLBACK_NOTE_MS = 8_000;
 
-type Stream = "rfb" | VideoStream;
+type Stream = "rfb" | "selkies";
 type ViewerSession = DesktopSession | SelkiesSession;
 const NO_STREAM: Connection = { state: "connecting" };
 const DESKTOP_ENDED = "The connection to the desktop ended.";
@@ -147,7 +147,7 @@ const DESKTOP_ENDED = "The connection to the desktop ended.";
 function storedChoice(boxId: string): Stream | null {
   try {
     const value = window.sessionStorage.getItem(streamChoiceKey(boxId));
-    return value === "rfb" || value === "selkies" || value === "voxl" ? value : null;
+    return value === "rfb" || value === "selkies" ? value : null;
   } catch {
     return null;
   }
@@ -877,12 +877,10 @@ export const WINDOWS_HIGH_RESOLUTION_WORDS =
 function DisplayItems({
   compact,
   vnc,
-  voxl,
   highResolution,
 }: {
   compact: boolean;
   vnc: { checked: boolean; onChange: (checked: boolean) => void } | null;
-  voxl: { checked: boolean; onChange: (checked: boolean) => void } | null;
   highResolution: { checked: boolean; disabled: boolean; words: string; onChange: (checked: boolean) => void } | null;
 }) {
   const items = (
@@ -892,12 +890,6 @@ function DisplayItems({
         <DropdownMenuCheckboxItem className="gap-2" checked={vnc.checked} onCheckedChange={vnc.onChange}>
           <MonitorGlyph />
           Show as VNC
-        </DropdownMenuCheckboxItem>
-      ) : null}
-      {voxl ? (
-        <DropdownMenuCheckboxItem className="gap-2" checked={voxl.checked} onCheckedChange={voxl.onChange}>
-          <StreamGlyph />
-          Stream with voxl
         </DropdownMenuCheckboxItem>
       ) : null}
       {highResolution ? <HighResolutionItem {...highResolution} /> : null}
@@ -1167,10 +1159,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
   };
   const video = state?.video ?? null;
   const videoPossible = video === true && !videoFailed && canShowVideo();
-  const streams: readonly VideoStream[] = state?.streams ?? ["selkies"];
   /** What the viewer opens before the person chooses: VNC where the box's video is shown only by choice, as on a Tart Mac. */
-  const firstStream: Stream = state?.videoByDefault === false ? "rfb" : (streams[0] ?? "selkies");
-  const offered = (choice: Stream | null): choice is Stream => choice === "rfb" || (choice !== null && streams.includes(choice));
+  const firstStream: Stream = state?.videoByDefault === false ? "rfb" : "selkies";
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. */
   const sharp = state?.sharp ?? null;
   /** A small screen's menu is a sheet, which has no submenus: the display's items go in it under a label. */
@@ -1192,9 +1182,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
       }
       return;
     }
-    const stored = storedChoice(boxId);
-    decide(offered(stored) ? stored : firstStream);
-  }, [video, videoPossible, firstStream, streams.join(",")]);
+    decide(storedChoice(boxId) ?? firstStream);
+  }, [video, videoPossible, firstStream]);
   const key = deviceShown ? deviceKeyOf(shown) : stream ? `desktop:${shown}:${stream}` : null;
   // The session of a stream given up for another is ended, not kept.
   const keyBefore = useRef(deviceShown ? null : key);
@@ -1308,9 +1297,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&display=device`, { device: { model: boxNow.current?.device?.model ?? null } })
           : stream === "selkies"
             ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`)
-            : stream === "voxl"
-              ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=voxl`, { acksEachFrame: true, pastesPngOnly: true })
-              : new DesktopSession(socketUrl(latestPath!, boxId, viewer)),
+            : new DesktopSession(socketUrl(latestPath!, boxId, viewer)),
       // It rested while the box was away, or lost its connection while hidden. A session that throws here is replaced by a fresh one.
       (resumed) => {
         if (resumed.connection.state === "disconnected") resumed.reconnect();
@@ -1822,20 +1809,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
                         ? {
                             checked: stream === "rfb",
                             onChange: (checked) => {
-                              const next = checked ? "rfb" : (streams[0] ?? "selkies");
-                              storeChoice(boxId, next);
-                              setVideoFailed(false);
-                              decide(next);
-                            },
-                          }
-                        : null
-                    }
-                    voxl={
-                      video === true && canShowVideo() && stream && streams.includes("voxl")
-                        ? {
-                            checked: stream === "voxl",
-                            onChange: (checked) => {
-                              const next = checked ? "voxl" : (streams.find((each) => each !== "voxl") ?? "rfb");
+                              const next = checked ? "rfb" : "selkies";
                               storeChoice(boxId, next);
                               setVideoFailed(false);
                               decide(next);
@@ -2013,7 +1987,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
             <AlertDialogDescription>
               {deviceShown
                 ? DEVICE_PASTE_FIELD_WORDS
-                : stream === "selkies" || stream === "voxl"
+                : stream === "selkies"
                   ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
                   : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
             </AlertDialogDescription>

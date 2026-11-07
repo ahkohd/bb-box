@@ -764,6 +764,7 @@ function readFields(
   owner: FieldOwner,
   problem: (path: string, message: string) => void,
   secrets: Record<string, string | null> | null,
+  retired: readonly string[] = [],
 ): Record<string, FieldValue> {
   const fields: Record<string, FieldValue> = {};
   if (value === undefined) return fields;
@@ -775,7 +776,7 @@ function readFields(
     const descriptor = descriptors[key];
     const at = `${path}.${key}`;
     if (!descriptor) {
-      problem(at, unknownField(owner, key, descriptors));
+      if (!retired.includes(key)) problem(at, unknownField(owner, key, descriptors));
       continue;
     }
     if (isSecret(descriptor) && secrets) {
@@ -832,7 +833,7 @@ function readBackend(
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") problem(`${path}.enabled`, "enabled is true or false.");
   const backendSecrets: Record<string, string | null> = {};
   const owner = `Backend ${id}`;
-  const fields = readFields(`${path}`, value.fields, driver.fields, { name: owner, settingsPrefix: `${driver.type}-` }, problem, backendSecrets);
+  const fields = readFields(`${path}`, value.fields, driver.fields, { name: owner, settingsPrefix: `${driver.type}-` }, problem, backendSecrets, driver.retiredFields);
   if (Object.keys(backendSecrets).length) secrets[id] = backendSecrets;
 
   const warm: Record<string, number> = {};

@@ -52,7 +52,6 @@ The site in `site/` is built from these packages. Its pages carry their code, st
 | --- | --- | --- |
 | [Selkies](https://github.com/selkies-project/selkies) | Mozilla Public License 2.0 | Linux desktops on X11, for video |
 | [TigerVNC](https://github.com/TigerVNC/tigervnc) | GNU GPL 2.0 | Linux desktops on X11 |
-| [voxl](https://github.com/tembo/voxl) | MIT; built in the image from its source crate, and linked with x264, so the binary is under the GNU GPL 2.0 | Linux desktops on X11, for video by choice |
 | [VirtualGL](https://github.com/VirtualGL/virtualgl) | wxWindows Library Licence 3.1 | Linux desktops on a GPU |
 | NVIDIA's driver | NVIDIA's licence | Linux desktops on an NVIDIA GPU, at the host's own driver version |
 | Google Chrome | Google Chrome's terms of service | Linux desktops |

@@ -1,9 +1,17 @@
 # 072: voxl streams Linux X11 desktops, beside today's streamers, as an option the owner picks
 
-Status: accepted, 7 November 2026, with the owner's direction of the same
-day built in (see [The owner's direction](#the-owners-direction)). Unit V1
-is built, and measured on Docker and on Proxmox LXC, on a CPU and a GPU
-desktop, in [072 results](072-results.md) (see [Units](#units)).
+Status: withdrawn by the owner, 7 November 2026. Unit V1 was built,
+merged and then removed; its resize fix stays (see below). The rest of
+this note is kept for the record, as it stood when V1 was built.
+
+The owner tried voxl and chose not to keep it. On a LAN its gain over
+Selkies was small: the same 60 frames a second, a few milliseconds less
+latency, and somewhat less bandwidth and CPU. Its clearer gain, on a slow
+link, did not outweigh one more streamer to build into every image, pin,
+follow through frequent releases and keep working beside Selkies and VNC.
+What V1 found and fixed stays: a video viewer's resize of a desktop whose
+Xtigervnc owns its size now reaches it as SetDesktopSize, on Docker and
+Proxmox LXC. V1's measurements and kit are in the history of PR 1390.
 
 Extends [060](060-every-desktop-streams-as-video-through-one-viewer.md):
 the panel keeps one video client and one viewer protocol, and voxl becomes
@@ -135,7 +143,7 @@ would have to live in the box. Nothing outside the box reaches the port.
 
 The panel keeps its one video client and its protocol, Selkies' subset
 that bb-box-stream and the device servers speak too (060). A new relay,
-[src/core/voxl.ts](../../src/core/voxl.ts), one per viewer connection, opens
+`src/core/voxl.ts`, one per viewer connection, opens
 its own WebSocket to the box's voxl and translates:
 
 - **Video**: voxl's 16-byte header is rewritten in place to the panel's
@@ -179,7 +187,7 @@ Today a Proxmox LXC GPU desktop streams RFB by default and Selkies with
 NVENC by choice (#863); a Docker GPU desktop, RFB only. voxl on a GPU
 desktop captures NVIDIA's Xorg with GetImage and encodes with x264 on the
 box's CPU, taking cores from the box's own work. Its cost at 1920x1080 on
-a CPU desktop is in [072 results](072-results.md): about a third of a core
+a CPU desktop was in 072's results: about a third of a core
 for a busy screen. On a Proxmox LXC GPU desktop, voxl costs about 0.3 of a
 core more than Selkies' NVENC, and the X server about 0.12 more, as voxl
 reads the screen back; NVENC holds about 0.7 GiB more of the card's memory.

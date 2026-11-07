@@ -212,8 +212,7 @@ Every download is checked against a pinned SHA-256, and kept in
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv, Claude
   Code, Codex and Pi, for x86_64 and arm64;
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Selkies, Google Chrome,
-  Cua Driver and rustup, for x86_64 and arm64, and voxl's source crate for
-  x86_64;
+  Cua Driver and rustup, for x86_64 and arm64;
 - the NVIDIA installer for the host's driver version, checked against the
   SHA-256 NVIDIA publishes beside it.
 
@@ -795,19 +794,14 @@ The XFCE desktops add:
   On a GPU desktop it encodes with NVENC on the box's GPU, without NvFBC,
   which never answers on its X screen and would hold each viewer's first
   frame for 5 s (#863);
-- voxl, built from its pinned source crate with Rust 1.99.1; the build
-  then removes the toolchain and every package it installed to build voxl.
-  `/usr/local/libexec/bb-box/voxl start` starts it on
-  `127.0.0.1:5981` when a viewer asks for it, and it stops a minute after
-  its last viewer ([072](../../docs/decisions/072-voxl.md));
 - on a GPU desktop, the NVIDIA userspace for the host's driver and
   VirtualGL; on every desktop, Vulkan and Mesa's CPU renderers;
 - Google Chrome, Mousepad, Ristretto, Evince and Noto CJK fonts;
 - Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
 - Cua Driver, as a daemon in the desktop session, with its telemetry and
   update check off;
-- `bb-box-check-desktop`, which checks the display, VNC, Selkies, voxl, the
-  GPU, Chrome, the fonts, Mousepad and Cua Driver.
+- `bb-box-check-desktop`, which checks the display, VNC, Selkies, the GPU,
+  Chrome, the fonts, Mousepad and Cua Driver.
 
 The Docker and microsandbox images, made from the same scripts, carry both
 checks. There, with no systemd, the lines for systemd and its units say
