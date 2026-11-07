@@ -16,6 +16,7 @@ import { myViewers } from "./box-row.tsx";
 import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
 import { leaveModifiedClick } from "./modified-click.ts";
+import { BoxPageSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
 import { boxPage, viewFromPage, type BoxPageRoute } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
 import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
@@ -756,11 +757,11 @@ function PageFrame({ children, dimmed = false }: { children: ReactNode; dimmed?:
   );
 }
 
-export function Loading({ back, error }: { back: WayBackTo; error: string | null }) {
+export function Loading({ back, error, onRetry, skeleton = null }: { back: WayBackTo; error: string | null; onRetry: () => Promise<unknown>; skeleton?: ReactNode }) {
   return (
     <PageFrame>
       <Trail back={back} here="Box" />
-      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : <p role="status" className="sr-only">Loading the box</p>}
+      {error ? <LoadFailed what="This box" error={error} onRetry={onRetry} /> : skeleton ? <WhileLoading words="Loading the box">{skeleton}</WhileLoading> : <p role="status" className="sr-only">Loading the box</p>}
     </PageFrame>
   );
 }
@@ -783,7 +784,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const titles = useActorTitles(actorThreads(box), page?.thread ?? null);
   const snapshotTitles = useSnapshotTitles(page?.snapshots);
-  if (!page) return <Loading back={back} error={error} />;
+  if (!page) return <Loading back={back} error={error} onRetry={refresh} skeleton={<BoxPageSkeleton />} />;
   if (!box) return <NotHere page={page} back={back} now={now} />;
   const yours = page.owner === "yours";
   const threadId = page.threadId ?? OPERATOR;

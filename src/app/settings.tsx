@@ -2,7 +2,8 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ConfigDocument } from "../core/document.ts";
 import type { ConfigState, Contract } from "../plugin/contract.ts";
-import { EmptyPanel, message, useLive } from "./common.tsx";
+import { message, useLive } from "./common.tsx";
+import { LoadFailed, SettingsSkeleton, WhileLoading } from "./loading-states.tsx";
 import { SettingsContext, settingsWrites, type Saved, type SettingsContextValue } from "./settings-context.tsx";
 import { drafts, type SaveTransport } from "./settings-drafts.ts";
 import { newestState, useInstant, useRegistry } from "./settings-saving.tsx";
@@ -105,8 +106,14 @@ export function SettingsSection() {
     },
     [rpc, refresh],
   );
-  if (error && !state) return <EmptyPanel role="alert">{error}</EmptyPanel>;
-  if (!state) return null;
+  if (error && !state) return <LoadFailed what="BB Box's settings" error={error} onRetry={refresh} />;
+  if (!state) {
+    return (
+      <WhileLoading words="Reading BB Box's settings…">
+        <SettingsSkeleton />
+      </WhileLoading>
+    );
+  }
   const context: SettingsContextValue = { state: newestState(state, registry), nav, instant, writes, notice, refresh, apply };
   return (
     <SettingsContext.Provider value={context}>

@@ -4,8 +4,6 @@ import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { DelayedLoading } from "@/components/ui/delayed-loading";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { BoxResult, Contract, PanelState, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type Held } from "./box-row.tsx";
@@ -13,6 +11,7 @@ import type { BoxAction } from "./box-menu.tsx";
 import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { leaveModifiedClick } from "./modified-click.ts";
+import { BoxRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
@@ -72,31 +71,12 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     setProblem(await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined));
   };
 
-  if (error) {
-    return (
-      <EmptyPanel role="alert">
-        <p>{error}</p>
-        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void refresh()}>
-          Try again
-        </Button>
-      </EmptyPanel>
-    );
-  }
+  if (error) return <LoadFailed what="The boxes" error={error} onRetry={refresh} />;
   if (!state) {
     return (
-      <DelayedLoading>
-        <div role="status" aria-label="Loading boxes" className="rounded-lg border border-border bg-card px-4 py-1">
-          {[0, 1].map((row) => (
-            <div key={row} className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-3 py-3">
-              <Skeleton className="size-6 rounded-sm" />
-              <div className="space-y-1.5">
-                <Skeleton className="h-3.5 w-36" />
-                <Skeleton className="h-3 w-56 max-w-full" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </DelayedLoading>
+      <WhileLoading words="Reading the boxes…">
+        <BoxRowsSkeleton rows={2} className="py-1" />
+      </WhileLoading>
     );
   }
   if (!state.kinds.length && !rows.length) {
