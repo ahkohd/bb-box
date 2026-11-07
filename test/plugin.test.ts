@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import type { Backend, BackendContext } from "../src/backends/types.ts";
 import { manifestSkills } from "../src/plugin/tool-selection.ts";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
@@ -43,7 +43,7 @@ import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
 import { FakeSnapshots } from "./fake-snapshots.ts";
-import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
+import { readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
 
@@ -4585,13 +4585,13 @@ function desktopFile(world: { root: string; backend: FakeBackend | null }, box: 
 }
 
 function readDesktop(file: string): FakeDesktop {
-  return JSON.parse(readFileSync(file, "utf8")) as FakeDesktop;
+  return readDesktopFile(file);
 }
 
 function editDesktop(file: string, edit: (desktop: FakeDesktop) => void): void {
   const desktop = readDesktop(file);
   edit(desktop);
-  writeFileSync(file, JSON.stringify(desktop));
+  writeDesktopFile(file, desktop);
 }
 
 function lastCall(file: string, tool: string): FakeDesktop["calls"][number] | undefined {
@@ -4620,7 +4620,7 @@ async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?:
   await started.app.boxes.idle();
   const box = await only(started.app);
   const file = desktopFile(started.world, box);
-  writeFileSync(file, JSON.stringify(tasksDesktop()));
+  writeDesktopFile(file, tasksDesktop());
   return { ...started, box, file };
 }
 
@@ -5261,6 +5261,18 @@ test("a desktop click cancelled during its after-read still returns the popup", 
   assert.doesNotMatch(said, /could not read what changed|The call was cancelled/);
   const reads = readDesktop(file).calls.filter((entry, index) => index >= callsBefore && entry.tool === "get_window_state");
   assert.ok(reads.length >= 2, "the cancelled read was asked again");
+});
+
+test("a read of the fake desktop waits out a torn write of its file", async (t) => {
+  const dir = tempDir("torn-desktop");
+  const file = join(dir, "cua-driver.json");
+  const script = join(dir, "finish.mjs");
+  const desktop = tasksDesktop();
+  writeFileSync(file, "{");
+  writeFileSync(script, "import { writeFileSync } from 'node:fs';\nsetTimeout(() => writeFileSync(process.argv[2], process.argv[3]), 50);\n");
+  const child = spawn(process.execPath, [script, file, JSON.stringify(desktop)], { stdio: "ignore" });
+  t.after(() => child.kill());
+  assert.equal(readDesktop(file).windows.length, desktop.windows.length);
 });
 
 test("a desktop click whose after-read and its retry both fail still reports the click", async (t) => {
