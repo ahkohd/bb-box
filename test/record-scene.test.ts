@@ -233,9 +233,9 @@ test("keys show as chords, counted when repeated, and typing as one pill; Backsp
 test("only Shift is typing, and so is Option on a Mac; a person's printable keys are logged as typing, never as the character (073)", () => {
   const inputs = new RecordingInputs(() => 5_000);
   inputs.begin("mac", 0, "macos");
-  inputs.acted("mac", { type: "keys", chord: normalChord("2", ["option"]) });
-  inputs.acted("mac", { type: "keys", chord: normalChord("a", ["shift"]) });
-  inputs.acted("mac", { type: "keys", chord: normalChord("c", ["cmd"]) });
+  inputs.acted("mac", { type: "keys", key: "2", modifiers: ["option"] });
+  inputs.acted("mac", { type: "keys", key: "a", modifiers: ["shift"] });
+  inputs.acted("mac", { type: "keys", key: "c", modifiers: ["cmd"] });
   assert.deepEqual(inputs.end("mac")!.map((event) => event.type), ["typing", "typing", "keys"]);
   const person = new RecordingInputs(() => 5_000);
   person.begin("pc", 0, "linux");
@@ -243,7 +243,8 @@ test("only Shift is typing, and so is Option on a Mac; a person's printable keys
   const events = person.end("pc")!;
   assert.deepEqual(events.map((event) => (event.type === "keys" ? chordWords(event.chord, "pc") : event.type)), ["Ctrl+S", "typing", "typing", "Enter"]);
   assert.doesNotMatch(JSON.stringify(events), /"[pw]"/, "no typed character is kept");
-  assert.equal(keysymKey(0x1000416), "Ж");
+  assert.equal(keysymKey(0x1000041), "A");
+  assert.equal(keysymKey(0x1000416), null, "a character past ASCII is never a shortcut's key");
 });
 
 test("typed text never reaches the log, and secret typing is told by its role, its name or the text's shape; its end stays secret (073)", () => {
@@ -260,7 +261,7 @@ test("typed text never reaches the log, and secret typing is told by its role, i
   inputs.begin("box", 0, "linux");
   inputs.acted("box", { type: "typing", characters: 8, area: { x: 10, y: 10, width: 200, height: 20 }, secret: true });
   inputs.acted("box", { type: "typing", characters: 0, area: null, secret: false });
-  inputs.acted("box", { type: "keys", chord: normalChord("Return", []) });
+  inputs.acted("box", { type: "keys", key: "Return", modifiers: [] });
   inputs.acted("box", { type: "typing", characters: 0, area: null, secret: false });
   const events = inputs.end("box")!;
   assert.deepEqual(events.map((event) => (event.type === "typing" ? `typing ${event.characters} ${event.secret}` : event.type)), ["typing 8 true", "typing 0 true", "keys"], "a chord's own end adds no typing");
@@ -369,4 +370,144 @@ test("where Cua draws the agent's own pointer, as on macOS, bb-box draws only th
   assert.ok(moved.visibleFrom !== null && moved.visibleFrom > 4.9 && moved.visibleFrom < 5, "shown once a person moves it");
   assert.deepEqual(moved.frames[Math.round(3 * CLIP_FPS)], { x: 0, y: 0 }, "the agent's click does not move it");
   assert.deepEqual(planPointer(scene({ clicks, samples: [{ at: 0, x: 0, y: 0, buttons: 0 }] })).frames[Math.round(3 * CLIP_FPS)], { x: 700, y: 400 }, "elsewhere it glides to the click");
+});
+
+const XK_SHIFT_L = 0xffe1;
+const XK_CONTROL_L = 0xffe3;
+const XK_META_L = 0xffe7;
+const XK_ALT_L = 0xffe9;
+const XK_ALT_R = 0xffea;
+const XK_ISO_LEVEL3_SHIFT = 0xfe03;
+const XK_MODE_SWITCH = 0xff7e;
+const XK_F4 = 0xffc1;
+const UNICODE_EURO = 0x10020ac;
+
+function personKeys(os: "linux" | "macos" | "windows", keys: readonly (readonly [number, boolean])[], macKeys: "alt-command" | null = null): readonly InputEvent[] {
+  const inputs = new RecordingInputs(() => 5_000);
+  inputs.begin("box", 0, os);
+  for (const [keysym, down] of keys) inputs.person("box", { type: "key", keysym, down }, macKeys);
+  return inputs.end("box")!;
+}
+
+function pressed(events: readonly InputEvent[], style: "mac" | "pc" = "pc"): string[] {
+  return events.map((event) => (event.type === "keys" ? chordWords(event.chord, style) : event.type));
+}
+
+test("typing whose field bb-box cannot tell, a person's or a single key's, is kept secret: no Typing pill and no zoom (073)", () => {
+  const inputs = new RecordingInputs(() => 1_003_000);
+  inputs.begin("box", 0, "linux");
+  for (const keysym of [0x31, 0x32, 0x33, 0x34]) {
+    inputs.person("box", { type: "key", keysym, down: true });
+    inputs.person("box", { type: "key", keysym, down: false });
+  }
+  inputs.acted("box", { type: "keys", key: "5", modifiers: [] });
+  const events = inputs.end("box")!;
+  assert.deepEqual(
+    events.map((event) => event.type === "typing" && event.secret),
+    [true, true, true, true, true],
+  );
+  const plan = planScene(facts({ samples: [{ at: 1000, x: 900, y: 500, buttons: 0 }], inputs: events }), SCREEN, 1000, 10, { zoom: true, frame: false });
+  assert.deepEqual(plan.pills, [], "no Typing pill for a PIN typed by a person");
+  assert.equal(plan.zooms, false, "and no zoom on the pointer while it goes in");
+});
+
+test("a key that makes a character, with AltGr, a Mac's Option or Windows' Ctrl+Alt, is typing and its character is never logged; a shortcut needs a command modifier (073)", () => {
+  const altGr = personKeys("linux", [
+    [XK_ISO_LEVEL3_SHIFT, true],
+    [UNICODE_EURO, true],
+    [UNICODE_EURO, false],
+    [0x40, true],
+    [0x40, false],
+    [XK_ISO_LEVEL3_SHIFT, false],
+  ]);
+  assert.deepEqual(pressed(altGr), ["typing", "typing"], "AltGr types € and @");
+  const noVncOption = personKeys("linux", [
+    [XK_MODE_SWITCH, true],
+    [0x40, true],
+  ]);
+  assert.deepEqual(pressed(noVncOption), ["typing"], "a Mac's Option, as noVNC sends it");
+  const windowsAltGr = personKeys("windows", [
+    [XK_CONTROL_L, true],
+    [XK_ALT_R, true],
+    [0x40, true],
+  ]);
+  assert.deepEqual(pressed(windowsAltGr), ["typing"], "Windows' AltGr is Ctrl and Alt");
+  const pastAscii = personKeys("linux", [
+    [XK_CONTROL_L, true],
+    [0xe9, true],
+  ]);
+  assert.deepEqual(pressed(pastAscii), ["typing"], "a character past ASCII is never a shortcut's key");
+  const shortcuts = personKeys("linux", [
+    [XK_CONTROL_L, true],
+    [XK_SHIFT_L, true],
+    [0x54, true],
+    [XK_SHIFT_L, false],
+    [XK_CONTROL_L, false],
+    [XK_ALT_L, true],
+    [XK_F4, true],
+    [0x66, true],
+  ]);
+  assert.deepEqual(pressed(shortcuts), ["Ctrl+Shift+T", "Alt+F4", "Alt+F"]);
+  const screenSharing = personKeys("macos", [
+    [XK_ALT_L, true],
+    [0xe5, true],
+    [XK_ALT_L, false],
+    [XK_META_L, true],
+    [0x63, true],
+  ]);
+  assert.deepEqual(pressed(screenSharing, "mac"), ["typing", "⌘C"], "Alt is Option and Meta Command");
+  const tart = personKeys(
+    "macos",
+    [
+      [XK_META_L, true],
+      [0x61, true],
+      [XK_META_L, false],
+      [XK_ALT_L, true],
+      [0x63, true],
+    ],
+    "alt-command",
+  );
+  assert.deepEqual(pressed(tart, "mac"), ["typing", "⌘C"], "where the server takes Meta as Option and Alt as Command");
+  const agent = new RecordingInputs(() => 5_000);
+  agent.begin("pc", 0, "windows");
+  const chords: [string, string[]][] = [
+    ["e", ["ctrl", "alt"]],
+    ["e", ["ctrl", "altgr"]],
+    ["é", ["ctrl"]],
+    ["s", ["ctrl"]],
+    ["F4", ["alt"]],
+  ];
+  for (const [key, modifiers] of chords) agent.acted("pc", { type: "keys", key, modifiers });
+  const agents = agent.end("pc")!;
+  assert.deepEqual(pressed(agents), ["typing", "typing", "typing", "Ctrl+S", "Alt+F4"]);
+  assert.doesNotMatch(JSON.stringify([altGr, noVncOption, windowsAltGr, pastAscii, screenSharing, tart, agents]), /€|@|é|É|å|Å/, "no typed character is kept");
+});
+
+test("an outside change ends a zoom as it happens, with clicks still to come, and the clicks after it are framed afresh (073)", () => {
+  const clicks = [2, 4, 6, 8, 10].map((at) => ({ at, x: 400, y: 300, button: "left" as const, count: 1 as const, area: null }));
+  const changes = [{ at: 3, x: 1000, y: 200, width: 800, height: 700 }];
+  const keys = camera({ clicks, changes });
+  const zoomed = cameraAt(keys, 2.5).zoom;
+  assert.ok(zoomed > 1, "in on the first click");
+  assert.equal(cameraAt(keys, 3).zoom, zoomed, "until the dialog opens");
+  assert.ok(cameraAt(keys, 3.4).zoom < zoomed, "out as it opens");
+  assert.equal(cameraAt(keys, 3.9).zoom, 1);
+  assert.equal(cameraAt(keys, 5).zoom, 1, "out while the dialog is seen");
+  assert.ok(cameraAt(keys, 8).zoom > 1, "the clicks after it zoom again");
+  const between = camera({ clicks: [clicks[0]!, { ...clicks[0]!, at: 4.9 }], changes: [{ ...changes[0]!, at: 4.2 }] });
+  assert.equal(cameraAt(between, 4.2 + 0.9).zoom, 1, "a change after a click's linger and before the next click ends the zoom too, rather than a pan through it");
+  const quick = camera({
+    clicks: [
+      { at: 3, x: 300, y: 300, button: "left", count: 1, area: null },
+      { at: 3.5, x: 1700, y: 900, button: "left", count: 1, area: null },
+    ],
+    changes: [{ at: 3.55, x: 0, y: 0, width: 900, height: 450 }],
+  });
+  assert.deepEqual(
+    quick.map((key) => key.at),
+    [...quick.map((key) => key.at)].sort((a, b) => a - b),
+    "a zoom ended by a change just after its click still leaves after it arrives",
+  );
+  const late = camera({ clicks: clicks.slice(0, 2), changes });
+  for (let t = 3.9; t < 8; t += 0.1) assert.equal(cameraAt(late, t).zoom, 1, `a click the view could reach only after it lands is not framed, at ${t.toFixed(1)} s`);
 });

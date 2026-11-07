@@ -27,6 +27,7 @@ export const LINGER_S = 1.5;
 export const PAN_INSTEAD_S = 0.6;
 export const BIG_CHANGE_SHARE = 0.4;
 export const OUTSIDE_CHANGE_SHARE = 0.1;
+export const OUTSIDE_SEEN_S = 1.5;
 
 export interface PointerSample {
   readonly at: number;
@@ -363,25 +364,69 @@ interface Group {
   readonly first: number;
   readonly last: number;
   readonly view: View;
+  readonly outsideAt: number | null;
 }
 
-function groupsOf(scene: Scene, focuses: readonly Focus[]): Group[] {
+function closeGroups(scene: Scene, focuses: readonly Focus[]): Focus[][] {
   const groups: Focus[][] = [];
   for (const focus of focuses) {
     const current = groups.at(-1);
     if (current && focus.at - current.at(-1)!.at <= GROUP_GAP_S) current.push(focus);
     else groups.push([focus]);
   }
-  return groups.flatMap((members): Group[] => {
+  return groups.flatMap((members): Focus[][] => {
     const split: Focus[][] = [[]];
     for (const member of members) {
       const current = split.at(-1)!;
       const widened = unionOf([...current.map((each) => each.area), member.area]);
-      if (current.length && viewFor(scene, widened, false).zoom === 1 && viewFor(scene, unionOf(current.map((each) => each.area)), current.length === 1).zoom > 1) split.push([member]);
+      if (current.length && viewFor(scene, widened, false).zoom === 1 && viewOfMembers(scene, current).zoom > 1) split.push([member]);
       else current.push(member);
     }
-    return split.map((part) => ({ first: part[0]!.at, last: part.at(-1)!.at, view: viewFor(scene, unionOf(part.map((each) => each.area)), part.length === 1) }));
+    return split;
   });
+}
+
+function viewOfMembers(scene: Scene, members: readonly Focus[]): View {
+  return viewFor(scene, unionOf(members.map((each) => each.area)), members.length === 1);
+}
+
+function showsOutside(scene: Scene, view: View, change: ChangedRegion): boolean {
+  const screen = scene.width * scene.height;
+  return areaOf(change) > screen * BIG_CHANGE_SHARE || areaOf(change) - overlap(change, viewArea(scene, view)) > screen * OUTSIDE_CHANGE_SHARE;
+}
+
+function outsideChangeAt(scene: Scene, members: readonly Focus[]): number | null {
+  const view = viewOfMembers(scene, members);
+  if (view.zoom === 1) return null;
+  const first = members[0]!.at;
+  const until = Math.min(scene.length, members.at(-1)!.at + LINGER_S);
+  const outside = scene.changes.filter((change) => change.at > first && change.at < until && showsOutside(scene, view, change)).map((change) => change.at);
+  return outside.length ? Math.min(...outside) : null;
+}
+
+interface Unplanned {
+  readonly members: readonly Focus[];
+  readonly endsAt: number | null;
+}
+
+function earliest(a: number | null, b: number | null): number | null {
+  return a === null ? b : b === null ? a : Math.min(a, b);
+}
+
+function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][]): Group[] {
+  const planned: Group[] = [];
+  const queue: Unplanned[] = groups.map((members) => ({ members, endsAt: null }));
+  while (queue.length) {
+    const { members, endsAt } = queue.shift()!;
+    const outsideAt = earliest(outsideChangeAt(scene, members), endsAt);
+    const later = outsideAt === null ? [] : members.filter((each) => each.at > outsideAt);
+    if (later.length) {
+      queue.unshift({ members: members.filter((each) => each.at <= outsideAt!), endsAt: outsideAt }, { members: later, endsAt });
+      continue;
+    }
+    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), outsideAt });
+  }
+  return planned;
 }
 
 function sameView(a: View, b: View): boolean {
@@ -391,7 +436,7 @@ function sameView(a: View, b: View): boolean {
 export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
   const full = FULL(scene);
   const keys: CameraKey[] = [{ at: 0, view: full }];
-  const groups = groupsOf(scene, focusesOf(scene, pointer));
+  const groups = splitAtOutsideChanges(scene, closeGroups(scene, focusesOf(scene, pointer)));
   const last = () => keys.at(-1)!;
   const moveTo = (arrive: number, view: View) => {
     const current = last();
@@ -401,18 +446,24 @@ export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
     if (from > current.at) keys.push({ at: round3(from), view: current.view });
     keys.push({ at: round3(to), view });
   };
+  let outsideShownUntil = -Infinity;
   groups.forEach((group, index) => {
     const nextGroup = groups[index + 1];
-    moveTo(group.first - SETTLE_S, group.view);
+    const arrive = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
+    if (group.view.zoom > 1 && arrive > group.last) return;
+    moveTo(arrive, group.view);
     if (group.view.zoom === 1) return;
-    let hold = Math.min(scene.length, group.last + LINGER_S);
-    const shown = viewArea(scene, group.view);
-    const screen = scene.width * scene.height;
-    const away = scene.changes.find((change) => change.at > group.first && change.at < hold && (areaOf(change) > screen * BIG_CHANGE_SHARE || areaOf(change) - overlap(change, shown) > screen * OUTSIDE_CHANGE_SHARE));
-    if (away) hold = Math.max(group.last, away.at);
+    const hold = Math.min(scene.length, group.last + LINGER_S, group.outsideAt ?? Infinity);
     if (hold > last().at) keys.push({ at: round3(hold), view: group.view });
+    const leave = Math.max(hold, last().at);
+    const zoomsOut = leave + MOVE_S <= scene.length;
+    if (group.outsideAt !== null) {
+      if (zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
+      outsideShownUntil = leave + MOVE_S + OUTSIDE_SEEN_S;
+      return;
+    }
     const nextMove = nextGroup ? nextGroup.first - SETTLE_S - MOVE_S : Infinity;
-    if (nextMove > hold + MOVE_S + PAN_INSTEAD_S && hold + MOVE_S <= scene.length) keys.push({ at: round3(hold + MOVE_S), view: full });
+    if (nextMove > leave + MOVE_S + PAN_INSTEAD_S && zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
   });
   return keys;
 }

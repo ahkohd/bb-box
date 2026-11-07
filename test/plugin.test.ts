@@ -7637,3 +7637,67 @@ test("while a desktop box records, its computer use is logged for the clip: clic
   assert.ok(clicked.type === "click" && clicked.x === clicked.area!.x + 40 && clicked.y === clicked.area!.y + 20, "at its centre");
   assert.doesNotMatch(JSON.stringify(events), /milk/, "the text typed is not in the log");
 });
+
+test("typing whose field bb-box cannot tell, into a window's focused element or as a single key, is logged as secret, so the clip shows no pill and draws no zoom for it (073)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const field = refOf(tree, '"New task"');
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
+  await tool("computer_type", { box: box.name, window: 100, text: "4711" });
+  await tool("computer_type", { box: box.name, window: 100, keys: "5" });
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters}${event.secret ? " secret" : ""}` : event.type)),
+    ["typing 8", "typing 0", "typing 4 secret", "typing 0 secret", "typing 1 secret"],
+  );
+});
+
+test("a change of a desktop's control lets go of the keys a recording holds down, so a person's next key is not a shortcut (073)", async (t) => {
+  const { harness, app, box } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  app.recordings.begin(box.id, 0, "linux");
+  app.recordings.person(box.id, { type: "key", keysym: 0xffe3, down: true });
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  app.recordings.person(box.id, { type: "key", keysym: 0x61, down: true });
+  assert.deepEqual(
+    app.recordings.end(box.id)!.map((event) => event.type),
+    ["typing"],
+  );
+});
+
+test("a person's keys are read as the desktop's server names Command and Option, so on a Mac whose server takes Alt as Command, Option types and Command is a shortcut (073)", async (t) => {
+  const base = FAKE_KINDS[1]!;
+  const altCommand: BoxKind = {
+    ...base,
+    capabilities: { ...base.capabilities, displays: base.capabilities.displays.map((display) => (display.protocol === "rfb" ? { ...display, macKeys: "alt-command" as const } : display)) },
+  };
+  const { harness, app, box, world } = await desktopBox({ kind: altCommand });
+  t.after(() => harness.lifecycle.dispose());
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the box's server", async () => world.backend!.rfb.connections.length === 1);
+  const [rfb] = world.backend!.rfb.connections;
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  app.recordings.begin(box.id, 0, "macos");
+  const key = (down: boolean, keysym: number) => Uint8Array.of(4, down ? 1 : 0, 0, 0, (keysym >>> 24) & 0xff, (keysym >>> 16) & 0xff, (keysym >>> 8) & 0xff, keysym & 0xff);
+  const keys = [key(true, 0xffe7), key(true, 0x61), key(false, 0x61), key(false, 0xffe7), key(true, 0xffe9), key(true, 0x63)];
+  for (const each of keys) await session.receive(each);
+  await until("the keys to reach the box", async () => rfb!.received.byteLength === keys.length * 8);
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "keys" ? `${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["typing", "super+C"],
+  );
+});

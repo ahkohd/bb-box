@@ -14,7 +14,7 @@ import type { Owner } from "./control.ts";
 import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
-import { isSecretTyping, normalChord, type ActedInput, type InputArea } from "./record-input.ts";
+import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
@@ -818,6 +818,10 @@ function toArea(rect: Rect): InputArea {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
+function typedField(element: Element | null | undefined): TypedField | null {
+  return element ? { role: element.role, name: element.label } : null;
+}
+
 function describe(role: string, label: string): string {
   return label ? `${role} '${label}'` : role;
 }
@@ -1139,7 +1143,7 @@ export class Computer {
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
     if (input.action === "set_value") {
       const value = input.value ?? "";
-      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: isSecretTyping(target.element?.role ?? null, target.element?.label ?? null, value) }, sentAt);
+      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value) }, sentAt);
       return;
     }
     if (!point) return;
@@ -1162,8 +1166,8 @@ export class Computer {
     if (!this.#deps.onInput) return;
     const typed = text ?? "";
     const input: ActedInput = keys
-      ? { type: "keys", chord: normalChord(keys.key, keys.modifiers) }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: isSecretTyping(element?.role ?? null, element?.label ?? null, typed) };
+      ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
+      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed) };
     use.typedInput = { input, sentAt: Date.now() };
   }
 

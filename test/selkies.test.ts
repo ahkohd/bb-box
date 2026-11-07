@@ -9,6 +9,7 @@ import { followWindowsPointer } from "../src/backends/windows.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { FakeSelkies, videoFrame } from "./fake-selkies.ts";
 import { until } from "./fake-rfb.ts";
+import { RecordingInputs, type PersonInput } from "../src/core/record-input.ts";
 
 /** The relay's clock in a test: time moves only when the test moves it, or a wait asks it to. */
 class FakeClock implements Clock {
@@ -42,7 +43,7 @@ function viewer() {
 
 let marks = 0;
 
-function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; onSize?: (size: { width: number; height: number }) => void; ownCursor?: () => boolean } = {}) {
+function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; onSize?: (size: { width: number; height: number }) => void; ownCursor?: () => boolean; onInput?: (input: PersonInput) => void } = {}) {
   const server = new FakeSelkies({ refuse: options.refuse });
   const open = async () => server.channel();
   const clock = new FakeClock();
@@ -50,7 +51,7 @@ function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; o
   let control: string | null = null;
   const relay = (name: string) => {
     const end = viewer();
-    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs, onSize: options.onSize, ownCursor: options.ownCursor });
+    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs, onSize: options.onSize, ownCursor: options.ownCursor, onInput: options.onInput });
     // Not spread: that would copy `closed` as it is now.
     return Object.assign(end, { relay });
   };
@@ -503,4 +504,32 @@ test("bb-box follows a Windows box's pointer through bb-box-stream.exe, which sa
   stop.abort();
   await following;
   await until("the connection closed", () => page.closed);
+});
+
+test("a recording forgets the keys a viewer held when the relay lets them go, on a key reset, and when the viewer or the box ends its connection, so a later key is not a shortcut (073)", async () => {
+  const inputs = new RecordingInputs(() => 5_000);
+  inputs.begin("box", 0, "linux");
+  const { server, box, relay, give } = setup({ onInput: (input) => inputs.person("box", input) });
+  give("a");
+  const a = relay("a");
+  await until("the page", () => server.pages.length >= 1);
+  for (const message of ["kd,65507", "kd,97", "ku,97"]) await a.relay.receive(message);
+  await a.relay.release();
+  for (const message of ["kd,97", "ku,97", "kd,65507", "kr", "kd,97", "ku,97", "kd,65507"]) await a.relay.receive(message);
+  await a.relay.close();
+  const b = relay("a");
+  const viewerPages = () => server.pages.filter((page) => page.role === "viewer");
+  await until("its page", () => viewerPages().length === 2);
+  for (const message of ["kd,97", "ku,97", "kd,65507"]) await b.relay.receive(message);
+  await viewerPages()[1]!.close(1011);
+  await until("the box to end it", () => b.closed !== null);
+  const c = relay("a");
+  await c.relay.receive("kd,97");
+  const events = inputs.end("box")!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "keys" ? `${event.chord.modifiers.join("+")}+${event.chord.key}` : event.type)),
+    ["ctrl+A", "typing", "typing", "typing", "typing"],
+  );
+  await c.relay.close();
+  await box.close();
 });

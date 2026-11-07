@@ -83,6 +83,7 @@ export function personInput(text: string): PersonInput | null {
     const keysym = Number(fields[1]);
     return Number.isInteger(keysym) ? { type: "key", keysym, down: fields[0] === "kd" } : null;
   }
+  if (fields[0] === "kr") return { type: "released" };
   return null;
 }
 
@@ -653,6 +654,7 @@ export class SelkiesRelay {
 
   /** Releases the keys and buttons this viewer holds down in the box. */
   async release(): Promise<void> {
+    this.#options.onInput?.({ type: "released" });
     const messages = [...this.#held].map((keysym) => `ku,${keysym}`);
     this.#held.clear();
     for (const message of messages) await this.#options.box.input(message);
@@ -676,6 +678,7 @@ export class SelkiesRelay {
   async #end(by: "viewer" | "box", error: Error | null): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
+    this.#options.onInput?.({ type: "released" });
     if (by === "viewer") await this.release().catch(() => undefined);
     await this.#socket.then(({ socket }) => socket.close()).catch(() => undefined);
     if (by === "box") this.#options.viewer.close(error ? 1011 : 1000, (error?.message ?? `${this.#options.box.paths.shows} closed the connection.`).slice(0, 120));

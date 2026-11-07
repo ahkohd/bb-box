@@ -15,8 +15,10 @@ bb-box draws its own pointer over the clip, larger than the screen's. It glides 
 - Each click shows a ring where it lands: white for a left click, blue for a right click, and two quick rings for a double click.
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
 - Each shortcut or special key shows in a small pill at the bottom, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
-- Typing shows one "Typing" pill while it goes on. The pill never shows what was typed.
-- Typing into a password field, or text that looks like a password, key or token, shows no pill at all.
+- A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together, which type characters on Windows. A shortcut's key is a letter, digit or ASCII symbol.
+- When the agent types into a field it named, one "Typing" pill shows while it goes on. The pill never shows what was typed.
+- Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
+- Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
 
 The pill moves to the top when the pointer is near the bottom of the screen, so it does not cover what was clicked.
 
@@ -26,7 +28,11 @@ On macOS and Windows, the agent's pointer is the one its computer-use driver dra
 
 ### Zooms
 
-The clip zooms in gently, up to 2x, where the agent or you click, drag, scroll or type, and holds still while you read. It zooms back out between bursts of work, and as soon as something opens elsewhere on the screen, such as a dialog. It never zooms in on a password field.
+The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. It holds still while you read, and zooms back out between bursts of work.
+
+When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. The clicks after it get a zoom of their own.
+
+It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field bb-box cannot tell.
 
 The zooms follow what was actually done, not guesses: the agent's clicks and keys, your input when you have control, and what changed on the screen.
 

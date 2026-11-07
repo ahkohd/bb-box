@@ -62,7 +62,10 @@ The log has three sources, all put on the capture's timeline:
    best of two).
 2. **A person's input through the relay** while they have control: pointer
    places and buttons, and keys, sorted at once into chords, named keys and
-   "typing".
+   "typing". Each relay tells the log when it lets go of the keys the viewer
+   holds, on a key reset and when the viewer's connection ends, and bb-box
+   does on each change of control: the log then forgets every modifier held,
+   so a key after them is never read as a shortcut.
 3. **The box's pointer sampler**, beside the capture, 30 times a second,
    writing a line only when the place or buttons change.
 
@@ -103,25 +106,52 @@ while recording loses it, and the clip is made from the sampler alone.
 
 The log never holds a typed character: the agent's text is reduced to its
 length, and a person's printable keys to "typing", before they are logged.
-A pill says "Typing", never what was typed. A key with only Shift is
-typing, and so is Option with a key on a Mac, which types characters.
+A pill says "Typing", never what was typed.
 
-Typing is secret, and shows no pill and draws no zoom, when its element's
-role says password or secure (AT-SPI's "password text", macOS's secure text
-field), its name says password, passcode, passphrase, PIN, secret, token or
-API key, or the text looks like a key: 16 characters or more with no space
-and three kinds of character, or a known prefix such as `sk-`, `ghp_`,
-`AKIA` or `-----BEGIN`. What the app itself draws is in the picture as it
-was, as today.
+Whether a key is a shortcut or types a character is decided before
+anything is logged, from the modifiers held as each way into the box names
+them:
+
+- A shortcut needs a command modifier: Ctrl, Command, Super, or Alt where it
+  does not make characters. Its key must be a named key, Space, or one
+  ASCII letter, digit or symbol; any other character is typing.
+- Shift alone makes characters, and so do AltGr and its kin
+  (`ISO_Level3_Shift`, `ISO_Level5_Shift`, `Mode_switch`), Option on a
+  macOS desktop, and Ctrl with Alt, which is AltGr on Windows. A key with
+  any of them is typing, unless it is a named key such as an arrow.
+- Through noVNC in a Mac's browser, Option comes as `Mode_switch` or
+  `ISO_Level3_Shift`. bb-box's viewer sends a macOS desktop Command and
+  Option as its server names them: Meta and Alt, or Alt and Meta where the
+  server takes Alt as Command, as Tart's does (its display's `macKeys`).
+  The log reads each relay's keys with its desktop's naming.
+- An agent's chord with a modifier bb-box does not know, such as AltGr, is
+  typing.
+- Dead keys, compose and the lock keys are not logged. A character they
+  make comes as its own key, which is typing.
+
+Typing shows a pill, and its frame or the text it makes can draw a zoom,
+only when the agent types into an element it named by reference, and that
+element is not secret. Typing is secret when its element's role says
+password or secure (AT-SPI's "password text", macOS's secure text field),
+its name says password, passcode, passphrase, PIN, secret, token or API
+key, or the text looks like a key: 16 characters or more with no space and
+three kinds of character, or a known prefix such as `sk-`, `ghp_`, `AKIA`
+or `-----BEGIN`.
+
+Where bb-box cannot tell the field, the typing counts as secret: a person's
+typing through a relay, the agent's typing into a window's focused element
+or whatever has the focus, and the agent's single keys. Privacy wins over
+polish there. What the app itself draws is in the picture as it was, as
+today.
 
 ### Zoom
 
 On by default; `zoom: false` at the stop turns it off.
 
-- **Focus** comes from real events only: clicks, drags, scrolls and typing.
-  Typing's focus is its element's frame, or else the region that changed
-  on the screen while it went on, or else the pointer. Chords keep a zoom
-  but do not move it.
+- **Focus** comes from real events only: clicks, drags, scrolls and typing
+  that is not secret. Typing's focus is its element's frame, or else the
+  region that changed on the screen while it went on, or else the pointer.
+  Chords keep a zoom but do not move it.
 - **Groups.** Events less than 3 s apart form a group. A group's view is
   its events' bounds, a quarter larger on each side, at most 2x and at
   least 1.3x, else no zoom: a single click zooms 1.8x. The view stays on
@@ -131,7 +161,11 @@ On by default; `zoom: false` at the stop turns it off.
   group starts soon after, the view pans to it instead of zooming out.
 - **Out early** when a change covers more than 40% of the screen, or
   more than a tenth of it falls outside the view, so a dialog that opens
-  elsewhere is seen.
+  elsewhere is seen. The zoom ends as the change happens: the group is
+  split there, even with its clicks still to come, and the view moves out
+  without panning on. It stays out for at least 1.5 s after it arrives.
+  The events after the change are grouped and framed afresh; a group the
+  view could reach only after its last event is not zoomed.
 - **Still while reading.** A caption's hold, a still frame, holds the view
   too.
 - **Cuts keep the motion.** A cut still stretch is trimmed so it never

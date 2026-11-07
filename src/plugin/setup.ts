@@ -1098,7 +1098,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     staleMs: options.controlStaleMs,
     reconnectMs: options.controlReconnectMs,
     pause: (boxId) => computing.pause(boxId),
-    recordInput: (boxId, input) => recordings.person(boxId, input),
+    recordInput: (boxId, input, macKeys) => recordings.person(boxId, input, macKeys),
     controlChanged: (boxId) => devices.controlChanged(boxId),
     openDevice: async (box) => {
       await devices.ensure(box).catch((error) => logError(`device server of box ${box.name}`, error));

@@ -504,6 +504,7 @@ export class RfbRelay {
 
   /** Releases the keys and buttons this viewer holds down in the box. */
   async release(): Promise<void> {
+    this.#options.onInput?.({ type: "released" });
     const connection = this.#connection;
     if (!connection || this.#phase !== "messages") return;
     const messages = [...this.#held.values()];
@@ -580,6 +581,7 @@ export class RfbRelay {
   async #end(by: "viewer" | "box", error: Error | null): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
+    this.#options.onInput?.({ type: "released" });
     for (const timer of this.#watch) clearTimeout(timer);
     this.#watch.clear();
     const connection = this.#connection;
