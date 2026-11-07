@@ -1,10 +1,16 @@
 #!/bin/bash
 set -u
-port=5981
+port=${BBBOX_VOXL_PORT:-5981}
+binary=${BBBOX_VOXL_BINARY:-/usr/local/bin/voxl}
 idle_limit_seconds=${BBBOX_VOXL_IDLE_SECONDS:-60}
+check_seconds=${BBBOX_VOXL_CHECK_SECONDS:-5}
+start_lock_seconds=3
+answer_tenths=50
+run_lock_seconds=20
 state=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 [ -d "$state" ] && [ -w "$state" ] || state=/tmp
 log=$state/bb-box-voxl.log
+wanted=$state/bb-box-voxl.wanted
 
 answers() { curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; }
 
@@ -15,23 +21,31 @@ viewer_count() {
 }
 
 start_unless_answering() {
+  touch "$wanted"
   answers && return 0
   exec 9>"$state/bb-box-voxl.lock"
-  flock -w 20 9 || { echo "voxl: another start held the lock for 20 s" >&2; return 1; }
+  flock -w "$start_lock_seconds" 9 || { echo "voxl: another start held the lock for $start_lock_seconds s" >&2; return 1; }
   if ! answers; then
     setsid "$0" run 9>&- </dev/null >>"$log" 2>&1 &
   fi
-  for _ in $(seq 1 200); do
+  for _ in $(seq 1 "$answer_tenths"); do
     answers && return 0
     sleep 0.1
   done
-  echo "voxl did not answer on 127.0.0.1:$port within 20 s: $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')" >&2
+  echo "voxl did not answer on 127.0.0.1:$port within $((answer_tenths / 10)) s: $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')" >&2
   return 1
+}
+
+watched_since() {
+  local wanted_at
+  wanted_at=$(stat -c %Y "$wanted" 2>/dev/null || echo 0)
+  [ "$wanted_at" -gt "$1" ] && echo "$wanted_at" || echo "$1"
 }
 
 run_until_unwatched() {
   exec 8>"$state/bb-box-voxl.run"
-  flock -n 8 || exit 0
+  flock -w "$run_lock_seconds" 8 || exit 1
+  answers && exit 0
   if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
   export DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
   : >"$log"
@@ -41,13 +55,14 @@ run_until_unwatched() {
   while :; do
     if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
       [ -z "$pid" ] || { wait "$pid" 2>/dev/null; sleep 1; }
-      /usr/local/bin/voxl --addr=127.0.0.1 --port=$port --enable-basic-auth=false \
+      "$binary" --addr=127.0.0.1 --port="$port" --enable-basic-auth=false \
         --enable-resize=false --audio-enabled=false --microphone-enabled=false \
         --file-transfers=none --title="bb-box desktop" &
       pid=$!
     fi
-    sleep 5
+    sleep "$check_seconds"
     [ "$(viewer_count)" -eq 0 ] || watched_at=$(date +%s)
+    watched_at=$(watched_since "$watched_at")
     if [ $(($(date +%s) - watched_at)) -ge "$idle_limit_seconds" ]; then
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null

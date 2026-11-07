@@ -5,6 +5,7 @@ import { VOXL_PING_VERB, VOXL_PONG_VERB } from "./voxl-verbs.ts";
 
 export { VOXL_PING_VERB, VOXL_PONG_VERB };
 export const VOXL_PATH = "/ws";
+export const VOXL_CONNECT_MS = 20_000;
 
 export const VOXL_VIDEO = 0x01;
 export const VOXL_AUDIO = 0x02;
@@ -275,7 +276,7 @@ export class VoxlRelay {
   constructor(options: VoxlRelayOptions) {
     this.#options = options;
     this.#socket = (async () => {
-      const signal = AbortSignal.timeout(options.connectTimeoutMs ?? 20_000);
+      const signal = AbortSignal.timeout(options.connectTimeoutMs ?? VOXL_CONNECT_MS);
       return BoxWebSocket.upgrade(await options.open(signal), { host: "localhost", path: VOXL_PATH, signal });
     })();
     this.#socket.then(

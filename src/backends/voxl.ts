@@ -7,7 +7,7 @@ export const VOXL_LAUNCHER = "/usr/local/libexec/bb-box/voxl";
 export type VoxlOffer = "off" | "offered" | "chosen";
 
 export const VOXL_DISPLAY: DesktopDisplayCapability = { id: "voxl", protocol: "voxl", resizable: true, byChoice: true };
-const START_TIMEOUT_MS = 30_000;
+export const VOXL_START_TIMEOUT_MS = 15_000;
 
 export class VoxlPresence extends ImageFile {
   constructor(launcher = VOXL_LAUNCHER) {
@@ -20,7 +20,7 @@ function quoted(path: string): string {
 }
 
 export async function startVoxl(command: CommandTransport, signal?: AbortSignal, launcher = VOXL_LAUNCHER): Promise<void> {
-  const result = await command.run(`${quoted(launcher)} start`, { timeoutMs: START_TIMEOUT_MS, signal, maxOutputBytes: 4096 });
+  const result = await command.run(`${quoted(launcher)} start`, { timeoutMs: VOXL_START_TIMEOUT_MS, signal, maxOutputBytes: 4096 });
   if (result.exitCode !== 0) throw new Error(`The box's voxl did not start: ${result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`}`);
 }
 
