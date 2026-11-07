@@ -4752,8 +4752,10 @@ Built on main `1a3dae81`, on branch `u71-10`, after units 9 and 12. Section
 on Proxmox LXC. It replaces unit 9's refusal with one restart that installs
 the userspace first, and installs it with unit 12's path: the update script,
 its lock in the box, its apt guard and its checks. No helper or template
-change. The gate on the node has not run yet: its steps are in the report to
-the lead.
+change. Its gate passed on the node on `a674ddea`, after three rounds of
+fixes from the gate's own findings and Astra's and Fable's reviews; the last
+commit, `10169a06`, keeps the desktop's check within its bound and needed no
+rerun.
 
 ### What it does
 
@@ -4792,14 +4794,18 @@ the lead.
 
   and to an agent, "Not resized: … bb-box changed nothing." A reason with no
   action of its own adds "Make a new box with the GPU it needs", or for an
-  agent "Acquire a new box with the GPU it needs, or ask the user". A box
-  still running an earlier update is told to try again once it has ended
-  (`try_again`).
-- **A stopped box that needs it** is refused, as section 6's table has it,
-  where its template's record has no userspace for the host's driver or
-  another version: "Start swift-owl first: NVIDIA's userspace 580.142, which
-  a card needs, is installed in a running box. Nothing changes." A stopped
-  box from a template with it changes while stopped, as unit 9 has it. A
+  agent "Acquire a new box with the GPU it needs, or ask the user". A check
+  that did not finish, or that found an update started meanwhile, says
+  "Try again in a minute." (`try_again`). Every GPU change that restarts a
+  running box, with an install or without, first reads the box, and refuses
+  while an earlier install or update still holds its lock: "Resize it again
+  once it has ended."
+- **A stopped box that needs it** is refused, as section 6's table has it:
+  "Start swift-owl first: NVIDIA's userspace 580.142, which a card needs, is
+  installed in a running box. Nothing changes." It is judged by its own last
+  reading where it has one, before its backend plans, and by its template's
+  record where it has none. A stopped box with the host's driver's userspace
+  changes while stopped, as unit 9 has it. A
   host whose helper reports no driver, or one that is not a version, is
   refused for each audience; bb-box never installs "none".
 - **The order**, section 6's. The backend makes the plan again under the
@@ -4822,7 +4828,13 @@ the lead.
   restarts with no install, and is starting from its stop all the same. The core then
   checks it as unit 12 does: the userspace read again is the host's driver,
   `nvidia-smi` lists the claimed card and `cuInit` returns 0, and for a
-  desktop its display is on the GPU and its video from NVENC.
+  desktop its display is on the GPU and its video from NVENC. That desktop
+  check waits, within one bound of 30 s kept in milliseconds, for the
+  display and for Selkies to answer, then probes Selkies' video, again while
+  no frames come, each try cut to the time left. NVENC is proved two ways:
+  NVIDIA's encoder is loaded in Selkies' own process, found by its command
+  line, and the card's encoder sessions rise while the probe streams. Each
+  part that is not ready, or not on NVENC, is named.
 - **The result**, after the plan's words:
 
   > bb-box installed NVIDIA's userspace 580.142 in it, where it had none,
@@ -4845,7 +4857,15 @@ the lead.
   failed at its check: the result says so, with "Update it again: bb box gpu
   update amber-fox --thread …" for a person and "Ask the user to update it
   again." for an agent, and status and the doctor name it as unit 12 does.
-  bb-box stopping mid-install leaves the update `unknown`, as unit 12's.
+  bb-box stopping mid-install leaves the update `unknown`, as unit 12's, and
+  the sweep reads the box again even where it has no GPU yet, so the doctor
+  and status name the install with "Resize it again: bb box resize amber-fox
+  --gpu shared --restart --thread …". A resize cut short by bb-box stopping
+  takes, at the sweep or at the box's next resize, the claim the backend
+  holds and the kind that goes with it; until that claim can be read, the
+  resize stays pending. A release cancels a resize in progress, before or
+  during its install or restart, rather than waiting behind it, and once a
+  release is asked no install or restart starts.
 - **A desktop made from the CPU template.** A `linux-desktop-cpu` box, which
   section 1 makes a `linux-desktop` with no GPU, is resized to shared or
   whole through the `linux-desktop` offer, and on success its record becomes
@@ -4893,16 +4913,20 @@ them:
 
 - `tsc` clean, and `node scripts/reference.ts --check` clean after the
   reference was written again (the two descriptions).
-- The node suite on the branch's first full commit, `843a7fdd`: 3,965 tests,
+- The node suite on `843a7fdd`, the branch's first full commit: 3,965 tests,
   3,543 passed, 112 failed, 310 skipped. Each failure is one of main's in the
   same container, by name: main `1a3dae81`'s same 11 files there, 281 tests,
   fail the same 112, identity reset scripts that find none of the
   container's interfaces and the snapshot, fork and keep tests built on them,
   the Android image check and a Mac host's check, as units 9, 11 and 12
-  found. vitest: 478 passed.
-- On the last commit, after the restart's hook: the GPU files, `boxes`,
-  `plugin`, `proxmox-lxc` and `docker-gpus` suites: 926 tests, 916 passed,
-  6 failed, 4 skipped. The 6 are `gpu-restore`'s, among main's 112 above.
+  found. vitest: 478 passed. On `ee820d4f`, with the kind tag: 3,968 tests,
+  3,546 passed, the same 112 failed by name, 310 skipped; vitest 478 passed.
+- On `a674ddea`, the gate's commit: `tsc` and the reference clean; the node
+  suite 3,978 tests, 3,556 passed, the same 112 failed by name as main, 310
+  skipped; vitest 478 passed.
+- On `10169a06`: `tsc` clean; `test/gpu-userspace-scripts.test.ts`, run
+  three times, and `test/gpu-add-userspace.test.ts` and
+  `test/gpu-userspace.test.ts`, all passed.
 - `test/gpu-add-userspace-proxmox.test.ts`, 10 tests, against the real helper
   0.4.3 on unit 2's fake node through unit 5's bridge: the plan and its words
   for a running server with no userspace, with another version, and with the
@@ -4918,7 +4942,7 @@ them:
   none; its claim not granted, its old marker and kind tag asked back, the tag
   changed only in the marker's write; a rollback's old kind tag made
   `linux-desktop` again with the claim kept; the plan made again both ways.
-- `test/gpu-add-userspace.test.ts`, 11 tests, through `Boxes` with a fake
+- `test/gpu-add-userspace.test.ts`, 21 tests, through `Boxes` with a fake
   backend that installs through the core, and unit 12's fake userspace: the
   check, a refusal for want of `restart: true` naming the install, the
   resize, its order, the record ready during the install and starting at the
@@ -4931,21 +4955,37 @@ them:
   desktop on its backend; the apt guard, too little disk and an update still
   running, in the check and the resize, with nothing stopped; a failed
   install and a failed download; the guard refusing after the install, and
-  the next resize settling it; the plan comparison.
+  the next resize settling it; the plan comparison; an update still running
+  with no install needed; a resize cut short, its claim taken from the
+  backend, its claim read failing and retried by the sweep and by the next
+  resize; an install cut short on a box with no GPU, named by the sweep, the
+  doctor, status and an agent; the doctor's count; a check that did not
+  finish; a stopped box judged by its own reading; a release during an
+  install, during a restart, during each guard and while the backend plans.
+- `test/gpu-userspace-scripts.test.ts`, 16 tests: unit 12's, and the
+  desktop's check run as a script with fake `curl`, `node`, `nvidia-smi` and
+  `pgrep`: its wait for the display and for Selkies, its repeated probe, the
+  encoder sessions read while it streams, NVIDIA's encoder looked for only in
+  Selkies' process, and its bound timed against a Selkies that never answers
+  and a stream that never flows; and the judge's words for each.
 - `test/plugin.test.ts`: `box_resize` gives an agent its own words when the
   check after an install failed. `test/gpu-resize.test.ts`: unit 9's refusal
   of a box with no userspace is now the plan that installs it, and a stopped
   box's words are unit 10's.
 - Each rule was reverted on its own on the box, by a harness that patches it
-  out, runs its tests and puts it back, and its tests failed: 52 reverts on
-  the last commit, 25 in the core, 7 in its words, 16 in the backend and its
-  plan's words, 3 in the plans' comparison and its words, and one in
-  `box_resize`.
-  Two passed at first, on `de69ebfa`: a test of a resize left holding a card
-  was missing, and one rule guarded a branch no box can reach, which went.
-  Unit 12's harness was run again over the shared steps: 94 reverts, three
-  rewritten for the code they patch, two of them moved by the shared steps
-  and one already stale on main; each fails its tests.
+  out, runs its tests and puts it back, and its tests failed: 86 reverts,
+  42 in the core, 14 in the userspace's scripts and words, 16 in the backend
+  and its plan's words, 10 in the views, 3 in the plans' comparison and one
+  in `box_resize`, each run on the commit that last changed its code. Each
+  revert that passed at first got a test of its own, and then failed: a
+  resize left holding a card; the display's wait, whose test raced its own
+  timing; a release between the guards and the install; a Selkies try cut
+  to the time left, against a `curl` that hangs; a probe cut to the time
+  left, against a probe that lasts as long as it is asked. Two rules were
+  dropped instead: one guarded a branch no box reaches, which went, and one
+  whose test would pass or fail by chance. Unit 12's harness was run again
+  over the shared steps: 94 reverts, six of them rewritten, five for code
+  this unit changed and one already stale on main; each fails its tests.
 - The node steps' blocks pass `bash -n` and `shellcheck`, with their shared
   definitions.
 - S2's apt install brought three more NVIDIA packages as dependencies; S3's
@@ -5039,6 +5079,61 @@ round.
 | The box log's resize said it installed the userspace even where the backend's plan made again found it there | The request's words name no install; the resize's words say "with NVIDIA's userspace 580.142 installed first" only when it ran |
 | The gate's card-wide encoder sessions could be another guest's | It is for the record; the proof is D's own Selkies process |
 
+### After Astra's final checks
+
+Astra's check of `ee820d4f`'s round said no-go, with one high finding and
+three medium; the lead decided all go in this round. Each has a test that
+fails with it reverted, on a box.
+
+| Finding | Fix |
+| --- | --- |
+| A claim that could not be read once left a cut-short GPU resize settled without it, for ever (high) | The resize stays pending, `resizing`, until its claim is read: each sweep reads it again, and the box's next resize settles it first, or says "Not changed: bb-box could not yet read which GPU box amber-fox holds after its last resize, which was cut short. Try again in a minute." The resize then takes its ways from the settled kind |
+| The NVENC check in the box saw only a mapped library | It also needs the card's encoder sessions, `nvidia-smi --query-gpu=encoder.stats.sessionCount` in the box, to rise while its probe streams. `nvidia-smi encodersessions` in the box gives host PIDs, which the box cannot map to its own processes, so the attribution to Selkies' process is the gate's, on the node |
+| The gate's block took session PIDs from `-q -d ENCODER_STATS`, which lists none | It uses `nvidia-smi encodersessions` |
+| bb-box's release waited behind a resize in progress, and the watchdog marked D released before its release had worked | A release cancels the box's resize and its install. In the steps, the watchdog, D4's failure cleanup and D5 release through one script under one lock, which tries again until bb-box reports D gone, and only then marks it released |
+
+Its check of `4f38579e` confirmed those and found one medium: a release asked while the resize waited on its
+first restart guard found nothing to cancel yet, so the install started after
+it. The queued resize now registers its cancellation before anything else,
+a release cancels it before its first write, and once a release is asked no
+install or restart starts, checked after each guard and by the install's and
+the restart's hooks. Its check of `a674ddea` confirmed that and found one
+more medium, fixed in `10169a06` with no rerun: the repeated Selkies probes
+could run past the 30 s bound, measured at 31.57 s. The check keeps its
+deadline in milliseconds and cuts each try of Selkies, each probe, its
+timeout and its sampling to the time left; tests time it against a Selkies
+that never answers and a stream that never flows.
+
+### The gate on the node, second run
+
+Run by the lead on the node and by the builder on the same test BB, rebuilt
+from each commit, on 7 November 2026 (UTC). S's steps passed on `ee820d4f`,
+in the first run above, and were not run again; D's ran again on each
+commit with the fixes, each time with a fresh D from D1, as the one before
+was released.
+
+| Commit | D | What happened |
+| --- | --- | --- |
+| `f3f548f1` (D4 at 04:27:37) | golden-lark on CT 3243 (an earlier try, CT 3242, released) | D1's first try failed in the steps: the gate's measurement probed Selkies before a desktop just made answered; it now waits for Selkies. D4 then passed, bb-box's own check after the restart included, as the Selkies wait made it: 28,629 ms, `glxgears` 4,181 FPS, 618 frames in 10 s, NVIDIA's encoder in Selkies' process. Block 4 failed in the block: `node` was not on the box user's PATH under `runuser`, and `nvidia-smi -q -d ENCODER_STATS` lists no PIDs; with the lead's patch for the path, its probe streamed 614 frames. D was released after holding its place for 179 s |
+| `4f38579e` (D4 at 04:45:31) | vivid-finch on CT 3244 | The resize went ahead in 32.6 s, and D became a GPU desktop, but bb-box's check after the restart failed: Selkies answered, and its first 3 s probe got no frames. D4's failure cleanup released D at once: "D4's failure released D at 04:46:24". The check now probes again until frames come, within its bound |
+| `a674ddea` (D4 at 04:59:44) | golden-quail on CT 3240 | Every step passed. See below |
+
+On `a674ddea`:
+
+| Step | Evidence |
+| --- | --- |
+| D1 | golden-quail, `linux-desktop-cpu` on CT 3240 from the CPU desktop template: on the CPU, llvmpipe, `glxgears` 2,242 FPS, Selkies 606 frames in 10 s; stopped, told to start first, for a person and an agent. The node block first failed in the steps: its journal window began at step 0, and CT 3240 had been the first run's D, stopped then too. It now begins at D's own `created` tag less 5 s, and passed: one start, one stop, one start |
+| D2 | The check named card 0, the install and the kind's change; refused without `--restart` |
+| D3 | Card 0 at 201 MiB used, card 1 at 273 MiB, card-wide, no encoder session |
+| D4 (04:59:44) | The resize in 33,675 ms, the install included: "bb-box installed NVIDIA's userspace 580.142 in it, where it had none, before the restart. nvidia-smi in it lists card 0, shared, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96 GiB, and CUDA's driver initialises. Its desktop is drawn by the GPU, and its video encoded with NVENC." and "It is now a GPU desktop: a linux-desktop box with a shared GPU, no longer linux-desktop-cpu." The record `linux-desktop`, shared, granted, 580.142, the update done in 41,635 ms with its check. Measured: display mode gpu, renderer NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, `glxgears` 4,853 FPS, Xorg holding 14 NVIDIA handles, NVIDIA's encoder in Selkies' own process, 618 frames in 10 s; card-wide, for the record, 1 encoder session at 61 FPS, 1,870 µs, 3 %; active GPU work 13 s |
+| D4 node | The claim and holder on card 0, the desktop set of lines, `kind.linux-desktop`, one stop and one start, NVIDIA's installer log 2 s before the stop. Streaming from D itself, the card's one NVENC session was held by D's own Selkies: host PID 872899, in CT 3240's cgroup, Selkies' command line, with NVIDIA's encoder loaded; 615 frames and 1,290 KB in 10 s. Card 0 went from 201 to 282 MiB used, card-wide. `nvidia-smi encodersessions` with no options never exits on 580.142, so the block hung until the lead stopped that one `nvidia-smi`, which also made its active GPU work read 138 s where the stream was 10 s; the block now runs `timeout 3 nvidia-smi encodersessions -i` the card, reads its first table only and de-duplicates the PIDs |
+| D5 | D5 released D at 05:04:23, 275 s after D4 began, within the 6 minutes; the watchdog stopped. Card 0 back to 209 MiB used |
+| H | No lent VMID in use or holding a card, no mismatch; `u5-compare.sh`: 9 GPU guests of 44 before and 8 of 40 after, the one change 3178, a production GPU guest production released meanwhile (CHANGED: production's 3057, 3092 to 3115 and 3178); both cards idle |
+
+Limits: one node, both cards held by guests outside bb-box, so shared only;
+one desktop and one server; a desktop's GPU work kept under 60 s, its place
+on a card under 6 minutes; card figures are card-wide.
+
 ### Deviations from the note
 
 - A `linux-desktop-cpu` box resized to a GPU becomes a `linux-desktop`
@@ -5061,6 +5156,10 @@ round.
   say what happened.
 - The installer is downloaded in the box from NVIDIA, as unit 12's is: bb-box
   cannot read the node's artifacts.
+- The check after a restart proves NVENC from inside the box by NVIDIA's
+  encoder in Selkies' own process and the card's encoder sessions rising
+  while it streams. It cannot tie a session to its own process, as the box
+  sees only host PIDs; the gate does that on the node.
 - The dialog's "Restart, install NVIDIA's userspace 580.65.06 and add the
   GPU" button is unit 13's.
 - The gate's box "made without the userspace" is a box from production's
@@ -5069,6 +5168,6 @@ round.
 
 ### Still open
 
-- The gate on the node.
 - None to whole with the install, which needs a free card, as unit 9's W and
   unit 8's G1 do.
+- `10169a06`, the check's bound, was not run on the node: Astra checks it.
