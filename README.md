@@ -10,7 +10,7 @@ Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and An
 - **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or Hetzner Cloud, Namespace and boat.dev.
 - **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or an Android device in its emulator. See [device boxes](docs/guide/devices.md).
 - **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
-- **GPUs for training and graphics.** A box can share an NVIDIA card or have one to itself, with `nvidia-smi`, CUDA and PyTorch ready, on Proxmox or Docker. See [GPU boxes](docs/guide/gpu-boxes.md).
+- **GPUs.** A box can share an NVIDIA card or have one to itself, with `nvidia-smi`, CUDA and PyTorch ready, on Proxmox or Docker. See [GPU boxes](docs/guide/gpu-boxes.md).
 - **Resize as you go.** More cores, memory, disk or a GPU when a build needs them, from the Box panel, the box's page or the agent. See [resizing a box](docs/guide/resizing.md).
 - **Snapshot, undo and fork.** Save a box before a risky change, restore it with an undo, or fork it into a fresh box with its own identity. See [snapshots](docs/guide/snapshots.md).
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
