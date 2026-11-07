@@ -1041,3 +1041,16 @@ test("071 unit 15 gate: turning whole cards off on Docker leaves a whole box who
   const shared = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
   assert.notEqual(shared.claim?.card, box.claim?.card, "the whole box's card still takes no shared box");
 });
+
+test("071 unit 15, live: a refusal on a card a lowered limit left over it says over the limit, not the most a card may have", async () => {
+  const one = { gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)] };
+  const { fake, backend, context } = setup({ "boxes-per-card": 2 }, one);
+  await backend.acquire(identity("linux", "shared", "thr_abc123", "lone-pine"), null, hooks(), signal());
+  await backend.acquire(identity("linux", "shared", "thr_abc123", "calm-reef"), null, hooks(), signal());
+  const lower = new DockerBackend(dockerConfig({ "gpu-desktops": true, "boxes-per-card": 1 }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const refused = await lower.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.match(refused.message ?? "", /card 0 has 2 boxes, over the limit of 1 \(/);
+  const full = await setup({ "boxes-per-card": 1 }, one);
+  await full.backend.acquire(identity("linux", "shared", "thr_abc123", "tidy-glade"), null, hooks(), signal());
+  assert.match((await full.backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).message ?? "", /card 0 has 1 box, the most a card may have/);
+});

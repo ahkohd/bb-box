@@ -11725,3 +11725,27 @@ test("071 unit 15: a kind's GPU when not asked for is a menu on its page that ac
   fireEvent.keyDown(within(await on.findByRole("region", { name: "GPU" })).getByRole("combobox", { name: "GPU when not asked for" }), { key: "ArrowDown" });
   expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(["None", "Shared", "Whole card"]);
 });
+
+test("071 unit 15, live: Whole cards turned off on a backend whose own field is unset saves false, so the install-wide option no longer turns them on there; an unticked GPU boxes saves false over an old key that was on", async () => {
+  applied = gpuDocument({}, { wholeCards: true });
+  const { handlers, changes } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(4) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const whole = within(gpus).getByRole("switch", { name: "Whole cards" });
+  expect(whole.getAttribute("aria-checked")).toBe("true");
+  expect(within(gpus).getByText(/^Lets a box have a card to itself\. From the install-wide option, general\.wholeCards, as this backend's own is not set\.$/)).toBeTruthy();
+  fireEvent.click(whole);
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "whole-cards": false });
+  cleanup();
+  const replacing: ConfigState["drivers"][number] = { ...GPU_DRIVER, fields: [...GPU_DRIVER.fields, { key: "gpus", type: "boolean", label: "GPU boxes", group: "gpus", default: false, replaces: "gpu-desktops" }, { key: "gpu-desktops", type: "boolean", label: "GPU desktops (replaced)", group: "advanced", replacedBy: "gpus" }] };
+  applied = gpuDocument({ "gpu-desktops": true });
+  const old = server([], { config: { drivers: [...configState({}).drivers, replacing] } });
+  const page = settings(old.handlers, "#backend/lxc-gpu");
+  const boxes = within(await page.findByRole("region", { name: "GPUs" })).getByRole("checkbox", { name: "GPU boxes" }) as HTMLInputElement;
+  expect(boxes.checked).toBe(true);
+  fireEvent.click(boxes);
+  fireEvent.click(page.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(old.changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(old.changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "gpu-desktops": true, gpus: false });
+});

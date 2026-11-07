@@ -17,7 +17,7 @@ export type CardBlock =
   | { readonly is: "whole"; readonly card: HelperCard; readonly vmid: number }
   | { readonly is: "reserved-whole"; readonly card: HelperCard; readonly making: BoxMaking | null }
   | { readonly is: "unsettled"; readonly card: HelperCard; readonly vmids: readonly number[] }
-  | { readonly is: "limit"; readonly card: HelperCard; readonly own: number; readonly vmids: readonly number[]; readonly making: readonly (BoxMaking | null)[] }
+  | { readonly is: "limit"; readonly card: HelperCard; readonly own: number; readonly vmids: readonly number[]; readonly making: readonly (BoxMaking | null)[]; readonly limit?: number }
   | { readonly is: "unanswered"; readonly card: HelperCard; readonly vmid: number; readonly generation: number }
   | { readonly is: "held"; readonly card: HelperCard; readonly holders: readonly HelperHolder[] }
   | { readonly is: "placing"; readonly card: HelperCard; readonly making: readonly (BoxMaking | null)[] }
@@ -103,7 +103,8 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `${card} waits for ${inWords(block.vmids.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${block.vmids.length === 1 ? "it" : "each"} may hold the card`;
     case "limit": {
       const names = [...block.vmids.map((vmid) => guestWords(vmid, namer, audience, true)), ...block.making.map((making) => makingWords(making, namer, audience, true))];
-      return `${card} has ${block.own} of this install's boxes, the most a card may have${names.length ? ` (${inWords(names)})` : ""}`;
+      const most = block.limit !== undefined && block.own > block.limit ? `over the limit of ${block.limit}` : "the most a card may have";
+      return `${card} has ${block.own} of this install's boxes, ${most}${names.length ? ` (${inWords(names)})` : ""}`;
     }
     case "unanswered":
       return `the GPU helper has not answered CT ${block.vmid}'s request g${block.generation} on ${card}`;

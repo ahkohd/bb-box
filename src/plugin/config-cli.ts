@@ -293,12 +293,12 @@ async function save(configuration: Configuration, request: Save, signal?: AbortS
   return { exitCode: 1, stderr: `The configuration kept changing, ${MOST_TRIES} times while this saved; nothing was saved. Run the command again.\n` };
 }
 
-function fieldLine(field: FieldView, value: unknown): string {
+export function fieldLine(field: FieldView, value: unknown, replaced?: unknown): string {
   const secret = (field as { secret?: boolean }).secret === true;
   const options = (field as { options?: readonly string[] }).options;
   const kinds = [field.type === "select" ? `one of ${options?.join(", ")}` : field.type, secret ? "secret" : null, field.offWhenEmpty ? "empty turns its kind off" : null].filter(Boolean).join(", ");
   const lead = (field.description ?? "").split(/(?<=[.!?])\s/)[0] ?? "";
-  const current = value === undefined ? (field.default === undefined || field.default === "" ? "unset" : `unset, so ${JSON.stringify(field.default)}`) : typeof value === "object" && value !== null && "set" in value ? ((value as { set: boolean }).set ? "set" : "not set") : typeof value === "string" && value.includes("\n") ? `${value.split("\n").filter((line) => line.trim()).length} lines` : JSON.stringify(value);
+  const current = value === undefined && replaced !== undefined && field.replaces ? `unset, so ${JSON.stringify(replaced)} from ${field.replaces}, which it replaces` : value === undefined ? (field.default === undefined || field.default === "" ? "unset" : `unset, so ${JSON.stringify(field.default)}`) : typeof value === "object" && value !== null && "set" in value ? ((value as { set: boolean }).set ? "set" : "not set") : typeof value === "string" && value.includes("\n") ? `${value.split("\n").filter((line) => line.trim()).length} lines` : JSON.stringify(value);
   const inherits = field.inherits ? ` Empty, with the rest of ${field.inherits.set.join(", ")}, it takes ${field.inherits.label}'s.` : "";
   return `  ${field.key} (${kinds}) [${field.group}]: ${field.label}. ${lead}${inherits} Now: ${current}.`;
 }
@@ -389,7 +389,7 @@ export function configCommands(configuration: Configuration) {
         const backend = document.backends.find((candidate) => candidate.id === positionals.backend) ?? null;
         const driver = driverView(state, backend?.type ?? positionals.backend);
         if (options.json) return json({ type: driver.type, backend: backend?.id ?? null, fields: driver.fields.map((field) => ({ ...field, value: backend?.fields[field.key] })), hostFields: driver.hostFields, hosts: backend?.hosts ?? [] });
-        const lines = [`${backend ? `Backend ${backend.id}, ` : ""}${driver.label} (${driver.type}). Its guide: ${driver.setup.guide}.`, "Fields:", ...driver.fields.map((field) => fieldLine(field, backend?.fields[field.key]))];
+        const lines = [`${backend ? `Backend ${backend.id}, ` : ""}${driver.label} (${driver.type}). Its guide: ${driver.setup.guide}.`, "Fields:", ...driver.fields.map((field) => fieldLine(field, backend?.fields[field.key], field.replaces ? backend?.fields[field.replaces] : undefined))];
         if (driver.hostFields.length) {
           lines.push("Each host's fields, with bb box backend host add:", ...driver.hostFields.map((field) => fieldLine(field, undefined).replace(/ Now: [^\n]*$/, "")));
           for (const host of backend?.hosts ?? []) lines.push(`Host ${host.name}: ${host.enabled ? "on" : "off"}${Object.entries(host.fields).map(([key, value]) => `, ${key} ${JSON.stringify(value)}`).join("")}.`);

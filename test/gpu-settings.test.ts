@@ -10,11 +10,13 @@ import { dockerDriver } from "../src/backends/docker/index.ts";
 import { backendPart, backendWholeCards, emptyDocument, generalConfig, readDraft, wholeCardsAnywhere, type ConfigDocument } from "../src/core/document.ts";
 import { chooseGpu, gpuForSpare } from "../src/core/gpu.ts";
 import { setKind } from "../src/plugin/config-edits.ts";
+import { fieldLine } from "../src/plugin/config-cli.ts";
 import { settingsCards } from "../src/plugin/gpu-settings.ts";
 import { candidateOf, plain } from "../src/app/settings-paths.ts";
 import { draftLimit, kindGpuChoices, kindGpuWords, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
 import type { ConfigState } from "../src/plugin/configuration.ts";
 import { ClaimsBridge, CARD_A } from "./gpu-helper/claims-bridge.ts";
+import { PERSON, blockWords } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
 import { MemoryStorage, lxcConfig } from "./helpers.ts";
 
 const KINDS = ["linux", "linux-desktop", "linux-desktop-cpu", "macos"];
@@ -286,4 +288,19 @@ test("071 unit 15 gate: turning whole cards off leaves a whole box as it is: its
   bridge.pass();
   const started = await backend.start(whole, new AbortController().signal);
   assert.deepEqual(started && "claim" in started ? started.claim : null, { card: CARD_A.uuid, part: "whole", generation: 1, answer: "granted" }, "it starts on its card, whole, with no new claim");
+});
+
+test("071 unit 15, live: bb box backend fields gives a new key's value from the key it replaces while it is unset", () => {
+  const field = { key: "boxes-per-card", ...LXC_FIELDS["boxes-per-card"]! } as never;
+  assert.match(fieldLine(field, undefined, 2), / Now: unset, so 2 from desktops-per-gpu, which it replaces\.$/);
+  assert.match(fieldLine(field, undefined, undefined), / Now: unset, so 4\.$/);
+  assert.match(fieldLine(field, 3, 2), / Now: 3\.$/);
+});
+
+test("071 unit 15, live: a Proxmox LXC refusal on a card over a lowered limit says over the limit", () => {
+  const namer = { guest: (vmid: number) => ({ is: "box" as const, name: `box-${vmid}`, threadId: null }), title: () => null };
+  const block = (own: number, limit?: number) => ({ is: "limit" as const, card: { uuid: CARD_A.uuid, index: 0, pci: CARD_A.bus, minor: 1, drmCard: null, drmRender: null }, own, vmids: [3240, 3241, 3242].slice(0, own), making: [], ...(limit !== undefined ? { limit } : {}) });
+  assert.match(blockWords(block(3, 2), namer, PERSON), /^card 0 has 3 of this install's boxes, over the limit of 2 \(/);
+  assert.match(blockWords(block(2, 2), namer, PERSON), /^card 0 has 2 of this install's boxes, the most a card may have \(/);
+  assert.match(blockWords(block(2), namer, PERSON), /the most a card may have/);
 });

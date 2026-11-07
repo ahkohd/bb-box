@@ -345,7 +345,7 @@ test("071 unit 5: the claim rules on their own: holders, reservations, the lock,
   assert.deepEqual(reasonsOf(placeShared(input({ lines: lost, candidates: new Set([A]), vmid: 3 }))), ["card 0 waits for CT 4 to ask again, as the GPU helper's ledger was lost and it may hold the card"], "one of them asking again is not held back by itself");
   const held = reservations.add(A, "shared", 384, "bx", null);
   assert.equal(placeShared(input({ reserved: reservations.live(lines, 0), limit: 2 })).is, "placed");
-  assert.deepEqual(reasonsOf(placeShared(input({ reserved: reservations.live(lines, 0), limit: 1, candidates: new Set([A]) }))), ["card 0 has 2 of this install's boxes, the most a card may have (CT 1 and a box)"]);
+  assert.deepEqual(reasonsOf(placeShared(input({ reserved: reservations.live(lines, 0), limit: 1, candidates: new Set([A]) }))), ["card 0 has 2 of this install's boxes, over the limit of 1 (CT 1 and a box)"]);
   held.vmid = 1;
   assert.equal(loadOf(a, input({ reserved: reservations.live(lines, 0) })).boxes, 1, "a reservation for a guest the report already counts is counted once");
   reservations.settle(held, 0);

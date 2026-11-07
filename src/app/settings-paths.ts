@@ -534,7 +534,7 @@ function asPlain(value: unknown): PlainValue {
 
 function fieldValue(field: FieldView | null, value: PlainValue): PlainValue {
   if (!field || value === null) return value;
-  if (field.type === "boolean") return value === (field.default ?? false) ? null : value;
+  if (field.type === "boolean") return field.default === undefined || field.replaces !== undefined || value !== field.default ? value : null;
   if (field.type === "number") {
     if (typeof value !== "string") return value;
     const text = value.trim();

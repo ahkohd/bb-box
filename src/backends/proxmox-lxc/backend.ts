@@ -5169,7 +5169,7 @@ export class ProxmoxLxcBackend implements Backend {
       .reduce((best, candidate) => (uses(candidate) < uses(best) ? candidate : best));
     const full = room !== null && room <= unplaced;
     if (!full) return { template, gpus, problem: null };
-    const reasons: CardBlock[] = placed.loads.map((load) => ({ is: "limit", card: load.card, own: load.own, vmids: [], making: [] }));
+    const reasons: CardBlock[] = placed.loads.map((load) => ({ is: "limit", card: load.card, own: load.own, vmids: [], making: [], ...(this.#config.desktop.perGpu !== null ? { limit: this.#config.desktop.perGpu } : {}) }));
     return { ...refusedChoice(template, (await this.#placementRefused(api.node, { is: "refused", reasons, loads: placed.loads }, seen, threadId)).refusal), gpus };
   }
 
