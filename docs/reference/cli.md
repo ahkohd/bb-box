@@ -49,7 +49,7 @@
 | [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line. |
 | [`bb box backend host set`](#bb-box-backend-host-set) | Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working. |
 | [`bb box backend host remove`](#bb-box-backend-host-remove) | Remove a host from a backend. Refused while it has boxes, as on the settings page. |
-| [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only. |
+| [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only. |
 | [`bb box option list`](#bb-box-option-list) | List the general and Monitor options: each one's value now, its default, and what it does. |
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
 | [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.&lt;backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them. |
@@ -134,7 +134,7 @@ Options:
   --image <value>              The image to start from: a project's image, from bb box image list, or "standard". The thread's project's image for the kind by default.
   --device <value>             For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default.
   --no-slim                    For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default.
-  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Shared for linux-desktop and none for linux by default.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the kind's GPU when not asked for: shared for linux-desktop and none for linux unless bb box kind set --gpu changed it.
   --dedicated                  For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Without it, an ios box is shared where a shared iOS host has room. Give it with a size: where a shared iOS host is set up, a size without it is refused.
   --shared                     For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: a macOS user on a Mac or VM shared with ios boxes, ready in seconds, for commands, builds and the iOS Simulator, with its own files and keychain, but no sudo, Homebrew installs, desktop or app windows, and cores, ports and processes shared. Only where a shared iOS host is set up; box_list says.
   --no-wait                    Return once the box is recorded.
@@ -846,11 +846,11 @@ Options:
 
 ## bb box kind set
 
-Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only.
+Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only.
 
 ```text
 Usage:
-  bb box kind set <kind> [--json] [--check] [--revision <n>] [--operation <value>] [--on] [--off] [--make-default] [--default-preset <small|medium|large>] [--preset <small|medium|large>] [--cores <1-1024>] [--memory-gib <value>] [--disk-gib <value>] [--largest-cores <1-1024>] [--largest-memory-gib <value>] [--largest-disk-gib <value>] [--spares <0-100>] [--reset]
+  bb box kind set <kind> [--json] [--check] [--revision <n>] [--operation <value>] [--on] [--off] [--make-default] [--default-preset <small|medium|large>] [--preset <small|medium|large>] [--cores <1-1024>] [--memory-gib <value>] [--disk-gib <value>] [--largest-cores <1-1024>] [--largest-memory-gib <value>] [--largest-disk-gib <value>] [--spares <0-100>] [--gpu <none|shared|whole>] [--reset]
 
 Arguments:
   <kind>  The kind, such as linux. bb box kinds lists those on offer. (required)
@@ -872,6 +872,7 @@ Options:
   --largest-memory-gib <value>   The most memory in GiB a custom size may ask for.
   --largest-disk-gib <value>     The most disk in GiB a custom size may ask for.
   --spares <0-100>               Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none.
+  --gpu <none|shared|whole>      The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice: none, shared or whole. linux and linux-desktop only.
   --reset                        Go back to bb-box's own sizes and switch for the kind first.
   --help, -h                     Show this help and exit
 ```

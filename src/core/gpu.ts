@@ -59,6 +59,17 @@ export function gpuWhenNotAsked(kind: string, settings: GpuWhenNotAsked = {}): G
   return gpuPartsOf(id).includes(chosen) ? chosen : "none";
 }
 
+export function gpuForSpare(part: GpuPart): GpuPart {
+  return part === "whole" ? "shared" : part;
+}
+
+export function configuredGpu(kind: string, settings: GpuWhenNotAsked): GpuPart | null {
+  const id = currentKindId(kind);
+  if (kindNamingNoGpu(id)) return null;
+  const set = settings[id];
+  return set !== undefined && gpuPartsOf(id).includes(set) ? set : null;
+}
+
 export function chooseGpu(kind: string, asked?: GpuPart, settings: GpuWhenNotAsked = {}): GpuChoice {
   if (asked === undefined) return { ok: true, gpu: gpuWhenNotAsked(kind, settings) };
   if (!holdsCard(asked)) return { ok: true, gpu: asked };
@@ -165,20 +176,52 @@ export function userspaceRestoreWords(recorded: SnapshotGpu | null, hostDriver: 
   return null;
 }
 
-export const WHOLE_CARDS_OFF = {
-  person: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
-  agent: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
-} as const;
+export interface WholeCardsOffWords {
+  readonly person: string;
+  readonly agent: string;
+}
 
-export const WHOLE_CARDS_OFF_FOR_FORK = {
-  person: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn whole cards on with bb box option set general.wholeCards=true. bb-box copied nothing.",
-  agent: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.",
-} as const;
+export interface Provider {
+  readonly label: string;
+  readonly id: string;
+}
 
-export const WHOLE_CARDS_OFF_FOR_RESIZE = {
-  person: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn whole cards on with bb box option set general.wholeCards=true. bb-box changed nothing.",
-  agent: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
-} as const;
+function turnWholeOn(provider: Provider | null): string {
+  return provider
+    ? `turn Whole cards on in ${provider.label}'s GPUs section in BB Box's settings, or with bb box backend set ${provider.id} --field whole-cards=true`
+    : "turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true";
+}
+
+function offOn(provider: Provider | null): string {
+  return provider ? `on ${provider.label}` : "on this install";
+}
+
+export function wholeCardsOff(provider: Provider | null = null): WholeCardsOffWords {
+  return {
+    person: `Whole cards are off ${offOn(provider)}, so no box gets a card to itself${provider ? " there" : ""}. Ask for gpu shared, or ${turnWholeOn(provider)}.`,
+    agent: `Not made: whole cards are off ${offOn(provider)}. Ask for gpu shared, or ask the user. bb-box changed nothing.`,
+  };
+}
+
+export function wholeCardsOffForFork(provider: Provider | null = null): WholeCardsOffWords {
+  return {
+    person: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ${turnWholeOn(provider)}. bb-box copied nothing.`,
+    agent: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.`,
+  };
+}
+
+export function wholeCardsOffForResize(provider: Provider | null = null): WholeCardsOffWords {
+  return {
+    person: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ${turnWholeOn(provider)}. bb-box changed nothing.`,
+    agent: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+  };
+}
+
+export const WHOLE_CARDS_OFF = wholeCardsOff();
+
+export const WHOLE_CARDS_OFF_FOR_FORK = wholeCardsOffForFork();
+
+export const WHOLE_CARDS_OFF_FOR_RESIZE = wholeCardsOffForResize();
 
 export function gpuResizingWords(gpu: { readonly add: string; readonly share: string; readonly move: string } | null | undefined): string {
   if (!gpu) return "";
@@ -223,4 +266,6 @@ export function gpuPlanChangedWords(name: string, agreed: GpuResize, now: GpuRes
   };
 }
 
-export const WHOLE_CARDS_OFF_IN_LIST = "Whole cards are off on this install: ask the user if a box needs a card to itself.";
+export function wholeCardsOffInList(provider: string): string {
+  return `Whole cards are off on ${provider}: ask the user if a box needs a card to itself.`;
+}

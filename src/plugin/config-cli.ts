@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
-import type { DoctorReport } from "../backends/types.ts";
+import { GPU_PARTS, type DoctorReport, type GpuPart } from "../backends/types.ts";
 import { withoutSecretVersions, type ConfigDocument, type Problem } from "../core/document.ts";
 import { digestOf } from "../core/saves.ts";
 import { PRESETS, type Preset } from "../core/sizes.ts";
@@ -293,12 +293,12 @@ async function save(configuration: Configuration, request: Save, signal?: AbortS
   return { exitCode: 1, stderr: `The configuration kept changing, ${MOST_TRIES} times while this saved; nothing was saved. Run the command again.\n` };
 }
 
-function fieldLine(field: FieldView, value: unknown): string {
+export function fieldLine(field: FieldView, value: unknown, replaced?: unknown): string {
   const secret = (field as { secret?: boolean }).secret === true;
   const options = (field as { options?: readonly string[] }).options;
   const kinds = [field.type === "select" ? `one of ${options?.join(", ")}` : field.type, secret ? "secret" : null, field.offWhenEmpty ? "empty turns its kind off" : null].filter(Boolean).join(", ");
   const lead = (field.description ?? "").split(/(?<=[.!?])\s/)[0] ?? "";
-  const current = value === undefined ? (field.default === undefined || field.default === "" ? "unset" : `unset, so ${JSON.stringify(field.default)}`) : typeof value === "object" && value !== null && "set" in value ? ((value as { set: boolean }).set ? "set" : "not set") : typeof value === "string" && value.includes("\n") ? `${value.split("\n").filter((line) => line.trim()).length} lines` : JSON.stringify(value);
+  const current = value === undefined && replaced !== undefined && field.replaces ? `unset, so ${JSON.stringify(replaced)} from ${field.replaces}, which it replaces` : value === undefined ? (field.default === undefined || field.default === "" ? "unset" : `unset, so ${JSON.stringify(field.default)}`) : typeof value === "object" && value !== null && "set" in value ? ((value as { set: boolean }).set ? "set" : "not set") : typeof value === "string" && value.includes("\n") ? `${value.split("\n").filter((line) => line.trim()).length} lines` : JSON.stringify(value);
   const inherits = field.inherits ? ` Empty, with the rest of ${field.inherits.set.join(", ")}, it takes ${field.inherits.label}'s.` : "";
   return `  ${field.key} (${kinds}) [${field.group}]: ${field.label}. ${lead}${inherits} Now: ${current}.`;
 }
@@ -389,7 +389,7 @@ export function configCommands(configuration: Configuration) {
         const backend = document.backends.find((candidate) => candidate.id === positionals.backend) ?? null;
         const driver = driverView(state, backend?.type ?? positionals.backend);
         if (options.json) return json({ type: driver.type, backend: backend?.id ?? null, fields: driver.fields.map((field) => ({ ...field, value: backend?.fields[field.key] })), hostFields: driver.hostFields, hosts: backend?.hosts ?? [] });
-        const lines = [`${backend ? `Backend ${backend.id}, ` : ""}${driver.label} (${driver.type}). Its guide: ${driver.setup.guide}.`, "Fields:", ...driver.fields.map((field) => fieldLine(field, backend?.fields[field.key]))];
+        const lines = [`${backend ? `Backend ${backend.id}, ` : ""}${driver.label} (${driver.type}). Its guide: ${driver.setup.guide}.`, "Fields:", ...driver.fields.map((field) => fieldLine(field, backend?.fields[field.key], field.replaces ? backend?.fields[field.replaces] : undefined))];
         if (driver.hostFields.length) {
           lines.push("Each host's fields, with bb box backend host add:", ...driver.hostFields.map((field) => fieldLine(field, undefined).replace(/ Now: [^\n]*$/, "")));
           for (const host of backend?.hosts ?? []) lines.push(`Host ${host.name}: ${host.enabled ? "on" : "off"}${Object.entries(host.fields).map(([key, value]) => `, ${key} ${JSON.stringify(value)}`).join("")}.`);
@@ -533,7 +533,7 @@ export function configCommands(configuration: Configuration) {
     }),
     "kind set": cliCommand({
       summary:
-        "Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only.",
+        "Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only.",
       positionals: [{ name: "kind", description: "The kind, such as linux. bb box kinds lists those on offer.", required: true }],
       options: {
         ...saveOptions,
@@ -548,6 +548,7 @@ export function configCommands(configuration: Configuration) {
         "largest-memory-gib": { type: "string", description: "The most memory in GiB a custom size may ask for." },
         "largest-disk-gib": { type: "string", description: "The most disk in GiB a custom size may ask for." },
         spares: { type: "integer", min: 0, max: 100, description: "Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none." },
+        gpu: { type: "enum", values: GPU_PARTS, description: "The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice: none, shared or whole. linux and linux-desktop only." },
         reset: { type: "boolean", description: "Go back to bb-box's own sizes and switch for the kind first." },
       },
       run: async ({ positionals, options }, ctx) => {
@@ -562,6 +563,7 @@ export function configCommands(configuration: Configuration) {
           size,
           largest,
           ...(options.spares !== undefined ? { spares: options.spares } : {}),
+          ...(options.gpu ? { gpu: options.gpu as GpuPart } : {}),
           ...(options.reset ? { reset: true } : {}),
         };
         return save(

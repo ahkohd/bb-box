@@ -254,7 +254,7 @@ test("capacity counts desktops on each GPU against the limit per GPU", async () 
   assert.equal(full.ok, false);
   assert.match(full.message!, /Every GPU on pve runs 2 desktop boxes, the most bb-box's settings allow\. Release a desktop box, or raise the desktops per GPU/);
 
-  const unlimited = await setup().backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  const unlimited = await setup({ "proxmox-lxc-desktops-per-gpu": 0 }).backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.deepEqual(unlimited.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 0, total: null, reserve: 0, unit: "count" });
 });
 

@@ -24,7 +24,7 @@ box or a spare is ready at once. How bb-box drives a box is in the
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for bb-box |
 | `host/setup-gpu-report.sh` | With GPU desktops: the host's report of each GPU's free memory, which bb-box reads |
-| `host/setup-gpu.sh` | Not yet for general use: installs, upgrades and removes the GPU helper, `bb-box-gpu`, with writes off. It writes the report in the timer's place |
+| `host/setup-gpu.sh` | Installs, upgrades and removes the GPU helper, `bb-box-gpu`, which gives each box its card. It writes the report in the timer's place |
 | `template/build.sh` | Builds the templates |
 | `test/smoke.sh` | Clones, starts, checks and deletes a box with bb-box's token |
 
@@ -307,8 +307,56 @@ reads memory in desktops. The doctor's "Host's GPU report" check says which.
 
 #### The GPU helper
 
-Not yet for general use. `host/setup-gpu.sh` installs `bb-box-gpu`, the
-host's GPU helper, in the timer's place. The helper writes the same report,
+The GPU helper gives each box its card: none, shared or a whole card, for
+servers and desktops alike. It moves a box to another card when the box is
+resized. Without it, only desktops can have a card, and only the one their
+template's device lines name. What a box with a GPU has is in [GPU
+boxes](../../docs/guide/gpu-boxes.md).
+
+To give boxes GPUs:
+
+1. Install NVIDIA's driver on the host, and run `host/setup-host.sh`, which
+   makes the cards' device nodes at each boot.
+2. Build the Linux and desktop templates on the host with its driver, as in
+   [templates](#4-templates), so they carry NVIDIA's userspace for it.
+3. Install the helper. It starts with writes off, a dry run that changes no
+   guest:
+
+   ```sh
+   host/setup-gpu.sh
+   ```
+
+4. If GPU desktops already run on the host, mark them from BB, so the
+   helper knows which card each holds:
+
+   ```sh
+   bb box gpu mark --check
+   bb box gpu mark
+   ```
+
+5. Leave it in the dry run for a day. Then run `bb box doctor`: its "Host's
+   GPU helper" check passes but for a warning that writes are off, and its
+   "Markers on GPU guests" check passes.
+6. See what writes on would write, then turn them on:
+
+   ```sh
+   host/setup-gpu.sh --writes on --check
+   host/setup-gpu.sh --writes on
+   ```
+
+7. In BB Box's settings, open Proxmox LXC and set its GPUs section: boxes
+   per card, whole cards and the GPU memory a new box needs. Whole cards
+   need `bb-box-gpu` 0.4.3 or later on the node, and a card no guest outside
+   the install holds.
+8. Check it worked, from BB, then in the box:
+
+   ```sh
+   bb box acquire linux --gpu shared
+   nvidia-smi -L
+   ```
+
+`host/setup-gpu.sh` installs `bb-box-gpu`, the host's GPU helper, in the
+timer's place. The helper writes the same report,
 with its own lines added, and answers the GPU markers bb-box writes on its
 guests. It installs with writes off, a dry run: it changes no guest until
 `--writes on`, a step of its own.
@@ -534,10 +582,12 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `ssh-private-key` |  | secret; the key `BBBOX_SSH_KEY` names. Left empty, bb-box makes one, and its doctor shows the public key the templates must accept |
 | `pool` | `bbbox` | `BBBOX_POOL` |
 | `linux-templates` | `9100` | VMIDs of Linux templates, separated by spaces or commas |
-| `desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
+| `desktop-templates` | `9101` | one line per GPU desktop template: its VMID. On a host without the GPU helper, a space and the GPU its device lines name, such as `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line |
 | `desktop-cpu-templates` | `9103` | VMIDs of CPU desktop templates |
 | `desktop-wayland-cpu-templates` | `9105` | VMIDs of Wayland desktop templates |
-| `desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
+| `boxes-per-card` | `4` | the most of this install's boxes running on one card, servers and desktops together; 0 means no limit. Unset, a value set in the replaced `desktops-per-gpu` is read, 0 included |
+| `whole-cards` |  | whether a box may have a card to itself. Unset, the install-wide option `general.wholeCards` says, which is off unless set |
+| `gpu-memory-mib` | `1024` | the memory a card must have free, when last read, for a new server to be placed on it; a desktop needs 384 MiB |
 | `bridge` | `vmbr200` | `BBBOX_BRIDGE` |
 | `subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
 | `gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
@@ -554,9 +604,12 @@ fields against the host; Save and turn on saves them. From a terminal,
 - A GPU's ID can be any name without spaces; templates with the same ID share
   a GPU. Use its UUID, which this lists beside the PCI address you gave
   `build.sh`: `nvidia-smi --query-gpu=pci.bus_id,uuid --format=csv`.
-- A new box is a clone of its kind's least used template. A GPU desktop goes
-  to the GPU with the fewest desktops. It is refused when every GPU has
-  `desktops-per-gpu` desktops, and the refusal suggests `linux-desktop-cpu`.
+- A new box is a clone of its kind's least used template. A box with a
+  shared GPU goes to the card with the fewest boxes. It is refused when
+  every card has `boxes-per-card` of this install's boxes running, and the
+  refusal names them.
+  A lower limit stops nothing that runs: the doctor and the list of cards in
+  BB Box's settings name the boxes over it.
 - A GPU desktop needs 384 MiB of GPU memory free as it starts. bb-box reads
   each GPU's free memory from [the host's report](#the-gpu-memory-report).
   Without it, bb-box reads it as a desktop on it starts, and with

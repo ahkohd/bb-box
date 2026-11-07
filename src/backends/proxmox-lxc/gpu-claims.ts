@@ -271,7 +271,7 @@ export function placeShared(input: PlaceInput): Placed {
     if (load.whole) reasons.push({ is: "whole", card, vmid: load.whole.vmid });
     else if (load.wholeReserved) reasons.push({ is: "reserved-whole", card, making: load.wholeReserved.making });
     else if (unsettled.length) reasons.push({ is: "unsettled", card, vmids: unsettled });
-    else if (input.limit !== null && load.own >= input.limit) reasons.push({ is: "limit", card, own: load.own, vmids: load.ownVmids, making: load.ownReserved.map((reservation) => reservation.making) });
+    else if (input.limit !== null && load.own >= input.limit) reasons.push({ is: "limit", card, own: load.own, vmids: load.ownVmids, making: load.ownReserved.map((reservation) => reservation.making), limit: input.limit });
     else if (waiting) reasons.push({ is: "unanswered", card, vmid: waiting.vmid, generation: waiting.marker.generation });
     else open.push(publicLoad(load));
   }

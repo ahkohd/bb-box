@@ -8,7 +8,7 @@
 // "kinds.linux.presets.small", so the settings page can show it by its field.
 
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
-import { isSecret, type BackendDriver, type BackendPart, type MachineSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
+import { GPU_PARTS, isSecret, type BackendDriver, type BackendPart, type MachineSize, type FieldDescriptor, type FieldValue, type GpuPart } from "../backends/types.ts";
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
@@ -75,6 +75,12 @@ export interface KindConfig {
   readonly largest?: SizeChange;
   /** Spare boxes to keep: ready, enrolled and owned by no thread (032). None by default, ios and android included: a device spare waits with its device booted and its memory saved to disk (063). */
   readonly spares?: number;
+  /**
+   * The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice until the
+   * person's own is remembered (071): none, shared or whole. Only linux and linux-desktop take it. Left out, none for
+   * linux and shared for linux-desktop. A spare or a warm box of a kind whose GPU is whole is made shared.
+   */
+  readonly gpu?: GpuPart;
 }
 
 /**
@@ -137,7 +143,8 @@ export interface GeneralSettings {
   /**
    * Whether a Linux box or desktop on a backend that can give one may have a whole card: a GPU to itself, on which
    * bb-box places no other box (071). Off, gpu whole is refused and not offered, and boxes that hold a card whole keep
-   * it until they are released. Off unless set.
+   * it until they are released. Off unless set. A backend's own whole-cards field, in its GPUs section, wins where it
+   * is set: this is what a backend gets while that field is unset.
    */
   readonly wholeCards?: boolean;
   /**
@@ -310,6 +317,26 @@ export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "
 
 export const WHOLE_CARDS_BY_DEFAULT = false;
 
+export const WHOLE_CARDS_FIELD = "whole-cards";
+
+export const KINDS_WITH_GPU_DEFAULT: readonly string[] = ["linux", "linux-desktop"];
+
+export type WholeCardsSource = "backend" | "install";
+
+export function backendWholeCards(backend: Pick<BackendConfig, "fields">, general: Pick<GeneralSettings, "wholeCards">): { readonly on: boolean; readonly from: WholeCardsSource } {
+  const own = backend.fields[WHOLE_CARDS_FIELD];
+  if (typeof own === "boolean") return { on: own, from: "backend" };
+  return { on: general.wholeCards ?? WHOLE_CARDS_BY_DEFAULT, from: "install" };
+}
+
+export function wholeCardsAnywhere(document: Pick<ConfigDocument, "backends" | "general">): boolean {
+  return document.backends.some((backend) => backend.enabled && backendWholeCards(backend, document.general).on);
+}
+
+export function kindGpuDefaults(kinds: Readonly<Record<string, KindConfig>>): Readonly<Record<string, GpuPart>> {
+  return Object.fromEntries(Object.entries(kinds).flatMap(([kind, config]) => (config.gpu ? [[kind, config.gpu]] : [])));
+}
+
 export const MONITOR_DEFAULTS = { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true } as const;
 export const MONITOR_REFRESH_SECONDS = { least: 2, most: 60 } as const;
 
@@ -347,8 +374,8 @@ export interface GeneralConfig {
   readonly spares: Readonly<Record<string, number>>;
   /** The backends whose new Linux boxes get an identity marker (070). */
   readonly identityResetBackends?: readonly string[];
-  /** Whether boxes may have a whole card (071). */
   readonly wholeCards?: boolean;
+  readonly gpuWhenNotAsked?: Readonly<Record<string, GpuPart>>;
 }
 
 export function generalConfig(document: ConfigDocument): GeneralConfig {
@@ -362,7 +389,8 @@ export function generalConfig(document: ConfigDocument): GeneralConfig {
       Object.entries(document.kinds).flatMap(([kind, config]) => (config.spares && kindOn(document, kind) ? [[kind, config.spares]] : [])),
     ),
     identityResetBackends: document.general.identityResetBackends ?? [],
-    wholeCards: document.general.wholeCards ?? WHOLE_CARDS_BY_DEFAULT,
+    wholeCards: wholeCardsAnywhere(document),
+    gpuWhenNotAsked: kindGpuDefaults(document.kinds),
   };
 }
 
@@ -668,10 +696,10 @@ function readSize(path: string, value: unknown, largest: boolean, problem: (path
 
 function readKind(path: string, value: unknown, problem: (path: string, message: string) => void): KindConfig | undefined {
   if (!isRecord(value)) {
-    problem(path, "A kind is an object with enabled, presets, default, largest and spares.");
+    problem(path, "A kind is an object with enabled, presets, default, largest, spares and gpu.");
     return undefined;
   }
-  const kind: { enabled?: boolean; presets?: Partial<Record<Preset, SizeChange>>; default?: Preset; largest?: SizeChange; spares?: number } = {};
+  const kind: { enabled?: boolean; presets?: Partial<Record<Preset, SizeChange>>; default?: Preset; largest?: SizeChange; spares?: number; gpu?: GpuPart } = {};
   for (const [key, part] of Object.entries(value)) {
     if (part === undefined || part === null) continue;
     if (key === "enabled") {
@@ -685,6 +713,9 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
     } else if (key === "spares") {
       if (typeof part === "number") kind.spares = part;
       else problem(`${path}.spares`, "Give the spare boxes as a number.");
+    } else if (key === "gpu") {
+      if ((GPU_PARTS as readonly unknown[]).includes(part)) kind.gpu = part as GpuPart;
+      else problem(`${path}.gpu`, "A kind's GPU when not asked for is none, shared or whole.");
     } else if (key === "presets") {
       if (!isRecord(part)) {
         problem(`${path}.presets`, "presets is an object with small, medium and large.");
@@ -697,7 +728,7 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
         else presets[name as Preset] = readSize(`${path}.presets.${name}`, size, false, problem);
       }
       kind.presets = presets;
-    } else problem(`${path}.${key}`, `A kind has enabled, presets, default, largest and spares, not "${key}".`);
+    } else problem(`${path}.${key}`, `A kind has enabled, presets, default, largest, spares and gpu, not "${key}".`);
   }
   return kind;
 }
@@ -899,6 +930,10 @@ export function withSecretChanges(stored: Secrets, changes: SecretChanges, docum
  * values of the first other backend of the type it names among `backends`,
  * the document's.
  */
+function isFieldValue(value: unknown): value is FieldValue {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
 export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, secrets: Secrets, backends: readonly BackendConfig[] = []): BackendPart {
   const filled = (descriptors: Readonly<Record<string, FieldDescriptor>>, set: Readonly<Record<string, unknown>>, secret: Readonly<Record<string, string>>) => {
     const fields: Record<string, FieldValue | undefined> = {};
@@ -906,7 +941,8 @@ export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, 
       if (isSecret(descriptor)) fields[key] = secret[key];
       else {
         const value = set[key];
-        fields[key] = typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : (descriptor.default as FieldValue | undefined);
+        const replacedIsSet = descriptor.replaces !== undefined && isFieldValue(set[descriptor.replaces]);
+        fields[key] = isFieldValue(value) ? value : replacedIsSet ? undefined : (descriptor.default as FieldValue | undefined);
       }
     }
     return fields;
@@ -1046,6 +1082,7 @@ export function checkDocument(
       if (tooSmall) problem(`${path}.presets.${preset}`, `The ${preset} ${id} preset is too small. ${tooSmall}`);
     }
     if (kind.spares !== undefined && !isWhole(kind.spares, 0, MAX_SPARES)) problem(`${path}.spares`, `Keep 0 to ${MAX_SPARES} spare ${id} boxes.`);
+    if (kind.gpu !== undefined && !KINDS_WITH_GPU_DEFAULT.includes(id)) problem(`${path}.gpu`, `${id} boxes have no GPU part, so the kind has no GPU when not asked for. Only ${KINDS_WITH_GPU_DEFAULT.join(" and ")} have one.`);
   }
 
   for (const missing of tailnetProblems(document.general.tailnet, secrets[GENERAL_SECRETS] ?? {})) problem(missing.path, missing.message);

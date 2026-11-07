@@ -22,6 +22,7 @@ import { kindCardReads } from "../src/plugin/kind-cards.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
+import type { SettingsCards } from "../src/plugin/gpu-settings.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta, useLive } from "../src/app/common.tsx";
 import { BoxLine, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
@@ -556,7 +557,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { cards?: Record<string, SettingsCards>; entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -798,6 +799,7 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       ],
     }),
     "config.get": () => configState({ ...options.config, receipts: [...receipts] }),
+    "config.cards": ({ backend }) => options.cards?.[backend] ?? { is: "none" },
     "config.check": ({ draft, test }): CheckResult => {
       changes.push(`check ${test ?? "-"} ${JSON.stringify(draft)}`);
       return options.checkWith ?? { problems: [], doctor: null };
@@ -11585,4 +11587,232 @@ test("070 unit 11: Settings say how many saved snapshots the account holds and t
   expect(await slot.findByText(/could not read what .* bills just now, so it counts each of the 3 saved snapshots it knows of at full price: about \$5\.04 a month, an estimate\./)).toBeTruthy();
   expect(document.querySelector("[data-bill-slot]")?.className).toContain("min-h-[3lh]");
   expect(slot.queryByText(/Spent this month so far/)).toBeNull();
+});
+
+const GPU_DRIVER: ConfigState["drivers"][number] = {
+  type: "lxc-gpu",
+  label: "Proxmox LXC",
+  description: "Containers on a Proxmox VE host.",
+  nature: "virtual",
+  kinds: ["linux", "linux-desktop"],
+  warmKinds: [],
+  fields: [
+    { key: "url", type: "string", label: "API URL", group: "connection", default: "" },
+    { key: "boxes-per-card", type: "number", label: "Boxes per card", description: "The most boxes running on one card, desktops and servers together. 0 means no limit.", group: "gpus", default: 4, replaces: "desktops-per-gpu" },
+    { key: "whole-cards", type: "boolean", label: "Whole cards", description: "Lets a box have a card to itself.", group: "gpus" },
+    { key: "gpu-memory-mib", type: "number", label: "GPU memory a new box needs (MiB)", description: "A start-up check, not a limit on what the box uses.", group: "gpus", default: 1024 },
+    { key: "desktops-per-gpu", type: "number", label: "Desktops per GPU (replaced)", description: "Replaced by boxes per card.", group: "advanced", replacedBy: "boxes-per-card" },
+  ],
+  hostFields: [],
+  setup: { guide: "setup/proxmox-lxc/README.md", scripts: [] },
+  several: false,
+};
+
+const shared = (name: string, box: string | null = null) => ({ box, name, part: "shared" as const, running: true, ours: true, counts: true });
+
+function gpuCards(limit: number | null, at = Date.now() - 5_000): SettingsCards {
+  return {
+    is: "read",
+    host: "pve-1",
+    source: "helper",
+    at,
+    limit,
+    counts: "this-install-running",
+    cards: [
+      { uuid: "GPU-3f9a2c1e-55b0-4c1d-9e2a-0b7d6c4a1f00", index: 0, model: null, totalMiB: 24_576, freeMiB: 3_480, outsideMiB: null, counted: 1, over: 0, overWords: null, holders: [{ box: "bxquietelm001", name: "quiet-elm", part: "whole", running: true, ours: true, counts: true }] },
+      {
+        uuid: "GPU-8c2d4e6f-0a1b-4c3d-9e8f-7a6b5c4d3e2f",
+        index: 1,
+        model: null,
+        totalMiB: 24_576,
+        freeMiB: 18_227,
+        outsideMiB: null,
+        counted: 4,
+        over: limit !== null && limit > 0 ? Math.max(0, 4 - limit) : 0,
+        overWords: limit === 3 ? "Card 1 has 4 of this install's boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room." : null,
+        holders: [shared("amber-fox", "bxamberfox001"), shared("lone-pine"), shared("calm-reef"), shared("tidy-glade")],
+      },
+    ],
+    wholeKept: [{ box: "bxquietelm001", name: "quiet-elm" }],
+  };
+}
+
+function gpuDocument(fields: Record<string, unknown>, general: ConfigDocument["general"] = {}, kinds: ConfigDocument["kinds"] = {}): ConfigDocument {
+  return { schema: 1, revision: 3, backends: [{ id: "lxc-gpu", type: "lxc-gpu", enabled: true, fields: { url: "https://192.0.2.10:8006", ...fields } as ConfigDocument["backends"][number]["fields"] }], kinds, general };
+}
+
+test("071 unit 15 gate: the GPUs section shows an explicit old 0 as Boxes per card's value, names the boxes a lower limit puts over it before Save, and Save is confirmed by its receipt with the old key left in place", async () => {
+  applied = gpuDocument({ "desktops-per-gpu": 0 });
+  const { handlers, changes, operations } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(null) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const perCard = within(gpus).getByRole("textbox", { name: "Boxes per card" }) as HTMLInputElement;
+  expect(perCard.value).toBe("");
+  expect(perCard.placeholder).toBe("0");
+  expect(within(gpus).getByText(spanSaying("Empty: 0, from desktops-per-gpu, the field it replaces"))).toBeTruthy();
+  expect(slot.queryByText(/Desktops per GPU/)).toBeNull();
+  expect(slot.queryByRole("region", { name: "Advanced" })).toBeNull();
+  expect(await within(gpus).findByText(/^The cards on pve-1, as its GPU helper reported them \d+ s ago\.$/)).toBeTruthy();
+  expect(within(gpus).getByRole("link", { name: /amber-fox/ }).getAttribute("href")).toContain("bxamberfox001");
+  fireEvent.change(perCard, { target: { value: "3" } });
+  expect(within(gpus).getByText("With 3, card 1 has 4 of this install's boxes running, 1 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();
+  expect(slot.getByText(/^1 change to .+ not saved$/)).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "desktops-per-gpu": 0, "boxes-per-card": 3 });
+  expect(operations).toHaveLength(1);
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+});
+
+test("071 unit 15 gate: the cards list names the boxes over a saved limit", async () => {
+  applied = gpuDocument({ "boxes-per-card": 3 });
+  const { handlers } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(3) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  expect(await within(gpus).findByText("Card 1 has 4 of this install's boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room.")).toBeTruthy();
+});
+
+test("071 unit 15 gate: a failed save of the GPUs section shows its problem at the field and keeps the change", async () => {
+  applied = gpuDocument({});
+  const { handlers } = server([], {
+    config: { drivers: [...configState({}).drivers, GPU_DRIVER] },
+    applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.lxc-gpu.boxes-per-card", message: "Use a whole number from 0 to 1000 for the boxes per card, 0 for no limit." }] },
+  });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  fireEvent.change(within(gpus).getByRole("textbox", { name: "Boxes per card" }), { target: { value: "5000" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await within(gpus).findByText("Use a whole number from 0 to 1000 for the boxes per card, 0 for no limit.")).toBeTruthy();
+  expect(slot.getByText(/^Not saved: fix the field marked\. Your changes are still here\./)).toBeTruthy();
+  expect((within(gpus).getByRole("textbox", { name: "Boxes per card" }) as HTMLInputElement).value).toBe("5000");
+});
+
+test("071 unit 15 gate: Whole cards is a switch that acts at once on this backend's field alone; unset it shows the install-wide option, and off it names the boxes that keep their whole card", async () => {
+  applied = gpuDocument({});
+  const { handlers, changes } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(4) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const whole = within(gpus).getByRole("switch", { name: "Whole cards" });
+  expect(whole.getAttribute("aria-checked")).toBe("false");
+  expect(await within(gpus).findByText("Off: no box is given a whole card or changes to one. quiet-elm keeps its card until changed or released. From the install-wide option, general.wholeCards, as this backend's own is not set.")).toBeTruthy();
+  fireEvent.click(whole);
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  const sent = bodyOf(changes.find((change) => change.startsWith("apply 3 "))!);
+  expect(sent.backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "whole-cards": true });
+  expect(sent.general).toEqual({});
+  expect(await within(gpus).findByText("Saved")).toBeTruthy();
+  expect(within(gpus).getByText("Lets a box have a card to itself.")).toBeTruthy();
+  expect(slot.queryByText(/not saved/)).toBeNull();
+});
+
+test("071 unit 15: a kind's GPU when not asked for is a menu on its page that acts at once; Whole card is listed only where a backend has whole cards on", async () => {
+  applied = gpuDocument({});
+  const { handlers, changes } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] } });
+  const slot = settings(handlers, "#kind/linux");
+  const gpu = await slot.findByRole("region", { name: "GPU" });
+  const menu = within(gpu).getByRole("combobox", { name: "GPU when not asked for" });
+  expect(menu.textContent).toBe("None");
+  expect(within(gpu).getByText(/None is bb-box's own default for linux\./)).toBeTruthy();
+  fireEvent.keyDown(menu, { key: "ArrowDown" });
+  expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(["None", "Shared"]);
+  fireEvent.click(screen.getAllByRole("option").find((option) => option.textContent === "Shared")!);
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(changes.find((change) => change.startsWith("apply 3 "))!).kinds).toEqual({ linux: { gpu: "shared" } });
+  expect(await within(gpu).findByText("Saved")).toBeTruthy();
+  cleanup();
+  applied = gpuDocument({ "whole-cards": true });
+  const on = settings(server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] } }).handlers, "#kind/linux");
+  fireEvent.keyDown(within(await on.findByRole("region", { name: "GPU" })).getByRole("combobox", { name: "GPU when not asked for" }), { key: "ArrowDown" });
+  expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(["None", "Shared", "Whole card"]);
+});
+
+test("071 unit 15, live: Whole cards turned off on a backend whose own field is unset saves false, so the install-wide option no longer turns them on there; an unticked GPU boxes saves false over an old key that was on", async () => {
+  applied = gpuDocument({}, { wholeCards: true });
+  const { handlers, changes } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(4) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const whole = within(gpus).getByRole("switch", { name: "Whole cards" });
+  expect(whole.getAttribute("aria-checked")).toBe("true");
+  expect(within(gpus).getByText(/^Lets a box have a card to itself\. From the install-wide option, general\.wholeCards, as this backend's own is not set\.$/)).toBeTruthy();
+  fireEvent.click(whole);
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "whole-cards": false });
+  cleanup();
+  const replacing: ConfigState["drivers"][number] = { ...GPU_DRIVER, fields: [...GPU_DRIVER.fields, { key: "gpus", type: "boolean", label: "GPU boxes", group: "gpus", default: false, replaces: "gpu-desktops" }, { key: "gpu-desktops", type: "boolean", label: "GPU desktops (replaced)", group: "advanced", replacedBy: "gpus" }] };
+  applied = gpuDocument({ "gpu-desktops": true });
+  const old = server([], { config: { drivers: [...configState({}).drivers, replacing] } });
+  const page = settings(old.handlers, "#backend/lxc-gpu");
+  const boxes = within(await page.findByRole("region", { name: "GPUs" })).getByRole("checkbox", { name: "GPU boxes" }) as HTMLInputElement;
+  expect(boxes.checked).toBe(true);
+  fireEvent.click(boxes);
+  fireEvent.click(page.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(old.changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
+  expect(bodyOf(old.changes.find((change) => change.startsWith("apply 3 "))!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", "gpu-desktops": true, gpus: false });
+});
+
+test("071 unit 15, review: clearing Boxes per card names the boxes the limit it falls back to would put over it", async () => {
+  applied = gpuDocument({ "boxes-per-card": 8, "desktops-per-gpu": 2 });
+  const { handlers } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(8) } });
+  const slot = settings(handlers, "#backend/lxc-gpu");
+  const gpus = await slot.findByRole("region", { name: "GPUs" });
+  const perCard = within(gpus).getByRole("textbox", { name: "Boxes per card" }) as HTMLInputElement;
+  expect(perCard.value).toBe("8");
+  await within(gpus).findByText(/^The cards on pve-1/);
+  fireEvent.change(perCard, { target: { value: "" } });
+  expect(within(gpus).getByText("With 2, card 1 has 4 of this install's boxes running, 2 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();
+});
+
+test("071 unit 15, review: the New box form's first GPU is the kind's setting, for a server and a desktop, until the person's own choice is remembered", async () => {
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["none", "shared", "whole"], host: "pve-1", at: Date.now(), cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, freeForWhole: true }] };
+  const serverBase = kindView("linux", "Linux", "A server.", 2, false);
+  const serverKind: KindView = { ...offered(serverBase, [{ ...serverBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room, resizing: ADDS_A_GPU }]), gpuWhenNotAsked: "shared" };
+  const desktopBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const desktopKind: KindView = { ...offered(desktopBase, [{ ...desktopBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["shared", "whole"], gpuRoom: room }]), gpuWhenNotAsked: "whole" };
+  const { handlers, changes } = server([], { kinds: [serverKind, desktopKind] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  expect((await screen.findByRole("combobox", { name: "GPU" })).textContent).toBe("Shared");
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Whole card"));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Server/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Shared"));
+  await choose("GPU", "None");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("acquire linux"))).toBe(true));
+  expect(changes.find((change) => change.startsWith("acquire linux"))).toContain('"gpu":"none"');
+  cleanup();
+  const again = panel(server([], { kinds: [serverKind, desktopKind] }).handlers);
+  await again.findByText("No boxes yet");
+  fireEvent.click(again.getByRole("button", { name: "New box" }));
+  expect((await screen.findByRole("combobox", { name: "GPU" })).textContent).toBe("None");
+});
+
+test("071 unit 15, lead: Desktop opens on the GPU desktop with its part only when linux-desktop's GPU is set; unset, it opens on the CPU desktop; a remembered choice wins", async () => {
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["shared", "whole"], host: "pve-1", at: Date.now(), cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, freeForWhole: true }] };
+  const serverKind = kindView("linux", "Linux", "A server.", 2, false);
+  const cpuBase = kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true);
+  const cpuKind: KindView = { ...cpuBase, gpu: false, windowing: "x11" };
+  const gpuBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const gpuOffered = offered(gpuBase, [{ ...gpuBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["shared", "whole"], gpuRoom: room }]);
+  const opensOn = async (gpuKind: KindView) => {
+    const slot = panel(server([], { kinds: [serverKind, cpuKind, gpuKind] }).handlers);
+    await slot.findByText("No boxes yet");
+    fireEvent.click(slot.getByRole("button", { name: "New box" }));
+    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+    return (await screen.findByRole("combobox", { name: "GPU" })).textContent;
+  };
+  expect(await opensOn({ ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "whole", gpuSetting: "whole" })).toBe("Whole card");
+  cleanup();
+  expect(await opensOn({ ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "shared" })).toBe("None");
+  cleanup();
+  const set: KindView = { ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "shared", gpuSetting: "shared" };
+  expect(await opensOn(set)).toBe("Shared");
+  await choose("GPU", "Whole card");
+  expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Whole card");
+  await choose("GPU", "None");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Create box" })).toBeNull());
+  cleanup();
+  expect(await opensOn(set)).toBe("None");
 });

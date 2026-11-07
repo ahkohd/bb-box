@@ -13,6 +13,7 @@ import { ControlError } from "../core/control.ts";
 import { contract, type BoxEntry, type BoxPageState, type BoxResult, type DeviceBoot, type MachineEntry, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
 import { lastActiveAt, startedAt } from "./thread-on-box.ts";
 import { gpuMates } from "./gpu-page.ts";
+import { settingsCards } from "./gpu-settings.ts";
 import { sizeView } from "./views.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
@@ -71,6 +72,14 @@ function listed(box: BoxRecord): boolean {
 
 const SNAPSHOT_ANSWER_WAIT_MS = 3_000;
 const RESTORE_ANSWER_WAIT_MS = 60_000;
+
+const CARDS_READ_MS = 15_000;
+
+function answerWithin<T>(ms: number, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(ms);
+  const late = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error(`no answer in ${ms / 1000} s`)), { once: true }));
+  return Promise.race([work(signal), late]);
+}
 
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes, snapshots } = app;
@@ -495,6 +504,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),
+    "config.cards": async ({ backend: id }) => {
+      const backend = app.backends.get(id);
+      if (!backend?.cardsInUse) return { is: "none" };
+      const read = backend.cardsInUse.bind(backend);
+      const inUse = await answerWithin(CARDS_READ_MS, (signal) => read(signal)).catch((error: unknown) => ({ is: "unread" as const, host: null, why: `bb-box could not read the cards: ${error instanceof Error ? error.message : String(error)}`, setup: null }));
+      return settingsCards(inUse, id, (await boxes.all()).map((box) => ({ id: box.id, name: box.name, backend: box.backend })));
+    },
     "config.check": ({ draft, test, read }) => app.configuration.check(draft, test, undefined, { read }),
     "config.apply": async ({ draft, revision, operation, submission }) => {
       const result = await app.configuration.apply(draft, revision, operation === undefined ? undefined : { id: operation, submission });

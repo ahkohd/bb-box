@@ -2,6 +2,12 @@ import type { GpuPart } from "./types.ts";
 
 export const SERVER_GPU_MIB = 1024;
 
+export const DESKTOP_GPU_MIB = 384;
+
+export const BOXES_PER_CARD = 4;
+
+export const MOST_GPU_MEMORY_MIB = 1_048_576;
+
 const CUDA_INIT = `python3 -c 'import ctypes; print(ctypes.CDLL("libcuda.so.1").cuInit(0))'`;
 
 export const CHECK_DONE = "card check done";

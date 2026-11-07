@@ -1704,3 +1704,12 @@ Both said: build after changes. Numbers are each review's own.
 | A stopped box became Ready after Resize | Astra 5 | It stays stopped | Prototype |
 | The agent's words told it to release other threads' boxes or raise settings | Opus 9 | Agents' own words | Prototype |
 | The unit table, question answers and test capacity | Astra units, both on the questions | Taken unit by unit: two-guest checks with no load allowed; userspace work its own units; Docker's real-card gate; the kinds' default for the agent's GPU | Section 16; questions |
+
+### After unit 15
+
+Section 12 gives each backend's Whole cards a default of on. The owner
+decided on 6 November 2026 that whole cards stay off on Proxmox LXC until
+unit 8's G1, G3 and G5 pass on a free card. So a backend's `whole-cards`
+field, where set, wins; unset, it follows the install-wide option
+`general.wholeCards`, which is off unless set. Nothing changes on upgrade.
+See unit 15 in the [results](071-results.md).

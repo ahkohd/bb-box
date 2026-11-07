@@ -1,6 +1,7 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
 import { SNAPSHOT_DEFAULTS, ceilingOf, snapshotConfig, type BackendConfig, type ConfigDocument, type HostConfig, type ImageBake, type ImageConfig, type Problem } from "../core/document.ts";
 import { withImage } from "../core/project-images.ts";
+import { isGpuPart } from "../core/gpu.ts";
 import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
 import type { Preset } from "../core/sizes.ts";
@@ -286,13 +287,14 @@ export type KindAt =
   | { readonly at: "size"; readonly id: string; readonly size: SizeName; readonly part: SizePart }
   | { readonly at: "size-row"; readonly id: string; readonly size: SizeName }
   | { readonly at: "default"; readonly id: string }
-  | { readonly at: "spares"; readonly id: string };
+  | { readonly at: "spares"; readonly id: string }
+  | { readonly at: "gpu"; readonly id: string };
 
 export function warmPath(backendId: string, kind: string): Path {
   return `backends/${backendId}/warm/${kind}`;
 }
 
-export function kindPath(id: string, setting: "enabled" | "default" | "spares"): Path {
+export function kindPath(id: string, setting: "enabled" | "default" | "spares" | "gpu"): Path {
   return `kinds/${id}/${setting}`;
 }
 
@@ -315,7 +317,7 @@ function isPreset(name: string | undefined): name is Preset {
 export function kindAt(path: Path): KindAt | null {
   const [section, id, ...rest] = path.split("/");
   if (section !== "kinds" || !id) return null;
-  if (rest.length === 1 && (rest[0] === "enabled" || rest[0] === "default" || rest[0] === "spares")) return { at: rest[0], id };
+  if (rest.length === 1 && (rest[0] === "enabled" || rest[0] === "default" || rest[0] === "spares" || rest[0] === "gpu")) return { at: rest[0], id };
   const size: SizeName | null = rest[0] === "largest" ? "largest" : rest[0] === "presets" && isPreset(rest[1]) ? rest[1] : null;
   if (!size) return null;
   const tail = size === "largest" ? rest.slice(1) : rest.slice(2);
@@ -344,6 +346,8 @@ function storedAtKind(state: ConfigState, at: KindAt): Stored {
       return { kind: "value", value: sizes.default };
     case "spares":
       return { kind: "value", value: sizes.spares };
+    case "gpu":
+      return { kind: "value", value: sizes.gpu };
     case "size":
       return { kind: "value", value: storedSizePart(sizes, at.size, at.part) };
     case "size-row":
@@ -379,6 +383,8 @@ function withKindEdit(sizes: KindSizes, at: KindAt, value: PlainValue): KindSize
       return isPreset(typeof value === "string" ? value : undefined) ? { ...sizes, default: value as Preset } : sizes;
     case "spares":
       return typeof value === "number" ? { ...sizes, spares: value } : sizes;
+    case "gpu":
+      return value === null || isGpuPart(value) ? { ...sizes, gpu: value } : sizes;
     case "size":
       return typeof value === "number" || (value === null && at.part === "diskGiB") ? withSizePart(sizes, at.size, at.part, value) : sizes;
     case "size-row":
@@ -528,7 +534,7 @@ function asPlain(value: unknown): PlainValue {
 
 function fieldValue(field: FieldView | null, value: PlainValue): PlainValue {
   if (!field || value === null) return value;
-  if (field.type === "boolean") return value === (field.default ?? false) ? null : value;
+  if (field.type === "boolean") return field.default === undefined || field.replaces !== undefined || value !== field.default ? value : null;
   if (field.type === "number") {
     if (typeof value !== "string") return value;
     const text = value.trim();
@@ -1043,6 +1049,8 @@ function kindLabelOf(path: Path): string | null {
       return "Default size";
     case "spares":
       return "Spare boxes";
+    case "gpu":
+      return "GPU when not asked for";
     case "size":
       return `${sizeName(at.size)} ${SIZE_PART_WORDS[at.part]}`;
     case "size-row":

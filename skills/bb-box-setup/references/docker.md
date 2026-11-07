@@ -103,7 +103,10 @@ When the PC is not a BB machine, set `host` to `ssh://box@<pc>:2222`.
 | `machine-docker-host` | empty | For a `bb:<machine ID>` host: `wsl://distro`, a unix socket or `tcp://host:port` on that machine. Empty leaves the machine's own `DOCKER_HOST`. On Windows set `wsl://<distro>` |
 | `linux-image`, `desktop-image`, `wayland-desktop-image` | `bbbox/...:1` | The image of each kind. Empty turns the kind off here |
 | `privileged` | `true` | Boxes have Docker of their own and can take over the host |
-| `gpu-desktops` | `false` | Offers `linux-desktop` on the host's NVIDIA GPUs, through CDI |
+| `gpus` | `false` | GPU boxes: offers `linux` with a GPU and `linux-desktop` on the host's NVIDIA cards, through CDI. Unset, the replaced `gpu-desktops` is read |
+| `boxes-per-card` | 4 | The most boxes on one card, of every install, running or stopped. Unset, the replaced `desktops-per-gpu` is read |
+| `whole-cards` | unset | A card to itself for a box. Unset, `general.wholeCards` says, off unless set |
+| `gpu-memory-mib` | 1024 | The memory a card must have free for a new server |
 | `boxes` | 10 | The most bb-box containers on the host |
 | `reserve-memory-mib` | 4096 | Memory a new box leaves free. Lower it on a host with 8 GiB |
 

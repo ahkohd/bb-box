@@ -14,6 +14,8 @@ import { Card, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, RowControl
 import { backendFieldPath, kindPath, plain, sizeName, sizePath, sizeRowPath, SIZE_PARTS, storedProblemPath, warmPath, type Path, type PlainValue, type SizeName, type SizePart } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, RestoredNote, SAVING_RULE, SaveBar, saveOnEnter, useDraft, type Draft } from "./settings-saving.tsx";
 import { kindAvailability, kindName } from "./settings-status.ts";
+import { KindGpuCard } from "./settings-gpus.tsx";
+import { kindHasGpuDefault } from "./gpu-settings-words.ts";
 
 const PART_LABELS: Readonly<Record<SizePart, string>> = { cores: "Cores", memoryGiB: "Memory, GiB", diskGiB: "Disk, GiB" };
 const PART_NAMES: Readonly<Record<SizePart, string>> = { cores: "cores", memoryGiB: "memory, in GiB", diskGiB: "disk, in GiB" };
@@ -445,6 +447,7 @@ function KindEditor({ info }: { info: KindInfoView }) {
       <SizesCard draft={draft} id={info.id} problemAt={problemAt} />
       <WhereItRuns draft={draft} info={info} rows={rows} problemAt={problemAt} />
       <SparesCard draft={draft} info={info} />
+      {kindHasGpuDefault(latest, info.id) ? <KindGpuCard kind={info.id} /> : null}
       <p className="px-1 text-xs leading-snug text-subtle-foreground">Sizes, the default size, warm boxes and spares are saved together with Save.</p>
       <SaveBar draft={draft} unplaced={unplacedProblems(draft, placedPaths(info.id, rows))} />
     </div>

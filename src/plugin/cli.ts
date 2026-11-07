@@ -271,8 +271,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               type: "string",
               get description() {
                 return wholeCardsOn(app)
-                  ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Shared for linux-desktop and none for linux by default."
-                  : "The box's GPU: none, or shared, one card other boxes may share. Shared for linux-desktop and none for linux by default.";
+                  ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the kind's GPU when not asked for: shared for linux-desktop and none for linux unless bb box kind set --gpu changed it."
+                  : "The box's GPU: none, or shared, one card other boxes may share. Left out, the kind's GPU when not asked for: shared for linux-desktop and none for linux unless bb box kind set --gpu changed it.";
               },
             },
             dedicated: { type: "boolean", description: "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Without it, an ios box is shared where a shared iOS host has room. Give it with a size: where a shared iOS host is set up, a size without it is refused." },

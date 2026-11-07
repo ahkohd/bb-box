@@ -144,7 +144,7 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
     .filter(Boolean);
   for (const cidr of sshFrom) if (!CIDR.test(cidr)) problem(HETZNER_KEYS.sshFrom, `Hetzner Cloud: "${cidr}" is not an address range such as 203.0.113.7/32.`);
 
-  const docker = parseDockerPart({ id: part.id, hosts: [], fields: { ...values, [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpuDesktops]: false } });
+  const docker = parseDockerPart({ id: part.id, hosts: [], fields: { ...values, [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpus]: false } });
   if (!docker.ok) problems.push(...docker.problems.map((each) => ({ ...each, message: each.message.replace(/^Docker:/, "Hetzner Cloud:") })));
 
   if (problems.length || !docker.ok) return { ok: false, problems };

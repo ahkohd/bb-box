@@ -540,6 +540,28 @@ export interface GpuRoom {
   readonly reach?: string | null;
 }
 
+export type CardHolding = (
+  | { readonly is: "box"; readonly name: string }
+  | { readonly is: "warm" }
+  | { readonly is: "other-install" | "not-bb-box"; readonly guest: string }
+) & { readonly part: "shared" | "whole"; readonly running: boolean; readonly counts: boolean };
+
+export type LimitCounts = "this-install-running" | "every-install";
+
+export interface CardInUse {
+  readonly uuid: string;
+  readonly index: number | null;
+  readonly model: string | null;
+  readonly totalMiB: number | null;
+  readonly freeMiB: number | null;
+  readonly holders: readonly CardHolding[];
+  readonly counted: number;
+}
+
+export type CardsInUse =
+  | { readonly is: "read"; readonly host: string; readonly source: "helper" | "docker"; readonly at: number | null; readonly limit: number | null; readonly counts: LimitCounts; readonly cards: readonly CardInUse[] }
+  | { readonly is: "unread"; readonly host: string | null; readonly why: string; readonly setup: string | null };
+
 export interface Limit {
   readonly resource: "memory" | "disk" | "cpu" | "guests" | "gpu-desktops" | "gpu-memory" | "machines";
   /** Which one, where there are several: a GPU's index or UUID. */
@@ -943,6 +965,7 @@ export interface Backend {
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
   gpuRoom?(kind: string): Promise<GpuRoom>;
+  cardsInUse?(signal?: AbortSignal): Promise<CardsInUse>;
   cardReach?(kind: string): string | null;
   dockerDaemons?(signal?: AbortSignal): Promise<readonly DockerDaemonReached[]>;
   markGpus?(request: GpuMarkRequest, signal?: AbortSignal): Promise<GpuMarking>;
@@ -1468,10 +1491,14 @@ export type ParsedSettings<C> =
   | { readonly enabled: true; readonly ok: false; readonly problems: readonly string[] };
 
 /** Where the settings page shows a field (029). */
-export type FieldGroup = "connection" | "credentials" | "boxes" | "ios-hosts" | "advanced";
+export type FieldGroup = "connection" | "credentials" | "boxes" | "gpus" | "ios-hosts" | "advanced";
 
 /** A field of a backend or of its hosts: BB's setting descriptor and its group. */
-export type FieldDescriptor = PluginSettingDescriptor & { readonly group: FieldGroup };
+export type FieldDescriptor = PluginSettingDescriptor & {
+  readonly group: FieldGroup;
+  readonly replaces?: string;
+  readonly replacedBy?: string;
+};
 
 export type FieldValue = string | number | boolean;
 

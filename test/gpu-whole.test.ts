@@ -11,7 +11,7 @@ import { cardLines, marker } from "./gpu-helper/node.ts";
 import { gpuPartsText, gpuRoomText } from "../src/plugin/tools.ts";
 import { Backends } from "../src/backends/index.ts";
 import { MemoryStorage } from "./helpers.ts";
-import { emptyDocument, generalConfig, readDraft } from "../src/core/document.ts";
+import { emptyDocument, generalConfig, readDraft, type ConfigDocument } from "../src/core/document.ts";
 import { OPTIONS } from "../src/plugin/config-edits.ts";
 import type { KindView } from "../src/plugin/views.ts";
 
@@ -330,7 +330,7 @@ test("071 unit 8: box_list says which cards are free for a whole card, and whose
   const linux = { desktop: false, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared", "whole"], gpuRoom: { ...room, at: 1_000 } }] } as unknown as KindView;
   assert.equal(
     gpuPartsText(linux, 1_000),
-    " GPU on Proxmox LXC on pve: none, shared or whole; ask with gpu shared or gpu whole (pve: 2 cards; card 0 whole, quiet-elm's; card 1, shared, 0 boxes, 87.9 GiB free, free for a whole card, when read just now; a new box needs 1024 MiB free on its card).",
+    " GPU on Proxmox LXC on pve: none, shared or whole; ask with gpu shared or gpu whole (pve: 2 cards; card 0 whole, quiet-elm's; card 1, shared, 0 of 4 boxes, 87.9 GiB free, free for a whole card, when read just now; a new box needs 1024 MiB free on its card).",
   );
   const other = { desktop: false, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared", "whole"], gpuRoom: { ...room, at: 1_000, cards: [{ ...room.cards![0]!, wholeBy: "CT 214 of another install" }] } }] } as unknown as KindView;
   assert.match(gpuPartsText(other, 1_000), /\(pve: 1 card; card 0 held whole by CT 214 of another install, when read just now;/);
@@ -390,13 +390,13 @@ test("071 unit 8, lead: whole cards are off unless the install turns them on: no
   assert.equal(room.wholeOff, true);
   assert.ok(room.cards?.every((card) => !card.freeForWhole));
   const linux = { desktop: false, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared"], gpuRoom: { ...room, at: 1_000 } }] } as unknown as KindView;
-  assert.match(gpuPartsText(linux, 1_000), /: none or shared; ask with gpu shared \(.*\)\. Whole cards are off on this install: ask the user if a box needs a card to itself\.$/);
+  assert.match(gpuPartsText(linux, 1_000), /: none or shared; ask with gpu shared \(.*\)\. Whole cards are off on [^:]+: ask the user if a box needs a card to itself\.$/);
   const refused = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
-  assert.equal(refused.message, "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.");
-  assert.equal(refused.agentMessage, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(refused.message, "Whole cards are off on Proxmox LXC on pve, so no box gets a card to itself there. Ask for gpu shared, or turn Whole cards on in Proxmox LXC on pve's GPUs section in BB Box's settings, or with bb box backend set proxmox-lxc --field whole-cards=true.");
+  assert.equal(refused.agentMessage, "Not made: whole cards are off on Proxmox LXC on pve. Ask for gpu shared, or ask the user. bb-box changed nothing.");
   const before = clones(bridge);
   await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && error.agentMessage === refused.agentMessage);
-  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on Proxmox LXC on pve. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
   assert.equal(clones(bridge), before);
   assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, [])).ok, true, "shared is as before");
 });
@@ -511,10 +511,11 @@ test("071 unit 8, Astra 6, Astra 7 and Fable 4: box_list gives desktops their ca
 
 test("071 unit 8, lead: general.wholeCards is a boolean, off unless set, and bb box option lists it", () => {
   const read = (general: unknown) => readDraft({ schema: emptyDocument().schema, revision: 0, backends: [], kinds: {}, general }, []);
+  const withBackend = (document: ConfigDocument) => ({ ...document, backends: [{ id: "fake", type: "fake", enabled: true, fields: {} }] });
   const on = read({ wholeCards: true });
   assert.deepEqual(on.problems, []);
-  assert.equal(generalConfig(on.document).wholeCards, true);
-  assert.equal(generalConfig(read({}).document).wholeCards, false, "off unless set");
+  assert.equal(generalConfig(withBackend(on.document)).wholeCards, true, "a backend whose own whole-cards field is unset takes it");
+  assert.equal(generalConfig(withBackend(read({}).document)).wholeCards, false, "off unless set");
   assert.deepEqual(read({ wholeCards: "yes" }).problems.map((problem) => [problem.path, problem.message]), [["general.wholeCards", "wholeCards is true or false."]]);
   const option = OPTIONS.find((each) => each.name === "general.wholeCards");
   assert.deepEqual(option && { type: option.type, default: option.default }, { type: { kind: "boolean" }, default: false });

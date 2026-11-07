@@ -68,8 +68,31 @@ where it is built ahead, which its boxes claim at once (#440). The
   or a box on a Namespace Linux machine of its own, ready in about 25 s and
   billed by the minute. A plain `linux` box starts sooner, so ask for these
   only when you need them.
-- A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
-  suggests `linux-desktop-cpu`.
+- A `linux` or `linux-desktop` box on x86_64 can have an NVIDIA card, where
+  its provider has cards. Ask with `gpu`: `none`, `shared`, one card other
+  boxes may share, or `whole`, a card to itself, where its provider has
+  whole cards on. Left out, the box gets its kind's GPU when not asked for,
+  which `box_list` gives: shared for `linux-desktop` and none for `linux`
+  unless the user changed it. `box_list` says which providers have cards,
+  the room on each card and whether whole cards are on.
+- In a box with a GPU, `nvidia-smi -L` lists the card; on Docker it lists
+  every card, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"` shows the box's
+  own. CUDA sees the box's card as device 0. The box has NVIDIA's driver
+  libraries but not the CUDA toolkit: PyTorch's wheels bring their own
+  CUDA. Never install NVIDIA's driver packages from apt. A shared card has
+  no memory fence, so keep within the memory `nvidia-smi` shows free; a
+  PyTorch process takes about 650 MiB before it allocates anything.
+- When no card can take a box, the refusal names the boxes on each card.
+  Ask for `gpu: none`, or ask the user; never release, stop or resize
+  another thread's box to free a card.
+- `box_resize` changes a box's GPU: `check: true` first, then
+  `restart: true` where adding or taking away a GPU needs a restart, on
+  Proxmox LXC. Shared to whole card and back are live where no other box
+  runs on the card. On Docker only that switch is possible. `box_fork`
+  gives a fork no GPU unless asked, and only a desktop's fork can have one.
+- After the host's NVIDIA driver changes, `nvidia-smi` in an older box says
+  "Driver/library version mismatch". Ask the user to update the box's
+  userspace with `bb box gpu update <box>`: it restarts the box.
 - An `ios` box is a macOS VM with one iOS Simulator device booted, shown to
   the person in the panel. `box_list` names its devices; `device` picks one,
   such as `box_acquire({kind: "ios", device: "iPhone 17"})`, and the first

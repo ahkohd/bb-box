@@ -21,9 +21,9 @@ import { LargestLine, type AskedParts } from "./largest-line.tsx";
 import { withoutRaiseLargest } from "../core/largest-words.ts";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
 import type { GpuPart, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
-import { gpuWhenNotAsked } from "../core/gpu.ts";
+import { gpuForSpare, gpuWhenNotAsked } from "../core/gpu.ts";
 import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, type GpuFormOffer } from "./gpu-choice.ts";
-import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuDesktopSetting, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 export const ROOMS_CHECK_MS = 300;
 
@@ -251,6 +251,7 @@ export function NewBox({
   // kind without edits starts from its own preset in view.
   const [edited, setEdited] = useState<Readonly<Record<string, Fields>>>(() => (last.custom && typeof last.custom === "object" ? last.custom : {}));
   const [gpuByKind, setGpuByKind] = useState<Readonly<Record<string, GpuPart>>>(() => (last.gpu && typeof last.gpu === "object" ? last.gpu : {}));
+  const [desktopGpuChosen, setDesktopGpuChosen] = useState(false);
   const [cardRooms, setCardRooms] = useState<ReadonlyMap<string, { readonly room: GpuRoom | null; readonly failed: boolean }> | null>(null);
   const [cardsFailed, setCardsFailed] = useState(false);
   const [cardTry, setCardTry] = useState(0);
@@ -297,7 +298,9 @@ export function NewBox({
   }, [open, listed, loadProfile]);
 
   // Every step shows what exists; a choice snaps to the nearest that does.
-  const picked = nearest(kinds, wanted);
+  const snapped = nearest(kinds, wanted);
+  const desktopRemembered = desktopGpuChosen || kinds.some((candidate) => candidate.desktop && (candidate.id === last.kind || gpuByKind[candidate.id] !== undefined));
+  const picked = !snapped.gpu && !desktopRemembered && gpuDesktopSetting(kinds, snapped) ? nearest(kinds, { ...snapped, gpu: true }) : snapped;
   const kind = kindFor(kinds, picked);
   const kindId = kind?.id ?? null;
   const buildingFirst = toBuild.find((entry) => entry.kind.id === kind?.id) ?? null;
@@ -356,7 +359,7 @@ export function NewBox({
     cardOffers.map((offer) => (gpuSibling ? formOffer(offer, offer.gpuRoom, false) : asForm(offer))),
     cpuSibling || !!gpuSibling,
   );
-  const gpuDefault = kind ? gpuWhenNotAsked(kind.id) : "none";
+  const gpuDefault = kind ? (kind.gpuWhenNotAsked ?? gpuWhenNotAsked(kind.id)) : "none";
   const rememberedGpu = kind ? gpuByKind[kind.id] : undefined;
   const chosenGpu: GpuPart = rememberedGpu && menuParts.includes(rememberedGpu) ? rememberedGpu : menuParts.includes(gpuDefault) ? gpuDefault : (menuParts[0] ?? "none");
   const readCards = useRef(cards);
@@ -434,7 +437,7 @@ export function NewBox({
     const gpu = [offer.resizing?.gpu, sibling?.resizing?.gpu].find((candidate) => candidate && candidate.add !== "no") ?? offer.resizing?.gpu ?? sibling?.resizing?.gpu ?? null;
     return gpu ? { canAddGpu: gpu.add !== "no", addKnown: true } : { canAddGpu: false, addKnown: false };
   };
-  const forGpu = (offer: OfferView): GpuFormOffer => ({ ...asForm(offer), ...gpuAdd(offer), spare: !!kind && readyOn(offer) && chosenGpu === gpuWhenNotAsked(kind.id) });
+  const forGpu = (offer: OfferView): GpuFormOffer => ({ ...asForm(offer), ...gpuAdd(offer), spare: !!kind && readyOn(offer) && chosenGpu === gpuDefault && gpuForSpare(gpuDefault) === gpuDefault });
   const sizeBlocked = chosenGpu !== "none" && !onOffer && filtered.length > 0 && gpuPreview.length === 0;
   const gpuLine = !cardMenu
     ? null
@@ -724,12 +727,13 @@ export function NewBox({
                     onChange={(value) => {
                       if (!kind) return;
                       const part = value as GpuPart;
+                      if (kind.desktop) setDesktopGpuChosen(true);
                       if (part === "none" && cpuSibling) {
                         pick({ gpu: false });
                         return;
                       }
                       const rememberedKind = gpuSibling && part !== "none" ? gpuSibling.id : kind.id;
-                      if (gpuSibling && part !== "none") pick({ gpu: true });
+                      if (part !== "none" && (gpuSibling || (kind.desktop && !wanted.gpu))) pick({ gpu: true });
                       const next = { ...gpuByKind, [rememberedKind]: part };
                       setGpuByKind(next);
                       remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: rememberedKind, size, gpu: next, ...(Object.keys(edited).length ? { custom: edited } : {}) });

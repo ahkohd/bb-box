@@ -2,7 +2,7 @@ import { OPERATOR, SPARES } from "../../core/boxes.ts";
 import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, type CardCheck, type SeenCard } from "../card-check.ts";
 import type { CardClaim, CardPlacement, CardRoom, GpuPart, GpuRefusal } from "../types.ts";
 
-export const DESKTOP_GPU_MIB = 384;
+export { DESKTOP_GPU_MIB } from "../card-check.ts";
 export const ALL_CARDS_DEVICE = "nvidia.com/gpu=all";
 export const READING_FRESH_MS = 15_000;
 export const READING_KEPT_MS = 60_000;
@@ -271,7 +271,8 @@ export function blockWords(block: CardBlock, titles: ThreadTitles, audience: Aud
     case "limit": {
       const names = block.holders.map((holder) => holderName(holder, titles, audience, true));
       const counting = block.count > block.holders.length ? ", counting boxes being made" : "";
-      return `${card} has ${block.count} ${block.count === 1 ? "box" : "boxes"}${counting}, the most a card may have${names.length ? ` (${inWords(names)})` : ""}`;
+      const most = block.count > block.limit ? `over the limit of ${block.limit}` : "the most a card may have";
+      return `${card} has ${block.count} ${block.count === 1 ? "box" : "boxes"}${counting}, ${most}${names.length ? ` (${inWords(names)})` : ""}`;
     }
     case "held":
       return holdersWords(card, block.holders, titles, audience);

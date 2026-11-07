@@ -1,7 +1,7 @@
 // Pure helpers for the settings page: reading the configuration state the
 // server gives, and building the drafts the page sends back (029).
 
-import type { MachineSize, FieldValue, WarmShortfall } from "../backends/types.ts";
+import type { MachineSize, FieldValue, GpuPart, WarmShortfall } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState, SnapshotSettings } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
@@ -14,6 +14,7 @@ export const GROUPS: readonly { readonly id: FieldGroup; readonly title: string 
   { id: "connection", title: "Connection" },
   { id: "credentials", title: "Credentials" },
   { id: "boxes", title: "Boxes" },
+  { id: "gpus", title: "GPUs" },
   { id: "ios-hosts", title: "Shared iOS hosts" },
   { id: "advanced", title: "Advanced" },
 ];
@@ -28,7 +29,7 @@ export function isSecretState(value: unknown): value is SecretState {
 
 /** The fields of each group, in the driver's order; groups with none are left out. */
 export function groupFields(fields: readonly FieldView[]): { readonly id: FieldGroup; readonly title: string; readonly fields: FieldView[] }[] {
-  return GROUPS.map((group) => ({ ...group, fields: fields.filter((field) => field.group === group.id) })).filter((group) => group.fields.length > 0);
+  return GROUPS.map((group) => ({ ...group, fields: fields.filter((field) => field.group === group.id && !field.replacedBy) })).filter((group) => group.fields.length > 0);
 }
 
 /** Problems at a path, or under it. */
@@ -53,6 +54,7 @@ export interface KindSizes {
   readonly largest: MachineSize;
   /** Spare boxes to keep (032). */
   readonly spares: number;
+  readonly gpu: GpuPart | null;
 }
 
 /** A kind's sizes as they are: the shipped defaults with the document's changes. */
@@ -76,15 +78,17 @@ export function effectiveKind(state: ConfigState, id: string): KindSizes {
       diskGiB: change?.largest?.diskGiB ?? largestBase.diskGiB,
     },
     spares: change?.spares ?? 0,
+    gpu: change?.gpu ?? null,
   };
 }
 
 /** The kind's entry for the document: only what differs from the shipped defaults, or undefined when nothing does. */
 export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): KindConfig | undefined {
   const shipped = state.defaults.kinds[id];
-  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, MachineSize>>; default?: Preset; largest?: MachineSize; spares?: number } = {};
+  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, MachineSize>>; default?: Preset; largest?: MachineSize; spares?: number; gpu?: GpuPart } = {};
   if (!sizes.enabled) entry.enabled = false;
   if (sizes.spares) entry.spares = sizes.spares;
+  if (sizes.gpu) entry.gpu = sizes.gpu;
   if (shipped) {
     const presets: Partial<Record<Preset, MachineSize>> = {};
     for (const preset of PRESET_NAMES) {

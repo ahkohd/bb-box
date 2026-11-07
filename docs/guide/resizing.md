@@ -49,6 +49,10 @@ If threads are working on the box, the dialog shows them and asks again, 'Restar
 
 When it is done, the dialog says what the box has now, for example 'It has 4 cores · 8 GiB · 64 GiB disk now, after a restart.' The box's row says how it went, for example 'Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.'
 
+## The GPU
+
+A Linux box's GPU is part of its size. Resize has a GPU section below the size, with None, Shared and Whole card, where the box's backend can change it. See [changing a box's GPU](gpu-boxes.md#change-a-boxs-gpu).
+
 ## A BB machine's cores
 
 BB counts a machine's cores when its daemon there starts, and sets the machine's automatic thread limit from them. After a live change of a BB machine's cores, BB Box restarts BB's daemon in the box once the box shows its new cores, within about 15 seconds, if no thread is working on the machine and no BB terminal is open there. Otherwise, the answer says how to set the thread limit by hand.
