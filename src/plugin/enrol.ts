@@ -241,19 +241,12 @@ export interface EnrolmentDeps {
   readonly manualRemoveMs?: number;
   readonly joinWaitsMs?: readonly number[];
   readonly joinAlarm?: JoinAlarm;
+  readonly now?: () => number;
 }
 
 export interface JoinAlarm {
   set(at: number, ring: () => void): () => void;
 }
-
-export const TIMER_ALARM: JoinAlarm = {
-  set(at, ring) {
-    const timer = setTimeout(ring, Math.max(0, at - Date.now()));
-    timer.unref?.();
-    return () => clearTimeout(timer);
-  },
-};
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
 
@@ -454,6 +447,7 @@ export class Enrolment {
   readonly #nextTries = new Map<string, () => void>();
   readonly #joinAlarm: JoinAlarm;
   readonly #joinWaitsMs: readonly number[] | undefined;
+  readonly #now: () => number;
   readonly #identityTurns = new Map<string, Promise<unknown>>();
   /** The steps of each enrolment this process is following. */
   readonly #phases = new Map<string, Phases>();
@@ -471,7 +465,14 @@ export class Enrolment {
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
     this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
     this.#joinWaitsMs = deps.joinWaitsMs;
-    this.#joinAlarm = deps.joinAlarm ?? TIMER_ALARM;
+    this.#now = deps.now ?? (() => Date.now());
+    this.#joinAlarm = deps.joinAlarm ?? {
+      set: (at, ring) => {
+        const timer = setTimeout(ring, Math.max(0, at - this.#now()));
+        timer.unref?.();
+        return () => clearTimeout(timer);
+      },
+    };
   }
 
   dispose(): void {
@@ -692,7 +693,7 @@ export class Enrolment {
     // A resumed one's time from then would count the restart too, and a
     // restored box was ready long before, or was restored stopped.
     const since = options.since ?? "ready";
-    const phases = new Phases(since === "ready" ? (box.readyAt ?? Date.now()) : Date.now(), Date.now, since);
+    const phases = new Phases(since === "ready" ? (box.readyAt ?? this.#now()) : this.#now(), this.#now, since);
     this.#phases.set(box.id, phases);
     const outcome: TryOutcome = { resetFound: null, startOver: false };
     try {
@@ -789,7 +790,7 @@ export class Enrolment {
   async #create(box: BoxRecord): Promise<HostState | null> {
     if (box.capabilities.os === "windows") {
       const host = await this.#deps.hosts().experimental_create({ machineProviderId: MANUAL_PROVIDER_ID, key: box.id, inputs: null, wait: false });
-      await this.#deps.kv.set(`${MANUAL_PREFIX}${host.id}`, { boxId: box.id, at: Date.now() } satisfies ManualMachine);
+      await this.#deps.kv.set(`${MANUAL_PREFIX}${host.id}`, { boxId: box.id, at: this.#now() } satisfies ManualMachine);
       return host;
     }
     for (let attempt = 1; ; attempt++) {
@@ -813,7 +814,7 @@ export class Enrolment {
    */
   async #follow(box: BoxRecord, phases: Phases, access: Promise<void>): Promise<"start over" | void> {
     const hostId = box.enrol.hostId!;
-    const deadline = Date.now() + this.#timeoutMs;
+    const deadline = this.#now() + this.#timeoutMs;
     /** When the waits for the box's access ended. */
     let waitsEnded: number | undefined;
     for (;;) {
@@ -823,14 +824,14 @@ export class Enrolment {
       const host = await this.#deps.hosts().get({ hostId });
       const phase = host.lifecycle.phase;
       if (phase === "active" && host.status === "connected" && waitsEnded === undefined) {
-        const connected = Date.now();
+        const connected = this.#now();
         phases.mark("connected", connected);
         if (current.capabilities.os === "windows") await this.#rename(current, hostId);
         await access;
         await this.#variables(current, "the machine connected", connected, phases);
         // BB's daemon can stop during the waits, as when the box runs out of
         // memory, so bb-box asks BB again before it records the box enrolled (#286).
-        waitsEnded = Date.now();
+        waitsEnded = this.#now();
         continue;
       }
       if (phase === "active" && host.status === "connected") {
@@ -842,7 +843,7 @@ export class Enrolment {
             : {
                 enrol: { state: "enrolled", hostId, error: null },
                 joinTries: null,
-                ...(phases.since === "resumed" || phases.since === "retry" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
+                ...(phases.since === "resumed" || phases.since === "retry" ? {} : { timings: { ...latest.timings, enrol: this.#now() - phases.origin } }),
               },
         );
         if (enrolled?.enrol.hostId !== hostId) return;
@@ -865,7 +866,7 @@ export class Enrolment {
         await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId: null, error: reason } }));
         return;
       }
-      if (Date.now() > deadline) {
+      if (this.#now() > deadline) {
         const reason = `BB did not finish adding the box as a machine within ${Math.round(this.#timeoutMs / 60_000)} minutes.${host.lifecycle.message ? ` ${host.lifecycle.message}` : ""}`;
         await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
         return;
@@ -875,7 +876,7 @@ export class Enrolment {
       // within as long as an enrolment waits for the variables, the daemon
       // stopped, and the box is not a BB machine (#286).
       const from = waitsEnded ?? phases.marks.get("bootstrapped");
-      if (from !== undefined && Date.now() - from > this.#variablesWaitMs) {
+      if (from !== undefined && this.#now() - from > this.#variablesWaitMs) {
         const reason =
           (waitsEnded !== undefined
             ? `BB's daemon in box ${current.name} stopped soon after it connected, and BB did not show the machine connected again within ${waited(this.#variablesWaitMs)}.`
@@ -940,7 +941,7 @@ export class Enrolment {
         if (result.exitCode !== ACCESS_CHECK_EXITS.waiting) {
           throw new Error(`Looking for the thread's variables in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
         }
-        if (Date.now() >= deadline) {
+        if (this.#now() >= deadline) {
           this.#deps.log?.(`BB's daemon in box ${box.name} had no process with the thread's GH_TOKEN ${waited(this.#variablesWaitMs)} after ${since}. Its commands take it once one has.`);
           return;
         }
@@ -990,7 +991,7 @@ export class Enrolment {
   async #remove(hostId: string, waitMs = this.#manualRemoveMs): Promise<void> {
     const key = `${MANUAL_PREFIX}${hostId}`;
     const made = await this.#deps.kv.get<ManualMachine>(key);
-    const removing = made?.removing ?? Date.now();
+    const removing = made?.removing ?? this.#now();
     try {
       await this.#deps.hosts().delete({ hostId });
     } catch (error) {
@@ -1004,7 +1005,7 @@ export class Enrolment {
 
   /** Waits up to `waitMs` for BB to no longer have machine `hostId`. Null once it has not; otherwise what BB says of it. */
   async #removing(hostId: string, waitMs: number): Promise<string | null> {
-    const deadline = Date.now() + waitMs;
+    const deadline = this.#now() + waitMs;
     for (;;) {
       let host: HostState;
       try {
@@ -1015,17 +1016,17 @@ export class Enrolment {
       }
       if (host.lifecycle.phase === "removed") return null;
       // With the machine's name, which is its box's, to see which machine stays and why (#539).
-      if (Date.now() >= deadline) return `${host.name ? `"${host.name}" is ` : ""}${host.lifecycle.phase}, ${host.lifecycle.message ?? host.status}`;
+      if (this.#now() >= deadline) return `${host.name ? `"${host.name}" is ` : ""}${host.lifecycle.phase}, ${host.lifecycle.message ?? host.status}`;
       await new Promise((resolve) => setTimeout(resolve, this.#pollMs));
     }
   }
 
   /** Keeps the record of a manual machine BB is still removing, and logs it once BB has taken longer than a release waits. */
   async #stillRemoving(hostId: string, made: ManualMachine & { removing: number }, left: string): Promise<void> {
-    const stuck = Date.now() - made.removing >= this.#manualRemoveMs;
+    const stuck = this.#now() - made.removing >= this.#manualRemoveMs;
     if (stuck && !made.stuck) {
       this.#deps.log?.(
-        `BB has not finished removing machine ${hostId}, a manual machine bb-box made for a Windows box, ${Math.round((Date.now() - made.removing) / 1000)} s after bb-box asked: ${left}. bb-box keeps its record, and its sweep looks again.`,
+        `BB has not finished removing machine ${hostId}, a manual machine bb-box made for a Windows box, ${Math.round((this.#now() - made.removing) / 1000)} s after bb-box asked: ${left}. bb-box keeps its record, and its sweep looks again.`,
       );
     }
     await this.#deps.kv.set(`${MANUAL_PREFIX}${hostId}`, { ...made, stuck: made.stuck || stuck } satisfies ManualMachine);
@@ -1050,7 +1051,7 @@ export class Enrolment {
       }
       const box = made ? await this.#deps.boxes.find(made.boxId) : null;
       const gone = !box || box.state === "releasing" || box.state === "gone" || box.state === "failed";
-      const unnamed = !!box && box.enrol.hostId !== hostId && Date.now() - (made?.at ?? 0) > MANUAL_GRACE_MS;
+      const unnamed = !!box && box.enrol.hostId !== hostId && this.#now() - (made?.at ?? 0) > MANUAL_GRACE_MS;
       if (!made || gone || unnamed) {
         this.#deps.log?.(`Removing BB machine ${hostId}, a manual machine bb-box made for a Windows box: ${box ? `box ${box.name} no longer uses it` : "its box is gone"}.`);
         await this.#remove(hostId, 0).catch((error) => this.#deps.logError("sweep manual machines", error));
@@ -1116,11 +1117,11 @@ export class Enrolment {
 
   /** Whether BB shows machine `hostId` connected within `ms`. */
   async #connectedWithin(hostId: string, ms: number, signal?: AbortSignal): Promise<boolean> {
-    const deadline = Date.now() + ms;
+    const deadline = this.#now() + ms;
     for (;;) {
       if (signal?.aborted) return false;
       if ((await abortable(this.#deps.hosts().get({ hostId }), signal)).status === "connected") return true;
-      if (Date.now() >= deadline) return false;
+      if (this.#now() >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, this.#pollMs));
     }
   }
@@ -1145,13 +1146,13 @@ export class Enrolment {
    * it did, or null.
    */
   async #connected(box: BoxRecord, hostId: string, stop?: AbortSignal): Promise<number | null> {
-    const deadline = Date.now() + this.#variablesWaitMs;
+    const deadline = this.#now() + this.#variablesWaitMs;
     for (;;) {
       if (stop?.aborted) return null;
       const host = await abortable(this.#deps.hosts().get({ hostId }), stop);
       if (host.lifecycle.phase !== "active") return null;
-      if (host.status === "connected") return Date.now();
-      if (Date.now() >= deadline) {
+      if (host.status === "connected") return this.#now();
+      if (this.#now() >= deadline) {
         this.#deps.log?.(`BB did not show box ${box.name}'s machine connected ${waited(this.#variablesWaitMs)} after its daemon started again.`);
         return null;
       }
@@ -1173,7 +1174,7 @@ export class Enrolment {
       if (box.state !== "ready") continue;
       if (box.identityReset && box.identityReset.enrolledAgainAt === null) void this.#recover(box.id);
       else if (box.removedMachineToCheck) void this.#checkRemovedMachine(box);
-      else if (dueToJoin(box, Date.now())) void this.#tryAgain(box.id);
+      else if (dueToJoin(box, this.#now())) void this.#tryAgain(box.id);
       else if (failedBeforeTries(box)) void this.#startTries(box.id);
     }
     const enrolled = all.filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
@@ -1284,7 +1285,7 @@ export class Enrolment {
         if (!box?.identityReset) return;
       }
       if (waitingToJoin(box)) {
-        if (!dueToJoin(box, Date.now())) return;
+        if (!dueToJoin(box, this.#now())) return;
         await this.#tryAgain(boxId, "reset");
         await this.#deps.boxes.enrolledAgainAfterReset(boxId);
         return;
@@ -1326,7 +1327,7 @@ export class Enrolment {
       return;
     }
     const failed = (box.joinTries?.failed ?? 0) + 1;
-    const now = Date.now();
+    const now = this.#now();
     const since = box.joinTries?.since ?? now;
     const verdict = backendVerdict(box, await this.#deps.boxes.all());
     const planned = nextTry({ failed, problem: found.problem, verdict, now, since, waits: this.#joinWaitsMs });
@@ -1343,7 +1344,7 @@ export class Enrolment {
     );
     if (!settled?.joinTries) return;
     if (planned.next !== null) this.#tryAt(boxId, planned.next);
-    const when = planned.next === null ? null : `bb-box tries again in ${waitWords(planned.next - Date.now())}.`;
+    const when = planned.next === null ? null : `bb-box tries again in ${waitWords(planned.next - this.#now())}.`;
     const after = when ?? `bb-box gave up, ${waitWords(now - since)} after the first failure of this round.`;
     this.#deps.log?.(
       planned.gaveUp
@@ -1382,7 +1383,7 @@ export class Enrolment {
 
   async #tryAtOnce(box: BoxRecord, accepts: (current: BoxRecord) => boolean): Promise<BoxRecord | null> {
     if (this.isTrying(box.id)) return null;
-    const now = Date.now();
+    const now = this.#now();
     const marked = await this.#deps.boxes.update(box, (current) => {
       if (!accepts(current)) return {};
       const tries = current.joinTries;
@@ -1452,24 +1453,24 @@ export class Enrolment {
     this.#trying.add(boxId);
     try {
       const box = await this.#deps.boxes.find(boxId);
-      if (!box || box.role === "machine" || !dueToJoin(box, Date.now())) return;
+      if (!box || box.role === "machine" || !dueToJoin(box, this.#now())) return;
       const left = box.joinTries!.machine ?? (box.enrol.state === "failed" ? box.enrol.hostId : null);
       const known = namedMachine(box);
       if (known && (await this.#keptAsMachine(box, known)) !== "gone") {
         if ((await this.#deps.boxes.find(boxId))?.enrol.state === "enrolled") return;
-        const at = Date.now() + RETIRE_AGAIN_MS;
+        const at = this.#now() + RETIRE_AGAIN_MS;
         await this.#deps.boxes.update(box, (current) => (current.joinTries ? { joinTries: { ...current.joinTries, next: at } } : {}));
         this.#tryAt(boxId, at);
         return;
       }
       if (left && !(await this.#retire(left))) {
-        const at = Date.now() + RETIRE_AGAIN_MS;
+        const at = this.#now() + RETIRE_AGAIN_MS;
         await this.#deps.boxes.update(box, (current) => (current.joinTries ? { joinTries: { ...current.joinTries, next: at } } : {}));
         this.#tryAt(boxId, at);
         return;
       }
       const trying = await this.#deps.boxes.update(box, (current) =>
-        !dueToJoin(current, Date.now()) ? {} : { enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { ...current.joinTries!, next: null, machine: null } },
+        !dueToJoin(current, this.#now()) ? {} : { enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { ...current.joinTries!, next: null, machine: null } },
       );
       if (!trying?.joinTries || trying.joinTries.next !== null) return;
       this.#deps.log?.(`Adding box ${trying.name} to BB again, ${tryWords(trying.joinTries.failed)}.`);

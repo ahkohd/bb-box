@@ -408,6 +408,7 @@ export interface SetupOptions {
   readonly manualRemoveMs?: number;
   readonly joinWaitsMs?: readonly number[];
   readonly joinAlarm?: JoinAlarm;
+  readonly now?: () => number;
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
@@ -1012,6 +1013,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     manualRemoveMs: options.manualRemoveMs,
     joinWaitsMs: options.joinWaitsMs,
     ...(options.joinAlarm ? { joinAlarm: options.joinAlarm } : {}),
+    ...(options.now ? { now: options.now } : {}),
   });
   bb.experimental_machines.register(enrolment.provider());
   registerNewBox(bb, {

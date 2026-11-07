@@ -152,16 +152,21 @@ function exec(rest) {
   // A builder's commands, which need Docker and the network: logged, not run.
   if (name.startsWith("bb-box-builder-")) {
     appendFileSync(join(root, "builder"), `${rest.slice(i + 2).join(" ")}\n`);
-    process.stdin.resume();
     const command = rest.join(" ");
-    process.stdin.on("end", async () => {
-      // A build held until the test writes "release", to act while it runs.
+    const answer = async () => {
       while (host.holdBuild && command.includes("nohup sh -c") && !existsSync(join(root, "release"))) await new Promise((resolve) => setTimeout(resolve, 20));
-      // A detached build's exit code, and a guest whose kernel killed a process for memory.
-      if (command.includes("cat /build/build.exit")) process.stdout.write(host.failBuild ? "1\n" : "0\n");
-      if (command.includes("dmesg")) process.stdout.write("[  98.1] Out of memory: Killed process 812 (node) total-vm:6000000kB\n");
-      process.exit(0);
-    });
+      const lines = [];
+      if (command.includes("cat /build/build.exit")) lines.push(host.failBuild ? "1\n" : "0\n");
+      if (command.includes("dmesg")) lines.push("[  98.1] Out of memory: Killed process 812 (node) total-vm:6000000kB\n");
+      const text = lines.join("");
+      if (text) process.stdout.write(text, () => process.exit(0));
+      else process.exit(0);
+    };
+    if (process.stdin.readableEnded) void answer();
+    else {
+      process.stdin.on("end", () => void answer());
+      process.stdin.resume();
+    }
     return;
   }
   if (sandbox.status !== "Running") fail(`sandbox '${name}' is not running (status: ${sandbox.status})`);

@@ -34,6 +34,7 @@ export interface FakeMsbHost {
   heads(): Record<string, string>;
   /** msb's images, by reference, with their labels. */
   images(): Record<string, Record<string, string>>;
+  whenImage(ref: string): Promise<void>;
   home(name: string): string;
 }
 
@@ -62,6 +63,13 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
   ]);
   const imagesFile = join(root, "images.json");
   const readImages = (): Record<string, Record<string, string>> => (existsSync(imagesFile) ? JSON.parse(readFileSync(imagesFile, "utf8")) : {});
+  const imageWaiters = new Map<string, Array<() => void>>();
+  const notifyImage = (ref: string) => {
+    const waiting = imageWaiters.get(ref);
+    if (!waiting) return;
+    imageWaiters.delete(ref);
+    for (const wake of waiting) wake();
+  };
   writeFileSync(imagesFile, JSON.stringify(options.imported === false ? {} : Object.fromEntries([...docker].map(([ref, image]) => [ref, image.labels]))));
   let facts: Record<string, string> = {
     pinned: "0.7.7",
@@ -128,6 +136,7 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
       if (name === "transfer") {
         const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
         writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
+        notifyImage(args[1]!);
         return { exitCode: 0, stdout: `transferred=${args[1]}\n`, stderr: "" };
       }
       if (name === "memory") return { exitCode: 0, stdout: `available_kib=${facts.available_kib}\n`, stderr: "" };
@@ -155,6 +164,15 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     sandboxes: () => (existsSync(join(root, "sandboxes")) ? readdirSync(join(root, "sandboxes")).filter((name) => existsSync(join(root, "sandboxes", name, "config.json"))).sort() : []),
     inspect: (name) => JSON.parse(readFileSync(join(root, "sandboxes", name, "config.json"), "utf8")),
     images: readImages,
+    whenImage: (ref) => {
+      if (readImages()[ref]) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiting = imageWaiters.get(ref) ?? [];
+        waiting.push(resolve);
+        imageWaiters.set(ref, waiting);
+        if (readImages()[ref]) notifyImage(ref);
+      });
+    },
     snapshots: () => (existsSync(join(root, "snapshots.json")) ? JSON.parse(readFileSync(join(root, "snapshots.json"), "utf8")) : []),
     heads: () => (existsSync(join(root, "heads.json")) ? JSON.parse(readFileSync(join(root, "heads.json"), "utf8")) : {}),
     home: (name) => join(root, "sandboxes", name, "home"),

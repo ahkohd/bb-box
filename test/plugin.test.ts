@@ -85,7 +85,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; joinWaitsMs?: readonly number[]; joinAlarm?: JoinAlarm; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number; liveChecks?: boolean } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; joinWaitsMs?: readonly number[]; joinAlarm?: JoinAlarm; now?: () => number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number; liveChecks?: boolean } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost" | "slots"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -415,6 +415,7 @@ async function start(
     manualRemoveMs: options.manualRemoveMs,
     joinWaitsMs: options.joinWaitsMs,
     ...(options.joinAlarm ? { joinAlarm: options.joinAlarm } : {}),
+    ...(options.now ? { now: options.now } : {}),
     controlReconnectMs: options.controlReconnectMs,
     controlStaleMs: options.controlStaleMs,
     drainMs: options.drainMs,
@@ -1801,7 +1802,8 @@ class SetAlarms implements JoinAlarm {
 
 test("a try to join BB starts by itself once it is due, without waiting for the next sweep (a set clock)", async (t) => {
   const alarms = new SetAlarms();
-  const { harness, app, world, tool } = await start(undefined, { joinAlarm: alarms });
+  let now = Date.now() + 3_600_000;
+  const { harness, app, world, tool } = await start(undefined, { joinAlarm: alarms, now: () => now });
   t.after(() => harness.lifecycle.dispose());
   const broken = join(tempDir("dns"), "broken");
   writeFileSync(broken, "");
@@ -1813,22 +1815,15 @@ test("a try to join BB starts by itself once it is due, without waiting for the 
   rmSync(broken);
   const bootstraps = world.bootstraps.length;
 
-  let mocked = false;
-  t.after(() => {
-    if (mocked) t.mock.timers.reset();
-  });
-  t.mock.timers.enable({ apis: ["Date"], now: due - 1 });
-  mocked = true;
+  now = due - 1;
   alarms.ringAt(due - 1);
   assert.equal(world.bootstraps.length, bootstraps, "nothing rings before the try is due");
-  t.mock.timers.setTime(due);
+  now = due;
   alarms.ringAt(due);
   await until("the retry to leave its wait", async () => {
     const current = await app.boxes.find(box.id);
     return current?.joinTries?.next === null ? current : null;
   });
-  t.mock.timers.reset();
-  mocked = false;
   await until("the box to join with no sweep", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
   assert.equal(world.bootstraps.length, bootstraps + 1);
   assert.deepEqual(alarms.pending, [], "a joined box has no try planned");
