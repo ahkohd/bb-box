@@ -36,6 +36,7 @@ const PAUSE_WAIT_MS = 3_000;
 const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
 const DRIVER_SESSION_PREFIX = "bb-box-";
+const CURSOR_RESTORE_RETRY_MS: readonly number[] = [250, 1_000, 4_000];
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
 const FINDER_WINDOW_WAIT_MS = 3_000;
@@ -146,6 +147,7 @@ export interface ComputerDeps {
   logError(operation: string, error: unknown): void;
   readonly idleMs?: number;
   readonly pauseWaitMs?: number;
+  readonly cursorRestoreRetryMs?: readonly number[];
   readonly callTimeoutMs?: number;
   readonly launchWaitMs?: number;
   /** How long a launch asks again while Windows cannot look an app's name up yet. */
@@ -344,6 +346,7 @@ interface Live {
 interface DriverSession {
   readonly name: string;
   cursorHidden: boolean;
+  driverHasCursorHidden: boolean | null;
 }
 
 interface CursorCapture {
@@ -1574,7 +1577,7 @@ export class Computer {
       live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, this.#driverOptions(signal)).catch(() => null));
       if (!live.sessionTools.has("set_agent_cursor_enabled")) return false;
       const joined = use.state.driverSession;
-      use.state.driverSession = { name: joined?.name ?? `${DRIVER_SESSION_PREFIX}${randomBytes(4).toString("hex")}`, cursorHidden: true };
+      use.state.driverSession = { name: joined?.name ?? `${DRIVER_SESSION_PREFIX}${randomBytes(4).toString("hex")}`, cursorHidden: true, driverHasCursorHidden: joined?.driverHasCursorHidden ?? null };
       const ends = setTimeout(() => void this.#showCursor(box).catch((error: unknown) => this.#deps.logError("show the agent cursor at the capture's end", error)), Math.max(0, captureMs));
       ends.unref?.();
       use.state.cursorCapture = { hiddenThroughout: true, ends };
@@ -1591,22 +1594,34 @@ export class Computer {
     });
   }
 
-  async showAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+  async showAgentCursor(box: BoxRecord): Promise<boolean> {
     const capture = this.#boxes.get(box.id)?.cursorCapture ?? null;
-    await this.#showCursor(box, signal);
+    await this.#showCursor(box);
     const state = this.#boxes.get(box.id);
     if (state?.cursorCapture === capture) this.#endCursorCapture(state);
     return capture?.hiddenThroughout ?? false;
   }
 
-  #showCursor(box: BoxRecord, signal?: AbortSignal): Promise<void> {
-    return this.#queued(box, signal, async (use) => {
+  #showCursor(box: BoxRecord): Promise<void> {
+    return this.#queued(box, undefined, async (use) => {
       const session = use.state.driverSession;
-      if (!session?.cursorHidden) return;
+      if (!session) return;
       session.cursorHidden = false;
-      const live = use.state.live;
-      if (live && !live.mcp.closed) await this.#joinSession(use.state, live, signal).catch(() => false);
+      await this.#confirmCursorShown(box, use, session, 0);
     });
+  }
+
+  async #confirmCursorShown(box: BoxRecord, use: Use, session: DriverSession, attempt: number): Promise<void> {
+    const pending = () => use.state.driverSession === session && !session.cursorHidden && session.driverHasCursorHidden !== false;
+    if (!pending()) return;
+    const live = await this.#live(use).catch(() => null);
+    if (live && pending()) await this.#joinSession(use.state, live).catch(() => false);
+    const wait = (this.#deps.cursorRestoreRetryMs ?? CURSOR_RESTORE_RETRY_MS)[attempt];
+    if (!pending() || wait === undefined) return;
+    const again = setTimeout(() => {
+      void this.#queued(box, undefined, (later) => this.#confirmCursorShown(box, later, session, attempt + 1)).catch((error: unknown) => this.#deps.logError("show the agent cursor again", error));
+    }, wait);
+    again.unref?.();
   }
 
   #endCursorCapture(state: BoxState): void {
@@ -1630,7 +1645,10 @@ export class Computer {
     live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, options).catch(() => null));
     if (!live.sessionTools.has("start_session")) return false;
     if ((await live.mcp.call("start_session", { session: session.name }, options)).isError) return false;
-    return !(await live.mcp.call("set_agent_cursor_enabled", { session: session.name, enabled: !session.cursorHidden }, options)).isError;
+    const hidden = session.cursorHidden;
+    if ((await live.mcp.call("set_agent_cursor_enabled", { session: session.name, enabled: !hidden }, options)).isError) return false;
+    session.driverHasCursorHidden = hidden;
+    return true;
   }
 
   async screenPicture(box: BoxRecord, longestEdge: number, signal?: AbortSignal): Promise<{ readonly data: string; readonly mimeType: string }> {

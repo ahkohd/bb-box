@@ -115,6 +115,7 @@ export interface FakeDesktop {
   sessionlessLikeCuaBefore030?: boolean;
   endedNamedSessions?: string[];
   agentCursorShownBySession?: Record<string, boolean>;
+  cursorShowsRefused?: number;
   /** How many more launches by name Windows' shell cannot look up yet, as just after a box starts. */
   lookupBusy?: number;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
@@ -471,6 +472,10 @@ export class FakeCua {
     }
     if (session !== null && desktop.endedNamedSessions?.includes(session)) return text(`session has ended; tool call '${tool}' was rejected. Call start_session with session '${session}' to start it again, or use a new session label.`, undefined, true);
     if (tool === "set_agent_cursor_enabled") {
+      if (args.enabled === true && (desktop.cursorShowsRefused ?? 0) > 0) {
+        this.#change((changed) => void (changed.cursorShowsRefused = (changed.cursorShowsRefused ?? 1) - 1));
+        return text("The agent cursor's overlay is not ready.", { code: "overlay_unavailable" }, true);
+      }
       this.#change((changed) => void (changed.agentCursorShownBySession = { ...changed.agentCursorShownBySession, [session ?? ""]: args.enabled === true }));
       return text(`Agent cursor for session '${session}' ${args.enabled === true ? "enabled" : "disabled"}.`);
     }

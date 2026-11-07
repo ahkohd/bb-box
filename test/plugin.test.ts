@@ -7794,3 +7794,29 @@ test("where the driver's agent cursor came back during a capture, its stop keeps
   await tool("computer_observe", { box: box.name, window: 100 });
   assert.equal(await app.computer.showAgentCursor(box), false);
 });
+
+test("showing the hidden agent cursor again waits for the driver to confirm it, tries again after a short wait, and once more as bb-box next connects to the driver (073)", async (t) => {
+  const { harness, app, box, tool, file } = await desktopBox({ computer: { cursorRestoreRetryMs: [50, 100, 150] } });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+  const shows = () => readDesktop(file).calls.filter((call) => call.tool === "set_agent_cursor_enabled" && call.args.enabled === true).length;
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  const session = String(readDesktop(file).calls.find((call) => call.tool === "start_session")?.args.session);
+  editDesktop(file, (desktop) => void (desktop.cursorShowsRefused = 2));
+  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], false, "the driver refused to show it");
+  await until("the cursor shown on a later try", async () => readDesktop(file).agentCursorShownBySession?.[session] === true);
+  assert.equal(shows(), 3);
+
+  assert.equal(await app.computer.hideAgentCursor(box, A_LONG_CAPTURE_MS), true);
+  editDesktop(file, (desktop) => void (desktop.cursorShowsRefused = 100));
+  const before = shows();
+  assert.equal(await app.computer.showAgentCursor(box), true);
+  await until("every try refused", async () => shows() === before + 4);
+  editDesktop(file, (desktop) => {
+    desktop.cursorShowsRefused = 0;
+    desktop.endedSession = desktop.sessions;
+  });
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "shown as bb-box next connects");
+});

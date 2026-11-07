@@ -221,7 +221,10 @@ bb-box starts a session of its own, `bb-box-` and 8 hex digits, sets
 tool takes a session (38 of Cua 0.30.4's 58 tools). The hiding lasts as
 long as the capture: at the stop, or at the 5-minute limit if no stop comes
 first, bb-box sets the cursor shown again, and a later connection to the
-driver keeps it shown. A failed or cancelled hide leaves the session unused,
+driver keeps it shown. The cursor counts as shown only once the driver
+confirms it: a refused or failed call is tried again after 0.25, 1 and
+4 s, and again as bb-box next connects to the driver, whatever the tool
+call's cancellation. A failed or cancelled hide leaves the session unused,
 so the driver's own cursor shows. Whether the cursor stayed hidden for the
 whole capture is kept apart from whether it is hidden now, so a stop after
 the limit still draws bb-box's pointer for that capture. bb-box keeps
