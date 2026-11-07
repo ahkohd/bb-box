@@ -1,5 +1,3 @@
-// A recording's pointer, clicks, keys and zooms (073): planned in the plugin
-// from the event log, and drawn by ffmpeg in the box.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
