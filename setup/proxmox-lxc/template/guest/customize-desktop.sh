@@ -68,8 +68,12 @@ chrome=$(check chrome)
 selkies=$(check selkies)
 voxl_crate=
 [ -z "$(pin voxl)" ] || voxl_crate=$(check voxl)
+voxl_runtime_packages=
 voxl_build_packages=
-[ -z "$voxl_crate" ] || voxl_build_packages="pkg-config libclang1-18 libx264-dev libyuv-dev libopus-dev libpulse-dev libxcb1-dev esbuild"
+if [ -n "$voxl_crate" ]; then
+  voxl_runtime_packages="libx264-164 libyuv0 libopus0 libpulse0 libxcb1"
+  voxl_build_packages="pkg-config libclang1-18 libx264-dev libyuv-dev libopus-dev libpulse-dev libxcb1-dev esbuild"
+fi
 voxl_rust=1.99.1
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin. A
@@ -84,10 +88,10 @@ fi
 opts=()
 apt_acquire_options opts
 # shellcheck disable=SC2086
-apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages $voxl_build_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages $voxl_runtime_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
 # shellcheck disable=SC2086
-apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages $voxl_build_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
-for package in $desktop_packages $gpui_packages $voxl_build_packages tigervncserver virtualgl selkies google-chrome-stable; do
+apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages $voxl_runtime_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+for package in $desktop_packages $gpui_packages $voxl_runtime_packages tigervncserver virtualgl selkies google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done
 
@@ -425,6 +429,13 @@ RestartSec=1
 EOF
 
 if [ -n "$voxl_crate" ]; then
+  installed_packages() { dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1 == "ii" { print $2 }' | sort; }
+  packages_before_voxl=$(installed_packages)
+  # shellcheck disable=SC2086
+  apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $voxl_build_packages
+  # shellcheck disable=SC2086
+  apt_install -y -q --no-install-recommends $voxl_build_packages
+  voxl_installed_for_build=$(comm -13 <(echo "$packages_before_voxl") <(installed_packages) | tr '\n' ' ')
   voxl_work=/var/tmp/bb-box-voxl
   rm -rf "$voxl_work"
   install -d -m 0700 "$voxl_work"
@@ -446,6 +457,8 @@ if [ -n "$voxl_crate" ]; then
   done
   install -m 0755 "$voxl_work/target/release/voxl" /usr/local/bin/voxl
   rm -rf "$voxl_work"
+  # shellcheck disable=SC2086
+  [ -z "$voxl_installed_for_build" ] || apt-get purge -y -q $voxl_installed_for_build
   /usr/local/bin/voxl --version >/dev/null || die "voxl does not run"
 fi
 
