@@ -3909,6 +3909,10 @@ test("071 unit 11: box_resize refuses, for each audience and changing nothing, a
     return true;
   });
   cards.wholeRefusal = { person: "No card is free for it alone.", agent: "Not resized: no card is free for it alone. Keep the GPU shared, or ask the user. bb-box changed nothing." };
+  const shown = await world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { check: true, reportPlan: true });
+  assert.equal(shown.changed, false);
+  assert.equal(shown.plan?.gpu?.refusal?.person, "No card is free for it alone.");
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { check: true }), { code: "no_capacity", message: "No card is free for it alone.", agentMessage: cards.wholeRefusal.agent });
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), { code: "no_capacity", message: "No card is free for it alone.", agentMessage: cards.wholeRefusal.agent });
   assert.equal((await world.boxes.get(THREAD, box.name)).size?.gpu, "shared");
   assert.ok(!(await world.boxes.get(THREAD, box.name)).resize, "no resize was recorded");

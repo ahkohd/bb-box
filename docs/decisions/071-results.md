@@ -5171,3 +5171,141 @@ on a card under 6 minutes; card figures are card-wide.
 - None to whole with the install, which needs a free card, as unit 9's W and
   unit 8's G1 do.
 - `10169a06`, the check's bound, was not run on the node: Astra checks it.
+
+## Unit 13: the New box form and Resize for a GPU
+
+Built on main `1a3dae81`. Section 13's New box form, and Resize's GPU rows
+in place of "Changing the GPU comes later."
+
+### What it does
+
+- The New box form shows None, Shared and Whole card for a Linux server or
+  an X11 desktop on x86_64, when a provider shown has cards. Whole card is
+  left out when no provider shown allows it. The first choice is the kind's
+  GPU when not asked for, until the person's own choice for that kind is
+  remembered. A choice that is the kind's default is left off the acquire,
+  so a spare still matches. Any other choice, including no GPU on a desktop,
+  is sent beside the size.
+- The line under the menu keeps one height for reading, None, Shared, Whole
+  card and a refusal. While the cards are read it says "Reading the cards
+  on pve-1…". None, Shared and Whole card use the note's sentences. On a
+  provider where every box can open every card, None and Whole card add
+  "Boxes with Docker in them can still open every card." Create stays off
+  while the cards are read or the line is a refusal.
+- A provider that cannot take the choice says why on its row, in place of
+  the memory reason: "Reading its cards…", or "Card 0 is quiet-elm's; card
+  1 has 2 boxes." None leaves the memory reason. A card counts as full when
+  this install's own boxes on it reach the per-card limit. Boxes on the
+  card that are not this install's sit in the shared-with count and do not
+  fill that limit. When a room does not say how many are this install's,
+  every box on the card counts, as before.
+- The old None / 1 GPU menu stays for a desktop whose offers have no card
+  parts. It still switches the CPU desktop and the GPU desktop.
+- Resize, for a box that has a GPU or a backend that can change one, shows
+  None, Shared and Whole card under Size. Whole card is left out where
+  shared and whole cannot switch, unless the box already holds one. The
+  check runs as the choice changes. What changes names the GPU, from and
+  to, and Live, Restart, While stopped or Cannot change. The words under it
+  are the plan's, and a restart names the programs the Monitor has already
+  read for that machine. A refusal disables Resize and shows the person's
+  words, with a link to each box this install holds. Agreeing to a restart
+  says Move and restart when the card changes, Install and restart when a
+  driver is installed, and Restart and resize otherwise. A plan that
+  changed since it was agreed is shown again and is not applied.
+- The panel asks for that plan with `reportPlan`. A check that refuses, and
+  an apply whose plan changed, return the plan. The tool and the CLI do
+  not, so they still throw and change nothing.
+
+### What was run
+
+On the Linux box that held the test BB, Node 24.21.0:
+
+- `test/gpu-form.test.ts`, 4 tests. One asserts only the line's height
+  class. One asserts that guests outside this install do not fill a card.
+  The others cover None, Shared, Whole card, a card partly in use outside
+  bb-box, a refusal for one provider and for two, reading, a Docker host
+  that cannot add a GPU, whole cards off, and the Resize ways line with the
+  programs named in the confirmation.
+- vitest, three form tests and two Resize tests: 5 passed. One form test
+  asserts only that the line on screen has `h-[3lh]`, `sm:h-[2lh]`,
+  `overflow-hidden`, `text-xs` and `leading-snug`. One asserts only that a
+  refusal stays on the line and Create stays off. One Resize test asserts
+  only the plan's words, including "Everything running in it stops". The
+  other two cover the rest of the form and the refusal link.
+- Reverting the height class to `text-xs` fails the height test. Reverting
+  the refusal sentence fails the refusal test. Reverting the plan sentence
+  out of the dialog fails the plan-words test. Each was restored, and the
+  tests then passed.
+
+### The live gate
+
+A separate BB, `npx bb-app` 0.48.1 with no account, its own data folder,
+bound to 127.0.0.1:38990. bb-box installed from this branch. The Proxmox
+LXC backend was the one added for this gate. Whole cards started off.
+Both cards were held by guests outside bb-box, so a whole card was never
+placed. That row is untested live. Shared was the live path, and one GPU
+guest was the most held at once. It was released at the end.
+
+The room reported five and four boxes on the two cards, and none of them
+this install's, under a limit of two. Before the own-count fix the form
+called both cards full. After it, Shared placed, and the line said card 1,
+shared with 4 boxes, 94.7 GiB free.
+
+Playwright in that box, at 390, 760 and 1440 px, light and dark. The line's
+height was read from the element's box: 50 px at 390 and 33 px at 760 and
+1440, the same for reading, None, Shared and the refusal. `scrollHeight`
+equaled `clientHeight` on each, and the shots show the sentences whole.
+The refusal shot is Whole card, which the room refused: the host has no
+free card, and the provider row names how many boxes each card has. Create
+stayed off. Whole card was offered by turning whole cards on for those
+shots, then back off before anything was placed.
+
+Resize, on the one shared guest:
+
+- Running, None: the row said shared, card 1, to none, Restart, and
+  "Everything running in it stops." The confirmation was "Restart … to
+  change its GPU?" with "Restart and resize". Not applied from that dialog.
+- Running, Whole card: "No card is free for it alone", naming the guests
+  outside bb-box on each card, and Resize stayed off. Not applied.
+- Stopped, None: "While stopped", and "Nothing starts now." Applied from
+  the CLI while it stayed stopped, in 1.0 s.
+- `nvidia-smi -L` while it held the card listed the card. After the
+  removal, `nvidia-smi -L` could not talk to a driver. Putting the shared
+  card back needed a restart, took 9.2 s, and `nvidia-smi -L` listed the
+  card again.
+
+The dialogs were shot at the same three widths, light and dark. None of
+those dialogs scrolled (`scrollHeight` within 2 px of `clientHeight`), and
+the sentences were whole. Enrolment failed, as a BB with no account
+cannot join a box, so the confirmation did not name a program: the Monitor
+had no reading for that machine.
+
+No node command was run from here.
+
+### Review
+
+A later review of the form and the dialog changed four behaviours, and the tests that lock them use offers with `gpuParts` set the way a provider sends them.
+
+- None is in the GPU menu when an offer's parts include it, or when a CPU desktop of the same windowing is offered beside it. Choosing None then acquires that CPU kind (`linux-desktop-cpu` on Docker and on a Proxmox desktop whose parts are shared, or shared and whole). That CPU desktop keeps the same menu. The line says "No GPU. You can add one later with Resize." when a GPU desktop on the same backend can add one, and that box's Resize dialog offers the GPU rows that desktop's resizing gives. Where no GPU desktop on that backend can add one, the line says "No GPU." A provider that says a GPU cannot be added still says "No GPU, and none can be added later on {label}." `canAddGpu` is not taken as true when `resizing.gpu` is absent. The older None / 1 GPU menu stays only where no offer has card parts. A GPU desktop with no CPU desktop does not offer None.
+- A ready spare of the kind's default GPU, at the default size, does not fill the card, so Create stays on. A spare of another GPU still does. First with room names a card only on a provider the size can use.
+- A card reading that fails stays failed, with Retry on the same line as "The cards could not be read." The cards RPC says which provider failed, instead of an empty room, and None does not wait on a reading.
+- The line's height follows the form's width (`@container` and `@sm:h-[2lh]`), not the window. Choosing None on a desktop keeps that line and that menu. Resize does not check again when the opening size snaps to the box's preset, so Resize stays on while that plan is shown.
+- When the size check leaves no provider, the line says "No provider has room for this size: see below." and Create stays off. A resize that changes the GPU names it in the success line, as "and no GPU" or "and a shared GPU on card 1", before "now". A move from one card to another is named the same way. A whole card is "and card 0 to itself".
+- The remembered GPU and the cards callback have no doc comments. The names `gpu` and `cards` carry that.
+
+The shots from the live gate were not taken again. The test BB and its backend were already gone, and this pass did not place a box on a GPU.
+
+### Deviations from the note
+
+- None on a backend that cannot add a GPU later says "No GPU, and none can
+  be added later on {label}." The note's "You can add one later with
+  Resize." would be false there. The Docker sentence is added after it.
+- One provider's refusal names that host: "{host} has no free card now:
+  see below." The note's "No provider has a free card now: see each below."
+  is the line when more than one provider is shown.
+- Memory in use outside bb-box is the card's total minus what was free,
+  and only when no box of this install holds the card. A card with a box
+  on it does not split that use.
+- The programs in the confirmation are the Monitor reading the box page
+  already has, for the same machine as the GPU card. Resize opened from a
+  row that has not read the Monitor does not name them.

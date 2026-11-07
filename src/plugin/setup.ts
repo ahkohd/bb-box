@@ -13,7 +13,7 @@ import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index
 import { providerName } from "../core/provider-name.ts";
 import { joinChecks, joiningWords } from "../core/join-tries.ts";
 import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
-import { recordedGpu } from "../core/gpu.ts";
+import { boxResizing, recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { chromePin, imageProgram, pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
@@ -66,7 +66,8 @@ import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOff
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
-import type { DesktopOnDemandView, ThreadOnBox } from "./contract.ts";
+import type { DesktopOnDemandView, KindCards, ThreadOnBox } from "./contract.ts";
+import { kindCardReads } from "./kind-cards.ts";
 import { threadOnBox } from "./thread-on-box.ts";
 import { dockerKind } from "../backends/docker/backend.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
@@ -238,6 +239,7 @@ export interface BbBox {
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
+  kindCards(kindId: string): Promise<KindCards[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   gpuMark(options: { readonly check: boolean; readonly undo: boolean; readonly on?: string }, signal?: AbortSignal): Promise<GpuMarking[]>;
   /**
@@ -1524,7 +1526,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     configuration,
     replyDrops: (options.liveChecks ?? liveChecksOn()) ? new ReplyDrops() : null,
     general,
-    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null, { log: boxLog.view(box.id), reach: reachOf(box) }),
+    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), boxResizing(backends.get(box.backend), box.kind), { log: boxLog.view(box.id), reach: reachOf(box) }),
     boxLog,
     snapshots,
     snapshotStore,
@@ -1606,6 +1608,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         room: first ? await boxes.room(backendId, first.kind.id, signal).catch(() => null) : null,
         status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
       };
+    },
+    async kindCards(kindId) {
+      const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);
+      return kindCardReads(offered);
     },
     async offerRooms(kindId, size) {
       const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);

@@ -4,18 +4,24 @@
 // box are named before it goes ahead anyway. Refusals show plainly, in bb-box's own words.
 
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { ResizeWay, Resizing, SizePart } from "../backends/types.ts";
-import type { Contract, ResizeResult, ThreadOnBox } from "../plugin/contract.ts";
+import type { GpuPart, ResizeWay, Resizing, SizePart } from "../backends/types.ts";
+import type { Contract, GpuChangeView, ResizeResult, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView, ResizeView, SizeView } from "../plugin/views.ts";
-import { FormSection, OptionCard } from "./box-form.tsx";
+import { gpuProgramsWords } from "../plugin/gpu-page.ts";
+import { FormSection, MenuSelect, OptionCard } from "./box-form.tsx";
+import { useBoxesNav } from "./box-nav.tsx";
+import { boxPage } from "./box-route.ts";
+import { gpuAmount, gpuExplanation, gpuWaysLine, GPU_MENU_LABELS, withGpuPrograms } from "./gpu-choice.ts";
+import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { message } from "./common.tsx";
 import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
 import { LargestLine, type AskedParts } from "./largest-line.tsx";
+import { gpuPartWords } from "../core/gpu.ts";
 import { withoutRaiseLargest } from "../core/largest-words.ts";
 
 /** How long the dialog waits after a change before it checks the size. */
@@ -39,6 +45,18 @@ export function canResize(box: BoxView): boolean {
 function words(size: SizeView, ways: Resizing | null): string {
   const disk = size.diskGiB !== null ? `${size.diskGiB} GiB disk` : ways?.disk === "no" ? null : "base disk";
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB`, disk].filter(Boolean).join(" · ");
+}
+
+function gpuNowWords(gpu: GpuChangeView): string {
+  if (gpu.to === "none") return "no GPU";
+  if (gpu.to === "whole") return gpu.toIndex === null ? gpuPartWords(gpu.to) : `card ${gpu.toIndex} to itself`;
+  return gpu.toIndex === null ? gpuPartWords(gpu.to) : `${gpuPartWords(gpu.to)} on card ${gpu.toIndex}`;
+}
+
+export function resizedNow(size: string, gpu: GpuChangeView | null | undefined, changed: boolean, restart: boolean): string {
+  const named = gpu && (gpu.from !== gpu.to || gpu.fromIndex !== gpu.toIndex) ? ` and ${gpuNowWords(gpu)}` : "";
+  const how = changed ? (restart ? ", after a restart" : ", changed live") : "";
+  return `It has ${size}${named} now${how}.`;
 }
 
 /** A part's value as the dialog shows it: memory and disk in GiB, a base disk as "base". */
@@ -91,7 +109,8 @@ function fieldsOf(size: SizeView | null | undefined): Fields {
  * memory read back from a guest may not be a whole number of GiB; an empty disk leaves the disk as it is. Null when a part typed
  * is not a whole number.
  */
-function requestOf(choice: string, fields: Fields, now: Fields): Request | null {
+function requestOf(choice: string, fields: Fields, now: Fields, held: string | null): Request | null {
+  if (held !== null && choice === held) return {};
   if (choice !== CUSTOM) return { preset: choice };
   const request: { -readonly [K in keyof Request]: Request[K] } = {};
   for (const name of ["cores", "memoryGiB", "diskGiB"] as const) {
@@ -177,7 +196,7 @@ type Step = { readonly at: "pick" } | { readonly at: "confirm"; readonly down: n
  * The Resize dialog for `box`, open while it is not null: a thread's box, by `threadId`, or one of your machines without it.
  * `onResized` runs after a resize changed the box.
  */
-export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }: { box: BoxView | null; threadId?: string; at?: "size" | "gpu"; onClose: () => void; onResized?: () => void }) {
+export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onClose, onResized }: { box: BoxView | null; threadId?: string; at?: "size" | "gpu"; monitorId?: string | null; onClose: () => void; onResized?: () => void }) {
   const rpc = useRpc<Contract>();
   const [choice, setChoice] = useState<string>(CUSTOM);
   const [fields, setFields] = useState<Fields>(fieldsOf(box?.sizeNow));
@@ -187,13 +206,17 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
   const [refusal, setRefusal] = useState<string | null>(null);
   const [presetAtOpen, setPresetAtOpen] = useState<string | null>(null);
   const [step, setStep] = useState<Step>({ at: "pick" });
+  const [gpu, setGpu] = useState<GpuPart>(box?.gpuPart ?? (box?.gpu ? "shared" : "none"));
+  const nav = useBoxesNav();
+  const monitor = useMonitorSnapshot(monitorId || box?.enrol.hostId || "resize-gpu");
   const asked = useRef(0);
   const firstAnswered = useRef(false);
   const options = useRef<(HTMLButtonElement | null)[]>([]);
-  const call = (input: Request & { check?: boolean; restart?: boolean; force?: boolean }) => {
-    const { check, restart, force, ...size } = input;
+  const call = (input: Request & { gpu?: GpuPart; check?: boolean; restart?: boolean; force?: boolean }) => {
+    const { check, restart, force, gpu: askedGpu, ...size } = input;
     const flags = { ...(check ? { check: true } : {}), ...(restart ? { restart: true } : {}), ...(force ? { force: true } : {}) };
-    return threadId !== undefined ? rpc.call("resize", { threadId, box: box!.id, size, ...flags }) : rpc.call("machines.resize", { box: box!.id, size, ...flags });
+    const asked = { ...size, ...(askedGpu ? { gpu: askedGpu } : {}) };
+    return threadId !== undefined ? rpc.call("resize", { threadId, box: box!.id, size: asked, ...flags }) : rpc.call("machines.resize", { box: box!.id, size: asked, ...flags });
   };
 
   // A new box to resize starts from its own size, as Custom, or as the preset it has.
@@ -204,13 +227,16 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
     setPresetAtOpen(null);
     firstAnswered.current = false;
     setFields(fieldsOf(box.sizeNow));
+    setGpu(box.gpuPart ?? (box.gpu ? "shared" : "none"));
     setAnswer(null);
     setRefusal(null);
     setStep({ at: "pick" });
   }, [open]);
 
-  const request = requestOf(choice, fields, fieldsOf(box?.sizeNow));
-  const key = JSON.stringify(request);
+  const request = requestOf(choice, fields, fieldsOf(box?.sizeNow), presetAtOpen);
+  const gpuNow: GpuPart = box?.gpuPart ?? (box?.gpu ? "shared" : "none");
+  const gpuSent = gpu !== gpuNow ? gpu : undefined;
+  const key = JSON.stringify({ request, gpu: gpuSent ?? null });
   // Checks the size chosen, a moment after the last change; an answer to an older choice is dropped.
   useEffect(() => {
     if (!box || !request) return;
@@ -218,7 +244,7 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
     const asOpened = Object.keys(request).length === 0 && !firstAnswered.current;
     setChecking(true);
     const timer = setTimeout(() => {
-      call({ ...request, check: true })
+      call({ ...request, ...(gpuSent ? { gpu: gpuSent } : {}), check: true })
         .catch((error: unknown): ResizeResult => ({ box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: message(error) }))
         .then((checked) => {
           if (asked.current !== id) return;
@@ -240,11 +266,14 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
   const largest = answer?.largest ?? null;
   const ways = box.resizing ?? null;
   const plan = answer?.error ? null : (answer?.plan ?? null);
-  const restart = !!plan?.parts.some((part) => part.way === "restart");
+  const gpuChange = plan?.gpu && plan.gpu.from !== plan.gpu.to ? plan.gpu : null;
+  const gpuRestarts = !!gpuChange && gpuChange.way === "restart" && !gpuChange.stopped && !gpuChange.refusal;
+  const restart = !!plan?.parts.some((part) => part.way === "restart") || gpuRestarts;
   /** Nothing asked yet: the box's own size, as the dialog opens. */
   const untouched = (!!request && Object.keys(request).length === 0) || (presetAtOpen !== null && choice === presetAtOpen);
-  const unchanged = !!answer && !answer.error && answer.plan === null && !checking;
-  const blocked = !request || checking || !answer || !!answer.error || !plan || !plan.room.ok || refusal !== null;
+  const unchanged = !!answer && !answer.error && answer.plan === null && !checking && !gpuSent;
+  const gpuBlocked = !!gpuChange && (gpuChange.refusal !== null || gpuChange.way === "no");
+  const blocked = !request || checking || !answer || !!answer.error || !plan || !plan.room.ok || refusal !== null || gpuBlocked;
   const grows = !!plan?.parts.some((part) => part.from === null || part.to > part.from);
   const choices = [...presets.map((preset) => preset.name), CUSTOM];
   const index = Math.max(0, choices.indexOf(choice));
@@ -271,7 +300,12 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
     setRefusal(null);
     askedInThisPage.set(box!.id, { before: box!.lastResize?.at ?? 0, askedAt: Date.now() });
     try {
-      const done = await call({ ...request, ...allow }).catch((error: unknown): ResizeResult => ({ box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: message(error) }));
+      const done = await call({ ...request, ...(gpuSent ? { gpu: gpuSent } : {}), ...allow }).catch((error: unknown): ResizeResult => ({ box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: message(error) }));
+      if (done.plan?.gpu?.changed && !done.changed) {
+        setAnswer(done);
+        setStep({ at: "pick" });
+        return;
+      }
       if (done.threads?.length) setStep({ at: "threads", threads: done.threads });
       else if (done.needsRestart) setStep({ at: "confirm", down: plan?.downSeconds ?? null });
       else if (done.error) {
@@ -315,8 +349,21 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
   const close = () => {
     if (!applying) onClose();
   };
+  const moving = !!gpuChange && gpuRestarts && gpuChange.from !== "none" && gpuChange.to !== "none" && gpuChange.fromIndex !== gpuChange.toIndex;
+  const programs = gpuProgramsWords((monitor.snapshot?.gpus?.processes ?? []).filter((process) => gpuChange?.fromIndex === null || process.card === gpuChange?.fromIndex));
+  const gpuWords = gpuChange && !gpuChange.refusal ? withGpuPrograms(gpuExplanation(gpuChange.words), programs) : null;
   const title =
-    step.at === "confirm" ? `Restart ${box.name} to resize it?` : step.at === "threads" ? `Restart ${box.name} anyway?` : step.at === "done" ? `Resized ${box.name}` : `Resize ${box.name}`;
+    step.at === "confirm"
+      ? moving
+        ? `Move ${box.name} to card ${gpuChange?.toIndex ?? "another"}?`
+        : gpuRestarts && !plan?.parts.some((part) => part.way === "restart")
+          ? `Restart ${box.name} to change its GPU?`
+          : `Restart ${box.name} to resize it?`
+      : step.at === "threads"
+        ? `Restart ${box.name} anyway?`
+        : step.at === "done"
+          ? `Resized ${box.name}`
+          : `Resize ${box.name}`;
 
   return (
     <AlertDialog open onOpenChange={(next) => !next && close()}>
@@ -332,14 +379,16 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogTitle className="font-normal">{title}</AlertDialogTitle>
           <AlertDialogDescription>
             {step.at === "confirm"
-              ? `Everything running in it stops, and ${back(step.down)}.`
+              ? gpuWords
+                ? gpuWords
+                : `Everything running in it stops, and ${back(step.down)}.`
               : step.at === "threads"
                 ? `${workingOnWords(step.threads, box.name)}. ${step.threads.length === 1 ? "Its" : "Their"} work stops while it restarts.`
                 : step.at === "done"
-                  ? `It has ${words(step.answer.to ?? step.answer.from!, box.resizing ?? null)} now${step.answer.changed ? (step.answer.box?.lastResize?.restart ? ", after a restart" : ", changed live") : ""}.`
+                  ? resizedNow(words(step.answer.to ?? step.answer.from!, box.resizing ?? null), step.answer.plan?.gpu, step.answer.changed, !!step.answer.box?.lastResize?.restart)
                   : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`}
           </AlertDialogDescription>
           {step.at === "threads" ? <ThreadChips threads={step.threads} /> : null}
@@ -375,10 +424,19 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
               {choice === CUSTOM && largest ? <LargestLine kind={box.kind} largest={largest} asked={askedParts(fields, ways)} onFollow={onClose} /> : null}
             </FormSection>
 
-            {box.gpu ? (
+            {box.gpu || box.resizing?.gpu ? (
               <section data-gpu-section tabIndex={-1} aria-label="GPU" className="space-y-3 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
                 <h3 className="text-xs text-foreground">GPU</h3>
-                <p className="text-xs leading-snug text-muted-foreground">Changing the GPU comes later.</p>
+                <MenuSelect
+                  label="GPU"
+                  value={gpu}
+                  options={(["none", "shared", "whole"] as const).filter((part) => part !== "whole" || !box.resizing?.gpu || box.resizing.gpu.share !== "no" || gpuNow === "whole").map((part) => ({ value: part, label: GPU_MENU_LABELS[part] }))}
+                  onChange={(value) => {
+                    setGpu(value as GpuPart);
+                    setRefusal(null);
+                  }}
+                />
+                <p className="min-h-[2lh] text-xs leading-snug text-muted-foreground">{box.resizing?.gpu ? gpuWaysLine(box.resizing.gpu, box.form) : "This box's backend does not change its GPU."}</p>
               </section>
             ) : null}
 
@@ -394,22 +452,31 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
                       <span className={cn("text-right", part.way === "live" ? "text-muted-foreground" : "text-warning-text")}>{WAY_WORDS[part.way]}</span>
                     </li>
                   ))}
+                  {gpuChange ? <GpuRow change={gpuChange} /> : null}
                 </ul>
               ) : unchanged && !untouched ? (
                 <p className="text-xs text-muted-foreground">Nothing: the box has this size.</p>
               ) : ways ? (
                 <p className="text-xs text-muted-foreground">{waysLine(ways)}</p>
               ) : null}
-              {refusal !== null ? null : plan && restart ? (
+              {gpuChange?.changed ? <p className="text-xs leading-snug text-warning-text">{gpuChange.changed}</p> : null}
+              {gpuWords ? <p className={cn("text-xs leading-snug", gpuRestarts ? "text-warning-text" : "text-muted-foreground")}>{gpuWords}</p> : null}
+              {refusal !== null || gpuWords ? null : plan && restart ? (
                 <p className="text-xs leading-snug text-warning-text">
                   Needs a restart: everything running in {box.name} stops{plan.downSeconds !== null ? `, for about ${plan.downSeconds} s` : ""}.
                 </p>
-              ) : plan ? (
+              ) : plan && !gpuChange ? (
                 <p className="text-xs leading-snug text-muted-foreground">Changes at once. Everything running in {box.name} carries on.</p>
               ) : null}
               {refusal === null && plan?.room.ok && grows ? <p className="text-xs leading-snug text-muted-foreground">Its host has room for it to grow.</p> : null}
             </FormSection>
 
+            {gpuChange?.refusal ? (
+              <div role="alert" className="space-y-2 text-xs leading-snug">
+                <p className="text-destructive-text">{gpuChange.refusal}</p>
+                <GpuLinks others={gpuChange.others} href={(id) => nav.href(boxPage(id))} onClick={(id) => nav.onLink(boxPage(id))} />
+              </div>
+            ) : null}
             {refusal !== null ? (
               // The answer to Resize: nothing changed, and why, in bb-box's words.
               <div role="alert" className="space-y-0.5 text-xs leading-snug">
@@ -430,9 +497,10 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
         <AlertDialogFooter>
           {step.at === "pick" ? (
             <>
-              <AlertDialogCancel disabled={applying}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel className="font-normal" disabled={applying}>Cancel</AlertDialogCancel>
               <Button
                 type="button"
+                className="font-normal"
                 disabled={blocked || applying || unchanged}
                 onClick={() => (restart ? setStep({ at: "confirm", down: plan?.downSeconds ?? null }) : void apply())}
               >
@@ -441,11 +509,11 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
             </>
           ) : step.at === "confirm" ? (
             <>
-              <Button type="button" variant="outline" disabled={applying} onClick={() => setStep({ at: "pick" })}>
+              <Button type="button" variant="outline" className="font-normal" disabled={applying} onClick={() => setStep({ at: "pick" })}>
                 Back
               </Button>
-              <Button type="button" disabled={applying} onClick={() => void apply({ restart: true })}>
-                {applying ? "Restarting…" : "Restart and resize"}
+              <Button type="button" className="font-normal" disabled={applying} onClick={() => void apply({ restart: true })}>
+                {applying ? "Restarting…" : moving ? "Move and restart" : gpuChange?.installs ? "Install and restart" : "Restart and resize"}
               </Button>
             </>
           ) : step.at === "threads" ? (
@@ -465,5 +533,39 @@ export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }:
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function GpuRow({ change }: { readonly change: GpuChangeView }) {
+  const way = change.stopped && change.way === "live" ? "While stopped" : change.way === "no" ? "Cannot change" : WAY_WORDS[change.way];
+  const quiet = way === "Live" || way === "While stopped";
+  return (
+    <li className="grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-baseline gap-2">
+      <span className="text-muted-foreground">GPU</span>
+      <span className="min-w-0 truncate text-foreground">
+        {gpuAmount(change.from, change.fromIndex)} → {gpuAmount(change.to, change.toIndex)}
+      </span>
+      <span className={cn("text-right", quiet ? "text-muted-foreground" : "text-warning-text")}>{way}</span>
+    </li>
+  );
+}
+
+function GpuLinks({ others, href, onClick }: { readonly others: GpuChangeView["others"]; readonly href: (id: string) => string; readonly onClick: (id: string) => (event: MouseEvent<HTMLAnchorElement>) => void }) {
+  if (!others.length) return null;
+  return (
+    <ul className="space-y-1">
+      {others.map((other) => (
+        <li key={other.box ?? other.name}>
+          {other.box ? (
+            <a className="text-foreground underline" href={href(other.box)} onClick={onClick(other.box)}>
+              {other.name}
+            </a>
+          ) : (
+            <span>{other.name}</span>
+          )}
+          {other.stopped ? ", stopped" : ""}
+        </li>
+      ))}
+    </ul>
   );
 }

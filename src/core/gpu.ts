@@ -1,5 +1,5 @@
 import { currentKindId } from "../backends/kinds.ts";
-import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type CardPlacement, type GpuPart, type GpuRefusal, type GpuResize, type KindCapabilities, type MachineSize } from "../backends/types.ts";
+import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type CardPlacement, type GpuPart, type GpuRefusal, type GpuResize, type KindCapabilities, type MachineSize, type Resizing } from "../backends/types.ts";
 
 export type NvidiaUserspace = "none" | "unknown" | `${number}.${string}`;
 
@@ -33,6 +33,19 @@ export function kindNamingNoGpu(kind: string): string | null {
 
 export function kindWithGpu(kind: string): string {
   return kindNamingNoGpu(kind) ?? kind;
+}
+
+export function resizingWithDesktopGpu(own: Resizing | null, desktop: Resizing | null): Resizing | null {
+  if (!own || own.gpu) return own;
+  const gpu = desktop?.gpu;
+  if (!gpu || gpu.add === "no") return own;
+  return { ...own, gpu };
+}
+
+export function boxResizing(backend: { resizing?(kind: string): Resizing | null } | null | undefined, kind: string): Resizing | null {
+  const own = backend?.resizing?.(kind) ?? null;
+  if (!kindNamingNoGpu(kind)) return own;
+  return resizingWithDesktopGpu(own, backend?.resizing?.(kindWithGpu(kind)) ?? null);
 }
 
 export function gpuPartsOf(kind: string): readonly GpuPart[] {

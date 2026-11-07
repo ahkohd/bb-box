@@ -18,6 +18,7 @@ import { busyWords } from "../src/app/box-words.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DoctorReport, GpuRoom } from "../src/backends/types.ts";
+import { kindCardReads } from "../src/plugin/kind-cards.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
@@ -465,6 +466,13 @@ function kindView(id: string, label: string, description: string, cores: number,
   };
 }
 
+function offered(kind: KindView, offers: KindView["offers"]): KindView {
+  return { ...kind, offers };
+}
+
+const ADDS_A_GPU = { cores: "live", memory: "live", disk: "live", shrinks: true, gpu: { add: "restart", share: "no", move: "no" } } as const;
+const CANNOT_ADD_A_GPU = { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "no", share: "live", move: "no" } } as const;
+
 // jsdom has no scrollIntoView, which a menu calls on its chosen item.
 Element.prototype.scrollIntoView = () => {};
 
@@ -548,7 +556,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; streams?: VideoStream[]; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -671,6 +679,14 @@ function server(initial: BoxView[], options: { entries?: (box: BoxView) => Parti
       changes.push(`rooms ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
       const blocked = typeof options.rooms === "function" ? options.rooms(size) : (options.rooms ?? {});
       return ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, available: !blocked[offer.backend], reason: blocked[offer.backend] ?? null }));
+    },
+    "kind.cards": async ({ kind }) => {
+      changes.push(`kind.cards ${kind}`);
+      if (options.holdCards) await options.holdCards;
+      if (options.cardsFail) throw new Error("The cards did not answer.");
+      const offers = (options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? [];
+      if (options.cardFailed) return kindCardReads(offers.map((offer) => ({ backend: { id: offer.backend, gpuRoom: async () => Promise.reject(new Error("The cards did not answer.")) }, kind: { id: kind } })));
+      return offers.map((offer) => ({ backend: offer.backend, room: offer.gpuRoom, failed: false }));
     },
     provider: ({ backend }) => {
       asked.push(backend);
@@ -1311,6 +1327,356 @@ test("071 unit 11: the New box form says where every box can open every card, fo
   expect(screen.getByText(reach).tagName).toBe("P");
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
   expect(screen.getByText(reach).tagName).toBe("P");
+});
+
+test("071 unit 13: the GPU line keeps its height on screen", async () => {
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const room: GpuRoom = { readings: [], fullUntil: null, parts: ["none", "shared"], host: "pve-1", cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_227, totalMiB: 24_576 }] };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared"], gpuRoom: room, resizing: ADDS_A_GPU }] };
+  const slot = panel(server([], { kinds: [linux], holdCards: hold }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText("No GPU. You can add one later with Resize.");
+  expect(line.className).toContain("h-[3lh]");
+  expect(line.className).toContain("overflow-hidden");
+  expect(line.className).toContain("@sm:h-[2lh]");
+  expect(line.className).toContain("text-xs");
+  expect(line.className).toContain("leading-snug");
+  expect(line.closest("[class*='@container']")).toBeTruthy();
+  release();
+});
+
+test("071 unit 13: a refusal stays on the GPU line", async () => {
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared", "whole"],
+    host: "pve-1",
+    cards: [
+      { index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, wholeBy: "quiet-elm", freeForWhole: false },
+      { index: 1, boxes: 2, whole: false, freeMiB: 18_227, totalMiB: 24_576, freeForWhole: false },
+    ],
+  };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room }] };
+  const slot = panel(server([], { kinds: [linux] }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  await choose("GPU", "Whole card");
+  const line = await screen.findByText("pve-1 has no free card now: see below.");
+  expect(line.getAttribute("data-gpu-state")).toBe("refused");
+  expect(screen.getByText("Card 0 is quiet-elm's; card 1 has 2 boxes")).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.getByText("pve-1 has no free card now: see below.").getAttribute("data-gpu-state")).toBe("refused");
+  expect(submitButton().disabled).toBe(true);
+});
+
+test("071 unit 13: the New box form offers None, Shared and Whole card, and the line keeps its height while the cards are read", async () => {
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const at = Date.now() - 20_000;
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared", "whole"],
+    host: "pve-1",
+    at,
+    neededMiB: 512,
+    cards: [
+      { index: 0, boxes: 0, whole: false, freeMiB: 21_000, totalMiB: 24_576, wholeBy: "quiet-elm", freeForWhole: false },
+      { index: 1, boxes: 2, whole: false, freeMiB: 18_227, totalMiB: 24_576, freeForWhole: false },
+    ],
+  };
+  const base = kindView("linux", "Linux", "A server.", 2, false);
+  const linux: KindView = { ...base, offers: [{ ...base.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"], gpuRoom: room, resizing: ADDS_A_GPU }] };
+  const { handlers, changes } = server([], { kinds: [linux], holdCards: hold });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText("No GPU. You can add one later with Resize.");
+  expect(line.getAttribute("data-gpu-state")).toBe("none");
+  expect(line.className).toContain("h-[3lh]");
+  expect(line.className).toContain("@sm:h-[2lh]");
+  expect(submitButton().disabled).toBe(false);
+  expect(await optionsOf("GPU")).toEqual(["None", "Shared", "Whole card"]);
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("reading"));
+  expect(submitButton().disabled).toBe(true);
+  release();
+  await waitFor(() => expect(line.textContent).toMatch(/^Card 1 on pve-1, shared with 2 boxes; 17\.8 GiB free when read, \d+ s ago\. Boxes on a card share its memory\.$/));
+  expect(line.getAttribute("data-gpu-state")).toBe("shared");
+  await choose("GPU", "Whole card");
+  await waitFor(() => expect(line.textContent).toBe("pve-1 has no free card now: see below."));
+  expect(line.getAttribute("data-gpu-state")).toBe("refused");
+  expect(screen.getByText("Card 0 is quiet-elm's; card 1 has 2 boxes")).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  await choose("GPU", "None");
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("none"));
+  fireEvent.click(submitButton());
+  await waitFor(() => expect(changes).toContain("acquire linux"));
+  expect(changes.some((change) => change.startsWith("acquire linux {"))).toBe(false);
+  expect(changes).toContain("kind.cards linux");
+});
+
+test.each([
+  ["Docker", ["shared"] as const, ["None", "Shared"], "No GPU, and none can be added later on Fake host.", CANNOT_ADD_A_GPU],
+  ["Proxmox", ["shared", "whole"] as const, ["None", "Shared", "Whole card"], "No GPU. You can add one later with Resize.", ADDS_A_GPU],
+])("071 unit 13: None on a %s desktop with a CPU sibling keeps the GPU line and acquires the CPU desktop", async (_shape, parts, menu, noneLine, gpuResizing) => {
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: [...parts],
+    host: "pve-1",
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000, freeForWhole: true }],
+  };
+  const gpuBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const cpuBase = kindView("linux-desktop-cpu", "Linux desktop", "A desktop drawn by the CPU.", 4, true);
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const gpuKind = offered(gpuBase, [{ ...gpuBase.offers[0]!, gpuParts: [...parts], hosts: ["pve-1"], gpuRoom: room, resizing: gpuResizing }]);
+  const cpuKind: KindView = offered({ ...cpuBase, gpu: false }, [{ ...cpuBase.offers[0]!, gpuParts: ["none"], hosts: ["pve-1"], resizing: { cores: "live", memory: "live", disk: gpuResizing.disk, shrinks: true } }]);
+  const linux = offered(linuxBase, [{ ...linuxBase.offers[0]!, gpuParts: ["none", "shared"], hosts: ["pve-1"] }]);
+  const options: { kinds: KindView[]; cardFailed?: boolean } = { kinds: [linux, gpuKind, cpuKind] };
+  const { handlers, changes } = server([], options);
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None"));
+  const heightOf = (element: Element) =>
+    element.className
+      .split(/\s+/)
+      .filter((token) => token.startsWith("h-[") || token.startsWith("@sm:h-["))
+      .join(" ");
+  const line = document.querySelector("[data-gpu-line]");
+  expect(line?.textContent).toBe(noneLine);
+  expect(line?.getAttribute("data-gpu-state")).toBe("none");
+  const height = heightOf(line!);
+  expect(height).toBe("h-[3lh] @sm:h-[2lh]");
+  expect(await optionsOf("GPU")).toEqual(menu);
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(document.querySelector("[data-gpu-line]")?.getAttribute("data-gpu-state")).toBe("shared"));
+  const shared = document.querySelector("[data-gpu-line]");
+  expect(heightOf(shared!)).toBe(height);
+  await choose("GPU", "None");
+  const none = document.querySelector("[data-gpu-line]");
+  expect(none?.textContent).toBe(noneLine);
+  expect(none?.getAttribute("data-gpu-state")).toBe("none");
+  expect(heightOf(none!)).toBe(height);
+  options.cardFailed = true;
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(document.querySelector("[data-gpu-line]")?.textContent).toMatch(/The cards could not be read/));
+  const failedLine = document.querySelector("[data-gpu-line]");
+  const retry = screen.getByRole("button", { name: "Retry" });
+  expect(retry.parentElement).toBe(failedLine);
+  expect(retry.classList.contains("inline")).toBe(true);
+  expect(heightOf(failedLine!)).toBe(height);
+  await choose("GPU", "None");
+  fireEvent.click(submitButton());
+  await waitFor(() => expect(changes).toContain("acquire linux-desktop-cpu"));
+  expect(changes.some((change) => change === "acquire linux-desktop" || change.startsWith("acquire linux-desktop "))).toBe(false);
+});
+
+test("071 unit 13: None does not promise Resize unless this backend's GPU desktop can add one", async () => {
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["shared"],
+    host: "pve-1",
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  };
+  const gpuBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const cpuBase = kindView("linux-desktop-cpu", "Linux desktop", "A desktop drawn by the CPU.", 4, true);
+  const cpuOffer = { ...cpuBase.offers[0]!, gpuParts: ["none"] as const, hosts: ["pve-1"], resizing: { cores: "live" as const, memory: "live" as const, disk: "live" as const, shrinks: true } };
+  const openNone = async (gpuOffer: KindView["offers"][number]) => {
+    const gpuKind = offered(gpuBase, [gpuOffer]);
+    const cpuKind = offered({ ...cpuBase, gpu: false }, [cpuOffer]);
+    const slot = panel(server([], { kinds: [gpuKind, cpuKind] }).handlers);
+    await slot.findByText("No boxes yet");
+    fireEvent.click(slot.getByRole("button", { name: "New box" }));
+    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None"));
+    return document.querySelector("[data-gpu-line]");
+  };
+  const absent = await openNone({ ...gpuBase.offers[0]!, gpuParts: ["shared"], hosts: ["pve-1"], gpuRoom: room });
+  expect(absent?.textContent).toBe("No GPU.");
+  expect(absent?.textContent).not.toMatch(/Resize/);
+  cleanup();
+  const elsewhere = await openNone({ ...gpuBase.offers[0]!, backend: "other", gpuParts: ["shared"], hosts: ["other"], gpuRoom: room, resizing: ADDS_A_GPU });
+  expect(elsewhere?.textContent).toBe("No GPU.");
+});
+
+test("071 unit 13: a GPU desktop with no CPU desktop does not offer None", async () => {
+  const gpuBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const gpuKind = offered(gpuBase, [{ ...gpuBase.offers[0]!, gpuParts: ["shared"], hosts: ["devpc"], form: "Docker" }]);
+  const linux = offered(linuxBase, [{ ...linuxBase.offers[0]!, gpuParts: ["none", "shared"], hosts: ["devpc"] }]);
+  const slot = panel(server([], { kinds: [linux, gpuKind] }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  expect(await optionsOf("GPU")).toEqual(["Shared"]);
+});
+
+test("071 unit 13: a ready spare of the chosen GPU does not disable Create, and a spare of another GPU does", async () => {
+  const full: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["shared"],
+    host: "pve-1",
+    limit: 2,
+    cards: [{ index: 0, boxes: 2, own: 2, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  };
+  const desktopBase = kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true);
+  const desktop = offered(desktopBase, [{ ...desktopBase.offers[0]!, ready: 1, hosts: ["pve-1"], gpuParts: ["shared"], gpuRoom: full }]);
+  const serverKind = kindView("linux", "Linux", "A server.", 2, false);
+  const slot = panel(server([], { kinds: [serverKind, desktop] }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  const line = await screen.findByText(/A ready box on pve-1 has this GPU|Card 0 on pve-1, shared/);
+  expect(line.getAttribute("data-gpu-state")).not.toBe("refused");
+  expect(submitButton().disabled).toBe(false);
+
+  cleanup();
+  const crowded: GpuRoom = { ...full, parts: ["none", "shared"] };
+  const crowdedServer = offered(serverKind, [{ ...serverKind.offers[0]!, ready: 1, hosts: ["pve-1"], gpuParts: ["none", "shared"], gpuRoom: crowded }]);
+  const again = panel(server([], { kinds: [crowdedServer] }).handlers);
+  await again.findByText("No boxes yet");
+  fireEvent.click(again.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  await choose("GPU", "Shared");
+  const refused = await screen.findByText("pve-1 has no card with room now: see below.");
+  expect(refused.getAttribute("data-gpu-state")).toBe("refused");
+  expect(submitButton().disabled).toBe(true);
+});
+
+test("071 unit 13: First with room previews a card only on a provider the size can use", async () => {
+  const card = (host: string): GpuRoom => ({
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared"],
+    host,
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  });
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const first = { ...linuxBase.offers[0]!, backend: "tight", hosts: ["tight-host"], gpuParts: ["none", "shared"] as const, gpuRoom: card("tight-host") };
+  const second = { ...linuxBase.offers[0]!, backend: "roomy", hosts: ["roomy-host"], gpuParts: ["none", "shared"] as const, gpuRoom: card("roomy-host") };
+  const linux = offered(linuxBase, [first, second]);
+  const slot = panel(server([], { kinds: [linux], rooms: { tight: "No room for this size" } }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByText("No room for this size");
+  await choose("GPU", "Shared");
+  const line = await screen.findByText(/Card 0 on roomy-host/);
+  expect(line.getAttribute("data-gpu-state")).toBe("shared");
+  expect(line.textContent).not.toContain("tight-host");
+});
+
+test("071 unit 13: when no provider has room for the size, the GPU line says so", async () => {
+  const card = (host: string): GpuRoom => ({
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared"],
+    host,
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  });
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const linux = offered(linuxBase, [
+    { ...linuxBase.offers[0]!, backend: "tight", hosts: ["tight-host"], gpuParts: ["none", "shared"], gpuRoom: card("tight-host") },
+    { ...linuxBase.offers[0]!, backend: "roomy", hosts: ["roomy-host"], gpuParts: ["none", "shared"], gpuRoom: card("roomy-host") },
+  ]);
+  const slot = panel(server([], { kinds: [linux], rooms: { tight: "No room for this size", roomy: "No room for this size" } }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  await choose("GPU", "Shared");
+  const line = await screen.findByText("No provider has room for this size: see below.");
+  expect(line.getAttribute("data-gpu-state")).toBe("refused");
+  expect(screen.queryByText(/This provider/)).toBeNull();
+  expect(screen.queryByText(/no card with room/)).toBeNull();
+  expect(screen.getAllByText("No room for this size")).toHaveLength(2);
+  expect(submitButton().disabled).toBe(true);
+});
+
+test("071 unit 13: a failed card reading can be retried, and None does not wait for it", async () => {
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared"],
+    host: "pve-1",
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  };
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const offer = { ...linuxBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared"] as const, gpuRoom: null as GpuRoom | null, resizing: ADDS_A_GPU };
+  const linux = offered(linuxBase, [offer]);
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const options: { kinds: KindView[]; cardsFail?: boolean; holdCards?: Promise<void> } = { kinds: [linux], cardsFail: true, holdCards: hold };
+  const slot = panel(server([], options).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText("No GPU. You can add one later with Resize.");
+  expect(line.getAttribute("data-gpu-state")).toBe("none");
+  expect(submitButton().disabled).toBe(false);
+  expect(screen.queryByText(/Reading the cards/)).toBeNull();
+  release();
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(document.querySelector("[data-gpu-line]")?.getAttribute("data-gpu-state")).toBe("failed"));
+  const failed = document.querySelector("[data-gpu-line]")!;
+  expect(failed.textContent).toMatch(/The cards could not be read/);
+  expect(submitButton().disabled).toBe(true);
+  options.cardsFail = false;
+  offer.gpuRoom = room;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("shared"));
+  expect(submitButton().disabled).toBe(false);
+});
+
+test("071 unit 13: a provider whose card reading fails in the RPC shape can be retried, and None stays usable", async () => {
+  const failed = await kindCardReads([{ backend: { id: "fake", gpuRoom: async () => Promise.reject(new Error("The cards did not answer.")) }, kind: { id: "linux" } }]);
+  expect(failed).toEqual([{ backend: "fake", room: null, failed: true }]);
+  const room: GpuRoom = {
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared"],
+    host: "pve-1",
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 18_000, totalMiB: 24_000 }],
+  };
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const offer = { ...linuxBase.offers[0]!, hosts: ["pve-1"], gpuParts: ["none", "shared"] as const, gpuRoom: null as GpuRoom | null, resizing: ADDS_A_GPU };
+  const linux = offered(linuxBase, [offer]);
+  const options: { kinds: KindView[]; cardFailed?: boolean } = { kinds: [linux], cardFailed: true };
+  const slot = panel(server([], options).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const line = await screen.findByText("No GPU. You can add one later with Resize.");
+  expect(line.getAttribute("data-gpu-state")).toBe("none");
+  expect(submitButton().disabled).toBe(false);
+  expect(screen.queryByText(/no card with room/)).toBeNull();
+  await choose("GPU", "Shared");
+  await waitFor(() => expect(document.querySelector("[data-gpu-line]")?.getAttribute("data-gpu-state")).toBe("failed"));
+  const failure = document.querySelector("[data-gpu-line]")!;
+  expect(failure.textContent).toMatch(/The cards could not be read/);
+  expect(failure.contains(screen.getByRole("button", { name: "Retry" }))).toBe(true);
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  expect(submitButton().disabled).toBe(true);
+  expect(screen.queryByText(/no card with room/)).toBeNull();
+  options.cardFailed = false;
+  offer.gpuRoom = room;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("shared"));
+  expect(submitButton().disabled).toBe(false);
 });
 
 test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {
@@ -7768,6 +8134,10 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(nearest(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "wayland" })).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "wayland" });
   expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "wayland" })?.id).toBe("linux-desktop-wayland-cpu");
   expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })?.id).toBe("linux-desktop");
+  const gpuDesktop: KindView = { ...KINDS[1]!, offers: [{ ...KINDS[1]!.offers[0]!, gpuParts: ["shared", "whole"] }] };
+  const cpuDesktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, offers: [{ ...KINDS[1]!.offers[0]!, gpuParts: ["none"] }] };
+  expect(kindFor([gpuDesktop, cpuDesktop], { os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "x11" })?.id).toBe("linux-desktop-cpu");
+  expect(kindFor([gpuDesktop, cpuDesktop], { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })?.id).toBe("linux-desktop");
   // The filters: a Kind chip keeps its form; Runs on keeps the machine's OS and an offer that does not know it yet; Physical ignores Runs on.
   const pool = { ...offer, backend: "ssh-pool", type: "ssh-pool", form: "Physical" as const };
   const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null, gpuRoom: null };

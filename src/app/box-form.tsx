@@ -131,7 +131,14 @@ export function kindFor(kinds: readonly KindView[], choice: Choice): KindView | 
   const at = kindsAt(kinds, choice.os, choice.arch).filter((kind) => kind.desktop === choice.desktop);
   if (!at.length) return null;
   if (!choice.desktop) return at.find((kind) => kind.gpu === choice.gpu) ?? at[0]!;
-  return at.find((kind) => kind.windowing === choice.windowing && kind.gpu === choice.gpu) ?? at.find((kind) => kind.windowing === choice.windowing) ?? at[0]!;
+  const windowed = at.filter((kind) => kind.windowing === choice.windowing);
+  if (choice.gpu) {
+    const withCards = windowed.find((kind) =>
+      kind.offers.some((offer) => (offer.gpuParts ?? []).includes("shared") || (offer.gpuRoom?.parts ?? []).includes("shared") || (offer.gpuRoom?.cards?.length ?? 0) > 0),
+    );
+    if (withCards) return withCards;
+  }
+  return windowed.find((kind) => kind.gpu === choice.gpu) ?? windowed[0] ?? at[0]!;
 }
 
 /** The nearest choice that exists: the OS stays, then the arch, the type, the windowing, and the GPU snap to what there is. */
@@ -281,7 +288,7 @@ export function useEscapeCloses(open: boolean, setOpen: (open: boolean) => void)
  */
 export function FormSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <section className="space-y-3">
+    <section className="@container space-y-3">
       <div>
         <h3 className="text-xs text-foreground">{title}</h3>
         {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}

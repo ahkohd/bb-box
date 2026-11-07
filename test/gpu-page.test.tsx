@@ -6,6 +6,8 @@ import type { BoxPageState, Contract, MonitorReach, MonitorSnapshot } from "../s
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
+import { resizedNow } from "../src/app/resize.tsx";
+import { boxResizing } from "../src/core/gpu.ts";
 import { rowLine, rowWords } from "../src/app/row-line.ts";
 import { HOLDS_NO_CARD, USERSPACE_UPDATE_REFUSAL } from "../src/plugin/gpu-page.ts";
 
@@ -87,7 +89,57 @@ function handlers(page: BoxPageState, reading: MonitorSnapshot = snapshot()): Pl
     "monitor.machine": () => reading,
     "monitor.history": () => null,
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
-    resize: () => ({ box: null, from: null, to: null, plan: null, changed: false, machine: false, needsRestart: false, presets: [], largest: null, error: null }),
+    resize: (input: { size?: { gpu?: string } }) => {
+      const empty = { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null };
+      const gpu = input.size?.gpu;
+      if (gpu === "none") {
+        return {
+          ...empty,
+          plan: {
+            parts: [],
+            room: { ok: true, message: null },
+            downSeconds: 15,
+            gpu: {
+              from: "shared",
+              to: "none",
+              way: "restart",
+              stopped: false,
+              installs: null,
+              words: "GPU: shared, card 1 → none · Restart. amber-fox restarts without card 1. Everything running in it stops.",
+              fromIndex: 1,
+              toIndex: null,
+              refusal: null,
+              others: [],
+              changed: null,
+            },
+          },
+        };
+      }
+      if (gpu === "whole") {
+        return {
+          ...empty,
+          plan: {
+            parts: [],
+            room: { ok: true, message: null },
+            downSeconds: null,
+            gpu: {
+              from: "shared",
+              to: "whole",
+              way: "no",
+              stopped: false,
+              installs: null,
+              words: "No card is free for amber-fox alone. Release one of them, or keep the GPU shared.",
+              fromIndex: 1,
+              toIndex: null,
+              refusal: "No card is free for amber-fox alone. Release one of them, or keep the GPU shared.",
+              others: [{ box: "bxlonepine01", name: "lone-pine", stopped: false }],
+              changed: null,
+            },
+          },
+        };
+      }
+      return empty;
+    },
   } as unknown as PluginRpcTestHandlers<Contract>;
 }
 
@@ -119,6 +171,7 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+Element.prototype.scrollIntoView = () => {};
 
 const app = await loadPluginApp(() => import("../app.tsx"));
 
@@ -158,9 +211,249 @@ test("071 unit 14: the box page shows the GPU fact and card, and Change opens Re
   const dialog = await screen.findByRole("alertdialog");
   expect(dialog.getAttribute("data-resize-at")).toBe("gpu");
   expect(dialog.textContent).toContain("Resize amber-fox");
-  expect(dialog.textContent).toContain("Changing the GPU comes later.");
+  expect(dialog.textContent).not.toContain("Changing the GPU comes later.");
+  expect(within(dialog).getByRole("combobox", { name: "GPU" }).textContent).toBe("Shared");
+  expect(dialog.textContent).toContain("This box's backend does not change its GPU.");
   const gpu = dialog.querySelector("[data-gpu-section]");
   await waitFor(() => expect(document.activeElement).toBe(gpu));
+});
+
+test("071 unit 13: Resize keeps the button enabled when the size snaps to the box's preset", async () => {
+  let gpuNone = 0;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const empty = { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null };
+  const rpc = handlers(
+    page(
+      boxView({
+        resizing: { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+      }),
+    ),
+  );
+  rpc.resize = async (input: { size?: { gpu?: string } }) => {
+    if (input.size?.gpu === "none") {
+      gpuNone += 1;
+      return {
+        ...empty,
+        presets: [{ name: "small", cores: 4, memoryGiB: 8, diskGiB: null, words: "4 cores, 8 GiB memory" }],
+        plan: {
+          parts: [],
+          room: { ok: true, message: null },
+          downSeconds: 15,
+          gpu: {
+            from: "shared",
+            to: "none",
+            way: "restart",
+            stopped: false,
+            installs: null,
+            words: "GPU: shared, card 1 → none · Restart. amber-fox restarts without card 1. Everything running in it stops.",
+            fromIndex: 1,
+            toIndex: null,
+            refusal: null,
+            others: [],
+            changed: null,
+          },
+        },
+      };
+    }
+    await gate;
+    return empty;
+  };
+  const [panel] = app.navPanels;
+  const slot = renderSlot(panel!, { subPath: `box/${BOX}` }, { rpc, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "Train the model" }) } } });
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("Everything running in it stops"));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(within(dialog).getByRole("button", { name: "Resize…" }).hasAttribute("disabled")).toBe(false);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(gpuNone).toBe(1);
+  release();
+});
+
+test("071 unit 13: a resize that changes the GPU names it when it has finished", async () => {
+  const sizeNow = { cores: 2, memoryGiB: 4, diskGiB: 16, words: "2 cores, 4 GiB memory, 16 GiB disk" };
+  const box = boxView({
+    sizeNow,
+    size: "2 cores, 4 GiB memory, 16 GiB disk",
+    resizing: { cores: "live", memory: "live", disk: "live", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+  });
+  const empty = { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null };
+  const presets = [{ name: "small", cores: 2, memoryGiB: 4, diskGiB: 16, words: sizeNow.words }];
+  const gpu = {
+    from: "shared" as const,
+    to: "none" as const,
+    way: "restart" as const,
+    stopped: false,
+    installs: null,
+    words: "GPU: shared, card 1 → none · Restart. amber-fox restarts without card 1. Everything running in it stops.",
+    fromIndex: 1,
+    toIndex: null,
+    refusal: null,
+    others: [],
+    changed: null,
+  };
+  const rpc = handlers(page(box));
+  rpc.resize = (input: { size?: { gpu?: string }; check?: boolean; restart?: boolean }) => {
+    const plan = input.size?.gpu === "none" ? { parts: [], room: { ok: true, message: null }, downSeconds: 15, gpu } : null;
+    if (input.check || !input.restart) return { ...empty, from: sizeNow, to: sizeNow, presets, plan };
+    return {
+      ...empty,
+      from: sizeNow,
+      to: sizeNow,
+      presets,
+      plan,
+      changed: true,
+      box: { ...box, gpu: false, gpuPart: "none", lastResize: { to: sizeNow, at: Date.now(), state: "done", restart: true, ms: 1000, error: null } },
+    };
+  };
+  const [panel] = app.navPanels;
+  const slot = renderSlot(panel!, { subPath: `box/${BOX}` }, { rpc, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "Train the model" }) } } });
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("Everything running in it stops"));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize…" }));
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Restart and resize" }));
+  expect(await within(dialog).findByText("It has 2 cores · 4 GiB · 16 GiB disk and no GPU now, after a restart.")).toBeTruthy();
+  expect(resizedNow("2 cores · 4 GiB · 16 GiB disk", { ...gpu, from: "none", to: "shared", fromIndex: null, toIndex: 1, words: "GPU: none → shared, card 1 · Restart." }, true, true)).toBe(
+    "It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 1 now, after a restart.",
+  );
+});
+
+test("071 unit 13: a resize that moves a box onto another card names that card", () => {
+  expect(
+    resizedNow(
+      "2 cores · 4 GiB · 16 GiB disk",
+      {
+        from: "shared",
+        to: "shared",
+        way: "restart",
+        stopped: false,
+        installs: null,
+        words: "GPU: shared, card 0 → shared, card 1 · Restart.",
+        fromIndex: 0,
+        toIndex: 1,
+        refusal: null,
+        others: [],
+        changed: null,
+      },
+      true,
+      true,
+    ),
+  ).toBe("It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 1 now, after a restart.");
+});
+
+test("071 unit 13: a resize onto a whole card says that card to itself", () => {
+  const size = "2 cores · 4 GiB · 16 GiB disk";
+  const gpu = {
+    from: "shared" as const,
+    to: "whole" as const,
+    way: "live" as const,
+    stopped: false,
+    installs: null,
+    words: "GPU: shared → whole, card 0 · Live.",
+    fromIndex: 0,
+    toIndex: 0,
+    refusal: null,
+    others: [],
+    changed: null,
+  };
+  expect(resizedNow(size, gpu, true, false)).toBe("It has 2 cores · 4 GiB · 16 GiB disk and card 0 to itself now, changed live.");
+  expect(resizedNow(size, { ...gpu, to: "shared", from: "none", fromIndex: null, words: "GPU: none → shared, card 0 · Live." }, true, false)).toBe(
+    "It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 0 now, changed live.",
+  );
+});
+
+test("071 unit 13: a CPU desktop's Resize offers the GPU rows its backend's GPU desktop accepts", async () => {
+  const sizes = { cores: "live" as const, memory: "live" as const, disk: "live" as const, shrinks: true };
+  const backend = {
+    resizing(kind: string) {
+      if (kind === "linux-desktop-cpu") return sizes;
+      if (kind === "linux-desktop") return { ...sizes, gpu: { add: "restart" as const, share: "live" as const, move: "restart" as const } };
+      return null;
+    },
+  };
+  const cpu = boxView({
+    kind: "linux-desktop-cpu",
+    kindLabel: "Linux desktop",
+    gpu: false,
+    gpuPart: "none",
+    claim: null,
+    desktop: true,
+    facts: [],
+    resizing: boxResizing(backend, "linux-desktop-cpu"),
+  });
+  const slot = open(page(cpu));
+  fireEvent.keyDown(await slot.findByRole("button", { name: "amber-fox actions" }), { key: "Enter" });
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Resize…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
+  expect(dialog.textContent).toContain("Adding, removing or moving a card restarts the box");
+  expect(dialog.textContent).not.toContain("does not change its GPU");
+  cleanup();
+  const plain = open(page(boxView({ ...cpu, resizing: boxResizing({ resizing: () => sizes }, "linux-desktop-cpu") })));
+  fireEvent.keyDown(await plain.findByRole("button", { name: "amber-fox actions" }), { key: "Enter" });
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Resize…" }));
+  const again = await screen.findByRole("alertdialog");
+  expect(again.querySelector("[data-gpu-section]")).toBeNull();
+});
+
+test("071 unit 13: Resize shows the plan's words", async () => {
+  const slot = open(
+    page(
+      boxView({
+        resizing: { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+      }),
+    ),
+    snapshot(),
+  );
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  await waitFor(() => expect(card.textContent).toContain("python3"));
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("amber-fox restarts without card 1. Everything running in it stops: python3 (3310) has the GPU open."));
+  expect(dialog.textContent).toContain("shared, card 1 → none");
+  expect(dialog.textContent).toContain("Restart");
+});
+
+test("071 unit 13: Resize shows the GPU change, names a program that has it open, and refuses a card that is not free", async () => {
+  const refusal = "No card is free for amber-fox alone. Release one of them, or keep the GPU shared.";
+  const slot = open(
+    page(
+      boxView({
+        resizing: { cores: "live", memory: "live", disk: "no", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+      }),
+    ),
+    snapshot(),
+  );
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  await waitFor(() => expect(card.textContent).toContain("python3"));
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("python3 (3310) has the GPU open"));
+  expect(dialog.textContent).toContain("shared, card 1 → none");
+  expect(dialog.textContent).toContain("Restart");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize…" }));
+  expect(await within(dialog).findByText("Restart amber-fox to change its GPU?")).toBeTruthy();
+  expect(dialog.textContent).toContain("python3 (3310) has the GPU open");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "Whole card" }));
+  await waitFor(() => expect(dialog.textContent).toContain(refusal));
+  expect(within(dialog).getByRole("link", { name: "lone-pine" })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
 });
 
 test("071 unit 14: a box with no GPU keeps its facts when Docker reports every card", async () => {

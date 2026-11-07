@@ -515,6 +515,7 @@ export interface GpuReading {
 export interface CardRoom {
   readonly index: number | null;
   readonly boxes: number;
+  readonly own?: number;
   readonly whole: boolean;
   readonly freeMiB: number | null;
   readonly totalMiB: number | null;

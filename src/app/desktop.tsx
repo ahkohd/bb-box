@@ -2517,7 +2517,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
               with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
           <div className="flex shrink-0 items-center gap-1.5">
             <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
-            {kinds.length ? <NewBox kinds={kinds} make={add} onDemand={onDemand} access={machinesState?.access ?? null} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} /> : null}
+            {kinds.length ? <NewBox kinds={kinds} make={add} onDemand={onDemand} access={machinesState?.access ?? null} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} cards={(kind) => rpc.call("kind.cards", { kind })} /> : null}
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
