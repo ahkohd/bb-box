@@ -267,7 +267,10 @@ export class VoxlRelay {
   #ended = false;
   #size: Size | null = null;
   #lastSent: number | null = null;
-  #early: ToVoxl[] | null = [];
+  #sending: Promise<void> = Promise.resolve();
+  #controlTerm = 0;
+  #inputReachedBox = false;
+  #connected = false;
 
   constructor(options: VoxlRelayOptions) {
     this.#options = options;
@@ -275,7 +278,10 @@ export class VoxlRelay {
       const signal = AbortSignal.timeout(options.connectTimeoutMs ?? 20_000);
       return BoxWebSocket.upgrade(await options.open(signal), { host: "localhost", path: VOXL_PATH, signal });
     })();
-    this.#socket.catch(() => undefined);
+    this.#socket.then(
+      () => void (this.#connected = true),
+      () => undefined,
+    );
     void this.#pump();
   }
 
@@ -296,8 +302,6 @@ export class VoxlRelay {
       return;
     }
     try {
-      for (const message of this.#early ?? []) await socket.send(message);
-      this.#early = null;
       for (let message = await socket.next(); message !== null && !this.#ended; message = await socket.next()) this.#toViewer(message);
       const closed = socket.closedWith;
       await this.#end("box", closed && closed.code !== 1000 && closed.code !== 1005 ? new WebSocketError(`The box's voxl closed the connection (${closed.code}).`) : null);
@@ -357,20 +361,38 @@ export class VoxlRelay {
     }
   }
 
-  async #toBox(messages: readonly ToVoxl[]): Promise<void> {
-    if (this.#early) {
-      this.#early.push(...messages);
-      return;
-    }
-    const socket = await this.#socket;
-    for (const message of messages) await socket.send(message).catch(() => undefined);
+  #inTurn(task: (socket: BoxWebSocket) => Promise<void>): Promise<void> {
+    const turn = this.#sending.then(async () => task(await this.#socket));
+    this.#sending = turn.catch(() => undefined);
+    return this.#sending;
+  }
+
+  async #onceConnected(turn: Promise<void>): Promise<void> {
+    if (this.#connected) await turn;
+  }
+
+  #watchingToBox(messages: readonly ToVoxl[]): Promise<void> {
+    return this.#inTurn(async (socket) => {
+      for (const message of messages) await socket.send(message).catch(() => undefined);
+    });
+  }
+
+  #inputToBox(messages: readonly ToVoxl[]): Promise<void> {
+    const term = this.#controlTerm;
+    return this.#inTurn(async (socket) => {
+      for (const message of messages) {
+        if (term !== this.#controlTerm || !this.#options.mayInput()) return;
+        this.#inputReachedBox = true;
+        await socket.send(message).catch(() => undefined);
+      }
+    });
   }
 
   async receive(message: Message): Promise<void> {
     if (this.#ended || typeof message !== "string") return;
     switch (viewerMessageKind(message)) {
       case "watching":
-        await this.#toBox(this.#watching(message));
+        await this.#onceConnected(this.#watchingToBox(this.#watching(message)));
         return;
       case "resize": {
         if (!this.#options.mayInput()) return;
@@ -385,7 +407,7 @@ export class VoxlRelay {
           return;
         }
         if (key) this.#options.keyLog?.(`to the box: ${message}, at ${Date.now() % 100_000} ms`);
-        await this.#toBox(this.#input.translate(message));
+        await this.#onceConnected(this.#inputToBox(this.#input.translate(message)));
         return;
       }
       case "drop":
@@ -417,8 +439,13 @@ export class VoxlRelay {
   }
 
   async release(): Promise<void> {
-    const messages = this.#input.release();
-    if (messages.length) await this.#toBox(messages);
+    this.#controlTerm += 1;
+    this.#input.release();
+    if (!this.#inputReachedBox) return;
+    this.#inputReachedBox = false;
+    await this.#inTurn(async (socket) => {
+      await socket.send("r").catch(() => undefined);
+    });
   }
 
   close(): Promise<void> {
@@ -428,13 +455,7 @@ export class VoxlRelay {
   async #end(by: "viewer" | "box", error: Error | null): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
-    if (by === "viewer") {
-      const messages = this.#input.release();
-      if (messages.length && !this.#early) {
-        const socket = await this.#socket.catch(() => null);
-        for (const message of messages) await socket?.send(message).catch(() => undefined);
-      }
-    }
+    if (by === "viewer") await this.release().catch(() => undefined);
     await this.#socket.then((socket) => socket.close()).catch(() => undefined);
     if (by === "box") this.#options.viewer.close(error ? 1011 : 1000, (error?.message ?? "The box's desktop closed the connection.").slice(0, 120));
     this.#options.onEnd?.(by, error);

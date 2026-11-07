@@ -246,6 +246,50 @@ test("hand-back releases what the viewer held, once, and nothing when it held no
   assert.equal(a.relay.holding, false);
 });
 
+function slowToOpen(control: () => boolean) {
+  const server = new FakeVoxl();
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => (open = resolve));
+  const end = viewer();
+  const relay = new VoxlRelay({
+    viewer: end.end,
+    open: async () => {
+      await gate;
+      return server.channel();
+    },
+    mayInput: control,
+  });
+  return { server, relay, open };
+}
+
+test("input a viewer sent while voxl's connection opened never reaches voxl once its control has ended, and hand-back does not wait for the connection", async () => {
+  let control = true;
+  const { server, relay, open } = slowToOpen(() => control);
+  await relay.receive("kd,97");
+  await relay.receive("m,5,5,1,0");
+  control = false;
+  const handedBack = await Promise.race([relay.release().then(() => "handed back"), new Promise((resolve) => setTimeout(() => resolve("waited for the connection"), 1000))]);
+  assert.equal(handedBack, "handed back");
+  open();
+  const client = await clientOf(server);
+  await settled(relay, client);
+  assert.deepEqual(client.received.filter((message) => message !== "kf"), [], "nothing from the viewer that lost control, not even a release of what never arrived");
+});
+
+test("input a viewer sent while voxl's connection opened reaches voxl in order once it opens, while the viewer keeps control", async () => {
+  const { server, relay, open } = slowToOpen(() => true);
+  await relay.receive("kd,97");
+  await relay.receive("START_VIDEO");
+  await relay.receive("ku,97");
+  open();
+  const client = await clientOf(server);
+  await settled(relay, client);
+  assert.deepEqual(client.received.filter((message) => message !== "kf"), ["k,97,1", "v,1", "k,97,0"]);
+  await relay.release();
+  await settled(relay, client);
+  assert.deepEqual(client.received.filter((message) => message === "r"), ["r"], "hand-back releases once input reached voxl");
+});
+
 test("a viewer that goes while holding a key releases it before its connection closes", async () => {
   const { server, connect, ends } = setup();
   const a = connect();
