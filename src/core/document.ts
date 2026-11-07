@@ -374,9 +374,7 @@ export interface GeneralConfig {
   readonly spares: Readonly<Record<string, number>>;
   /** The backends whose new Linux boxes get an identity marker (070). */
   readonly identityResetBackends?: readonly string[];
-  /** Whether boxes may have a whole card (071): on where any backend that is on lets them. */
   readonly wholeCards?: boolean;
-  /** Each kind's GPU when a request leaves gpu out, where it is set (071). */
   readonly gpuWhenNotAsked?: Readonly<Record<string, GpuPart>>;
 }
 

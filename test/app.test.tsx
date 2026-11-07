@@ -11808,6 +11808,8 @@ test("071 unit 15, lead: Desktop opens on the GPU desktop with its part only whe
   cleanup();
   const set: KindView = { ...gpuOffered, gpu: true, windowing: "x11", gpuWhenNotAsked: "shared", gpuSetting: "shared" };
   expect(await opensOn(set)).toBe("Shared");
+  await choose("GPU", "Whole card");
+  expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("Whole card");
   await choose("GPU", "None");
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Create box" })).toBeNull());

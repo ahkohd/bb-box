@@ -733,7 +733,7 @@ export function NewBox({
                         return;
                       }
                       const rememberedKind = gpuSibling && part !== "none" ? gpuSibling.id : kind.id;
-                      if (gpuSibling && part !== "none") pick({ gpu: true });
+                      if (part !== "none" && (gpuSibling || (kind.desktop && !wanted.gpu))) pick({ gpu: true });
                       const next = { ...gpuByKind, [rememberedKind]: part };
                       setGpuByKind(next);
                       remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: rememberedKind, size, gpu: next, ...(Object.keys(edited).length ? { custom: edited } : {}) });
