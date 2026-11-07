@@ -106,9 +106,10 @@ comes only with phase 3.
   `customize-desktop.sh` builds it with `cargo build --release --locked`,
   so every crate is checked against voxl's `Cargo.lock`, with Rust 1.99.1
   from the pinned rustup in a toolchain it removes after. It installs
-  `/usr/local/bin/voxl` and keeps the runtime libraries: libx264-164,
-  libyuv0, libopus0, libpulse0 and libxcb1. The Docker and Proxmox LXC
-  images share this script, so both get it.
+  `/usr/local/bin/voxl`, purges every package it installed to build it,
+  and keeps the runtime libraries, installed with the desktop's own:
+  libx264-164, libyuv0, libopus0, libpulse0 and libxcb1. The Docker and
+  Proxmox LXC images share this script, so both get it.
 - **Started on demand.** A launcher, `/usr/local/libexec/bb-box/voxl`,
   starts voxl as the box user when a viewer opens its display, and stops
   it once it has had no client for 60 s. On demand, because voxl hides the

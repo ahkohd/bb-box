@@ -742,8 +742,9 @@ The XFCE desktops add:
   On a GPU desktop it encodes with NVENC on the box's GPU, without NvFBC,
   which never answers on its X screen and would hold each viewer's first
   frame for 5 s (#863);
-- voxl, built from its pinned source crate with Rust 1.99.1, which the
-  build then removes; `/usr/local/libexec/bb-box/voxl start` starts it on
+- voxl, built from its pinned source crate with Rust 1.99.1; the build
+  then removes the toolchain and every package it installed to build voxl.
+  `/usr/local/libexec/bb-box/voxl start` starts it on
   `127.0.0.1:5981` when a viewer asks for it, and it stops a minute after
   its last viewer ([072](../../docs/decisions/072-voxl.md));
 - on a GPU desktop, the NVIDIA userspace for the host's driver and

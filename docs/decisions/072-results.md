@@ -135,16 +135,18 @@ Docker backend's setting](072-voxl/v1/shots/settings-docker-1440-light.png).
 
 ## Cost
 
-- **Image size**: about 90 MB on a 6.9 GB desktop image: voxl's 25 MB
-  binary, 3 MB of libraries it runs with, and 62 MB of what builds it
-  (libclang 34 MB, esbuild 22 MB, headers 6 MB), which the build could
-  remove.
+- **Image size**: voxl's 25 MB binary and about 3 MB of libraries it runs
+  with. The build installs 20 more packages, 48.5 MB (esbuild, the x264,
+  libyuv, Opus and PulseAudio headers, and the GLib development packages
+  those bring), and purges them once voxl is built; libclang, pkg-config
+  and the xcb headers were in the image already, for GPUI. The Docker
+  desktop image is 6.81 GB.
 - **Build time**: about a minute more: 12 s for the Rust toolchain and
   45 s to compile on 16 cores.
 - **Risk**: voxl is four weeks old and released five times in its last
-  week; bb-box pins it, and its protocol with it. Its binary is GPL-2.0 through x264. It hides the X
-  cursor while it runs, so a VNC viewer of the same desktop sees none until
-  voxl stops.
+  week; bb-box pins it, and its protocol with it. Its binary is GPL-2.0
+  through x264. It hides the X cursor while it runs, so a VNC viewer of the
+  same desktop sees none until voxl stops.
 
 ## Not measured
 
