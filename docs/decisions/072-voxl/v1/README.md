@@ -19,6 +19,7 @@ measurements.
 | `batch-matrix.sh` | The results: 3 runs of voxl, Selkies and noVNC, taking turns, for each workload, on LAN and the slow link, then each idle |
 | `tables.mjs` | The results' tables, from the runs in `measure/` |
 | `measure/`, `live-check.json`, `shots/` | What the runs, the live check and `shots.mjs` gave |
+| `proxmox-lxc-runs.txt`, `live-check-lxc-gpu.json` | What the Proxmox LXC runs printed, with the card's figures the lead took on the node, and the GPU desktop's live check |
 
 The scene and the viewer run on the same box, so both read the same clock.
 

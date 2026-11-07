@@ -1,7 +1,8 @@
 # 072 results: voxl against today's streamers, unit V1
 
-Measured on 7 November 2026, for [072](072-voxl.md). The kit, the raw
-runs and the screenshots are in [072-voxl/v1](072-voxl/v1/README.md).
+Measured on 7 November 2026, for [072](072-voxl.md), on Docker and then on
+Proxmox LXC (see [On Proxmox LXC](#on-proxmox-lxc)). The kit, the raw runs
+and the screenshots are in [072-voxl/v1](072-voxl/v1/README.md).
 
 ## How it was measured
 
@@ -104,8 +105,8 @@ Not shown by these figures:
 - **A stall**: in a first batch before these, one voxl run of the
   animation stopped for 1.9 s once. It did not happen in that batch's other
   8 voxl runs, nor in the 13 here.
-- **Several viewers**, **a GPU desktop** and **Proxmox LXC** were not
-  measured. voxl's flow control is one decision for all its viewers.
+- **Several viewers** were not measured. voxl's flow control is one
+  decision for all its viewers.
 
 ## Live checks
 
@@ -133,6 +134,118 @@ The panel's screenshots at 1440, 760 and 390 px, light and dark, are in
 [at 390 px, dark](072-voxl/v1/shots/viewer-menu-390-dark.png), and [the
 Docker backend's setting](072-voxl/v1/shots/settings-docker-1440-light.png).
 
+## On Proxmox LXC
+
+Run through the lead on the same day, on a Proxmox VE node with two NVIDIA
+cards and driver 580.142.
+
+### How it was measured there
+
+- **The node**: the lead built a desktop template from this branch, by the
+  same `customize-desktop.sh`, in a pool lent for the test. No production
+  template, setting or guest was touched. At most two guests ran at once,
+  and one GPU desktop.
+- **The BB**: a fresh test BB in a box, as on Docker, set up by
+  `live-setup-lxc.sh`, with a test Proxmox LXC backend for that pool
+  (`add-proxmox-backend.sh`) and its voxl setting on. Its viewer reached
+  the guests over the LAN.
+- **The CPU desktop**: a `linux-desktop` box from that template with no
+  GPU, which runs on the CPU since 071: Xtigervnc at 1920x1080, Selkies
+  with x264, and voxl.
+- **The GPU desktop**: a `linux-desktop` box with a shared part of one
+  card, an RTX PRO 6000 Blackwell Max-Q with 96 GiB: NVIDIA's Xorg at
+  1920x1080, Selkies with NVENC, and voxl, which reads Xorg's screen with
+  GetImage and encodes with x264 on the box's CPU.
+- **The measures**: as on Docker, from the same kit, with the desktop's
+  commands sent by `bb box run`. Fewer runs: one scroll of each stream on
+  the CPU desktop, and two of each workload on the GPU desktop, the streams
+  taking turns. The lead sampled the card on the node every 500 ms,
+  card-wide, and took each run's figures over its UTC window. Chrome drew
+  60 frames a second in every run.
+- **The runs' figures**, as each printed them, are in
+  `072-voxl/v1/proxmox-lxc-runs.txt`; their raw files were not kept.
+
+### Results there
+
+CPU desktop, scroll, LAN, one run each:
+
+| Stream | Frames/s | Worst second | Latency p50, ms | Latency p99, ms | Longest gap, ms | Mbit/s | Streamer, cores | X server, cores |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| voxl | 60.0 | 59 | 47 | 51 | 22 | 3.5 | 0.28 | 0.07 |
+| Selkies | 59.7 | 58 | 37 | 47 | 39 | 4.5 | 0.37 | 0.07 |
+
+GPU desktop, 1080p animation, LAN, two runs each, from the lower to the
+higher:
+
+| Stream | Frames/s | Worst second | Latency p50, ms | Latency p99, ms | Longest gap, ms | Mbit/s | Streamer, cores | X server, cores |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| voxl | 60.0 | 60 | 30 to 45 | 37 to 50 | 32 to 35 | 5.1 to 5.2 | 0.28 to 0.31 | 0.16 |
+| Selkies with NVENC | 59.9 to 60.0 | 59 | 32 to 33 | 41 to 42 | 35 | 2.4 to 6.1 | 0.03 to 0.04 | 0.04 |
+
+GPU desktop, scroll, LAN, two runs each:
+
+| Stream | Frames/s | Worst second | Latency p50, ms | Latency p99, ms | Longest gap, ms | Mbit/s | Streamer, cores | X server, cores |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| voxl | 60.0 | 60 | 29 to 45 | 33 to 50 | 26 to 32 | 3.5 | 0.27 to 0.29 | 0.16 to 0.17 |
+| Selkies with NVENC | 59.9 to 60.0 | 59 | 32 to 49 | 55 to 72 | 48 to 49 | 2.0 | 0.03 | 0.03 to 0.04 |
+
+The GPU desktop's card, card-wide, over the runs' windows, 2,807 samples:
+
+| Stream | GPU %, most | Encoder %, mean and most | Memory used, most |
+| --- | --- | --- | --- |
+| voxl | 15 to 16 | 0 and 0 | 311 to 380 MiB |
+| Selkies with NVENC | 3 to 4 | 3 to 4, and 3 to 5 | 1,026 to 1,087 MiB |
+
+### What it shows there
+
+- **On a CPU desktop**, voxl on Proxmox LXC kept 60 frames a second, as
+  on Docker, with less bandwidth than Selkies (3.5 Mbit/s against 4.5) and
+  0.09 of a core less. Its median latency was 10 ms higher than Selkies'
+  in this one run, unlike on Docker; one run cannot say whether that
+  holds.
+- **On a GPU desktop**, both kept 60 frames a second. voxl's p99 latency
+  was lower on the scroll (33 to 50 ms against 55 to 72), and close on the
+  animation.
+- **voxl's x264 costs about 0.3 of a core more than NVENC** on a GPU
+  desktop (0.27 to 0.31 against 0.03 to 0.04), and the X server about 0.12
+  more (0.16 against 0.04), as voxl reads the screen back with GetImage.
+- **NVENC holds about 0.7 GiB more of the card's memory** (1,026 to 1,087
+  MiB used at most, against 311 to 380) and uses the card's encoder, which
+  voxl leaves idle. The card's GPU use was higher with voxl, 15 to 16 % at
+  most against 3 to 4 %; these figures do not say why.
+- **NVENC sent less on the scroll**: 2.0 Mbit/s against voxl's 3.5.
+
+### Live checks there
+
+`live-check.mjs`'s 9 checks, as on Docker: the stream, the menu, taking
+control, the pointer and keys, the clipboard both ways, a resize, the
+wheel and handing back.
+
+| Desktop | Result |
+| --- | --- |
+| CPU desktop, first run | 8 of 9: the resize failed (below) |
+| CPU desktop, after the fix | 9 of 9; the resize set 856x726 and then 1120x906, and voxl's picture followed |
+| GPU desktop | 9 of 9, the same resize through xrandr (`072-voxl/v1/live-check-lxc-gpu.json`) |
+
+### What the run found, and what changed
+
+- **A video viewer's resize of a GPU-template desktop on the CPU did
+  nothing.** There the backend's resize leaves the size to Xtigervnc,
+  which takes it by SetDesktopSize, but a video viewer's resize sent none,
+  so as to open no RFB connection on the GPU path (#916). Selkies on main
+  had the same fault, as did a Docker GPU desktop that took the CPU. Now
+  the backend's resize says when it left the size to the VNC server, and
+  only then does a video viewer's resize send SetDesktopSize. The GPU path
+  still opens no RFB connection.
+- **The node steps**, which were the lead's and are outside the repo:
+  their check of the template's device lines failed on `/dev/net/tun`,
+  which production's CPU template has too, and now looks for NVIDIA and
+  DRI lines only. Their example backend URL ended in `/api`, so bb-box
+  called `/api/api2/json/version`; it now ends in `/api2/json`, as the
+  backend's setup guide says. Their card lookup asked `nvidia-smi` for
+  `minor_number`, which driver 580.142 does not have; it now reads Minor
+  Number from `nvidia-smi -q`.
+
 ## Cost
 
 - **Image size**: voxl's 25 MB binary and about 3 MB of libraries it runs
@@ -150,8 +263,6 @@ Docker backend's setting](072-voxl/v1/shots/settings-docker-1440-light.png).
 
 ## Not measured
 
-- Proxmox LXC: its template is built by the same script; the lead builds
-  one on the node.
-- A GPU desktop: x264's cost there, against Selkies' NVENC.
+- Proxmox LXC on the slow link, and more than one or two runs there.
 - Wayland desktops: voxl streams X11 only.
 - macOS and Windows: voxl runs there, but V1 does not build it for them.

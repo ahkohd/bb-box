@@ -2,9 +2,8 @@
 
 Status: accepted, 7 November 2026, with the owner's direction of the same
 day built in (see [The owner's direction](#the-owners-direction)). Unit V1
-is built, and measured on Docker in [072 results](072-results.md); its
-Proxmox LXC template and GPU desktops wait for the lead's node (see
-[Units](#units)).
+is built, and measured on Docker and on Proxmox LXC, on a CPU and a GPU
+desktop, in [072 results](072-results.md) (see [Units](#units)).
 
 Extends [060](060-every-desktop-streams-as-video-through-one-viewer.md):
 the panel keeps one video client and one viewer protocol, and voxl becomes
@@ -181,8 +180,10 @@ NVENC by choice (#863); a Docker GPU desktop, RFB only. voxl on a GPU
 desktop captures NVIDIA's Xorg with GetImage and encodes with x264 on the
 box's CPU, taking cores from the box's own work. Its cost at 1920x1080 on
 a CPU desktop is in [072 results](072-results.md): about a third of a core
-for a busy screen. On a GPU desktop it is measured through the lead before
-the owner's trial there.
+for a busy screen. On a Proxmox LXC GPU desktop, voxl costs about 0.3 of a
+core more than Selkies' NVENC, and the X server about 0.12 more, as voxl
+reads the screen back; NVENC holds about 0.7 GiB more of the card's memory.
+Both kept 60 frames a second.
 
 ### 7. The option, and how to turn it back
 
