@@ -15,7 +15,8 @@ import { settingsCards } from "../src/plugin/gpu-settings.ts";
 import { candidateOf, plain } from "../src/app/settings-paths.ts";
 import { draftLimit, kindGpuChoices, kindGpuWords, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
 import type { ConfigState } from "../src/plugin/configuration.ts";
-import { ClaimsBridge, CARD_A } from "./gpu-helper/claims-bridge.ts";
+import { ClaimsBridge, CARD_A, CARD_B, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
+import { marker } from "./gpu-helper/node.ts";
 import { PERSON, blockWords } from "../src/backends/proxmox-lxc/gpu-refusals.ts";
 import { MemoryStorage, lxcConfig } from "./helpers.ts";
 
@@ -303,4 +304,22 @@ test("071 unit 15, live: a Proxmox LXC refusal on a card over a lowered limit sa
   assert.match(blockWords(block(3, 2), namer, PERSON), /^card 0 has 3 of this install's boxes, over the limit of 2 \(/);
   assert.match(blockWords(block(2, 2), namer, PERSON), /^card 0 has 2 of this install's boxes, the most a card may have \(/);
   assert.match(blockWords(block(2), namer, PERSON), /the most a card may have/);
+});
+
+test("071 unit 15, live: on Proxmox LXC the list of cards and the doctor count this install's boxes against the limit, as placement does; another install's guest is listed but not counted", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  const mine = await bridge.backend({ perGpu: 0 }).acquire(identity("linux", "shared"), null, hooks(), new AbortController().signal);
+  bridge.pass();
+  const card = mine.claim?.card === CARD_A.uuid ? CARD_A : CARD_B;
+  bridge.desktop(7055, card, { ...identity("linux-desktop", "shared"), name: "other-7055" }, SECOND_INSTALL, { marker: marker("shared", card, 1), running: true, pool: SECOND_POOL });
+  bridge.pass();
+  const lowered = bridge.backend({ perGpu: 1 });
+  const inUse = await lowered.cardsInUse();
+  assert.ok(inUse.is === "read");
+  if (inUse.is !== "read") return;
+  const held = inUse.cards.find((each) => each.uuid === card.uuid)!;
+  assert.equal(held.counted, 1, "this install's one box, not the other install's guest");
+  assert.deepEqual(held.holders.map((holder) => [holder.is, holder.counts]).sort(), [["box", true], ["other-install", false]]);
+  assert.deepEqual((await lowered.doctor()).checks.filter((check) => check.id.endsWith(".limit")), [], "at the limit, not over it");
 });
