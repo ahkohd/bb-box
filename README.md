@@ -75,7 +75,7 @@ Some things wait on features BB does not have yet, listed in [what bb-box asks o
 - [Setting up bb-box](setup/README.md)
 - [Reference](docs/reference/README.md)
 - [Architecture](docs/architecture.md)
-- [Developing bb-box and writing a backend](docs/development.md)
+- [Developing bb-box and writing a backend](docs/development.md), and [AGENTS.md](AGENTS.md), the rules for working in this repository
 - [Decision records](docs/decisions)
 - [Research notes](docs/research)
 - [Design specs](docs/design)

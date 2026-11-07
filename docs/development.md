@@ -4,6 +4,10 @@ How to build and test bb-box, and how to add a backend. How bb-box works is
 in [the architecture](architecture.md), and why in the
 [decisions](decisions/README.md).
 
+Before you change bb-box, read [AGENTS.md](../AGENTS.md): the layout, the
+commands, and the rules every change follows. Coding agents read it first,
+and `CLAUDE.md` points to it.
+
 ## Build and test
 
 ```sh
