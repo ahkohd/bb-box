@@ -5309,3 +5309,225 @@ The shots from the live gate were not taken again. The test BB and its backend w
 - The programs in the confirmation are the Monitor reading the box page
   already has, for the same machine as the GPU card. Resize opened from a
   row that has not read the Monitor does not name them.
+
+## Unit 15: settings, the guide, the setup guides and the skill
+
+Built on main `a06fc8b7`. Section 12's settings and section 15's guide page,
+with the reference, the setup guides and the skills. The New box form's first
+choice is unit 13's, which is not merged yet: see Still open at the end of this entry.
+
+### What it does
+
+- **A GPUs section** on the settings page of each backend with cards,
+  Proxmox LXC and Docker. Boxes per card and the GPU memory a new box needs
+  are fields that wait for Save, with 067's bar and receipt. Docker's GPU
+  boxes is a checkbox in the same form. Whole cards is a switch that acts at
+  once, writes only that backend's field, and shows "Saved" once BB Box
+  confirms it.
+- **The keys.** Proxmox LXC gains `boxes-per-card`, `whole-cards` and
+  `gpu-memory-mib`. Docker gains `gpus`, `boxes-per-card`, `whole-cards` and
+  `gpu-memory-mib`. The old keys, Proxmox LXC's `desktops-per-gpu` and
+  Docker's `desktops-per-gpu` and `gpu-desktops`, stay fields: they are read
+  while the new key is unset, and a value set there is kept, 0 for no limit
+  included. Only a key never set gets the new default, 4 boxes per card. The
+  settings page does not show an old field: the new one shows its value, as
+  "Empty: 0, from desktops-per-gpu, the field it replaces". bb-box never
+  removes an old key. Building a backend from the configuration fills a new
+  key's default only where the key it replaces is unset too.
+- **Whole cards per backend.** A backend's `whole-cards` wins where it is
+  set. Unset, `general.wholeCards` says, off unless set, so nothing changes
+  on upgrade (see the deviations). The install offers whole cards where any
+  backend that is on has them on, and the refusal words point to the
+  backend's GPUs section or `bb box backend set <backend> --field
+  whole-cards=true`. Off, the switch's words name the boxes that keep their
+  whole card: "Off: no box is given a whole card or changes to one.
+  plain-beacon keeps its card until changed or released."
+- **GPU memory a new box needs** replaces the 1,024 MiB constant for
+  servers on both backends. A desktop still needs 384 MiB.
+- **The list of cards**, under the fields, from a new backend method,
+  `cardsInUse`, and an RPC, `config.cards`: "The cards on pve-1, as its GPU
+  helper reported them 5 s ago", or "as Docker lists them". Each card has
+  its index, model where known, memory, free memory when read, its holders
+  as chips linked to their box pages, guests of other installs or not
+  bb-box's by CT number, and memory in use outside this install's boxes
+  where none of them is on the card. A card over its limit says "Card 0 has
+  2 boxes, 1 over the limit of 1: quiet-reef and kind-ridge. They keep
+  running; no new box goes on card 0 until it has room." With no helper,
+  the list says why and links "Set up the helper".
+- **A lower limit** stops nothing. Typed before Save, the field says which
+  boxes it would put over the limit. After Save, the list and the doctor
+  name them. Proxmox LXC's doctor gains a `gpu.<card>.limit` warning, as
+  Docker had. A refusal on a card left over a lowered limit says "over the
+  limit of 1", not "the most a card may have".
+- **What a limit counts.** Proxmox LXC's placement counts this install's
+  boxes that hold a place on a card, so its list and doctor do too, and name
+  only those; another install's guests are listed apart. Docker counts every
+  install's boxes, running or stopped, as it places them. The field help
+  says which.
+- **Each kind's GPU when not asked for**: `kinds.<id>.gpu`, none, shared or
+  whole, for `linux` and `linux-desktop` only. A menu on the kind's page
+  acts at once, and `bb box kind set <kind> --gpu` sets it. Whole card is in
+  the menu only where a backend has whole cards on, or the kind has it now.
+  Core uses it for a request that leaves `gpu` out. A spare of a kind whose
+  GPU is whole is made shared, so a whole box never takes one. Saving a
+  kind's sizes keeps its GPU. `box_list` says what a kind gets with `gpu`
+  left out, and the kind view carries it for the New box form.
+- **`desktop-templates`** says a GPU ID is no longer needed once the helper
+  is there. A line with one still reads.
+- **The guide page**, `docs/guide/gpu-boxes.md`, from the draft, as main and
+  unit 13 build it: what you get, checking the card and CUDA, PyTorch,
+  shared and whole cards, changing the GPU, stopped boxes, the userspace
+  update, Docker GPU boxes, the settings and the limits. The other guides
+  link to it, and the New box form's GPU menu is described as unit 13 has
+  it.
+- **The setup guides.** Proxmox LXC's GPU helper is no longer "not yet for
+  general use": it has the steps from the host's driver to writes on, then
+  the settings and a check. Docker's GPU boxes section names the new fields
+  and ends with a check. Both field tables have the new keys.
+- **The skills.** The bb-box skill says how an agent asks for a GPU, checks
+  the card, what to do when no card can take a box, and how Resize and
+  forks treat the GPU. The setup skill has the GPU helper's steps and the
+  new fields.
+
+### What was run
+
+On a Linux box, in a `node:26-bookworm` container as CI runs, on
+`fb51f1db`, its 2,327 tracked files checked against this checkout by
+SHA-256. The commit after it adds only this entry.
+
+- `npm run typecheck`: clean. `npm test`: exit 0. The node suite ran
+  4,047 tests: 3,743 passed, 0 failed, 304 skipped. vitest: 486 passed in 6
+  files.
+- New tests: 19 node tests in `test/gpu-settings.test.ts`, 5 in
+  `test/docker-gpus.test.ts`, 1 in `test/boxes.test.ts`, and 6 vitest
+  tests in `test/app.test.tsx`. Tests that asserted the old default, no
+  limit, or the old words now assert 4, an explicit 0 where the test meant
+  no limit, and the new words.
+- `npm run reference`, then the site in `node:26-bookworm`: `npm ci`,
+  `npm run build`, 129 pages, and `npm run check-links`: 23,662 internal
+  links and assets checked, none broken.
+
+Each rule's test fails on revert. Each revert below was applied alone, its
+test run, and the file put back:
+
+| Rule | Reverted to | Test that fails |
+| --- | --- | --- |
+| The old key is read | only `boxes-per-card` read | gpu-settings: explicit old desktops per GPU is kept |
+| Never set gets 4 | default 0 | the same |
+| An old key set beats the new key's default, as a backend is built | the default filled | gpu-settings: through the driver |
+| The old key is left in place | the old field removed | gpu-settings: the old key is left in place |
+| Docker reads `gpu-desktops` while `gpus` is unset | `gpus` only | docker-gpus: Docker's GPU fields |
+| GPU memory a new box needs is the setting | 1,024 | docker-gpus: a server's GPU memory need |
+| Whole cards are each backend's | `general.wholeCards` only | gpu-settings: each backend's context reads its own |
+| A request that leaves `gpu` out gets the kind's setting | bb-box's own default | boxes: a request that leaves gpu out |
+| A spare of a kind whose GPU is whole is shared | whole | the same |
+| Saving a kind's sizes keeps its GPU | dropped | gpu-settings: saves its sizes keeps the kind's GPU |
+| The cards list names the boxes over a limit | no words | gpu-settings: a lowered limit names the boxes over it |
+| The page shows that line | not shown | app: the cards list names the boxes over a saved limit |
+| A limit typed lower names the boxes before Save | no note | app: names the boxes a lower limit puts over it |
+| Proxmox LXC's doctor names them | no warning | gpu-settings: Proxmox LXC's cards in use |
+| Proxmox LXC counts this install's boxes | every guest | gpu-settings: another install's guest is not counted |
+| A lower limit stops nothing | the doctor stops the boxes | gpu-settings: Proxmox LXC's cards in use |
+| Whole cards off names the boxes that keep their card | none named | gpu-settings: turning whole cards off leaves a whole box |
+| Whole cards off saves false | unset, as before the fix | app: Whole cards turned off saves false |
+| The switch writes its backend's field alone | `general.wholeCards` | app: Whole cards is a switch that acts at once |
+| A kind's GPU menu acts at once | no write | app: GPU when not asked for is a menu |
+| The GPUs fields wait for Save, with its receipt | no fields | app: Save is confirmed by its receipt |
+| An explicit old 0 shows as Boxes per card's value | not shown | app: an explicit old 0 as Boxes per card's value |
+| A refusal over a lowered limit says so | "the most a card may have" | docker-gpus: says over the limit |
+
+### The live gate
+
+A separate BB on a Linux box of this thread: `npx bb-app@0.49.0` with no
+account, its own data folder, listening on 127.0.0.1 only, with bb-box
+installed from this branch and enrolment and nightly images off. Docker 29.1.3
+in the same box was its Docker backend, with GPU boxes on, no desktop images,
+and two fake cards as units 11 and 14 had: a CDI spec with only
+`nvidia.com/gpu=all`, a fake `nvidia-smi` and a fake `libcuda.so.1`, each
+card an "NVIDIA RTX 4090 (fake)" of 24 GiB. `bbbox/linux:1` was built there
+with `setup/docker/build.sh linux`. The lead added a Proxmox LXC backend on
+the lent pool, VMIDs 3240 to 3244, with `desktops-per-gpu` 2, whole cards
+off, and bb-box-gpu 0.4.3 with writes on. Everything on the settings page was
+driven with Playwright in the box. Times are UTC on 7 November 2026.
+
+| Step | Evidence |
+| --- | --- |
+| The old key, 06:33 | `bb box kinds --json`: Proxmox LXC's room limit 2, read from `desktops-per-gpu`. Its GPUs section: "Empty: 2, from desktops-per-gpu, the field it replaces"; `bb box backend fields`: "unset, so 2 from desktops-per-gpu, which it replaces" (after the fix below) |
+| Whole cards on, 06:35 | The switch from off to on showed "Saved". The configuration, revision 6: Docker's `whole-cards: true`, `general` untouched. Docker's linux offered none, shared and whole; Proxmox LXC's still none and shared |
+| Boxes on cards | A whole box, plain-beacon, on card 1; two shared, kind-ridge and wise-tundra, on card 0 |
+| A save with its receipt, 06:35 | Boxes per card typed 1: "With 1, card 0 has 2 boxes, 1 over: wise-tundra and kind-ridge. They keep running; …", and "1 change to Docker not saved". Save: "Saved.", revision 7, `boxes-per-card: 1`, the old keys as they were |
+| A lowered limit names the boxes over it | The list: "Card 0 has 2 boxes, 1 over the limit of 1: wise-tundra and kind-ridge. They keep running; no new box goes on card 0 until it has room." The doctor: `[warn] GPU 0 boxes` with the same words. All three boxes still ready. A shared acquire was refused, naming card 0's boxes and card 1's whole box |
+| A failed save, 06:36 | Boxes per card 0, which Docker refuses: "Not saved: fix the field marked. Your changes are still here.", with "Docker: boxes per card must be a whole number, at least 1." at the field. Revision still 7 |
+| Whole cards off leaves a whole box as it is, 06:37 and 06:40 | The switch off showed "Saved", and its words "plain-beacon keeps its card until changed or released." A whole acquire was refused with the new words. plain-beacon stayed "card 1, whole", generation 1, granted; stopped and started, the same claim. The doctor: "Card 1 is plain-beacon's whole card, with no other box on it." |
+| The kind's default, 06:40 | Linux's GPU when not asked for: menu None, Shared (no whole card on any backend); Shared chosen, "Saved", `kinds.linux.gpu: "shared"`, revision 12. `bb box acquire linux --on docker` with no `--gpu` made quiet-reef with a shared card |
+| An explicit old 0 kept, 06:43 | `desktops-per-gpu=0` on Proxmox LXC, revision 15. The real backend's room limit was null, no limit, not 4; the page said "Empty: 0, from desktops-per-gpu, the field it replaces". Set back to 2 at 06:47 |
+| The guide's commands on Docker, fake cards | In quiet-reef: `nvidia-smi -L` listed both cards, as on Docker; the `cuInit` check printed 0; `CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` named card 0 in the environment and `/etc/environment`. The fake `nvidia-smi` ignores `-i`, so that line is proved only by unit 11's gate on a real card |
+| The guide's commands on Proxmox LXC, a real card, 06:44 to 06:47 | One shared box, keen-willow, on card 0, ready in 9.2 s. `nvidia-smi -L` listed only its card, as GPU 0. The `cuInit` check printed 0. The card read card-wide first: 200 MiB used, 97,049 MiB free, 0% busy. `pip install torch` took 2.8 GB of downloads and 5.3 GB installed, PyTorch 2.15.0 with CUDA 13.2; the box's 16 GiB disk was grown to 32 GiB live, in 1.1 s, to be safe. The guide's matrix multiply printed the card's name and a sum, exit 0, in 4.8 s. The card card-wide, every 250 ms: 200 MiB before, 1,073 MiB at most during, 200 MiB after. Released at 06:47 |
+| HEAD, 06:55 | The test BB on `fb51f1db`: the list and the switch's words as above |
+
+The guide's commands on Docker with a real card were not run here: the
+owner keeps GPU boxes off on the only Docker host with a card and uses the
+card for training (the lead, 7 November 2026). They were proved on that card
+in unit 11's gate: `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"` named the box's
+card, and CUDA picked it through `box_run`, a terminal and a service.
+
+Screenshots of the Docker GPUs section, with a limit typed and saved, the
+Proxmox LXC GPUs section with its helper's cards, and the linux kind's GPU
+menu, at 390, 760 and 1440 px, light and dark, each of the section and of
+the window, are in this unit's thread storage under `u71-15-shots/`. In
+each, the section had no horizontal overflow and the page was no wider than
+the window.
+
+### Found by the live gate, and fixed
+
+- Turning Whole cards off removed the backend's field, as the page drops a
+  boolean equal to its default, so `general.wholeCards` would show through
+  and could turn whole cards back on. A boolean with no default, or one
+  that replaces another field, now keeps `false`. The same fix keeps an
+  unticked GPU boxes over an old `gpu-desktops` that was on.
+- The list and the doctor counted every guest on a Proxmox LXC card against
+  the limit, which placement does not: the lent pool's cards had four
+  guests each, none of this install's, under a limit of 2.
+- A refusal on a card left over a lowered limit said the card had the most
+  boxes a card may have.
+- `bb box backend fields` said a new key was "unset, so 4" while the old key
+  held 2.
+- The guide's PyTorch step warned with no NumPy, and now installs it; it
+  says the disk the wheels take.
+
+### Deviations from the note
+
+- **Whole cards, unset, are off.** Section 12 has each backend's whole cards
+  on by default. The owner decided on 6 November 2026 that whole cards stay
+  off on Proxmox LXC until G1, G3 and G5 pass on a free card, so the lead
+  decided: a backend's field wins where set; unset, `general.wholeCards`,
+  off unless set, so nothing changes on upgrade. The switch shows the
+  effective value, and says when it comes from the install-wide option.
+- **Docker's boxes per card stays at least 1**, as unit 11 had it. 0 for no
+  limit is Proxmox LXC's.
+- **Proxmox LXC's list of cards has no model**: the helper's report gives a
+  card's UUID, index and memory, not its name.
+- **Memory in use outside bb-box's boxes** is "outside this install's
+  boxes", and only on a card none of them holds, as unit 13 has it: one
+  reading cannot say whose the rest is.
+- **What a limit counts** differs by backend, as their placement does:
+  this install's boxes that hold a place on Proxmox LXC, every install's,
+  running or stopped, on Docker.
+- **The old fields stay on the page's Advanced count** but are not shown;
+  `bb box backend fields` lists them as "(replaced)".
+- **A spare of a kind whose GPU is whole** is made shared, as section 3
+  says; a warm guest is already only shared.
+- **An explicit old 0** is a Proxmox LXC key: Docker's old
+  `desktops-per-gpu` never took 0.
+
+### Still open
+
+- **Unit 13.** Once it merges, this branch is rebased onto it. Two files
+  conflict only by adding beside each other: `src/plugin/rpc.ts` and the
+  app test's fake RPC. The New box form's first choice then reads the kind's
+  setting, `kind.gpuWhenNotAsked`, where unit 13 calls `gpuWhenNotAsked`
+  with bb-box's defaults alone.
+- **Whole cards off leaving a whole box as it is, on Proxmox LXC**, is
+  untested live: no card on the node is free for a whole box. It ran live on
+  Docker, and on Proxmox LXC in its tests.
+- **The guide's Docker commands on a real card**: unit 11's gate only.
