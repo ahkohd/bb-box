@@ -439,8 +439,8 @@ export function resizeGpuParameter(wholeCards: boolean) {
     .optional()
     .describe(
       wholeCards
-        ? "The box's GPU: shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Where a backend can, shared and whole switch live; adding a GPU, removing it or moving the box to another card cannot be done on Docker, where box_resize says so. box_list says what each provider can change."
-        : "The box's GPU: shared, one card other boxes may share. Left out, the GPU stays as it is. Adding a GPU, removing it or moving the box to another card cannot be done on Docker, where box_resize says so. box_list says what each provider can change.",
+        ? "The box's GPU: none, shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; adding a GPU, removing it or moving the box to another card restarts it on Proxmox LXC and cannot be done on Docker. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change."
+        : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. Adding a GPU or removing it restarts the box on Proxmox LXC and cannot be done on Docker. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change.",
     );
 }
 
@@ -1111,7 +1111,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_resize",
     description:
-      "Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU between shared and whole, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.",
+      "Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true, and a GPU change and cores or memory in the same call share one restart. check true only says what would change.",
     presentation: { label: { pending: "Resizing a box", completed: "Resized a box" } },
     parameters: resizeParameters(true),
     async execute({ box: ref, size, cores, memory_gib, disk_gib, gpu, restart, check }, { threadId, signal }) {

@@ -12,10 +12,10 @@
 | [`bb box acquire`](#bb-box-acquire) | Acquire a box for a thread and wait until it answers. |
 | [`bb box status`](#bb-box-status) | Show one box, checking its power state with the backend. |
 | [`bb box run`](#bb-box-run) | Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job. |
-| [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
+| [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines`](#bb-box-machines) | List your machines: boxes you own, kept as BB machines, which no thread ending releases. |
 | [`bb box machines add`](#bb-box-machines-add) | Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it. |
-| [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
+| [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
 | [`bb box thread`](#bb-box-thread) | Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project. |
 | [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
@@ -179,7 +179,7 @@ Options:
 
 ## bb box resize
 
-Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
 
 ```text
 Usage:
@@ -197,7 +197,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
-  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
   --help, -h                   Show this help and exit
 ```
 
@@ -245,7 +245,7 @@ Options:
 
 ## bb box machines resize
 
-Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
 
 ```text
 Usage:
@@ -262,7 +262,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
-  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Docker a GPU cannot be added, removed or moved.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
   --help, -h                   Show this help and exit
 ```
 

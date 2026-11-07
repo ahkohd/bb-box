@@ -2268,6 +2268,7 @@ same guest.
 | `powerOff`, `stop` | a box's guest | stop | box |
 | `release` | a box's guest | delete | box |
 | `resize` | a box's guest | cores, memory, disk | box |
+| `#growForGpu`, `#sizeForGpu`, `#askForGpu`, `#claimBack`, `#restartForGpu` | a box's guest whose GPU a resize changes (unit 9) | its disk, cores and memory, its marker, a stop; `#claimBack` asks for its claim before the resize again when the new one was not granted; the start goes through `start` | box |
 | `hold`, `#retag`, `relabel` | a warm guest a box takes, a box's guest | name, memory, description, labels | warm guest of this install, then box |
 | `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
@@ -4390,3 +4391,356 @@ storage under `u71-14-shots/`.
   the guest cannot split other boxes from use outside bb-box.
 - A whole card was not made live. Its fact, badge and last line are in the
   tests. The two live boxes were the shared pair the fact's "with" line needs.
+
+## Unit 9: Resize with a GPU on Proxmox LXC
+
+Built on main `07b96c95`, on branch `u71-9`. Section 8 on Proxmox LXC: the
+share switch live, adding, removing and moving a GPU with a restart, stopped
+boxes, the plan made again when it is carried out, and `box_resize gpu`. It
+extends unit 11's core contract for Resize's GPU part rather than adding
+another. No helper change: bb-box-gpu 0.4.3 already grants a change of part
+on a running guest with no write, when its lines are the card's already, and
+refuses any device change on a running guest.
+
+### What it does
+
+- **What Proxmox LXC can resize.** `linux` and `linux-desktop` offers with a
+  GPU part resize it: `add` and `move` with a restart, `share` live. While
+  whole cards are off on the install, `share` and `move` are `no`, as no box
+  then switches to whole or moves to a card of its own. `box_list` says
+  "A box's GPU switches between shared and whole live, and is added, removed
+  or moved to another card with a restart."
+- **The plan.** `planResize` reads the box's marker, its claim in the
+  helper's ledger, whether it runs, and the cards, and gives section 8's row,
+  for a running box and a stopped one, in its words:
+  - none → shared or whole: a restart onto the card the acquire's placement
+    would give it, servers and desktops each by their own rule;
+  - shared → whole: live where no other guest holds its card but this
+    install's own stopped shared boxes in its pool, which yield and are
+    named; a restart onto a free card where others run on its card; refused
+    with names where none is free;
+  - whole → shared: live;
+  - shared or whole → none: a restart without its card;
+  - a stopped box: the change is made now and nothing starts, "While
+    stopped". To none, its lines go now; to whole, its card is claimed now;
+    to shared from whole, its claim opens the card; none → shared, its
+    marker goes on the card with the fewest boxes that no guest holds whole,
+    whatever the boxes per card, as a stopped shared box holds no place, and
+    its next start places it, that card first.
+
+  A restart's cores and memory are restart parts of the same plan, made
+  while the box is stopped: one restart. The plan's GPU part, unit 11's
+  `GpuResize`, gains `fromCard`, `toCard`, `stopped`, `installs` (null until
+  unit 10), each other box's ID in `others`, and `changedSinceAgreed`.
+- **Refusals, for each audience.** No helper, writes off, an untested
+  pve-container, a helper below 0.4.3 for whole, whole cards off, a guest with
+  a card's lines and no marker ("Run bb box gpu mark"), adding a GPU to a box
+  without NVIDIA's userspace for the host's driver (unit 10 installs it; a
+  stopped box is judged by its template's record, else "Start it first"), and
+  no card with room or free, naming each card's boxes as unit 8 does:
+
+  > No card is free for amber-fox alone. Card 0 has lone-pine (in thread
+  > "Train the model") running. Card 1 has CT 7063 of another install
+  > running. Release one of them, or keep the GPU shared.
+
+  > Not resized: no card is free for amber-fox alone. Card 0 has lone-pine
+  > running; card 1 has CT 7063 of another install running. Keep the GPU
+  > shared, or ask the user. bb-box changed nothing.
+
+- **Carrying it out**, under the card lock: the plan is made again from a
+  fresh report and pool, and compared with the plan the caller agreed to.
+  Only if they match, and a restart is allowed where one is needed, does
+  bb-box drop the box's old reservations, reserve the new card (whole, or
+  shared for a running box) and go on.
+  - A live switch, or a stopped box's change: the new marker, on the
+    config's digest; the helper's answer within 10 s. A grant changes the
+    claim; a running box's card is checked once more for its GPU fact.
+  - A restart: the disk grows first, live; then the stop through the helper;
+    cores and memory; the new marker; the answer; the start through the
+    start gate, with the check after start that unit 7 has. The old card is
+    given up only when the helper grants the new claim.
+  - When the new claim is not granted, the box is left stopped with its
+    disk: its cores and memory go back, the marker it had is asked for again,
+    and it reports what the helper holds then, in words. When it is granted and the start fails,
+    the box is left stopped, with its disk and the claim the helper holds
+    for it now, and says so. Both reach the box's record as a
+    `ResizeLeftStopped` error: the record is stopped, with that claim and GPU
+    part, and the resize failed.
+- **The plan made again** (section 8, section 11's table). A check keeps
+  its GPU plan for the box in bb-box's storage, through a restart of bb-box,
+  until the backend's resize is called. A resize of the same box to the same
+  GPU part compares its plan now with that one: changed (another way,
+  another card, the box started or stopped), it is refused, saying what
+  changed and why, and whether `restart: true` is now needed; the plan it was
+  told is then what it agrees to, so its next call goes ahead on it. With no
+  check, the plan made at the start of the call is what it agreed to. The
+  backend makes the plan again under the card lock, from the box as it is
+  then, and refuses the same way if it changed meanwhile.
+
+  > Not resized: when you checked, quiet-elm could change to a whole card
+  > live, on card 0; now card 0 has CT 7064 of another install running, so it
+  > would move to card 1 with a restart. Call box_resize with restart true to
+  > do that, or ask the user. bb-box changed nothing.
+
+  > Not resized: when you checked, amber-fox would get card 0 with a restart;
+  > now card 0 has 1 of this install's boxes, the most a card may have
+  > (tidy-glade), so it would get card 1 with a restart. Call box_resize with
+  > restart true to do that, or ask the user. bb-box changed nothing.
+
+- **The start gate**, unit 5's, now asks a standing claim of none again when
+  the box's marker asks for a card the helper refused, and starts the box
+  with no card. Before, it placed the box on a card by its marker. A resize
+  whose new claim was refused, and whose old claim could not be asked back,
+  as with the guest locked, left such a marker.
+- **Core.** A GPU restart refused without `restart: true` names the GPU and
+  gives an agent its own words. A resize whose restart left the box stopped
+  is recorded as stopped, on every backend, rather than ready and then
+  "stopped without bb-box's request".
+- **The tools and the CLI.** `box_resize`'s and `bb box resize --gpu`'s words
+  say what each change does on Proxmox LXC and Docker, that a stopped box
+  stays stopped, and that a plan changed since its check is refused.
+
+### What was run
+
+On a `linux` box, in `node:26-bookworm` as root with `--init`, as CI runs
+them:
+
+- `tsc` clean. The node suite, on the commit: 3,869 tests, 3,447 passed, 112
+  failed, 310 skipped; vitest, 470 passed, and in one run of three 469, the
+  thread card's spinner test, which units 6 and 8 found flaky. On main
+  `07b96c95` in the same container, its tree without `docs/`, `site/` and
+  `skills/`: 3,774 tests, 121 failed. Every test that fails on the branch
+  fails on main too, by name: identity reset scripts that find the node
+  kernel's GRE and ERSPAN interfaces in every namespace of the container, and
+  the snapshot, fork and keep tests built on them, as unit 11 recorded.
+- `test/gpu-resize.test.ts`, against the real helper 0.4.3 on unit 2's fake
+  node through unit 5's bridge: each row of section 8, running and stopped;
+  cores and GPU in one restart, one stop and one start in the helper's power
+  log; a live switch with no power action and the box's lines unchanged; a
+  stopped shared box yielding to a live switch, named in the words; a move
+  to a free card naming who runs on the box's card; the refusal with names
+  for each audience; the plan made again, for a live switch that now needs a
+  move and for an added card another box took; a restart whose claim the
+  helper does not answer, left stopped with its cores and old claim; a
+  restart granted whose start the helper refuses, left stopped with its new
+  claim; refusals with writes off, no helper, an unmarked guest, no
+  userspace and whole cards off; a desktop to none and back; a resize to
+  whole racing an acquire, four times; a stopped box at every card's limit;
+  the start gate's standing none claim.
+- `test/boxes.test.ts`: the GPU restart refused without `restart: true` and
+  made with it, cores and GPU together; the plan made again from a check,
+  and again when it changed once more after it was told; a box left stopped
+  by its resize, with no stop recorded as unasked; a stopped box's GPU
+  changed while it stays stopped, in words that say so.
+- Each rule was reverted on its own on the box, by a harness that patches
+  it out, runs its tests and puts it back, and its tests failed: 31
+  reverts, 20 in the backend, 3 in its words, 6 in core, one in the resize
+  answer's words and one in `box_list`'s. Three passed at first (the
+  reservation a restart holds, the plan told being what is agreed to next,
+  and the record's stopped state); each got a test of its own, and then
+  failed.
+- The node steps' 22 blocks pass `bash -n`.
+
+### The node steps
+
+The gate runs on a test BB from this branch, before the merge, on the lent
+VMIDs and the test pool, through the lead: the steps are in the report to
+the lead. Both cards are held by guests outside bb-box, so no card can be
+free and no whole claim granted. The steps run every row of section 8 that
+needs no free card, running and stopped: none to shared through an agent,
+asked again first as the card its check named was taken, then made with its
+cores in one restart (Q); shared to whole and none to whole refused with
+names, for each audience (R2); shared to none (R3); a stopped box's changes
+(S); a restart whose new claim is never granted, by a lock the lead puts on
+the test guest as it stops (F1), and one whose start fails after the grant,
+by a lock once the claim is granted (F2), each left stopped with its disk.
+The live switch with a process that counts on the card, the move to a free
+card, and the rows that need a whole box wait for a free card.
+
+### After the reviews
+
+Astra and Fable said no-go. The lead decided the fixes below, in one more
+commit, with three word fixes the lead asked for during the gate. Each has a
+test that failed with it reverted, on a box.
+
+| Finding | Fix |
+| --- | --- |
+| The plan made again under the card lock used the box's power state and marker as read before the lock, so a box stopped while the resize waited was started again (Astra 1) | The guest's config, marker and power state are read again inside the card lock, and the plan is made from them; a box that stopped or started meanwhile is asked again. NVIDIA's userspace read in the box before the lock is used only while those are unchanged; else the template's record is |
+| A request the helper did not answer in time was taken as refused, so a claim it granted late was reported as the old one (Astra 2) | After a failed change bb-box asks the helper again for the marker as it stands, and reports what it then holds: the claim granted, the old one, or, while the request is still unanswered, that it cannot tell yet and its next start waits for the answer, with the claim asked |
+| Reading a check's plan deleted it, so a refusal for want of `restart: true` lost it and a retry on another card went ahead (Astra 3, Fable 5) | A check's plan is kept until the backend's resize is called. A plan said in a refusal replaces it, the core's or one the backend found changed under its lock (`GpuPlanChanged`) |
+| A restart of bb-box forgot every check (Astra 4, Fable 5) | Checks are kept in bb-box's storage, by box, and dropped when the box is released |
+| After a failed restart the box's power was read with the operation's signal, so a cancelled resize recorded a stopped box as ready, and an unreadable state as running (Astra 5) | The power state, the size and the observation after a failure are read with a signal of their own, bounded to 15 s. A box the backend left stopped, or whose power cannot be read, is recorded stopped; ready only when it is read running |
+| A change in place whose marker write or answer threw kept its new cores (Astra 6) | Its cores and memory go back and its claim is asked back, as for a refusal. Putting cores back and asking a claim back are tried up to four times, 2 s apart, after a refusal or a failed write, as while a guest is briefly locked; an unanswered request is not asked again |
+| The claim back wrote the ledger's standing claim, or none, so a stopped shared box whose claim had yielded was asked back to none (Fable 1) | It asks for the marker the box had, its part and card, with a fresh generation; the ledger's claim only where there was no marker |
+| A box with no claim whose refused marker could not be asked back was reported as having no GPU, though its next start places it by that marker (Fable 2) | The marker is reported as it stands: where the helper holds no claim for the box, its GPU is the part the marker asks for, its claim that marker refused, and the words say its next start places it on a card with room or does not start it. Where the helper holds a claim, the words say the marker still asks for another card and the next start asks for the claim again |
+| A resize to the part the marker already holds changed no cores, though the plan said it would (Fable 3) | It resizes the cores, memory and disk as a resize with no GPU does, and keeps the claim |
+| The disk grew before the claim was asked, so a restart left stopped said its disk was as it was when it had grown (Fable 4) | The disk grows once the new claim is granted, and the size returned is read from the config. A disk that then cannot grow leaves the GPU changed and says so |
+| F1 could pass with the lock landing before bb-box's first write, and its start relied on step S's claim (Astra 7, Fable 7) | F1a locks only once a new shared marker is on the stopped guest, records 4 cores then, and unlocks on the helper's refusal: the cores go back and the old marker is asked back. F1b keeps the lock: the cores stay, the refused marker stands with a claim of none, and the start then asks for none and starts with no card |
+| L checked no helper write (Astra 8) | L checks both switches' grants, no power action and no write to the running guest in the helper's journal, and its device lines unchanged |
+| The person's words named a box's thread in brackets inside the brackets of a card's limit (lead) | Inside those brackets a thread reads `in thread "…"`, `as a spare` or `as your machine`, on Proxmox LXC and Docker; a box named outside them keeps its own brackets |
+| The resize log line and the box log's resize events left the GPU out (lead) | They name the GPU part where it changes |
+| Rebased onto main `6ef653f5`, which joins each card's reasons in a refusal with semicolons, as one card's words can hold an "and" | The refusal of a shared GPU for a resize joins them the same way |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,883 tests, 3,461 passed, 112 failed, 310 skipped,
+the 112 the same environment's failures, by name, as on main; vitest, 470
+passed. The harness now has 48 reverts, the 33 of the first round, 4 of them
+rewritten for the new code, and 15 for these fixes; each fails its tests.
+Three passed at first: the recovery read's own signal, once an unreadable
+state was no longer taken as running, and needed a box still running after a
+cancelled resize; a check consumed once the backend is called; and a plan the
+backend found changed under its lock. Each got a test of its own and then
+failed. The node steps' blocks pass `bash -n`.
+
+### After the second reviews
+
+Astra's review of the fixes said no-go, with two medium findings and one
+low; Fable's said go, with two lows, one of them Astra's low. The lead
+decided the fixes below, in one more commit. Each has a test that failed
+with it reverted, on a box.
+
+| Finding | Fix |
+| --- | --- |
+| A resize cancelled after the helper granted its new claim asked the claim back with the cancelled signal, which threw before it said what the helper held, so the record kept the old claim while the helper held the new one (Astra 1) | Asking the claim back has a signal of its own, bounded to 60 s, and reading what the helper holds after it one of 20 s; neither throws. A cancelled change puts its cores back, asks its old marker back and reports what the helper then holds, as for a refusal. Once a claim is granted, the reads that follow use a signal of their own, and a disk whose growth a cancel cut short is read again: grown, the resize reports it; not, it says the GPU changed and the disk did not grow |
+| A start that asked a claim of none again, after a late refusal, started the box with no card but reported nothing, so the record kept the claim asked and its GPU part (Astra 2) | A start reports a claim of `null` when it starts the box with no card, as its claim of none says, and the record's claim is cleared and its GPU part set to none. A start that reports a claim sets the record's GPU part to that claim's |
+| A start that failed after the disk grew said the box was stopped with its disk as it was (Astra 3, Fable low 1) | It says the disk's size now when it grew, and that it could not grow, with why, when it could not. The start's own words about the box being stopped are taken off first, so it is said once |
+| A refusal that changed nothing on a running box, whose power could not be read after it, recorded the box stopped (Fable low 2) | Where the power cannot be read and the backend did not say it left the box stopped, the record keeps the state the box had, for the next look to correct. This replaces the rule in Astra 5's row above that an unreadable state is recorded stopped |
+| The word fix found in gate step F1a's first try: Proxmox's words for a start that failed ended with no full stop before "It is stopped" | The words before bb-box's are ended as a sentence |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,895 tests, 3,472 passed, 113 failed, 310 skipped:
+111 of them the same environment's failures, by name, as on the last
+commit, and two timing tests that passed when run on their own, a desktop
+click's cancel and a Mac's tailnet key; vitest, 471 passed. The harness has
+59 reverts: 11 new for these fixes, 5 rewritten for the new code, and the
+rule that an unreadable power state is recorded stopped replaced by its
+opposite. Run in full on the box, each of the 59 fails its tests. One
+passed at first,
+the start's own words that the box is stopped taken off before bb-box's, as
+no test's start said them; a start that fails after the grant on a box that
+does not see its card now does, and it then failed.
+
+Gate step F1a's first try, on the last commit, lost the race it is built on:
+the watcher, a shell loop that ran `pct config` each pass, saw the new
+marker after the helper had granted it, and locked the box only before its
+start. That was step F2's case, observed: the box was left stopped with its
+new shared claim and its disk, and said so, with the full stop missing
+above. F1a's, F1b's and F2's watchers are now one Perl process that reads
+the guest's and the report's config files every 10 ms, with no subprocess,
+and locks the guest with Proxmox's own `set_lock` in the same process.
+
+### The gate
+
+On the unit's first build, steps 0, A, K, Q, R2, R3 and S passed. On the
+reviews' fixes, K, Q, R2, R3 and S passed again, and F1a's first try lost
+its race, as above. On `87356d94`, the gate ran K, Q, R3, S, F1a, F1b, F2
+and H, and each passed; R2 was not run again, as it passed on the commit
+before and nothing it drives changed. Every step ran on the test BB with its
+own pool, on the lent guests, with both cards held by guests outside
+bb-box.
+
+- **K**, before each step: both cards still held.
+- **Q**: S1 made with no GPU. The agent's check named card 1, with a
+  restart. S2 was made with a shared GPU on card 1, which then held this
+  install's one box per card. The agent's resize, with restart true and 4
+  cores, was refused, naming S2 as filling card 1 and saying S1 would now
+  get card 0. Its next call resized S1 in 11.3 s, cores 2 to 4 and GPU none
+  to shared, on card 0, its first claim granted. The helper's power log has
+  no stop of S1 before the refused call ended, then one stop and one start.
+  In S1, `nvidia-smi -L` lists one card.
+- **R3**: S2, shared to none. The check said it restarts without card 1. The
+  resize without `restart` was refused, changing nothing; with it, it took
+  10.2 s, with one stop and one start. Its marker asks for none, granted, it
+  has no NVIDIA lines, and in it `nvidia-smi` finds no driver.
+- **S**: S2, stopped. None to shared took 1.7 s and shared to none 1.6 s,
+  each "while it stayed stopped", with no power action; whole was refused,
+  naming every guest running on each card. S2 stayed stopped with no GPU.
+- **The watcher**, installed on the node once before F1a. One Perl process reads the
+  guest's and the report's config files every 10 ms, with no subprocess,
+  and locks the guest with Proxmox's own `set_lock`, as vzdump does, under
+  the guest's config lock, touching only that guest's config. In a dry run
+  on a box it locked within 1 ms of seeing the marker; each `pct` call
+  costs a Perl start of 0.3 to 0.6 s.
+- **F1a**: S2, none to shared with 4 cores and a restart. The watcher saw
+  the new shared marker, g5, and locked S2 8 ms later, with its cores at 4.
+  The helper refused g5, locked, and the watcher unlocked S2 0.66 s after
+  the lock. bb-box put the cores back to 2 and asked for none again, g6,
+  granted. The resize failed in 4.9 s: S2 stopped, with its disk, 2 cores,
+  no NVIDIA lines and its GPU as it was, in words that say so.
+- **F1b**: the same, with the lock kept. The watcher locked S2 7 ms after
+  the new marker, g7, was seen, and the helper refused it. bb-box could
+  neither put the cores back nor ask for none again, and the resize failed
+  in 15.8 s, most of it the four tries of each: S2 stopped with 4 cores, its
+  disk, the refused marker and its standing claim, g6 none, granted; its
+  words say the marker still asks for card 1 and its next start asks for no
+  GPU again. Once unlocked, its start asked for none, g8, granted, and
+  started it with no card; its record had no claim and GPU none, and its
+  cores went back to 2 live in 37 ms.
+- **F2**: S2, none to shared with a restart, and the lock taken once the new
+  claim was granted. The watcher locked S2 2 ms after it saw the grant of
+  g9. bb-box's start was refused at its power request's write, locked, and
+  the resize failed in 4.0 s: S2 stopped with its disk, holding g9, shared
+  on card 1, with that card's lines, and its words say so, with the
+  sentence before "It is stopped" ended. Once unlocked, its start started it
+  on card 1, and `nvidia-smi -L` lists one card.
+- **H**: S1 and S2 released. No lent guest holds a card or is locked, the
+  helper reports no mismatch, and no guest outside the lent ones yielded its
+  card. The read-only check found 7 GPU guests of 40 before and 9 of 45
+  after; the two new GPU guests were production boxes made meanwhile, and
+  production's other changes were its spares cycling. Both cards were idle.
+
+S's node check first failed on a boundary in the steps, not in bb-box: the
+helper logged the grant of the stopped box's shared claim at
+1794013423.14, and the builder took the step's midpoint, `s-mid`, in that
+same second, so `journalctl --until @MID` left the grant out. The check
+passed with the midpoint a second later, and the builder now waits a second
+before it takes it. F2's builder check for the full stop first required the
+words to end the line, which the CLI's error code after them would have
+failed; it was fixed before the step ran.
+
+### Deviations from the note
+
+- While whole cards are off, `resizing` gives `share` and `move` as `no`,
+  as no box can switch to whole or move to a card of its own. Section 8's
+  table has them `live` and `restart` on a node with the helper.
+- What the caller agreed to is the plan of its last check of that box for
+  the same change, or of the last refusal that told it a plan, kept in
+  bb-box's storage, not on the box's record. With no check, the plan made at
+  the start of the call is what it agreed to, and only a change between it
+  and the plan made again under the card lock is asked again.
+- A stopped box's change is `live`, with `stopped` true, and its words say
+  "While stopped": it needs no restart, and starts nothing.
+- None to shared on a stopped box puts its marker on a card now, the one
+  with the fewest boxes that no guest holds whole, whatever the boxes per
+  card, and the helper writes that card's lines into it. It holds no place
+  until it starts, and its start places it as any stopped shared box's
+  does, that card first. Section 8 has it placed only when it starts; a
+  marker with a card is what the start gate places from.
+- Adding a GPU to a box without NVIDIA's userspace for the host's driver is
+  refused, as section 16 has it until unit 10. A stopped box is judged by
+  its template's record, and is asked to start first where that has none.
+- The words name a card by its index and memory, not its model: the
+  helper's report gives no model. They do not name the processes that have
+  the GPU open: that is the Monitor's, for units 13 and 14.
+- The person's words for a plan that changed are words, not a dialog with
+  the new plan: the dialog is unit 13's.
+- The start gate asks a standing claim of none again for a box whose marker
+  asks for a card the helper refused (above). Unit 5's gate did so only for
+  a shared or whole claim.
+- A resize whose restart left the box stopped is recorded as stopped on
+  every backend, not only Proxmox LXC.
+- Docker's plan is not compared with what the caller agreed to: its plan is
+  live or refused, and never changes card, so the plan made again under its
+  lock refuses where it changed.
+
+### Still open
+
+- L, M and W of the gate, which need a free card: L, the live switch with a
+  process that counts on the card; M, a move to a free card; and W, the rows
+  that need a whole box. As for unit 8's G1, G3 and G5, the node's development
+  container holds both cards; they run on a node where a card is free,
+  before whole cards are turned on there. Until then whole cards stay off,
+  so production offers only adding and removing a shared GPU, whose rows the
+  steps here drive.
+- The Resize dialog with the GPU, and the move confirmation naming the
+  programs with the GPU open: unit 13.

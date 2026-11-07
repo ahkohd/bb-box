@@ -188,6 +188,19 @@ export class ClaimsBridge {
     return { ref: String(vmid), host: "pve", address: null, size: null, data: { template, box: box.boxId } };
   }
 
+  userspaceIn(vmid: number, version: string | null): void {
+    for (const config of this.#configs) {
+      const address = vmid >= config.vmids.first && vmid <= config.vmids.last ? addressFor(config, vmid) : null;
+      if (!address) continue;
+      const folder = join(this.ssh.home(address), "usr", "share", "bb-box");
+      if (version === null) rmSync(join(folder, "nvidia-version"), { force: true });
+      else {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, "nvidia-version"), `${version}\n`);
+      }
+    }
+  }
+
   checksCutIn(vmid: number): number {
     for (const config of this.#configs) {
       const address = vmid >= config.vmids.first && vmid <= config.vmids.last ? addressFor(config, vmid) : null;

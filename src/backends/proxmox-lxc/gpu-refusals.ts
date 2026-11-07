@@ -6,6 +6,11 @@ export interface BoxMaking {
   readonly name: string;
   readonly threadId: string;
   readonly starting?: boolean;
+  readonly resizing?: boolean;
+}
+
+function doingWords(making: BoxMaking | null): string {
+  return making?.resizing ? "resizing" : making?.starting ? "starting" : "making";
 }
 
 export type CardBlock =
@@ -47,31 +52,32 @@ function capitalised(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function threadWords(threadId: string | null, namer: CardNamer): string {
+function threadWords(threadId: string | null, namer: CardNamer, inBrackets = false): string {
   if (threadId === null) return "";
-  if (threadId === SPARES) return " (a spare)";
-  if (threadId === OPERATOR) return " (your machine)";
+  if (threadId === SPARES) return inBrackets ? " as a spare" : " (a spare)";
+  if (threadId === OPERATOR) return inBrackets ? " as your machine" : " (your machine)";
   const title = namer.title(threadId);
-  return title ? ` (in thread "${title}")` : "";
+  if (!title) return "";
+  return inBrackets ? ` in thread "${title}"` : ` (in thread "${title}")`;
 }
 
-function boxWords(name: string, threadId: string | null, namer: CardNamer, audience: Audience): string {
-  return audience.to === "person" ? `${name}${threadWords(threadId, namer)}` : name;
+function boxWords(name: string, threadId: string | null, namer: CardNamer, audience: Audience, inBrackets = false): string {
+  return audience.to === "person" ? `${name}${threadWords(threadId, namer, inBrackets)}` : name;
 }
 
-export function holderWords(holder: Holder, namer: CardNamer, audience: Audience): string {
-  if (holder.is === "box") return boxWords(holder.name, holder.threadId, namer, audience);
+export function holderWords(holder: Holder, namer: CardNamer, audience: Audience, inBrackets = false): string {
+  if (holder.is === "box") return boxWords(holder.name, holder.threadId, namer, audience, inBrackets);
   if (holder.is === "warm") return "a warm desktop";
   if (holder.is === "other-install") return `CT ${holder.vmid} of another install`;
   return `CT ${holder.vmid}, which is not bb-box's`;
 }
 
-function makingWords(making: BoxMaking | null, namer: CardNamer, audience: Audience): string {
-  return making ? boxWords(making.name, making.threadId, namer, audience) : "a box";
+function makingWords(making: BoxMaking | null, namer: CardNamer, audience: Audience, inBrackets = false): string {
+  return making ? boxWords(making.name, making.threadId, namer, audience, inBrackets) : "a box";
 }
 
-function guestWords(vmid: number, namer: CardNamer, audience: Audience): string {
-  return holderWords(namer.guest(vmid), namer, audience);
+function guestWords(vmid: number, namer: CardNamer, audience: Audience, inBrackets = false): string {
+  return holderWords(namer.guest(vmid), namer, audience, inBrackets);
 }
 
 function heldWords(card: string, holders: readonly HelperHolder[], namer: CardNamer, audience: Audience): string {
@@ -92,11 +98,11 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `${card} is ${holder.name}'s whole card${audience.to === "person" ? threadWords(holder.threadId, namer) : ""}`;
     }
     case "reserved-whole":
-      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${block.making?.starting ? "starting" : "making"}`;
+      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${doingWords(block.making)}`;
     case "unsettled":
       return `${card} waits for ${inWords(block.vmids.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${block.vmids.length === 1 ? "it" : "each"} may hold the card`;
     case "limit": {
-      const names = [...block.vmids.map((vmid) => guestWords(vmid, namer, audience)), ...block.making.map((making) => makingWords(making, namer, audience))];
+      const names = [...block.vmids.map((vmid) => guestWords(vmid, namer, audience, true)), ...block.making.map((making) => makingWords(making, namer, audience, true))];
       return `${card} has ${block.own} of this install's boxes, the most a card may have${names.length ? ` (${inWords(names)})` : ""}`;
     }
     case "unanswered":
@@ -104,11 +110,13 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
     case "held":
       return heldWords(card, block.holders, namer, audience);
     case "placing": {
-      const starting = block.making.filter((making) => making?.starting);
-      const placing = block.making.filter((making) => !making?.starting);
+      const resizing = block.making.filter((making) => making?.resizing);
+      const starting = block.making.filter((making) => making?.starting && !making.resizing);
+      const placing = block.making.filter((making) => !making?.starting && !making?.resizing);
       const said = [
         ...(placing.length ? [`bb-box is placing ${inWords(placing.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
         ...(starting.length ? [`bb-box is starting ${inWords(starting.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+        ...(resizing.length ? [`bb-box is changing the GPU of ${inWords(resizing.map((making) => makingWords(making, namer, audience)))} to ${card}`] : []),
       ];
       return said.join(", and ");
     }

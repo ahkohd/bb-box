@@ -19,7 +19,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_list`](#box_list) | List this thread's boxes and the kinds of box you can acquire. |
 | [`box_record`](#box_record) | Record a desktop box's screen, to show your work in the thread as a short video (059). |
 | [`box_release`](#box_release) | Release a box you no longer need. |
-| [`box_resize`](#box_resize) | Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU between shared and whole, where its backend can. |
+| [`box_resize`](#box_resize) | Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU, where its backend can. |
 | [`box_restore`](#box_restore) | Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. |
 | [`box_run`](#box_run) | Run a shell script in a box, as its user, and wait for it. |
 | [`box_snapshot`](#box_snapshot) | Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. |
@@ -190,7 +190,7 @@ Release a box you no longer need. Its disk and everything on it are deleted. Cop
 
 ## box_resize
 
-Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU between shared and whole, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.
+Change a box's size: its cores, memory or disk, by a preset or by parts, and its GPU, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true, and a GPU change and cores or memory in the same call share one restart. check true only says what would change.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -199,7 +199,7 @@ Change a box's size: its cores, memory or disk, by a preset or by parts, and its
 | `cores` | integer | no | Cores. Left out, the box keeps its own. |
 | `memory_gib` | integer | no | Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own. |
 | `disk_gib` | integer | no | Root disk in GiB, which only grows. Left out, the box keeps its own. |
-| `gpu` | `none`, `shared`, `whole` | no | The box's GPU: shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Where a backend can, shared and whole switch live; adding a GPU, removing it or moving the box to another card cannot be done on Docker, where box_resize says so. box_list says what each provider can change. |
+| `gpu` | `none`, `shared`, `whole` | no | The box's GPU: none, shared, one card other boxes may share, or whole, its card to itself, where this install has whole cards on. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; adding a GPU, removing it or moving the box to another card restarts it on Proxmox LXC and cannot be done on Docker. A stopped box stays stopped. Call with check true first: the answer says what would change, and a resize whose plan changed since that check is refused, saying what changed. box_list says what each provider can change. |
 | `restart` | boolean | no | Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so. |
 | `check` | boolean | no | Only say what the resize would change, how, and whether there is room. Defaults to false. |
 
