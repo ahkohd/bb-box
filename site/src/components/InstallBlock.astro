@@ -1,23 +1,13 @@
 ---
 interface Props {
-  command: string;
   prompt: string;
   guide: string;
 }
 
-const { command, prompt, guide } = Astro.props;
-const lastPartAt = command.lastIndexOf("/") + 1;
-const [commandStart, commandEnd] = [command.slice(0, lastPartAt), command.slice(lastPartAt)];
+const { prompt, guide } = Astro.props;
 ---
 
 <section class="install not-content" aria-label="Install bb-box">
-  <div class="command">
-    <code id="install-command">{commandStart}<wbr /><span class="unbroken">{commandEnd}</span></code>
-    <button type="button" class="copy" data-copy="install-command" aria-label="Copy the install command" hidden>
-      <span class="label">Copy</span>
-      <span class="label copied" aria-hidden="true">Copied</span>
-    </button>
-  </div>
   <div class="actions">
     <button type="button" class="pill primary" data-copy="setup-prompt" hidden>
       <span class="label">Copy setup prompt</span>
@@ -93,32 +83,6 @@ const [commandStart, commandEnd] = [command.slice(0, lastPartAt), command.slice(
     margin: 1.3125rem auto 0;
   }
 
-  .command {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.5rem 0.5rem 0.5rem 0.75rem;
-    border-radius: 8px;
-    background-color: var(--muted);
-  }
-
-  .command code {
-    flex: 1;
-    min-width: 0;
-    padding: 0.25rem 0;
-    background: none;
-    font-size: 0.8125rem;
-    line-height: 1.25rem;
-    font-family: var(--__sl-font-mono);
-    color: var(--foreground);
-    overflow-wrap: break-word;
-  }
-
-  .unbroken {
-    white-space: nowrap;
-  }
-
-  .copy,
   .pill {
     display: inline-grid;
     flex-shrink: 0;
@@ -127,7 +91,6 @@ const [commandStart, commandEnd] = [command.slice(0, lastPartAt), command.slice(
     font: inherit;
   }
 
-  .copy[hidden],
   .pill[hidden] {
     display: none;
   }
@@ -143,20 +106,6 @@ const [commandStart, commandEnd] = [command.slice(0, lastPartAt), command.slice(
 
   [data-copied] .copied {
     visibility: visible;
-  }
-
-  .copy {
-    padding: 0.25rem 0.5rem;
-    border-radius: 6px;
-    background: transparent;
-    font-size: 0.75rem;
-    line-height: 1.25rem;
-    color: var(--muted-foreground);
-  }
-
-  .copy:hover,
-  .copy[data-copied] {
-    color: var(--foreground);
   }
 
   .actions {
