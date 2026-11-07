@@ -1,5 +1,5 @@
 import { boxesOver, holdingName, overLimitWords } from "../backends/card-limit.ts";
-import type { CardInUse, CardsInUse } from "../backends/types.ts";
+import type { CardInUse, CardsInUse, LimitCounts } from "../backends/types.ts";
 
 export interface SettingsCardHolder {
   readonly box: string | null;
@@ -7,6 +7,7 @@ export interface SettingsCardHolder {
   readonly part: "shared" | "whole";
   readonly running: boolean;
   readonly ours: boolean;
+  readonly counts: boolean;
 }
 
 export interface SettingsCard {
@@ -31,7 +32,7 @@ export type SettingsCards =
       readonly source: "helper" | "docker";
       readonly at: number | null;
       readonly limit: number | null;
-      readonly counts: "running" | "running-or-stopped";
+      readonly counts: LimitCounts;
       readonly cards: readonly SettingsCard[];
       readonly wholeKept: readonly { readonly box: string | null; readonly name: string }[];
     };
@@ -71,6 +72,7 @@ export function settingsCards(inUse: CardsInUse, backend: string, boxes: readonl
         part: holding.part,
         running: holding.running,
         ours: holding.is === "box" || holding.is === "warm",
+        counts: holding.counts,
       })),
     };
   });

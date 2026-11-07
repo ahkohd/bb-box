@@ -383,7 +383,7 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
   [LXC_KEYS.boxesPerCard]: {
     type: "number",
     label: "Proxmox LXC: boxes per card",
-    description: `The most boxes running on one card, desktops and servers together. 0 means no limit. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops per GPU's value where it was set, else ${BOXES_PER_CARD}.`,
+    description: `The most of this install's boxes running on one card, desktops and servers together. 0 means no limit. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops per GPU's value where it was set, else ${BOXES_PER_CARD}.`,
     default: BOXES_PER_CARD,
   },
   [LXC_KEYS.wholeCards]: {

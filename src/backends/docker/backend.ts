@@ -1761,12 +1761,12 @@ export class DockerBackend implements Backend {
     const inUse: CardInUse[] = cards.cards.map((card) => {
       const on = holders.filter((holder) => holder.card === card.uuid);
       const holdings = on.map((holder): CardHolding => {
-        const held = { part: holder.part, running: holder.state === "running" };
+        const held = { part: holder.part, running: holder.state === "running", counts: true };
         return holder.otherInstall ? { is: "other-install", guest: holder.name, ...held } : { is: "box", name: holder.name, ...held };
       });
       return { uuid: card.uuid, index: card.index, model: card.model, totalMiB: card.totalMiB, freeMiB: card.freeMiB, holders: holdings, counted: on.length };
     });
-    return { is: "read", host, source: "docker", at: cards.readAt, limit: this.#config.boxesPerCard, counts: "running-or-stopped", cards: inUse };
+    return { is: "read", host, source: "docker", at: cards.readAt, limit: this.#config.boxesPerCard, counts: "every-install", cards: inUse };
   }
 
   /** Whether a container comes from the build its kind's image names now: false once a refresh has moved the tag (049); null without either. */

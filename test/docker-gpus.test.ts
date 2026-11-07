@@ -1014,7 +1014,7 @@ test("071 unit 15 gate: a Docker limit lowered below a card's boxes names them i
   const inUse = await lower.cardsInUse(signal());
   assert.equal(inUse.is, "read");
   if (inUse.is !== "read") return;
-  assert.deepEqual([inUse.limit, inUse.counts, inUse.cards.map((each) => each.counted)], [1, "running-or-stopped", [2]]);
+  assert.deepEqual([inUse.limit, inUse.counts, inUse.cards.map((each) => each.counted)], [1, "every-install", [2]]);
   assert.deepEqual(inUse.cards[0]!.holders.map((holder) => holder.is === "box" && [holder.name, holder.part, holder.running]).sort(), [["calm-reef", "shared", true], ["lone-pine", "shared", true]]);
   assert.equal(fake.containers().length, 2, "a lower limit stops nothing");
   const off = setup({ "gpu-desktops": false }, one).backend;

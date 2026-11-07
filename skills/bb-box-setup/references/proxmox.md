@@ -79,7 +79,7 @@ checks give its public key; the templates must then be built with it.
 | --- | --- |
 | `linux-templates`, `desktop-cpu-templates`, `desktop-wayland-cpu-templates` | VMIDs, separated by spaces or commas. Empty offers none of that kind |
 | `desktop-templates` | One line per GPU desktop template: its VMID. On a host without the GPU helper, a space and the GPU its device lines name, such as `9101 GPU-<uuid>`. Use `--field-file` or `--add-line` |
-| `boxes-per-card` | The most boxes running on one card, 4 unless set, 0 for no limit. Unset, the replaced `desktops-per-gpu` is read, 0 included |
+| `boxes-per-card` | The most of this install's boxes running on one card, 4 unless set, 0 for no limit. Unset, the replaced `desktops-per-gpu` is read, 0 included |
 | `whole-cards` | A card to itself for a box: needs `bb-box-gpu` 0.4.3 or later. Unset, `general.wholeCards` says, off unless set |
 | `gpu-memory-mib` | The memory a card must have free for a new server, 1024 unless set |
 | `bridge`, `subnet`, `gateway`, `addresses` | Must match `/etc/bb-box/bb-box.env` when it changed them |

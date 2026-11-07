@@ -1,4 +1,4 @@
-import type { CardHolding, CardInUse } from "./types.ts";
+import type { CardHolding, CardInUse, LimitCounts } from "./types.ts";
 
 export function cardTitle(index: number | null): string {
   return index === null ? "A card" : `Card ${index}`;
@@ -19,10 +19,15 @@ export function boxesOver(card: Pick<CardInUse, "counted">, limit: number | null
   return limit === null || limit <= 0 ? 0 : Math.max(0, card.counted - limit);
 }
 
-export function overLimitWords(card: Pick<CardInUse, "index" | "counted" | "holders">, limit: number, counts: "running" | "running-or-stopped"): string {
+export function countedWords(counted: number, counts: LimitCounts): string {
+  const boxes = counted === 1 ? "box" : "boxes";
+  return counts === "this-install-running" ? `${counted} of this install's ${boxes} running` : `${counted} ${boxes}`;
+}
+
+export function overLimitWords(card: Pick<CardInUse, "index" | "counted" | "holders">, limit: number, counts: LimitCounts): string {
   const title = cardTitle(card.index);
   const name = title === "A card" ? "the card" : title.toLowerCase();
-  const boxes = `${card.counted} ${card.counted === 1 ? "box" : "boxes"}${counts === "running" ? " running" : ""}`;
-  const named = card.holders.length ? `: ${inWords(card.holders.map(holdingName))}` : "";
-  return `${title} has ${boxes}, ${boxesOver(card, limit)} over the limit of ${limit}${named}. They keep running; no new box goes on ${name} until it has room.`;
+  const counted = card.holders.filter((holding) => holding.counts);
+  const named = counted.length ? `: ${inWords(counted.map(holdingName))}` : "";
+  return `${title} has ${countedWords(card.counted, counts)}, ${boxesOver(card, limit)} over the limit of ${limit}${named}. They keep running; no new box goes on ${name} until it has room.`;
 }

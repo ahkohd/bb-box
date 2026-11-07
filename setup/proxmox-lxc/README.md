@@ -585,7 +585,7 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `desktop-templates` | `9101` | one line per GPU desktop template: its VMID. On a host without the GPU helper, a space and the GPU its device lines name, such as `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line |
 | `desktop-cpu-templates` | `9103` | VMIDs of CPU desktop templates |
 | `desktop-wayland-cpu-templates` | `9105` | VMIDs of Wayland desktop templates |
-| `boxes-per-card` | `4` | the most boxes running on one card, servers and desktops together; 0 means no limit. Unset, a value set in the replaced `desktops-per-gpu` is read, 0 included |
+| `boxes-per-card` | `4` | the most of this install's boxes running on one card, servers and desktops together; 0 means no limit. Unset, a value set in the replaced `desktops-per-gpu` is read, 0 included |
 | `whole-cards` |  | whether a box may have a card to itself. Unset, the install-wide option `general.wholeCards` says, which is off unless set |
 | `gpu-memory-mib` | `1024` | the memory a card must have free, when last read, for a new server to be placed on it; a desktop needs 384 MiB |
 | `bridge` | `vmbr200` | `BBBOX_BRIDGE` |
@@ -606,7 +606,8 @@ fields against the host; Save and turn on saves them. From a terminal,
   `build.sh`: `nvidia-smi --query-gpu=pci.bus_id,uuid --format=csv`.
 - A new box is a clone of its kind's least used template. A box with a
   shared GPU goes to the card with the fewest boxes. It is refused when
-  every card has `boxes-per-card` boxes running, and the refusal names them.
+  every card has `boxes-per-card` of this install's boxes running, and the
+  refusal names them.
   A lower limit stops nothing that runs: the doctor and the list of cards in
   BB Box's settings name the boxes over it.
 - A GPU desktop needs 384 MiB of GPU memory free as it starts. bb-box reads

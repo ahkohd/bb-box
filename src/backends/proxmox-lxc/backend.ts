@@ -4682,14 +4682,14 @@ export class ProxmoxLxcBackend implements Backend {
       const memory = view.memory.get(card.uuid);
       const holders = load.holders.map((holder): CardHolding => {
         const named = namer.guest(holder.vmid);
-        const held = { part: holder.part, running: holder.running };
+        const held = { part: holder.part, running: holder.running, counts: load.ownVmids.includes(holder.vmid) };
         if (named.is === "box") return { is: "box", name: named.name, ...held };
         if (named.is === "warm") return { is: "warm", ...held };
         return { is: named.is, guest: `CT ${holder.vmid}`, ...held };
       });
-      return { uuid: card.uuid, index: card.index, model: null, totalMiB: memory?.totalMiB ?? null, freeMiB: memory?.freeMiB ?? null, holders, counted: load.boxes };
+      return { uuid: card.uuid, index: card.index, model: null, totalMiB: memory?.totalMiB ?? null, freeMiB: memory?.freeMiB ?? null, holders, counted: load.own };
     });
-    return { is: "read", host: api.node, source: "helper", at: parseGpuReport(view.notes)?.at ?? null, limit: this.#config.desktop.perGpu, counts: "running", cards };
+    return { is: "read", host: api.node, source: "helper", at: parseGpuReport(view.notes)?.at ?? null, limit: this.#config.desktop.perGpu, counts: "this-install-running", cards };
   }
 
   async #nodeHasCards(api: Proxmox): Promise<boolean> {

@@ -151,7 +151,7 @@ To set it up, see [GPU boxes in the Docker setup guide](../../setup/docker/READM
 
 Each backend with cards has a **GPUs** section on its page in BB Box's settings. These set limits and defaults only. No setting changes a box's own GPU.
 
-- **Boxes per card**: the most boxes on one card, desktops and servers together. 4 unless you change it. On Proxmox LXC, 0 means no limit.
+- **Boxes per card**: the most boxes on one card, desktops and servers together, 4 unless you change it. On Proxmox LXC it counts this install's boxes that run, and 0 means no limit. On Docker it counts every install's boxes, running or stopped.
 - **Whole cards**: whether a box may have a card to itself. It is a switch, and saves at once. When it is not set on the backend, it follows the install-wide option `general.wholeCards`, which is off unless set. Turned off, no box is given a whole card or changes to one, and boxes that have one keep it until they change or are released.
 - **GPU memory a new box needs**: the memory a card must have free, when last read, for a new server to be placed on it, 1,024 MiB unless you change it. It is a check at the start, not a limit on what the box uses. A desktop needs 384 MiB.
 

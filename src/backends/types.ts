@@ -540,10 +540,13 @@ export interface GpuRoom {
   readonly reach?: string | null;
 }
 
-export type CardHolding =
-  | { readonly is: "box"; readonly name: string; readonly part: "shared" | "whole"; readonly running: boolean }
-  | { readonly is: "warm"; readonly part: "shared" | "whole"; readonly running: boolean }
-  | { readonly is: "other-install" | "not-bb-box"; readonly guest: string; readonly part: "shared" | "whole"; readonly running: boolean };
+export type CardHolding = (
+  | { readonly is: "box"; readonly name: string }
+  | { readonly is: "warm" }
+  | { readonly is: "other-install" | "not-bb-box"; readonly guest: string }
+) & { readonly part: "shared" | "whole"; readonly running: boolean; readonly counts: boolean };
+
+export type LimitCounts = "this-install-running" | "every-install";
 
 export interface CardInUse {
   readonly uuid: string;
@@ -556,7 +559,7 @@ export interface CardInUse {
 }
 
 export type CardsInUse =
-  | { readonly is: "read"; readonly host: string; readonly source: "helper" | "docker"; readonly at: number | null; readonly limit: number | null; readonly counts: "running" | "running-or-stopped"; readonly cards: readonly CardInUse[] }
+  | { readonly is: "read"; readonly host: string; readonly source: "helper" | "docker"; readonly at: number | null; readonly limit: number | null; readonly counts: LimitCounts; readonly cards: readonly CardInUse[] }
   | { readonly is: "unread"; readonly host: string | null; readonly why: string; readonly setup: string | null };
 
 export interface Limit {

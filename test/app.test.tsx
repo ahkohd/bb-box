@@ -11608,7 +11608,7 @@ const GPU_DRIVER: ConfigState["drivers"][number] = {
   several: false,
 };
 
-const shared = (name: string, box: string | null = null) => ({ box, name, part: "shared" as const, running: true, ours: true });
+const shared = (name: string, box: string | null = null) => ({ box, name, part: "shared" as const, running: true, ours: true, counts: true });
 
 function gpuCards(limit: number | null, at = Date.now() - 5_000): SettingsCards {
   return {
@@ -11617,9 +11617,9 @@ function gpuCards(limit: number | null, at = Date.now() - 5_000): SettingsCards 
     source: "helper",
     at,
     limit,
-    counts: "running",
+    counts: "this-install-running",
     cards: [
-      { uuid: "GPU-3f9a2c1e-55b0-4c1d-9e2a-0b7d6c4a1f00", index: 0, model: null, totalMiB: 24_576, freeMiB: 3_480, outsideMiB: null, counted: 1, over: 0, overWords: null, holders: [{ box: "bxquietelm001", name: "quiet-elm", part: "whole", running: true, ours: true }] },
+      { uuid: "GPU-3f9a2c1e-55b0-4c1d-9e2a-0b7d6c4a1f00", index: 0, model: null, totalMiB: 24_576, freeMiB: 3_480, outsideMiB: null, counted: 1, over: 0, overWords: null, holders: [{ box: "bxquietelm001", name: "quiet-elm", part: "whole", running: true, ours: true, counts: true }] },
       {
         uuid: "GPU-8c2d4e6f-0a1b-4c3d-9e8f-7a6b5c4d3e2f",
         index: 1,
@@ -11629,7 +11629,7 @@ function gpuCards(limit: number | null, at = Date.now() - 5_000): SettingsCards 
         outsideMiB: null,
         counted: 4,
         over: limit !== null && limit > 0 ? Math.max(0, 4 - limit) : 0,
-        overWords: limit === 3 ? "Card 1 has 4 boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room." : null,
+        overWords: limit === 3 ? "Card 1 has 4 of this install's boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room." : null,
         holders: [shared("amber-fox", "bxamberfox001"), shared("lone-pine"), shared("calm-reef"), shared("tidy-glade")],
       },
     ],
@@ -11655,7 +11655,7 @@ test("071 unit 15 gate: the GPUs section shows an explicit old 0 as Boxes per ca
   expect(await within(gpus).findByText(/^The cards on pve-1, as its GPU helper reported them \d+ s ago\.$/)).toBeTruthy();
   expect(within(gpus).getByRole("link", { name: /amber-fox/ }).getAttribute("href")).toContain("bxamberfox001");
   fireEvent.change(perCard, { target: { value: "3" } });
-  expect(within(gpus).getByText("With 3, card 1 has 4 boxes running, 1 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();
+  expect(within(gpus).getByText("With 3, card 1 has 4 of this install's boxes running, 1 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();
   expect(slot.getByText(/^1 change to .+ not saved$/)).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(changes.some((change) => change.startsWith("apply 3 "))).toBe(true));
@@ -11669,7 +11669,7 @@ test("071 unit 15 gate: the cards list names the boxes over a saved limit", asyn
   const { handlers } = server([], { config: { drivers: [...configState({}).drivers, GPU_DRIVER] }, cards: { "lxc-gpu": gpuCards(3) } });
   const slot = settings(handlers, "#backend/lxc-gpu");
   const gpus = await slot.findByRole("region", { name: "GPUs" });
-  expect(await within(gpus).findByText("Card 1 has 4 boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room.")).toBeTruthy();
+  expect(await within(gpus).findByText("Card 1 has 4 of this install's boxes running, 1 over the limit of 3: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on card 1 until it has room.")).toBeTruthy();
 });
 
 test("071 unit 15 gate: a failed save of the GPUs section shows its problem at the field and keeps the change", async () => {

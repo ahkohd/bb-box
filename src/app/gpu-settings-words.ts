@@ -1,5 +1,5 @@
-import { boxesOver } from "../backends/card-limit.ts";
-import { GPU_PARTS, type GpuPart } from "../backends/types.ts";
+import { boxesOver, countedWords } from "../backends/card-limit.ts";
+import { GPU_PARTS, type GpuPart, type LimitCounts } from "../backends/types.ts";
 import { backendWholeCards, KINDS_WITH_GPU_DEFAULT, wholeCardsAnywhere, type BackendConfig, type ConfigDocument } from "../core/document.ts";
 import { gpuWhenNotAsked } from "../core/gpu.ts";
 import type { ConfigState } from "../plugin/configuration.ts";
@@ -39,12 +39,11 @@ export function draftLimit(text: unknown): number | null {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function loweredLimitWords(cards: readonly SettingsCard[], limit: number, saved: number | null, counts: "running" | "running-or-stopped"): string | null {
+export function loweredLimitWords(cards: readonly SettingsCard[], limit: number, saved: number | null, counts: LimitCounts): string | null {
   if (limit <= 0 || (saved !== null && saved > 0 && limit >= saved)) return null;
   const over = cards.filter((card) => boxesOver(card, limit) > 0);
   if (!over.length) return null;
-  const running = counts === "running" ? " running" : "";
-  const each = over.map((card) => `${cardName(card.index)} has ${card.counted} ${card.counted === 1 ? "box" : "boxes"}${running}, ${boxesOver(card, limit)} over: ${inWords(card.holders.map((holder) => holder.name))}`);
+  const each = over.map((card) => `${cardName(card.index)} has ${countedWords(card.counted, counts)}, ${boxesOver(card, limit)} over: ${inWords(card.holders.filter((holder) => holder.counts).map((holder) => holder.name))}`);
   return `With ${limit}, ${inWords(each)}. They keep running; no new box goes on a card over the limit until it has room.`;
 }
 
