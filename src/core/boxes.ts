@@ -59,6 +59,7 @@ import {
   ResizeHolds,
   ResizeLeftStopped,
   desktopDisplays,
+  startedGpu,
   startedGuest,
 } from "../backends/types.ts";
 import { TransportError, type ByteChannel, type CommandTransport, type RunResult } from "../transports/types.ts";
@@ -3216,7 +3217,7 @@ export class Boxes {
         else if (gpuChanges) await this.#forgetGpuPlan(current.id);
         const now = await this.#sizeNow(backend, current.guest!, recovery);
         const power = restart && running ? await backend.power(current.guest!, recovery).catch(() => null) : null;
-        const runs = power === "running" && !(error instanceof ResizeLeftStopped);
+        const runs = error instanceof ResizeLeftStopped ? false : power === null ? true : power === "running";
         const held = error instanceof ResizeHolds ? error : null;
         await this.update(current, (latest) => ({
           resize: { ...record, state: "failed", ms: this.#now() - began, error: message },
@@ -3597,7 +3598,9 @@ export class Boxes {
       if (state === "stopped") return { state, stoppedAt: this.#now(), ...stoppedWith };
       if (!started) return { state };
       const guest = changed && current.guest ? { guest: startedGuest(current.guest, changed) } : {};
-      return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest };
+      const gpu = startedGpu(changed);
+      const size = gpu && current.size ? { size: { ...current.size, gpu } } : {};
+      return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest, ...size };
     });
   }
 

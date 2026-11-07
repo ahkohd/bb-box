@@ -4592,6 +4592,42 @@ cancelled resize; a check consumed once the backend is called; and a plan the
 backend found changed under its lock. Each got a test of its own and then
 failed. The node steps' blocks pass `bash -n`.
 
+### After the second reviews
+
+Astra's review of the fixes said no-go, with two medium findings and one
+low; Fable's said go, with two lows, one of them Astra's low. The lead
+decided the fixes below, in one more commit. Each has a test that failed
+with it reverted, on a box.
+
+| Finding | Fix |
+| --- | --- |
+| A resize cancelled after the helper granted its new claim asked the claim back with the cancelled signal, which threw before it said what the helper held, so the record kept the old claim while the helper held the new one (Astra 1) | Asking the claim back has a signal of its own, bounded to 60 s, and reading what the helper holds after it one of 20 s; neither throws. A cancelled change puts its cores back, asks its old marker back and reports what the helper then holds, as for a refusal. Once a claim is granted, the reads that follow use a signal of their own, and a disk whose growth a cancel cut short is read again: grown, the resize reports it; not, it says the GPU changed and the disk did not grow |
+| A start that asked a claim of none again, after a late refusal, started the box with no card but reported nothing, so the record kept the claim asked and its GPU part (Astra 2) | A start reports a claim of `null` when it starts the box with no card, as its claim of none says, and the record's claim is cleared and its GPU part set to none. A start that reports a claim sets the record's GPU part to that claim's |
+| A start that failed after the disk grew said the box was stopped with its disk as it was (Astra 3, Fable low 1) | It says the disk's size now when it grew, and that it could not grow, with why, when it could not. The start's own words about the box being stopped are taken off first, so it is said once |
+| A refusal that changed nothing on a running box, whose power could not be read after it, recorded the box stopped (Fable low 2) | Where the power cannot be read and the backend did not say it left the box stopped, the record keeps the state the box had, for the next look to correct. This replaces the rule in Astra 5's row above that an unreadable state is recorded stopped |
+| The word fix found in gate step F1a's first try: Proxmox's words for a start that failed ended with no full stop before "It is stopped" | The words before bb-box's are ended as a sentence |
+
+Then, on a `linux` box in `node:26-bookworm` as root with `--init`: `tsc`
+clean; the node suite, 3,895 tests, 3,472 passed, 113 failed, 310 skipped:
+111 of them the same environment's failures, by name, as on the last
+commit, and two timing tests that passed when run on their own, a desktop
+click's cancel and a Mac's tailnet key; vitest, 471 passed. The harness has
+59 reverts: 11 new for these fixes, 5 rewritten for the new code, and the
+rule that an unreadable power state is recorded stopped replaced by its
+opposite. Each new and rewritten one fails its tests. One passed at first,
+the start's own words that the box is stopped taken off before bb-box's, as
+no test's start said them; a start that fails after the grant on a box that
+does not see its card now does, and it then failed.
+
+Gate step F1a's first try, on the last commit, lost the race it is built on:
+the watcher, a shell loop that ran `pct config` each pass, saw the new
+marker after the helper had granted it, and locked the box only before its
+start. That was step F2's case, observed: the box was left stopped with its
+new shared claim and its disk, and said so, with the full stop missing
+above. F1a's, F1b's and F2's watchers are now one Perl process that reads
+the guest's and the report's config files every 10 ms, with no subprocess,
+and locks the guest with Proxmox's own `set_lock` in the same process.
+
 ### Deviations from the note
 
 - While whole cards are off, `resizing` gives `share` and `move` as `no`,

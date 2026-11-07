@@ -3950,7 +3950,7 @@ class RestartingCards extends FakeBackend {
   powerUnreadable = false;
   stopsThenFails: { readonly error: Error; readonly abort?: AbortController; readonly thenUnreadable?: boolean; readonly running?: boolean } | null = null;
   changesUnderLock: GpuResize | null = null;
-  leaveStopped: { readonly gpu: GpuPart } | null = null;
+  leaveStopped: { readonly gpu: GpuPart; readonly thenUnreadable?: boolean } | null = null;
   readonly #parts = new Map<string, GpuPart>();
 
   #partOf(guest: Guest): GpuPart {
@@ -4009,6 +4009,7 @@ class RestartingCards extends FakeBackend {
       await this.stop!(guest);
       const left = this.leaveStopped;
       this.leaveStopped = null;
+      if (left.thenUnreadable) this.powerUnreadable = true;
       throw new ResizeLeftStopped(`${guest.ref} holds a shared GPU now, but did not start.`, `Not resized as asked: ${guest.ref} holds a shared GPU now, but did not start. Start it with box_start, or ask the user.`, { ...resized, claim }, left.gpu);
     }
     this.#parts.set(guest.ref, to.gpu);
@@ -4154,7 +4155,7 @@ test("071 unit 9, review 4: the plan a check said survives a restart of bb-box, 
   assert.equal(cards.agreedSeen.length, 0);
 });
 
-test("071 unit 9, review 5: a restart cancelled after it stopped the box is recorded as stopped, read with a signal of its own; an unreadable power state is never taken as running", async () => {
+test("071 unit 9, review 5: a restart cancelled after it stopped the box is recorded as stopped, read with a signal of its own; an unreadable power state keeps the state the box had", async () => {
   const { world, cards } = restartingWorld();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
   const abort = new AbortController();
@@ -4165,12 +4166,49 @@ test("071 unit 9, review 5: a restart cancelled after it stopped the box is reco
   cards.stopsThenFails = { error: new Error("cut short"), thenUnreadable: true };
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }));
   cards.powerUnreadable = false;
-  assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped", "a power state that cannot be read is not taken as running");
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready", "a power state that cannot be read keeps the state the box had, for the next look to correct");
+  await world.boxes.stop(THREAD, box.name);
   await world.boxes.start(THREAD, box.name);
   const cancel = new AbortController();
   cards.stopsThenFails = { error: new Error("cut short"), abort: cancel, running: true };
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true, signal: cancel.signal }));
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready", "a box still running after a cancelled resize is read as running, with a signal of its own");
+});
+
+test("071 unit 9, Fable low 2: a refusal that changed nothing on a running box, whose power cannot be read after it, keeps the box ready; one the backend left stopped is stopped", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  cards.stopsThenFails = { error: new BackendError("no_capacity", "No card has room for it now. bb-box changed nothing."), running: true, thenUnreadable: true };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), /No card has room/);
+  cards.powerUnreadable = false;
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready", "the box it did not stop is not recorded stopped");
+  cards.leaveStopped = { gpu: "shared", thenUnreadable: true };
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), (error: unknown) => error instanceof ResizeLeftStopped);
+  cards.powerUnreadable = false;
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped", "a box the backend says it left stopped is stopped, whatever the power read");
+});
+
+test("071 unit 9, Astra re-review 2: a start that reports no claim clears the record's claim and sets its GPU part to none; one that reports a claim sets its part", async () => {
+  const { world, cards } = restartingWorld();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true });
+  const shared = await world.boxes.get(THREAD, box.name);
+  assert.equal(shared.size?.gpu, "shared");
+  assert.equal(shared.guest?.claim?.part, "shared");
+  await world.boxes.stop(THREAD, box.name);
+  cards.startClaim = null;
+  const started = await world.boxes.start(THREAD, box.name);
+  assert.equal(started.guest?.claim, null, "the claim it no longer holds is cleared");
+  assert.equal(started.size?.gpu, "none", "its GPU part is what it started with");
+  await world.boxes.stop(THREAD, box.name);
+  cards.startClaim = { card: "GPU-0", part: "whole", generation: 9, answer: "granted" };
+  const whole = await world.boxes.start(THREAD, box.name);
+  assert.equal(whole.guest?.claim?.part, "whole");
+  assert.equal(whole.size?.gpu, "whole");
+  await world.boxes.stop(THREAD, box.name);
+  cards.startClaim = undefined;
+  const plain = await world.boxes.start(THREAD, box.name);
+  assert.equal(plain.size?.gpu, "whole", "a start that reports no claim either way leaves the record as it was");
 });
 
 test("071 unit 9, review 3: a plan the backend found changed under its card lock is what the caller was told, and so what it agrees to next", async () => {

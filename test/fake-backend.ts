@@ -251,6 +251,7 @@ export class FakeBackend implements Backend {
   startFacts: readonly GuestFact[] | null = null;
   startFault: Error | null = null;
   startAddress: string | null = null;
+  startClaim: CardClaim | null | undefined = undefined;
   readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly keepsSession?: (kind: string) => boolean;
@@ -334,7 +335,9 @@ export class FakeBackend implements Backend {
         await this.#power(guest, "running");
         await answered?.();
         for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
-        if (this.startFacts || this.startAddress) return { ...(this.startFacts ? { facts: this.startFacts } : {}), ...(this.startAddress ? { address: this.startAddress } : {}) };
+        if (this.startFacts || this.startAddress || this.startClaim !== undefined) {
+          return { ...(this.startFacts ? { facts: this.startFacts } : {}), ...(this.startAddress ? { address: this.startAddress } : {}), ...(this.startClaim !== undefined ? { claim: this.startClaim } : {}) };
+        }
       };
       this.stop = (guest) => this.#power(guest, "stopped");
       if (options.keepsSession) this.keepsSession = options.keepsSession;

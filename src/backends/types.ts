@@ -398,7 +398,7 @@ export interface Started {
   /** The guest's facts now, in place of those kept, as a desktop's display mode when a GPU desktop fell back to the CPU (#597). */
   readonly facts?: readonly GuestFact[];
   readonly address?: string;
-  readonly claim?: CardClaim;
+  readonly claim?: CardClaim | null;
 }
 
 export interface LeasedAddressNow {
@@ -408,7 +408,12 @@ export interface LeasedAddressNow {
 
 export function startedGuest(guest: Guest, started: Started | void): Guest {
   if (!started) return guest;
-  return { ...guest, ...(started.facts ? { facts: started.facts } : {}), ...(started.address ? { address: started.address } : {}), ...(started.claim ? { claim: started.claim } : {}) };
+  return { ...guest, ...(started.facts ? { facts: started.facts } : {}), ...(started.address ? { address: started.address } : {}), ...(started.claim !== undefined ? { claim: started.claim } : {}) };
+}
+
+export function startedGpu(started: Started | void): GpuPart | null {
+  if (!started || started.claim === undefined) return null;
+  return started.claim?.part ?? "none";
 }
 
 export interface BoxOwner {
