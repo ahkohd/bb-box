@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { gpuBadge } from "../plugin/gpu-page.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { platformWord } from "../core/device.ts";
 import { runsWayland } from "./boxes-filter.ts";
@@ -567,7 +568,7 @@ export function boxTitleBadges(box: BoxView, machine = false): readonly TitleBad
     ...(box.device ? [{ label: screenWord(box, "device"), rank: BADGE_RANKS.device, outranksSystem: true }] : []),
     ...badge(box.desktop && "Desktop", BADGE_RANKS.desktop),
     ...badge(runsWayland(box) && "Wayland", BADGE_RANKS.more),
-    ...badge(box.gpu && "GPU", BADGE_RANKS.more),
+    ...badge(gpuBadge(box), BADGE_RANKS.more),
     ...badge(lacksDocker(box) && "No Docker", BADGE_RANKS.more),
     ...badge(isArm64Badge(box.os, box.arch) && "arm64", BADGE_RANKS.more),
     ...hostFormBadges(box).map((form) => ({ label: formBadge(form), rank: BADGE_RANKS.form })),

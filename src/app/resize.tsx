@@ -177,7 +177,7 @@ type Step = { readonly at: "pick" } | { readonly at: "confirm"; readonly down: n
  * The Resize dialog for `box`, open while it is not null: a thread's box, by `threadId`, or one of your machines without it.
  * `onResized` runs after a resize changed the box.
  */
-export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxView | null; threadId?: string; onClose: () => void; onResized?: () => void }) {
+export function ResizeDialog({ box, threadId, at = "size", onClose, onResized }: { box: BoxView | null; threadId?: string; at?: "size" | "gpu"; onClose: () => void; onResized?: () => void }) {
   const rpc = useRpc<Contract>();
   const [choice, setChoice] = useState<string>(CUSTOM);
   const [fields, setFields] = useState<Fields>(fieldsOf(box?.sizeNow));
@@ -320,7 +320,17 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
 
   return (
     <AlertDialog open onOpenChange={(next) => !next && close()}>
-      <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
+      <AlertDialogContent
+        className="max-h-[90vh] overflow-y-auto shadow-none"
+        data-resize-at={at}
+        onOpenAutoFocus={(event) => {
+          if (at !== "gpu") return;
+          const gpu = (event.currentTarget as HTMLElement).querySelector<HTMLElement>("[data-gpu-section]");
+          if (!gpu) return;
+          event.preventDefault();
+          gpu.focus();
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
@@ -364,6 +374,13 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
               ) : null}
               {choice === CUSTOM && largest ? <LargestLine kind={box.kind} largest={largest} asked={askedParts(fields, ways)} onFollow={onClose} /> : null}
             </FormSection>
+
+            {box.gpu ? (
+              <section data-gpu-section tabIndex={-1} aria-label="GPU" className="space-y-3 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                <h3 className="text-xs text-foreground">GPU</h3>
+                <p className="text-xs leading-snug text-muted-foreground">Changing the GPU comes later.</p>
+              </section>
+            ) : null}
 
             <FormSection title="What changes">
               {plan ? (

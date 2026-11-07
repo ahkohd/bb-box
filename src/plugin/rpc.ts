@@ -12,6 +12,7 @@ import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxEntry, type BoxPageState, type BoxResult, type DeviceBoot, type MachineEntry, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
 import { lastActiveAt, startedAt } from "./thread-on-box.ts";
+import { gpuMates } from "./gpu-page.ts";
 import { sizeView } from "./views.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
@@ -343,8 +344,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const found = await boxes.find(boxId);
       if (!found || !listed(found)) return { ...NOT_HERE, ended: app.boxLog.ended(boxId) };
       const yours = found.threadId === OPERATOR;
-      const [thread, threads, monitor, snapshotsView] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found), snapshotsOf(found)]);
-      return { box: app.view(found), threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null, snapshots: snapshotsView, busy: app.history.busy(found) };
+      const [thread, threads, monitor, snapshotsView, all] = await Promise.all([app.holderOf(found).catch(() => null), app.threadsOn(found).catch(() => []), monitorReach(found), snapshotsOf(found), boxes.all()]);
+      const view = app.view(found);
+      const mates = gpuMates(view, all.filter((box) => listed(box)).map((box) => app.view(box)));
+      return { box: view, threadId: found.threadId, owner: yours ? "yours" : "thread", thread, threads, monitor, deviceFailed: deviceFailed(found), ended: null, snapshots: snapshotsView, busy: app.history.busy(found), ...(mates.length ? { gpuMates: mates } : {}) };
     },
     async "snapshot.takeCheck"({ box: boxId, memory }) {
       try {

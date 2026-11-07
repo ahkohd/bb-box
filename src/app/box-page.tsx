@@ -21,6 +21,9 @@ import { useThreadTitles } from "./desktop.tsx";
 import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { Activity } from "./activity.tsx";
+import { GpuCard, GpuNotices, UpdateUserspaceDialog } from "./gpu-card.tsx";
+import { PageNotice } from "./page-notice.tsx";
+import { gpuFactLines } from "../plugin/gpu-page.ts";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
 import { snapshotWhen } from "./snapshot-words.ts";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
@@ -321,19 +324,6 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
   );
 }
 
-function PageNotice({ tone, title, children, actions }: { tone: "bad" | "warn"; title: string; children?: ReactNode; actions?: ReactNode }) {
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId} data-notice={tone} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
-      <h2 id={headingId} className={cn("text-sm font-normal", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
-        {title}
-      </h2>
-      {children ? <div className="mt-1 text-sm text-foreground">{children}</div> : null}
-      {actions ? <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">{actions}</div> : null}
-    </section>
-  );
-}
-
 function SmallButton({ words, onClick, danger = false, disabled = false, why }: { words: string; onClick: () => void; danger?: boolean; disabled?: boolean; why?: string | null }) {
   const whyId = useId();
   return (
@@ -602,16 +592,22 @@ function controlFact(box: BoxView): string | null {
   return controlWord(box, myViewers())?.text ?? null;
 }
 
-function Facts({ box, now }: { box: BoxView; now: number }) {
+function Facts({ box, mates, now }: { box: BoxView; mates: BoxPageState["gpuMates"]; now: number }) {
   const gone = notInSettings(box);
   const enrol = enrolFact(box, now);
   const host = hostWords(box);
   const control = controlFact(box);
+  const gpu = gpuFactLines(box, mates ?? []);
   return (
     <section aria-label="Facts" className="overflow-hidden rounded-lg border border-border bg-card">
       <dl className="-mb-px -mr-px grid grid-cols-2 lg:grid-cols-4 [&>*]:border-b [&>*]:border-r [&>*]:border-border">
         <Fact label="Kind">{box.kindLabel}</Fact>
         <Fact label="Size">{sizeWords(box)}</Fact>
+        {gpu ? (
+          <Fact label="GPU" second={gpu.second}>
+            {gpu.first}
+          </Fact>
+        ) : null}
         <Fact label="Runs on" second={gone ? "Backend not in settings" : driverOf(box.backendLabel)}>
           <span className={cn(gone && "text-muted-foreground")}>
             {formWords(box)}
@@ -780,6 +776,8 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const machineActions = useMachineActions(refreshAll);
   const [asking, setAsking] = useState<MenuAsk>(null);
   const [resizing, setResizing] = useState(false);
+  const [resizeAt, setResizeAt] = useState<"size" | "gpu">("size");
+  const [updatingUserspace, setUpdatingUserspace] = useState(false);
   const [announced, setAnnounced] = useState("");
   const [takingSnapshot, setTakingSnapshot] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -797,7 +795,10 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
     busy: busyOf(yours ? machineActions.busy : threadActions.busy),
     remove: () => machineActions.askRemove(box),
     ask: setAsking,
-    resize: () => setResizing(true),
+    resize: () => {
+      setResizeAt("size");
+      setResizing(true);
+    },
   };
   const opens: BoxOpens = { screen: (_box, screen) => nav.go(viewFromPage(route, screen)), terminal: () => undefined };
   const snapshots = page.snapshots ?? null;
@@ -810,7 +811,11 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       of={yours ? { owner: "yours", inBrowser: false, stop: () => act("stop"), start: () => act("start"), remove: actions.remove, forget: () => act("forget"), check: () => act("refresh") } : { owner: "thread", threadId, held: false, offersThread: true, act: (method, options) => act(method, options) }}
       opens={opens}
       resizing={resizing}
-      onResizing={setResizing}
+      resizeAt={resizeAt}
+      onResizing={(open) => {
+        if (open) setResizeAt("size");
+        setResizing(open);
+      }}
       place="page"
       asking={asking}
       onAsking={setAsking}
@@ -827,14 +832,27 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
       <Notices page={page} box={box} now={now} actions={actions} announce={setAnnounced} />
+      <GpuNotices box={box} monitor={page.monitor} onUpdate={() => setUpdatingUserspace(true)} />
       {snapshotsShown ? <SnapshotNotices box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
       <p aria-live="polite" data-announcer className="sr-only">
         {announced}
       </p>
       {starting ? <Starting box={box} now={now} /> : null}
       {starting ? null : <Activity page={page} box={box} now={now} />}
+      {starting || !box.gpu ? null : (
+        <GpuCard
+          box={box}
+          mates={page.gpuMates ?? []}
+          monitor={page.monitor}
+          busy={box.state === "starting" || box.state === "stopping" || actions.busy !== null}
+          onChange={() => {
+            setResizeAt("gpu");
+            setResizing(true);
+          }}
+        />
+      )}
       {snapshotsShown ? <SnapshotsCard box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
-      {starting ? null : <Facts box={box} now={now} />}
+      {starting ? null : <Facts box={box} mates={page.gpuMates} now={now} />}
       {starting ? null : failed ? (
         <HowItStarted box={box} now={now} titles={titles} />
       ) : (
@@ -845,6 +863,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       )}
       {yours ? machineActions.dialogs : threadActions.dialogs}
       {takingSnapshot && snapshots?.offer ? <TakeSnapshotDialog box={box} view={snapshots} now={now} returnTo={menuTrigger} onClose={() => setTakingSnapshot(false)} onChanged={refreshAll} /> : null}
+      {updatingUserspace ? <UpdateUserspaceDialog box={box} titles={titles} threads={page.threads} monitor={page.monitor} onClose={() => setUpdatingUserspace(false)} /> : null}
     </PageFrame>
   );
 }

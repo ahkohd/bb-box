@@ -5,6 +5,7 @@ import type { Tone } from "./common.tsx";
 import { backendNotice, backendSilent, busyWords, failedNotice, notAnswering, reachNotice, releaseFailure, rowAgo, rowSpan, settingsNotice, startingSince, upSince } from "./box-words.ts";
 import { joinAdvice, joinWords } from "./first-run.tsx";
 import { joiningWords, tryWords } from "../core/join-tries.ts";
+import { holdsNoCardWhileStopped, HOLDS_NO_CARD } from "../plugin/gpu-page.ts";
 import { controlWord, displayWord } from "./status.ts";
 
 export interface RowItem {
@@ -131,7 +132,8 @@ export function rowLine(box: BoxView, facts: RowFacts): RowLine {
     }
     case "stopped": {
       const stop = box.log?.lastStop;
-      return { tone: "off", items: [{ text: "Stopped" }, ...attention(box, facts), ...(stop ? [{ text: rowAgo(stop.at, now) }] : []), ...size] };
+      const parked = holdsNoCardWhileStopped(box) ? [{ text: HOLDS_NO_CARD }] : [];
+      return { tone: "off", items: [{ text: "Stopped" }, ...parked, ...attention(box, facts), ...(stop ? [{ text: rowAgo(stop.at, now) }] : []), ...size] };
     }
     case "ready": {
       const joining: RowItem[] = box.enrol.state === "enrolling" ? [joiningItem(box, now)] : [];

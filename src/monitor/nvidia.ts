@@ -3,7 +3,7 @@ import { clampPercentage } from "./numbers.ts";
 
 const MIB = 1024 * 1024;
 
-export const NVIDIA_CARD_FIELDS = "index,pci.bus_id,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit";
+export const NVIDIA_CARD_FIELDS = "index,uuid,pci.bus_id,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit";
 export const NVIDIA_CARD_ARGS: readonly string[] = [`--query-gpu=${NVIDIA_CARD_FIELDS}`, "--format=csv,noheader,nounits"];
 export const NVIDIA_PROCESS_ARGS: readonly string[] = ["-q", "-d", "PIDS"];
 export const NVIDIA_DEVICE = "/dev/nvidiactl";
@@ -20,6 +20,7 @@ const NAME_CHARACTERS = 128;
 
 export interface NvidiaCard {
   readonly index: number;
+  readonly uuid: string | null;
   readonly bus: string;
   readonly name: string;
   readonly usagePercent: number | null;
@@ -43,6 +44,7 @@ const percentage = z.number().min(0).max(100);
 export const gpuCardSchema = z
   .object({
     index: z.number().int().nonnegative(),
+    uuid: z.string().max(36).nullable().optional(),
     name: z.string().max(NAME_CHARACTERS),
     usagePercent: percentage.nullable(),
     memoryUsedBytes: finite.nonnegative().nullable(),
@@ -93,6 +95,11 @@ function mebibytes(text: string | undefined): number | null {
 
 const BUS_ID = /^[0-9a-f]{4,8}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$/i;
 
+function cardUuid(text: string | undefined): string | null {
+  const match = /^(?:GPU-)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(text?.trim() ?? "");
+  return match ? match[1]!.toLowerCase() : null;
+}
+
 function busOf(text: string): string | null {
   const bus = text.trim().toLowerCase();
   return BUS_ID.test(bus) ? bus.replace(/^0+(?=[0-9a-f]{4}:)/, "") : null;
@@ -106,15 +113,17 @@ export function executableName(text: string): string {
 export function parseNvidiaCards(source: string | undefined): NvidiaCard[] | null {
   const cards = (source ?? "").split("\n").flatMap((line): NvidiaCard[] => {
     const fields = fieldsOf(line);
-    if (fields.length < 9) return [];
+    if (fields.length < 10) return [];
     const index = Number(fields[0]);
-    const bus = busOf(fields[1]!);
+    const uuid = cardUuid(fields[1]);
+    const bus = busOf(fields[2]!);
     if (!Number.isSafeInteger(index) || index < 0 || bus === null) return [];
     const tail = fields.slice(-6);
-    const name = fields.slice(2, fields.length - 6).join(", ");
+    const name = fields.slice(3, fields.length - 6).join(", ");
     const usage = measured(tail[0], 100);
     return [{
       index,
+      uuid,
       bus,
       name: name.slice(0, NAME_CHARACTERS),
       usagePercent: usage,

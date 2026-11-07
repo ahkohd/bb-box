@@ -19,8 +19,10 @@ const MiB = 1024 * 1024;
 const BUS_0 = "00000000:D1:00.0";
 const BUS_1 = "00000000:C1:00.0";
 
-const CARD_0 = `0, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 82, 13250, 97887, 69, 285.05, 300.00`;
-const CARD_1 = `1, ${BUS_1}, NVIDIA GeForce RTX 4090, 3, 1024, 24564, 41, 31.20, 450.00`;
+const UUID_0 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const UUID_1 = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+const CARD_0 = `0, GPU-${UUID_0}, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 82, 13250, 97887, 69, 285.05, 300.00`;
+const CARD_1 = `1, GPU-${UUID_1}, ${BUS_1}, NVIDIA GeForce RTX 4090, 3, 1024, 24564, 41, 31.20, 450.00`;
 const TWO_CARDS = `${CARD_0}\n${CARD_1}`;
 
 type Listed = readonly [pid: number, type: string, name: string, mib: number | null];
@@ -45,9 +47,9 @@ function pidsReport(cards: Readonly<Record<string, readonly Listed[]>>): string 
 const bytes = (value: number) => `${Math.round(value / MiB)} MiB`;
 
 test("nvidia-smi's card query is read per card, in MiB and W without units, and a field it cannot read is null", () => {
-  const cards = parseNvidiaCards(`${TWO_CARDS}\n2, 00000000:41:00.0, Tesla T4, [N/A], [Not Supported], 15360, [N/A], [N/A], 70.00\n`)!;
+  const cards = parseNvidiaCards(`${TWO_CARDS}\n2, GPU-cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee, 00000000:41:00.0, Tesla T4, [N/A], [Not Supported], 15360, [N/A], [N/A], 70.00\n`)!;
   assert.equal(cards.length, 3);
-  assert.deepEqual(cards[0], { index: 0, bus: "0000:d1:00.0", name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition", usagePercent: 82, memoryUsedBytes: 13250 * MiB, memoryTotalBytes: 97887 * MiB, temperatureC: 69, powerWatts: 285.05, powerLimitWatts: 300 });
+  assert.deepEqual(cards[0], { index: 0, uuid: UUID_0, bus: "0000:d1:00.0", name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition", usagePercent: 82, memoryUsedBytes: 13250 * MiB, memoryTotalBytes: 97887 * MiB, temperatureC: 69, powerWatts: 285.05, powerLimitWatts: 300 });
   assert.equal(cards[1]!.name, "NVIDIA GeForce RTX 4090");
   assert.deepEqual([cards[2]!.usagePercent, cards[2]!.memoryUsedBytes, cards[2]!.memoryTotalBytes, cards[2]!.temperatureC, cards[2]!.powerWatts], [null, null, 15360 * MiB, null, null]);
 });
@@ -98,7 +100,7 @@ test("a shared card: the whole card's numbers, never busy; a desktop alone on it
   const idleContext = gpuReadingOf(cards, parseNvidiaProcesses(pidsReport({ [BUS_0]: [[31, "C", "python", 180]] })), true)!;
   assert.equal(idleContext.cards[0]!.shared, true);
   assert.equal(countedGpuPercent(idleContext.cards), null, "an idle notebook kernel on a card another box trains on is not busy");
-  const desktop = gpuReadingOf(parseNvidiaCards(`0, ${BUS_0}, NVIDIA RTX PRO 6000, 4, 900, 97887, 40, 60.00, 300.00`), parseNvidiaProcesses(pidsReport({ [BUS_0]: [[200, "G", "/usr/lib/xorg/Xorg", 63], [880, "G", "/opt/google/chrome/chrome", 837]] })), true)!;
+  const desktop = gpuReadingOf(parseNvidiaCards(`0, GPU-${UUID_0}, ${BUS_0}, NVIDIA RTX PRO 6000, 4, 900, 97887, 40, 60.00, 300.00`), parseNvidiaProcesses(pidsReport({ [BUS_0]: [[200, "G", "/usr/lib/xorg/Xorg", 63], [880, "G", "/opt/google/chrome/chrome", 837]] })), true)!;
   assert.equal(desktop.cards[0]!.shared, false, "its own Xorg and Chrome are its own");
   const alone = gpuReadingOf(cards, parseNvidiaProcesses(pidsReport({ [BUS_0]: [[31, "C", "python", 13250 - 300]] })), true)!;
   assert.equal(alone.cards[0]!.shared, false, "what is left is under the margin, so the card is this box's alone");
@@ -111,6 +113,7 @@ test("a shared card: the whole card's numbers, never busy; a desktop alone on it
   assert.equal(cardLabel(card, 1), "GPU, whole card");
   assert.equal(cardLabel(card, 2), "GPU 0, whole card");
   assert.equal(cardFoot(card, bytes), "This box: 0 MiB of 13250 MiB");
+  assert.equal(cardFoot(card, bytes, false), "13250 of 97887 MiB · 285 W");
   assert.equal(cardFoot({ ...card, ownMemoryBytes: null, ownProcesses: null }, bytes), "Whole card: 13250 MiB used");
   assert.equal(sharedCardWords(card, 1, bytes), "This box shares its GPU with other boxes or the host. Its numbers are the whole card's, every user's together. None of this box's processes use it now. bb-box cannot tell how much of the card's use is this box's, so a shared card never makes this box busy.");
   assert.match(sharedCardWords(idleContext.cards[0]!, 2, bytes), /^This box shares GPU 0 with .* This box's own process uses 180 MiB of its memory\./);
@@ -120,7 +123,7 @@ test("a shared card: the whole card's numbers, never busy; a desktop alone on it
 test("the route and light scripts ask nvidia-smi only where its device and command are, each call bounded, the GPU last", () => {
   for (const script of [routeScript("linux", "machine"), lightScript("linux", { own: false, machine: true })]) {
     assert.match(script, /if \[ -e \/dev\/nvidiactl \] && command -v nvidia-smi >\/dev\/null 2>&1; then t=; command -v timeout >\/dev\/null 2>&1 && t="timeout -k 1 2"/);
-    assert.equal(script.match(/\$t nvidia-smi --query-gpu=index,pci\.bus_id,name,utilization\.gpu,memory\.used,memory\.total,temperature\.gpu,power\.draw,power\.limit --format=csv,noheader,nounits/g)?.length, 1);
+    assert.equal(script.match(/\$t nvidia-smi --query-gpu=index,uuid,pci\.bus_id,name,utilization\.gpu,memory\.used,memory\.total,temperature\.gpu,power\.draw,power\.limit --format=csv,noheader,nounits/g)?.length, 1);
     assert.equal(script.match(/\$t nvidia-smi -q -d PIDS \|\| echo '\[failed\]'/g)?.length, 1);
     assert.match(script, /fi; true$/, "the GPU sections come last");
   }
@@ -213,7 +216,7 @@ test("a box read through its route shows its cards, keeps processes on the GPU i
     "@@bb-box-monitor:meminfo",
     "MemTotal: 8388608 kB\nMemAvailable: 4194304 kB",
     "@@bb-box-monitor:nvidia",
-    `0, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 97, 40000, 97887, 80, 290.00, 300.00`,
+    `0, GPU-${UUID_0}, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 97, 40000, 97887, 80, 290.00, 300.00`,
     "@@bb-box-monitor:nvidia-pids",
     pidsReport({ [BUS_0]: [[4242, "C", "/usr/bin/python3", 39000]] }),
     "",
@@ -241,7 +244,7 @@ function lightOutput(nvidia: string | null, pids: string | null, container: bool
 }
 
 test("box history's light reading keeps each card's use and memory at the minute's point; the GPU makes a point high from 85%, never on a shared card", () => {
-  const card = `0, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96, 48943, 97886, 80, 290.00, 300.00`;
+  const card = `0, GPU-${UUID_0}, ${BUS_0}, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 96, 48943, 97886, 80, 290.00, 300.00`;
   const own = parseLightOutput("linux", lightOutput(card, pidsReport({ [BUS_0]: [[31, "C", "python", 48900]] }), true));
   assert.deepEqual(own.gpus, [{ index: 0, usagePercent: 96, memoryUsedBytes: 48943 * MiB, memoryTotalBytes: 97886 * MiB, shared: false, ownProcesses: 1 }]);
   const previous: Kept = { at: 0, tick: 0, reading: own };
