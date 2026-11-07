@@ -6,7 +6,7 @@
 // or closed, and refuses everything while a person holds the box's desktop.
 // The agent never sees Cua's own words for what went wrong.
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { ByteChannel, GuestOs } from "../transports/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
@@ -35,6 +35,7 @@ const IDLE_MS = 10 * 60_000;
 const PAUSE_WAIT_MS = 3_000;
 const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
+const DRIVER_SESSION_PREFIX = "bb-box-";
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
 const FINDER_WINDOW_WAIT_MS = 3_000;
@@ -337,6 +338,12 @@ interface Live {
   readonly generation: number;
   /** Why bb-box closed it; null while open, or when it ended by itself. */
   reason: string | null;
+  sessionTools: ReadonlySet<string> | null;
+}
+
+interface DriverSession {
+  readonly name: string;
+  cursorHidden: boolean;
 }
 
 interface BoxState {
@@ -370,6 +377,7 @@ interface BoxState {
   readonly titled: Map<number, string>;
   /** On Linux, windows where the last action could have selected text: a key chord or a double-click. */
   readonly selecting: Set<number>;
+  driverSession: DriverSession | null;
 }
 
 interface Use {
@@ -955,6 +963,20 @@ function sessionEnded(result: McpResult): boolean {
   return !!result.isError && /\bSession '[^']*' has ended\b/i.test(rawText(result));
 }
 
+function namedSessionEnded(result: McpResult): boolean {
+  return !!result.isError && /\bsession has ended\b/i.test(rawText(result));
+}
+
+interface ListedTool {
+  readonly name?: unknown;
+  readonly inputSchema?: { readonly properties?: Record<string, unknown> };
+}
+
+function toolsTakingSession(listed: unknown): ReadonlySet<string> {
+  const tools = (listed as { tools?: readonly ListedTool[] } | null)?.tools ?? [];
+  return new Set(tools.flatMap((tool) => (typeof tool.name === "string" && tool.inputSchema?.properties && "session" in tool.inputSchema.properties ? [tool.name] : [])));
+}
+
 export class Computer {
   readonly #deps: ComputerDeps;
   readonly #boxes = new Map<string, BoxState>();
@@ -1510,6 +1532,7 @@ export class Computer {
         lastNaming: null,
         titled: new Map(),
         selecting: new Set(),
+        driverSession: null,
       };
       this.#boxes.set(boxId, state);
     }
@@ -1531,6 +1554,44 @@ export class Computer {
         throw error;
       }
     });
+  }
+
+  hideAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+    return this.#queued(box, signal, async (use) => {
+      const live = await this.#live(use);
+      live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, this.#driverOptions(signal)).catch(() => null));
+      if (!live.sessionTools.has("set_agent_cursor_enabled")) return false;
+      const joined = use.state.driverSession;
+      use.state.driverSession = { name: joined?.name ?? `${DRIVER_SESSION_PREFIX}${randomBytes(4).toString("hex")}`, cursorHidden: true };
+      if (await this.#joinSession(use.state, live, signal)) return true;
+      use.state.driverSession = null;
+      return false;
+    });
+  }
+
+  showAgentCursor(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+    return this.#queued(box, signal, async (use) => {
+      const session = use.state.driverSession;
+      if (!session?.cursorHidden) return false;
+      session.cursorHidden = false;
+      const live = use.state.live;
+      if (live && !live.mcp.closed) await this.#joinSession(use.state, live, signal).catch(() => false);
+      return true;
+    });
+  }
+
+  #driverOptions(signal?: AbortSignal): { timeoutMs: number; signal?: AbortSignal } {
+    return { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal };
+  }
+
+  async #joinSession(state: BoxState, live: Live, signal?: AbortSignal): Promise<boolean> {
+    const session = state.driverSession;
+    if (!session) return false;
+    const options = this.#driverOptions(signal);
+    live.sessionTools ??= toolsTakingSession(await live.mcp.request("tools/list", {}, options).catch(() => null));
+    if (!live.sessionTools.has("start_session")) return false;
+    if ((await live.mcp.call("start_session", { session: session.name }, options)).isError) return false;
+    return !(await live.mcp.call("set_agent_cursor_enabled", { session: session.name, enabled: !session.cursorHidden }, options)).isError;
   }
 
   async screenPicture(box: BoxRecord, longestEdge: number, signal?: AbortSignal): Promise<{ readonly data: string; readonly mimeType: string }> {
@@ -1652,7 +1713,7 @@ export class Computer {
             if (live.reason === null) this.#deps.logError(`computer-use session with box ${box.name}`, error);
           },
         });
-        live = { mcp, generation, reason: null };
+        live = { mcp, generation, reason: null, sessionTools: null };
         state.generation = generation;
         if (state.forgotten) {
           live.reason = FORGOTTEN;
@@ -1660,6 +1721,7 @@ export class Computer {
           throw new ComputerError("interrupted", FORGOTTEN, "Call box_status to see the box.");
         }
         state.live = live;
+        if (state.driverSession && !(await this.#joinSession(state, live).catch(() => false))) state.driverSession = null;
         return live;
       } catch (error) {
         if (error instanceof BoxError || error instanceof ComputerError) throw error;
@@ -1686,8 +1748,10 @@ export class Computer {
       gate();
       const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
       let result: McpResult;
+      const session = use.state.driverSession;
+      const sessioned = session && live.sessionTools?.has(name) ? { ...args, session: session.name } : args;
       try {
-        result = await live.mcp.call(name, args, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
+        result = await live.mcp.call(name, sessioned, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
       } catch (error) {
         if (error instanceof McpError) {
           throw new ComputerError("driver", `bb-box's request to the desktop failed: ${sentence(error.message)}`, "This is probably a bb-box bug: tell the user.");
@@ -1708,6 +1772,10 @@ export class Computer {
         void live.mcp.close(live.reason);
         const message = error instanceof Error ? error.message : String(error);
         throw new ComputerError("driver", `${sentence(message)}${unsure}`, "Call computer_observe to see the window, then try again.");
+      }
+      if (session && sessioned !== args && namedSessionEnded(result) && attempt === 0) {
+        if (!(await this.#joinSession(use.state, live).catch(() => false))) use.state.driverSession = null;
+        continue;
       }
       // The driver can end its session by itself, as after a while idle, and keep the connection: every call then
       // answers that the session has ended (#662). A new session takes over, for a read at once.

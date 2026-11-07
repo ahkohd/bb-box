@@ -18,7 +18,7 @@ import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
-import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -1001,6 +1001,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const offset = clockOffset(readings);
           const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           if (result.exitCode === RECORD_START_EXITS.started && offset !== null) app.recordings.begin(found.id, offset, os);
+          if (result.exitCode === RECORD_START_EXITS.started && driverDrawsAgentCursor(os) && found.capabilities.computerUse) await app.computer.hideAgentCursor(found, signal).catch(() => false);
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
             [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
@@ -1041,13 +1042,14 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           : await (async () => {
               const prepared = await runLong(recordPrepareScript(stills ?? "cut", os), 4 * 1024 * 1024);
               const inputs = app.recordings.end(found.id);
+              const cursorHidden = driverDrawsAgentCursor(os) && found.capabilities.computerUse ? await app.computer.showAgentCursor(found, signal).catch(() => false) : false;
               if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return null;
               const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
               if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
               app.devices.recordingEnded(found.id);
               timings.stopping = (Date.now() - stopBegan) / 1000;
               const planBegan = Date.now();
-              const plan = planClip(withInputs(facts, inputs), times, { zoom: zoom ?? true, frame: frame ?? true });
+              const plan = planClip(withAgentCursorHidden(withInputs(facts, inputs), cursorHidden), times, { zoom: zoom ?? true, frame: frame ?? true });
               const drawing = sceneBundle(plan);
               timings.planning = (Date.now() - planBegan) / 1000;
               if (drawing) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${SCENE_BUNDLE}`, drawing, { signal });

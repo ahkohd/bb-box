@@ -1,4 +1,4 @@
-import { cornerArt, pointerArt, pressArt, ringArt, type Art, type Pointer } from "./record-art.ts";
+import { cornerArt, pointerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
 import type { InputArea, InputEvent } from "./record-input.ts";
 import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
 import {
@@ -15,6 +15,7 @@ import {
   type PlacedClick,
   type PlacedScroll,
   type PlacedTyping,
+  type PointerFrame,
   type PointerPlan,
   type PointerSample,
   type Scene,
@@ -23,6 +24,20 @@ import {
 } from "./record-motion.ts";
 
 export type PointerMode = "drawn" | "shown";
+
+export const GRID_COLUMNS = 16;
+export const GRID_ROWS = 9;
+
+export interface BrightnessGrid {
+  readonly at: number;
+  readonly cells: readonly number[];
+}
+
+export interface VariantSpan {
+  readonly from: number;
+  readonly to: number;
+  readonly variant: PointerVariant;
+}
 
 export interface SceneFacts {
   readonly pointer: PointerMode;
@@ -33,6 +48,7 @@ export interface SceneFacts {
   readonly lag: number;
   readonly keys: KeyStyle;
   readonly agentCursor?: boolean;
+  readonly brightness?: readonly BrightnessGrid[];
   readonly inputs?: readonly InputEvent[];
 }
 
@@ -60,7 +76,13 @@ export interface ScenePlan {
   readonly art: readonly Art[];
   readonly pointerArt: Pointer | null;
   readonly pointerHeight: number;
-  readonly ringKinds: readonly ("left" | "right")[];
+  readonly variants: readonly VariantSpan[];
+  readonly ringStyles: readonly RingStyle[];
+}
+
+export interface RingStyle {
+  readonly kind: "left" | "right";
+  readonly variant: PointerVariant;
 }
 
 export const DARK_BACKGROUND = "161618";
@@ -115,6 +137,47 @@ export function contentSize(source: { readonly width: number; readonly height: n
   return { clip: { width, height: contentHeight + inset * 2 }, content: { width: contentWidth, height: contentHeight }, inset };
 }
 
+export const BRIGHT_UNDER = 150;
+export const DIM_UNDER = 105;
+export const VARIANT_LEAST_S = 0.5;
+
+function brightnessUnder(grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, at: number, x: number, y: number): number | null {
+  if (!grids.length || size.width <= 0 || size.height <= 0) return null;
+  const nearest = grids.reduce((best, grid) => (Math.abs(grid.at - at) < Math.abs(best.at - at) ? grid : best));
+  const column = Math.min(GRID_COLUMNS - 1, Math.max(0, Math.floor((x / size.width) * GRID_COLUMNS)));
+  const row = Math.min(GRID_ROWS - 1, Math.max(0, Math.floor((y / size.height) * GRID_ROWS)));
+  return nearest.cells[row * GRID_COLUMNS + column] ?? null;
+}
+
+function variantFor(under: number | null): PointerVariant | null {
+  if (under === null) return null;
+  if (under >= BRIGHT_UNDER) return "dark";
+  return under <= DIM_UNDER ? "light" : null;
+}
+
+export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null): VariantSpan[] {
+  const wanted = frames.map((frame, index) => variantFor(brightnessUnder(grids, size, index / CLIP_FPS, frame.x + pointerHeight * 0.25, frame.y + pointerHeight * 0.45)));
+  let current: PointerVariant = wanted.find((each) => each !== null) ?? (luma !== null && luma >= 128 ? "dark" : "light");
+  const runs: VariantSpan[] = [];
+  wanted.forEach((each, index) => {
+    current = each ?? current;
+    const last = runs.at(-1);
+    if (last && last.variant === current) runs[runs.length - 1] = { ...last, to: index + 1 };
+    else runs.push({ from: index, to: index + 1, variant: current });
+  });
+  const least = Math.round(VARIANT_LEAST_S * CLIP_FPS);
+  return runs.reduce((kept: VariantSpan[], run) => {
+    const last = kept.at(-1);
+    if (last && (last.variant === run.variant || run.to - run.from < least)) kept[kept.length - 1] = { ...last, to: run.to };
+    else kept.push(run);
+    return kept;
+  }, []);
+}
+
+function variantAt(spans: readonly VariantSpan[], frame: number): PointerVariant {
+  return (spans.find((span) => frame >= span.from && frame < span.to) ?? spans.at(-1))?.variant ?? "light";
+}
+
 export function backgroundFor(luma: number | null): string {
   return luma !== null && luma >= 128 ? LIGHT_BACKGROUND : DARK_BACKGROUND;
 }
@@ -135,19 +198,26 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   ].map((span) => ({ from: round3(Math.max(0, span.from)), to: round3(Math.min(length, span.to)) }));
   const { content, inset } = contentSize(size, options.frame);
   const pointerHeight = Math.max(16, Math.round(size.height / 30));
-  const ringKinds = (["left", "right"] as const).filter((kind) => pointer.rings.some((ring) => ring.kind === kind));
-  const pointerImage = drawsPointer ? pointerArt(pointerHeight) : null;
+  const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma);
+  const ringStyles = ringStylesOf(pointer, variants);
+  const pointerImages = drawsPointer ? (["dark", "light"] as const).filter((variant) => variants.some((span) => span.variant === variant)).map((variant) => pointerArt(pointerHeight, variant)) : [];
   const frame = options.frame ? { inset, radius: Math.max(4, Math.round(contentSize(size, true).clip.width * FRAME_RADIUS_SHARE)), background: backgroundFor(facts.luma) } : null;
   const art: Art[] = [
-    ...ringKinds.flatMap((kind) => Array.from({ length: RING_STAGES }, (_, stage) => ringArt(pointerHeight, stage, kind))),
+    ...ringStyles.flatMap((style) => Array.from({ length: RING_STAGES }, (_, stage) => ringArt(pointerHeight, stage, style.kind, style.variant))),
     ...(drawsPointer && pointer.drags.length ? [pressArt(pointerHeight)] : []),
-    ...(pointerImage ? [pointerImage] : []),
+    ...pointerImages,
     ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
   ];
-  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: pointerImage, pointerHeight, ringKinds };
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: pointerImages[0] ?? null, pointerHeight, variants, ringStyles };
 }
 
-const ringTarget = (kind: "left" | "right", stage: number) => `overlay@ring${kind[0]}${stage}`;
+function ringStylesOf(pointer: PointerPlan, variants: readonly VariantSpan[]): RingStyle[] {
+  const styles = pointer.rings.map((ring): RingStyle => ({ kind: ring.kind, variant: variantAt(variants, Math.round(ring.at * CLIP_FPS)) }));
+  return styles.filter((style, index) => styles.findIndex((other) => other.kind === style.kind && other.variant === style.variant) === index);
+}
+
+const ringTarget = (style: RingStyle, stage: number) => `overlay@ring${style.kind[0]}${style.variant[0]}${stage}`;
+const pointerTarget = (variant: PointerVariant) => `overlay@pointer${variant[0]}`;
 
 export function sceneCommands(plan: ScenePlan): string {
   const lines: { at: number; order: number; text: string }[] = [];
@@ -155,15 +225,22 @@ export function sceneCommands(plan: ScenePlan): string {
   const art = (name: string) => plan.art.find((each) => each.name === name)!;
   if (plan.drawsPointer && plan.pointerArt) {
     const press = plan.pointer.drags.length ? art("press.png") : null;
+    const drawn = (["dark", "light"] as const).filter((variant) => plan.variants.some((span) => span.variant === variant));
     let last: { x: number; y: number } | null = null;
     plan.pointer.frames.forEach((frame, index) => {
       if (last && last.x === frame.x && last.y === frame.y) return;
       last = frame;
-      const parts = [`overlay@pointer x ${frame.x - plan.pointerArt!.hotX}`, `overlay@pointer y ${frame.y - plan.pointerArt!.hotY}`];
+      const parts = drawn.flatMap((variant) => [`${pointerTarget(variant)} x ${frame.x - plan.pointerArt!.hotX}`, `${pointerTarget(variant)} y ${frame.y - plan.pointerArt!.hotY}`]);
       if (press) parts.push(`overlay@press x ${frame.x - Math.round(press.width / 2)}`, `overlay@press y ${frame.y - Math.round(press.height / 2)}`);
       lines.push({ at: at(index), order: 1, text: parts.join(", ") });
     });
-    lines.push({ at: plan.pointer.visibleFrom ?? 0, order: 2, text: "overlay@pointer enable 1" });
+    const visibleFrom = plan.pointer.visibleFrom ?? 0;
+    plan.variants.forEach((span, index) => {
+      const to = at(span.to);
+      if (to <= visibleFrom && index < plan.variants.length - 1) return;
+      lines.push({ at: Math.max(visibleFrom, at(span.from)), order: 2, text: `${pointerTarget(span.variant)} enable 1` });
+      if (index < plan.variants.length - 1) lines.push({ at: to, order: 0, text: `${pointerTarget(span.variant)} enable 0` });
+    });
     if (press) {
       for (const drag of plan.pointer.drags) {
         lines.push({ at: drag.from, order: 2, text: "overlay@press enable 1" }, { at: drag.to, order: 0, text: "overlay@press enable 0" });
@@ -171,10 +248,11 @@ export function sceneCommands(plan: ScenePlan): string {
     }
   }
   for (const ring of plan.pointer.rings) {
+    const style: RingStyle = { kind: ring.kind, variant: variantAt(plan.variants, Math.round(ring.at * CLIP_FPS)) };
     for (let stage = 0; stage < RING_STAGES; stage++) {
-      const image = art(`ring-${ring.kind}-${stage}.png`);
+      const image = art(`ring-${style.kind}-${style.variant}-${stage}.png`);
       const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
-      const target = ringTarget(ring.kind, stage);
+      const target = ringTarget(style, stage);
       lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}, ${target} enable 1` });
       lines.push({ at: round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS), order: 0, text: `${target} enable 0` });
     }
@@ -224,8 +302,9 @@ export function sceneHead(plan: ScenePlan, firstInput: number): { readonly graph
   plan.art.forEach((art, index) => {
     if (art.name === "corner.png") return;
     const input = firstInput + index;
-    const ring = /^ring-(left|right)-(\d)\.png$/.exec(art.name);
-    const target = ring ? ringTarget(ring[1] as "left" | "right", Number(ring[2])) : art.name === "press.png" ? "overlay@press" : "overlay@pointer";
+    const ring = /^ring-(left|right)-(dark|light)-(\d)\.png$/.exec(art.name);
+    const pointerVariant = /^pointer-(dark|light)\.png$/.exec(art.name)?.[1] as PointerVariant | undefined;
+    const target = ring ? ringTarget({ kind: ring[1] as "left" | "right", variant: ring[2] as PointerVariant }, Number(ring[3])) : pointerVariant ? pointerTarget(pointerVariant) : "overlay@press";
     const next = into();
     lines.push(`[${label}][${input}:v]${target}=x=0:y=0:enable=0[${next}]`);
     label = next;

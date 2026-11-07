@@ -76,14 +76,25 @@ while recording loses it, and the clip is made from the sampler alone.
 
 - **The pointer.** The screen's own pointer is left out of the capture
   where the box samples it, and bb-box draws a larger arrow, about a
-  thirtieth of the screen's height, black with a white edge, no shadow. It
-  follows the latest source that moved it. A jump, as the agent's clicks
+  thirtieth of the screen's height, no shadow. It is in the style of
+  Bibata Modern, but bb-box's own: no file, path or geometry of Bibata's,
+  which is GPL-3.0. Seven corners, each rounded by its own fillet, an
+  outline of even width, about a twelfth of its height, and edges softened
+  over 0.9 px. It comes in two inks: dark with a light outline, and light
+  with a dark outline. It follows the latest source that moved it. A jump, as the agent's clicks
   are, glides over 0.5 s to arrive as the click lands, on the web-demo
   skill's curve, `cubic-bezier(0.23, 1, 0.32, 1)`. A person's motion is
   smoothed over five frames, centred, so it does not lag.
-- **Clicks.** A ring grows and fades over 0.4 s where each click lands:
-  white with a dark edge for a left click, blue for a right click, two
-  rings 0.12 s apart for a double click. While a button is held, a soft
+- **Which ink.** The stop's pass that finds still stretches also writes
+  the screen's brightness, a grid of 16 by 9 cells, once a second. The
+  pointer is dark over a cell lighter than 150 of 255 and light over one
+  darker than 105, keeps its ink in between, and never changes for less
+  than 0.5 s, so it does not flicker. With no grid, the capture's average
+  brightness chooses.
+- **Clicks.** A ring grows and fades over 0.4 s where each click lands, in
+  the pointer's inks as it is there: a band of its fill between thin edges
+  of its outline's ink, blue for a right click, two rings 0.12 s apart for
+  a double click. While a button is held, a soft
   disc stays under the pointer, so a drag shows as one.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
   Home, End, Page Up and Down, Delete) shows as a small pill, "Ctrl+S" or
@@ -185,11 +196,26 @@ Where no sampler runs, the screen's own pointer stays in the picture, as
 the recorder captures it, and bb-box draws only the rings, pills and zoom.
 
 On macOS and Windows, Cua Driver draws its own agent cursor on the screen
-for each action, so the picture has the agent's pointer already. There
-bb-box draws only the real pointer, from the samples, and only once it
-first moves, as when a person has control: two arrows for one action would
-mislead. Hiding Cua's cursor while recording, so bb-box draws the agent's,
-is for later: Cua 0.30 can, per session.
+for each action. While recording, bb-box hides it, so it draws the same
+pointer on every platform. Cua 0.30 owns the cursor per lifecycle session:
+bb-box starts a session of its own, `bb-box-` and 8 hex digits, sets
+`set_agent_cursor_enabled` false in it, and names it on each call whose
+tool takes a session (38 of Cua 0.30.4's 58 tools). At the stop it sets the
+cursor shown again in the same session and keeps using it, as Cua's element
+references belong to the session that read them: ending it made the next
+click on a ref fail. A new connection to the driver starts the session
+again with the cursor as it was, and so does a call the driver refuses as
+the session ended. Measured on a Tart macOS box and a Proxmox Windows box,
+both Cua 0.30.4: with the cursor hidden, a click showed no agent cursor in
+a screenshot taken at once; shown again, it did, and a ref read while
+hidden still clicked.
+
+Where the driver cannot hide it, as one without sessions, or the session
+is lost while recording, the clip keeps Cua's cursor, and bb-box draws only
+the real pointer, from the samples, and only once it first moves, as when a
+person has control: two arrows for one action would mislead. On Windows,
+Cua's badge beside its cursor shows the session's name when the cursor
+shows, outside recordings.
 
 The first frame comes after the box's `start` time by a lag each platform
 sets: 0.09 s on X11, measured over 5 runs; the same on Wayland, and 0.1 s
@@ -207,9 +233,12 @@ still stretches, planning, drawing and encoding, and copying.
 2. macOS, on a Tart box. Done.
 3. Windows. Done, checked by its scripts on a Proxmox box.
 4. The guide and its images. Done.
-5. Wayland: a sampler from `bb-box-cursor`, once its pointer in the
+5. The rounded pointer in two inks, its rings, and Cua's cursor hidden while
+   recording on macOS and Windows. Done, the pointer re-recorded on Linux
+   X11 and the hiding driven live on macOS and Windows.
+6. Wayland: a sampler from `bb-box-cursor`, once its pointer in the
    capture is known.
-6. Device boxes: key pills, then zoom. Not in this delivery: their clips
+7. Device boxes: key pills, then zoom. Not in this delivery: their clips
    are as before.
 
 ## Rejected

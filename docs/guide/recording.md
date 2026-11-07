@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![An agent writes a note in Mousepad on a Linux box: the clip zooms in where it clicks and types, draws its pointer and a ring for the click, pans to the window's title as it is dragged, and shows Typing, Ctrl+A, Ctrl+S and Esc in pills at the bottom](../media/recording.webp)
+![An agent writes a note in Mousepad on a Linux box: the clip zooms in where it clicks and types, draws its pointer, light over the desktop and dark over the page, zooms out as the window is dragged and as the Save dialog opens, and shows Typing, Ctrl+A, Ctrl+S and Esc in pills at the bottom](../media/recording.webp)
 
 ## What a clip shows
 
@@ -10,9 +10,9 @@ A clip shows the box's whole screen, up to 1280 pixels wide and 30 frames a seco
 
 ### The pointer, clicks and keys
 
-bb-box draws its own pointer over the clip, larger than the screen's. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
+bb-box draws its own pointer over the clip, larger than the screen's: an arrow with rounded corners and an even outline. It is dark with a light outline over light parts of the screen, and light with a dark outline over dark ones, and it changes only when what is under it stays lighter or darker for half a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
 
-- Each click shows a ring where it lands: white for a left click, blue for a right click, and two quick rings for a double click.
+- Each click shows a ring where it lands, drawn as the pointer is, in its colours: blue for a right click, and two quick rings for a double click.
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
 - Each shortcut or special key shows in a small pill at the bottom, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together, which type characters on Windows. A shortcut's key is a letter, digit or ASCII symbol.
@@ -22,9 +22,9 @@ bb-box draws its own pointer over the clip, larger than the screen's. It glides 
 
 The pill moves to the top when the pointer is near the bottom of the screen, so it does not cover what was clicked.
 
-On macOS and Windows, the agent's pointer is the one its computer-use driver draws on the screen, and bb-box draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
+On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
-![The drawn pointer in a note being typed in Mousepad, zoomed in, with the Typing pill at the bottom and the step captioned at the top](../media/recording-zoom.png)
+![The drawn pointer, dark over the page, in a note being typed in Mousepad, zoomed in, with the Typing pill at the bottom and the step captioned at the top](../media/recording-zoom.png)
 
 ### Zooms
 
@@ -47,7 +47,7 @@ When an agent tests something, it captions each check:
 
 The next step replaces both. Each caption stays up long enough to read, even where still stretches are cut or the clip plays faster.
 
-![A step and its result captioned at the top of a Linux desktop on a dark background with rounded corners, and an Esc pill above the taskbar](../media/recording-step.png)
+![A step captioned at the top of a Linux desktop on a dark background with rounded corners, and an Esc pill above the taskbar](../media/recording-step.png)
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 
@@ -98,3 +98,5 @@ A desktop also samples its pointer 30 times a second while it records, on X11, m
 | Windows on Proxmox, 4 cores, 1280 by 800, 29 s recorded | not timed | 0.1 s | 2.5 s | not timed |
 
 A busy 67 second recording on an X11 desktop of 8 cores, six rounds of clicks, typing, shortcuts and drags, took 9.9 seconds to make in all.
+
+Choosing the pointer's colours reads the brightness of the screen once a second, in the pass that finds still stretches. On a 15.5 second X11 recording of 8 cores that pass took 0.33 to 0.35 seconds with it and 0.31 to 0.35 seconds without, over 5 runs, and making the clip took the same time as before, 2.6 to 2.7 seconds.

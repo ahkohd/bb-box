@@ -43,6 +43,8 @@ test("box_record starts once, refuses no display, and stop makes the clip with s
   const { scene, ...plain } = facts!;
   assert.deepEqual({ ...plain, start: null }, { ended: "stopped", recorded: 10, width: 1280, height: 720, start: null, position: "top", cuts: [[1.5, 6], [8.5, 10]], events: [] });
   assert.equal(scene?.pointer, "shown", "no display to sample, so the screen's own pointer stays in the picture");
+  assert.deepEqual(scene?.brightness?.map((grid) => [grid.at, grid.cells.length, grid.cells[0]]), [[0, 144, 200], [1, 144, 200]], "the brightness under the pointer, a grid a second");
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /-map \[grid\] -f rawvideo -pix_fmt gray \S+\/grid\.raw/);
   assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
   const { drawing, encoding, ...result } = parseRecordResult(made!.stdout)!;
   assert.deepEqual(result, { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: true });
@@ -176,6 +178,9 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   assert.match(prepare, /if \('cut' -eq 'cut'\)/);
   assert.match(prepare, /-vf freezedetect=n=0\.0001:d=1 -map 0:v -f null -/);
   assert.match(prepare, /"start":\{3\},"position":"\{4\}","cuts":\[\{5\}\]/);
+  assert.ok(prepare.includes("$grid = Join-Path $d 'grid.raw'"), "the grid's path, as a backslash before an interpolation would hide it");
+  assert.match(prepare, /-map '\[grid\]' -f rawvideo -pix_fmt gray \$grid 2>&1/);
+  assert.ok(prepare.includes("'G {0} {1}' -f ($i / 144), [BitConverter]::ToString($cells, $i, 144)"), "each second's grid as a line, as on Linux and macOS");
   assert.match(recordPrepareScript("keep", "windows"), /if \('keep' -eq 'cut'\)/);
   const prepared = parsePrepared(`{"ended":"stopped","recorded":20.5,"size":"1280x800","start":100.000,"position":"bottom","cuts":[[3.500,9.000]]}\r\n100.500\tstep\t${Buffer.from("It opens Notepad").toString("base64")}\r\n102.000\tpass\t${Buffer.from("Notepad is open").toString("base64")}\r\n`);
   assert.deepEqual(prepared?.events.map((event) => event.text), ["It opens Notepad", "Notepad is open"]);
@@ -218,7 +223,7 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   };
   const plan = planClip(prepared, 1);
   assert.equal(plan.fps, 30);
-  assert.deepEqual(plan.scene!.art.map((art) => art.name), ["ring-left-0.png", "ring-left-1.png", "ring-left-2.png", "ring-left-3.png", "ring-left-4.png", "ring-left-5.png", "pointer.png", "corner.png"]);
+  assert.deepEqual(plan.scene!.art.map((art) => art.name), ["ring-left-light-0.png", "ring-left-light-1.png", "ring-left-light-2.png", "ring-left-light-3.png", "ring-left-light-4.png", "ring-left-light-5.png", "pointer-light.png", "corner.png"]);
   const missing = run(recordMakeScript(plan), home);
   assert.equal(missing.status, RECORD_STOP_EXITS.failed, "no drawing, no clip");
   assert.match(missing.stderr, /drawing was not delivered/);
@@ -226,7 +231,7 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   const made = run(recordMakeScript(plan), home);
   assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
-  assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-0.png"), encoded);
-  assert.match(encoded, /-i pointer\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
-  for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "pointer.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
+  assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-light-0.png"), encoded);
+  assert.match(encoded, /-i pointer-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
+  for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "pointer-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
 });

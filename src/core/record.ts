@@ -14,7 +14,7 @@ import type { GuestOs } from "../transports/types.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
 import type { InputEvent } from "./record-input.ts";
 import { CLIP_FPS, keptMotion, type ChangedRegion, type PointerSample } from "./record-motion.ts";
-import { bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
+import { GRID_COLUMNS, GRID_ROWS, bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type BrightnessGrid, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
 
 export { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind };
 
@@ -25,6 +25,9 @@ export const SAMPLER_HZ = 30;
 export const CHANGES_WIDTH = 480;
 export const CHANGES_MOST = 3000;
 export const SAMPLES_MOST = 12_000;
+export const GRID_FILE = "grid.raw";
+const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
+const GRIDS_MOST = RECORD_LIMIT_S + 30;
 export const FIRST_FRAME_LAG_S = { x11: 0.09, wayland: 0.09, macos: 0.1, windows: 0.1 } as const;
 export const DEFAULT_SCENE_OPTIONS: SceneOptions = { zoom: true, frame: true };
 
@@ -110,7 +113,7 @@ export function recordStartScript(os: GuestOs = "linux", position: CaptionPositi
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
 if [ -s "$d/pointer.pid" ]; then kill "$(cat "$d/pointer.pid")" 2>/dev/null; fi
-rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events" "$d/pointer" "$d/pointer.pid" "$d/pointer-mode" "$d/analysis.log"
+rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events" "$d/pointer" "$d/pointer.pid" "$d/pointer-mode" "$d/analysis.log" "$d/${GRID_FILE}"
 find "$d" -maxdepth 1 \( -name 'pill-*' -o -name 'ring-*' -o -name '*.png' -o -name '*.cmd' -o -name '*.graph' -o -name '*.bundle' \) -exec rm -f {} +
 echo ${position} >"$d/position"
 mode=shown
@@ -195,7 +198,7 @@ if [ -s "$d/pointer.pid" ]; then kill "$(cat "$d/pointer.pid")" 2>/dev/null; rm 
 [ -s "$d/capture.mkv" ] || { tail -n 3 "$d/log" >&2; exit ${RECORD_STOP_EXITS.failed}; }
 recorded=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/capture.mkv")
 size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/capture.mkv")
-ffmpeg -nostdin -hide_banner -nostats -i "$d/capture.mkv" -filter_complex "${analysisGraph(stills)}" -map "[o]" -f null - 2>"$d/analysis.log" ||
+ffmpeg -nostdin -hide_banner -nostats -i "$d/capture.mkv" -filter_complex "${analysisGraph(stills)}" -map "[o]" -f null - -map "[grid]" -f rawvideo -pix_fmt gray "$d/${GRID_FILE}" 2>"$d/analysis.log" ||
   ffmpeg -nostdin -hide_banner -nostats -i "$d/capture.mkv" -vf ${FREEZE} -map 0:v -f null - 2>"$d/analysis.log"
 cuts=
 if [ "${stills}" = cut ]; then
@@ -212,12 +215,13 @@ awk -v f="$(echo "$size" | awk -Fx '{ printf "%.4f", $1 / ${CHANGES_WIDTH} }')" 
     for (i = 1; i <= NF; i++) { split($i, kv, ":"); v[kv[1]] = kv[2] }
     printf "C %.3f %d %d %d %d\n", v["pts_time"], v["x1"] * f, v["y1"] * f, (v["x2"] - v["x1"] + 1) * f, (v["y2"] - v["y1"] + 1) * f
   }' "$d/analysis.log" | head -n ${CHANGES_MOST}
+[ ! -s "$d/${GRID_FILE}" ] || od -An -v -tu1 "$d/${GRID_FILE}" | awk -v n=${GRID_CELLS} '{ for (i = 1; i <= NF; i++) { if (c % n == 0) printf "%sG %d ", (c ? "\n" : ""), c / n; printf "%02x", $i; c++ } } END { if (c) printf "\n" }' | head -n ${GRIDS_MOST}
 `;
 }
 
 export function analysisGraph(stills: "cut" | "keep"): string {
   const head = stills === "cut" ? `[0:v]${FREEZE},split=2[o][a]` : "[0:v]split=2[o][a]";
-  return `${head};[a]fps=4,scale=${CHANGES_WIDTH}:-2:flags=area,format=gray,split=2[c][l];[c]tblend=all_mode=difference,bbox=min_val=6,nullsink;[l]signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,nullsink`;
+  return `${head};[a]fps=4,scale=${CHANGES_WIDTH}:-2:flags=area,format=gray,split=3[c][l][g];[c]tblend=all_mode=difference,bbox=min_val=6,nullsink;[l]signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,nullsink;[g]fps=1,scale=${GRID_COLUMNS}:${GRID_ROWS}:flags=area[grid]`;
 }
 
 export interface RecordEvent {
@@ -252,17 +256,24 @@ export interface Prepared {
 
 const finiteNumbers = (parts: readonly string[]) => parts.map(Number).every(Number.isFinite);
 
-export function parseSceneLines(lines: readonly string[]): { readonly screen: SceneFacts["screen"]; readonly samples: PointerSample[]; readonly changes: ChangedRegion[] } {
+const GRID_LINE = new RegExp(`^G (\\d+) ([0-9a-f]{${GRID_CELLS * 2}})$`);
+
+export function parseSceneLines(lines: readonly string[]): { readonly screen: SceneFacts["screen"]; readonly samples: PointerSample[]; readonly changes: ChangedRegion[]; readonly brightness: BrightnessGrid[] } {
   let screen: SceneFacts["screen"] = null;
   const samples: PointerSample[] = [];
   const changes: ChangedRegion[] = [];
+  const brightness: BrightnessGrid[] = [];
   for (const line of lines) {
     const parts = line.trim().split(/\s+/);
     if (parts[0] === "P" && parts[1] === "screen" && finiteNumbers(parts.slice(2, 4)) && parts.length >= 4) screen = { width: Number(parts[2]), height: Number(parts[3]) };
     else if (parts[0] === "P" && parts.length >= 5 && finiteNumbers(parts.slice(1, 5))) samples.push({ at: Number(parts[1]), x: Number(parts[2]), y: Number(parts[3]), buttons: Number(parts[4]) });
     else if (parts[0] === "C" && parts.length >= 6 && finiteNumbers(parts.slice(1, 6))) changes.push({ at: Number(parts[1]), x: Number(parts[2]), y: Number(parts[3]), width: Number(parts[4]), height: Number(parts[5]) });
+    else {
+      const grid = GRID_LINE.exec(line.trim());
+      if (grid) brightness.push({ at: Number(grid[1]), cells: Array.from(Buffer.from(grid[2]!, "hex")) });
+    }
   }
-  return { screen, samples, changes };
+  return { screen, samples, changes, brightness };
 }
 
 export function parsePrepared(stdout: string): Prepared | null {
@@ -287,6 +298,7 @@ export function parsePrepared(stdout: string): Prepared | null {
             screen: sceneLines.screen,
             samples: sceneLines.samples,
             changes: sceneLines.changes,
+            ...(sceneLines.brightness.length ? { brightness: sceneLines.brightness } : {}),
             luma: typeof value.luma === "number" ? value.luma : null,
             lag: typeof value.lag === "number" ? value.lag : 0,
             keys: value.keys === "mac" ? "mac" : "pc",
@@ -300,6 +312,14 @@ export function parsePrepared(stdout: string): Prepared | null {
 
 export function withInputs(prepared: Prepared, inputs: readonly InputEvent[] | null): Prepared {
   return prepared.scene && inputs ? { ...prepared, scene: { ...prepared.scene, inputs } } : prepared;
+}
+
+export function driverDrawsAgentCursor(os: GuestOs): boolean {
+  return os === "macos" || os === "windows";
+}
+
+export function withAgentCursorHidden(prepared: Prepared, hidden: boolean): Prepared {
+  return hidden && prepared.scene ? { ...prepared, scene: { ...prepared.scene, agentCursor: false } } : prepared;
 }
 
 export interface Caption {
@@ -593,7 +613,7 @@ encoded=$(now)
 seconds() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
 recorded=$(seconds "$d/capture.mkv")
 size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/clip.mp4")
-rm -f "$d/capture.mkv" "$d/events" "$d/pill.js" "$d/pointer" "$d/pointer.js" "$d/pointer.py" "$d/analysis.log" "$d/overlay.bundle"
+rm -f "$d/capture.mkv" "$d/events" "$d/pill.js" "$d/pointer" "$d/pointer.js" "$d/pointer.py" "$d/analysis.log" "$d/overlay.bundle" "$d/${GRID_FILE}"
 find "$d" -maxdepth 1 \( -name 'pill-*' -o -name 'ring-*' -o -name '*.png' -o -name '*.cmd' -o -name '*.graph' \) -exec rm -f {} +
 printf '{"ended":"stopped","recorded":%s,"clip":%s,"bytes":%s,"size":"%s","captions":%s,"drawing":%s,"encoding":%s}\n'   "$recorded" "$(seconds "$d/clip.mp4")" "$(wc -c <"$d/clip.mp4" | tr -d ' ')" "$size" "$(if [ "$captions" = 1 ]; then echo true; elif [ "$captions" = none ]; then echo null; else echo false; fi)" "$(awk -v a="$began" -v b="$drawn" 'BEGIN { printf "%.2f", b - a }')" "$(awk -v a="$drawn" -v b="$encoded" 'BEGIN { printf "%.2f", b - a }')"
 `;
@@ -666,7 +686,7 @@ if (Recording) { exit ${RECORD_START_EXITS.running} }
 $ffmpeg = (Get-Command ffmpeg -ErrorAction Ignore).Source
 if (-not $ffmpeg) { [Console]::Error.WriteLine('ffmpeg'); exit ${RECORD_START_EXITS.noRecorder} }
 if (Test-Path "$d\pointer.pid") { Stop-Process -Id ([int](Get-Content "$d\pointer.pid" -Raw)) -Force -ErrorAction Ignore }
-Remove-Item "$d\capture.mkv", "$d\clip.mp4", "$d\log", "$d\events", "$d\pill-*", "$d\pointer", "$d\pointer.pid", "$d\pointer-mode", "$d\analysis.log", "$d\*.png", "$d\*.cmd", "$d\*.graph", "$d\*.bundle" -Force -ErrorAction Ignore
+Remove-Item "$d\capture.mkv", "$d\clip.mp4", "$d\log", "$d\events", "$d\pill-*", "$d\pointer", "$d\pointer.pid", "$d\pointer-mode", "$d\analysis.log", (Join-Path $d '${GRID_FILE}'), "$d\*.png", "$d\*.cmd", "$d\*.graph", "$d\*.bundle" -Force -ErrorAction Ignore
 Set-Content "$d\position" '${position}'
 [IO.File]::WriteAllText("$d\pointer.ps1", [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(WINDOWS_SAMPLER).toString("base64")}')))
 $mode = 'shown'
@@ -702,6 +722,7 @@ exit ${RECORD_STEP_EXITS.saved}
 function windowsPrepare(stills: "cut" | "keep"): string {
   return String.raw`${WINDOWS_DIR}
 $capture = "$d\capture.mkv"
+$grid = Join-Path $d '${GRID_FILE}'
 if (-not (Test-Path "$d\pid") -and -not (Test-Path $capture)) { exit ${RECORD_STOP_EXITS.none} }
 $ended = 'limit'
 $p = Recording
@@ -715,7 +736,7 @@ if (Test-Path "$d\pointer.pid") { Stop-Process -Id ([int](Get-Content "$d\pointe
 if (-not (Test-Path $capture) -or -not (Get-Item $capture).Length) { Get-Content "$d\log" -Tail 3 -ErrorAction Ignore | ForEach-Object { [Console]::Error.WriteLine($_) }; exit ${RECORD_STOP_EXITS.failed} }
 $recorded = [double](ffprobe -v error -show_entries format=duration -of csv=p=0 $capture)
 $size = "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 $capture)".Trim()
-$analysis = @(ffmpeg -nostdin -hide_banner -nostats -i $capture -filter_complex "${analysisGraph(stills)}" -map '[o]' -f null - 2>&1)
+$analysis = @(ffmpeg -nostdin -hide_banner -nostats -i $capture -filter_complex "${analysisGraph(stills)}" -map '[o]' -f null - -map '[grid]' -f rawvideo -pix_fmt gray $grid 2>&1)
 if ($LASTEXITCODE) { $analysis = @(ffmpeg -nostdin -hide_banner -nostats -i $capture -vf ${FREEZE} -map 0:v -f null - 2>&1) }
 $cuts = @()
 if ('${stills}' -eq 'cut') {
@@ -746,6 +767,10 @@ $position = if (Test-Path "$d\position") { (Get-Content "$d\position" -Raw).Trim
 if (Test-Path "$d\events") { Get-Content "$d\events" }
 if (Test-Path "$d\pointer") { Get-Content "$d\pointer" -TotalCount ${SAMPLES_MOST} | ForEach-Object { "P $_" } }
 $changes
+if (Test-Path $grid) {
+  $cells = [IO.File]::ReadAllBytes($grid)
+  for ($i = 0; $i + ${GRID_CELLS} -le $cells.Length -and $i / ${GRID_CELLS} -lt ${GRIDS_MOST}; $i += ${GRID_CELLS}) { 'G {0} {1}' -f ($i / ${GRID_CELLS}), [BitConverter]::ToString($cells, $i, ${GRID_CELLS}).Replace('-', '').ToLower() }
+}
 exit ${RECORD_STOP_EXITS.made}
 `;
 }
@@ -805,7 +830,7 @@ if ($LASTEXITCODE) { Get-Content "$d\log" -Tail 3 -ErrorAction Ignore | ForEach-
 $encodedAt = [DateTime]::UtcNow
 $recorded = Seconds $capture
 $size = "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d\clip.mp4")".Trim()
-Remove-Item $capture, "$d\events", "$d\pill-*", "$d\pointer", "$d\pointer.ps1", "$d\analysis.log", "$d\*.png", "$d\*.cmd", "$d\*.graph", "$d\*.bundle" -Force -ErrorAction Ignore
+Remove-Item $capture, "$d\events", "$d\pill-*", "$d\pointer", "$d\pointer.ps1", "$d\analysis.log", (Join-Path $d '${GRID_FILE}'), "$d\*.png", "$d\*.cmd", "$d\*.graph", "$d\*.bundle" -Force -ErrorAction Ignore
 $drawn = switch ($captions) { '1' { 'true' } 'none' { 'null' } default { 'false' } }
 '{{"ended":"stopped","recorded":{0},"clip":{1},"bytes":{2},"size":"{3}","captions":{4},"drawing":{5:f2},"encoding":{6:f2}}}' -f $recorded, (Seconds "$d\clip.mp4"), (Get-Item "$d\clip.mp4").Length, $size, $drawn, ($drawnAt - $began).TotalSeconds, ($encodedAt - $drawnAt).TotalSeconds
 exit ${RECORD_STOP_EXITS.made}

@@ -16,8 +16,10 @@ import {
   typingFocus,
   type Scene,
 } from "../src/core/record-motion.ts";
-import { planScene, sceneCommands, zoomFilter, type SceneFacts } from "../src/core/record-scene.ts";
-import { clipGraph, parsePrepared, planClip, type Prepared } from "../src/core/record.ts";
+import { GRID_COLUMNS, GRID_ROWS, planScene, pointerVariants, sceneCommands, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
+import { pointerArt, ringArt } from "../src/core/record-art.ts";
+import { pngPixels } from "../src/core/png.ts";
+import { clipGraph, driverDrawsAgentCursor, parsePrepared, planClip, withAgentCursorHidden, type Prepared } from "../src/core/record.ts";
 import { personInput } from "../src/core/selkies.ts";
 
 const SCREEN = { width: 1920, height: 1080 };
@@ -290,11 +292,11 @@ test("still stretches are cut around the motion: glides, rings, pills' first sec
 test("the pointer's commands move it each frame it moves, show it from when it is known, and switch each ring stage on and off in turn (073)", () => {
   const plan = planScene(facts({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(3, 500, 400)] }), SCREEN, 1000, 5, { zoom: true, frame: true });
   const commands = sceneCommands(plan).trim().split("\n");
-  assert.match(commands[0]!, /^0\.000 overlay@pointer x \d+, overlay@pointer y \d+;$/);
-  assert.ok(commands.includes("0.000 overlay@pointer enable 1;"));
-  const ring = commands.filter((line) => line.includes("overlay@ringl0"));
-  assert.match(ring[0]!, /^3\.000 overlay@ringl0 x \d+, overlay@ringl0 y \d+, overlay@ringl0 enable 1;$/);
-  assert.equal(ring[1], "3.067 overlay@ringl0 enable 0;");
+  assert.match(commands[0]!, /^0\.000 overlay@pointerl x \d+, overlay@pointerl y \d+;$/, "a dark screen, so the light pointer");
+  assert.ok(commands.includes("0.000 overlay@pointerl enable 1;"));
+  const ring = commands.filter((line) => line.includes("overlay@ringll0"));
+  assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+, overlay@ringll0 enable 1;$/);
+  assert.equal(ring[1], "3.067 overlay@ringll0 enable 0;");
   const times = commands.map((line) => Number(line.split(" ")[0]));
   assert.deepEqual(times, [...times].sort((a, b) => a - b), "in time order");
   assert.ok(plan.frame && plan.art.some((art) => art.name === "corner.png"));
@@ -510,4 +512,96 @@ test("an outside change ends a zoom as it happens, with clicks still to come, an
   );
   const late = camera({ clicks: clicks.slice(0, 2), changes });
   for (let t = 3.9; t < 8; t += 0.1) assert.equal(cameraAt(late, t).zoom, 1, `a click the view could reach only after it lands is not framed, at ${t.toFixed(1)} s`);
+});
+
+function pixelAt(png: Buffer, x: number, y: number): readonly number[] {
+  const { width, rgba } = pngPixels(png);
+  const at = (Math.round(y) * width + Math.round(x)) * 4;
+  return [...rgba.subarray(at, at + 4)];
+}
+
+const POINTER_HEIGHT = 36;
+const POINTER_SCALE = POINTER_HEIGHT / 20;
+
+test("the pointer is a rounded arrow of bb-box's own, dark with a light edge or light with a dark edge, with soft edges and its tip where it points (073)", () => {
+  for (const [variant, fill, edge] of [
+    ["dark", 24, 250],
+    ["light", 250, 24],
+  ] as const) {
+    const art = pointerArt(POINTER_HEIGHT, variant);
+    assert.equal(art.name, `pointer-${variant}.png`);
+    const body = pixelAt(art.png, 6.5 * POINTER_SCALE, 11 * POINTER_SCALE);
+    assert.deepEqual([body[0], body[3]], [fill, 255], `${variant}: the body is filled`);
+    const rim = pixelAt(art.png, 3.5 * POINTER_SCALE, 11 * POINTER_SCALE);
+    assert.ok(Math.abs(rim[0]! - edge) < 40 && rim[3]! > 200, `${variant}: the edge is the other ink, ${rim.join(",")}`);
+    assert.equal(pixelAt(art.png, 17 * POINTER_SCALE, 14.1 * POINTER_SCALE)[3], 0, `${variant}: the wing's corner is rounded off`);
+    assert.equal(pixelAt(art.png, 14 * POINTER_SCALE + 1, 19.9 * POINTER_SCALE + 1)[3], 0, `${variant}: and the tail's`);
+    assert.ok(pixelAt(art.png, art.hotX + 1, art.hotY + 1)[3]! > 0, `${variant}: the tip is at the hot spot`);
+    assert.equal(pixelAt(art.png, art.hotX - 2, art.hotY - 2)[3], 0, `${variant}: and nothing is drawn beyond it`);
+    const { rgba } = pngPixels(art.png);
+    const soft = [...Array(rgba.length / 4).keys()].filter((index) => rgba[index * 4 + 3]! > 0 && rgba[index * 4 + 3]! < 255).length;
+    assert.ok(soft > art.width * 2, `${variant}: soft edges, ${soft} pixels partly covered`);
+  }
+});
+
+function grid(at: number, brightness: (column: number, row: number) => number): BrightnessGrid {
+  return { at, cells: Array.from({ length: GRID_COLUMNS * GRID_ROWS }, (_, index) => brightness(index % GRID_COLUMNS, Math.floor(index / GRID_COLUMNS))) };
+}
+
+test("the pointer is dark over a light part of the screen and light over a dark one, by the brightness under it, and does not flicker between them (073)", () => {
+  const halves = [0, 1, 2, 3, 4].map((at) => grid(at, (column) => (column < GRID_COLUMNS / 2 ? 30 : 230)));
+  const frames = Array.from({ length: 120 }, (_, index) => ({ x: index < 60 ? 300 : 1500, y: 400 }));
+  assert.deepEqual(pointerVariants(frames, halves, SCREEN, POINTER_HEIGHT, 40), [
+    { from: 0, to: 60, variant: "light" },
+    { from: 60, to: 120, variant: "dark" },
+  ]);
+  const flicker = Array.from({ length: 90 }, (_, index) => ({ x: index >= 30 && index < 36 ? 1500 : 300, y: 400 }));
+  assert.deepEqual(pointerVariants(flicker, halves, SCREEN, POINTER_HEIGHT, 40), [{ from: 0, to: 90, variant: "light" }], "a fifth of a second over the light half does not switch it");
+  const grey = [0, 1, 2, 3].map((at) => grid(at, (column) => (column < GRID_COLUMNS / 2 ? 30 : 128)));
+  assert.deepEqual(pointerVariants(frames.slice(0, 90), grey, SCREEN, POINTER_HEIGHT, 40).map((span) => span.variant), ["light"], "mid grey keeps the pointer it has");
+  assert.deepEqual(pointerVariants(frames.slice(0, 10), [], SCREEN, POINTER_HEIGHT, 200).map((span) => span.variant), ["dark"], "with no grid, by the screen's brightness");
+  const plan = planScene(
+    facts({ brightness: halves, samples: [{ at: 1000, x: 300, y: 400, buttons: 0 }, { at: 1002, x: 1500, y: 400, buttons: 0 }], inputs: [click(2.5, 1500, 400), click(0.5, 300, 400)] }),
+    SCREEN,
+    1000,
+    5,
+    { zoom: false, frame: false },
+  );
+  assert.deepEqual(plan.art.filter((art) => art.name.startsWith("pointer-")).map((art) => art.name), ["pointer-dark.png", "pointer-light.png"]);
+  assert.deepEqual(plan.ringStyles, [{ kind: "left", variant: "light" }, { kind: "left", variant: "dark" }], "each click's ring matches the pointer where it lands");
+  const commands = sceneCommands(plan);
+  assert.match(commands, /overlay@pointerl enable 1;[\s\S]*overlay@pointerl enable 0;[\s\S]*overlay@pointerd enable 1;/, "one pointer shows at a time");
+  assert.match(commands, /overlay@ringld0 x/);
+});
+
+test("a click's ring is drawn as the pointer is: a band of the pointer's fill between edges of its other ink, blue for a right click (073)", () => {
+  const ringPixel = (kind: "left" | "right", variant: "dark" | "light") => {
+    const art = ringArt(POINTER_HEIGHT, 2, kind, variant);
+    const radius = POINTER_HEIGHT * (0.3 + 0.55 * (1 - (1 - 3 / 6) ** 2));
+    return pixelAt(art.png, art.width / 2 + radius, art.height / 2);
+  };
+  assert.ok(ringPixel("left", "dark")[0]! < 60, "a dark ring by a dark pointer");
+  assert.ok(ringPixel("left", "light")[0]! > 200, "a light ring by a light pointer");
+  const right = ringPixel("right", "dark");
+  assert.ok(right[2]! > 200 && right[0]! < 120, "a right click's ring is blue");
+});
+
+test("the stop reads the brightness grid, a line a second of each cell's brightness, and keeps none that is cut short (073)", () => {
+  const cells = (value: number) => Buffer.alloc(GRID_COLUMNS * GRID_ROWS, value).toString("hex");
+  const stdout = `{"ended":"stopped","recorded":3,"size":"1920x1080","start":1000.000,"position":"top","cuts":[],"pointer":"drawn","lag":0,"luma":50,"keys":"pc"}\nG 0 ${cells(30)}\nG 1 ${cells(230)}\nG 2 ${cells(10).slice(0, 20)}\n`;
+  const brightness = parsePrepared(stdout)!.scene!.brightness!;
+  assert.deepEqual(brightness.map((each) => [each.at, each.cells.length, each.cells[0]]), [
+    [0, GRID_COLUMNS * GRID_ROWS, 30],
+    [1, GRID_COLUMNS * GRID_ROWS, 230],
+  ]);
+});
+
+test("where the driver's agent cursor was hidden for the whole recording, the clip draws the agent's pointer as on Linux, gliding to its clicks (073)", () => {
+  assert.deepEqual((["linux", "macos", "windows"] as const).map(driverDrawsAgentCursor), [false, true, true]);
+  const prepared: Prepared = { ended: "stopped", recorded: 10, width: 1920, height: 1080, start: 1000, cuts: [], events: [], scene: facts({ agentCursor: true, samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(4, 900, 600)] }) };
+  assert.equal(withAgentCursorHidden(prepared, false).scene?.agentCursor, true, "the driver's cursor stayed, so bb-box draws only the real pointer");
+  const hidden = withAgentCursorHidden(prepared, true);
+  assert.equal(hidden.scene?.agentCursor, false);
+  assert.ok(planClip(hidden, 1).scene!.pointer.glides.length > 0, "the pointer glides to the agent's click");
+  assert.equal(planClip(prepared, 1).scene!.pointer.glides.length, 0);
 });
