@@ -10639,6 +10639,19 @@ function clockAtLocalNoon(): void {
   vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 9, 14, 12, 0), shouldAdvanceTime: true });
 }
 
+function takeFactLines(dialog: HTMLElement): { label: string; value: string }[] {
+  const describedBy = within(dialog).getByRole("textbox", { name: "Name" }).getAttribute("aria-describedby");
+  const described = describedBy ? document.getElementById(describedBy) : null;
+  expect(described, "the name field describes the facts").toBeTruthy();
+  const terms = Array.from(described!.querySelectorAll("dt"));
+  const details = Array.from(described!.querySelectorAll("dd"));
+  expect(terms, "the facts are labelled lines, so a paragraph would fail").toHaveLength(details.length);
+  return terms.map((term, index) => ({
+    label: (term.textContent ?? "").replace(/:\s*$/, ""),
+    value: (details[index]!.textContent ?? "").replaceAll("\u00a0", " "),
+  }));
+}
+
 function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePreview {
   return {
     refusal: null,
@@ -10745,13 +10758,69 @@ test("070 unit 6: Take snapshot asks for a name and note, says what it holds, co
   const dialog = await slot.findByRole("alertdialog", { name: "Take a snapshot of calm-otter" });
   const name = within(dialog).getByRole("textbox", { name: "Name" });
   expect(document.activeElement).toBe(name);
-  expect(await within(dialog).findByText(/It holds the disk: files, installed apps and settings\. About 0\.7\ss; calm-otter keeps running\. 2 of 5 for calm-otter after this\. A picture of its screen around now is kept with it\. No charge/)).toBeTruthy();
+  await waitFor(() => expect(takeFactLines(dialog).map((line) => line.label)).toEqual(["Holds", "Takes", "Snapshots", "Picture", "Cost"]));
+  expect(takeFactLines(dialog).map((line) => line.value)).toEqual([
+    "the disk: files, installed apps and settings.",
+    "About 0.7 s; calm-otter keeps running.",
+    "2 of 5 for calm-otter after this.",
+    "A picture of its screen around now is kept with it.",
+    "No charge: it is on the host's own storage.",
+  ]);
   fireEvent.change(name, { target: { value: "before the upgrade" } });
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Note" }), { target: { value: "Node 24" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Take snapshot" }));
   await waitFor(() => expect(changes).toContain(`snapshot.take ${JSON.stringify({ box: "box_1", name: "before the upgrade", note: "Node 24", memory: false })}`));
   await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(take));
+});
+
+test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that order, for disk, memory and a device", async () => {
+  const excludes = "/run, which lives in the box's memory, unless the snapshot holds its memory";
+  const offer = { holds: ["disk" as const, "disk-and-memory" as const], scope: "box" as const, whileRunning: "pauses" as const, restore: "in-place" as const, fork: "none" as const, keeps: false, excludes, price: { amount: 0.005, currency: "USD" as const, per: "day" as const, known: true } };
+  const { handlers } = server([box()], { snapshots: snapshotsView({ offer, screen: true, pictures: false, counted: 0 }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  fireEvent.click(within(await slot.findByRole("region", { name: "Snapshots" })).getByRole("button", { name: "Take snapshot" }));
+  const dialog = await slot.findByRole("alertdialog", { name: "Take a snapshot of calm-otter" });
+  await waitFor(() => expect(takeFactLines(dialog).map((line) => line.label)).toEqual(["Holds", "Leaves out", "Takes", "Snapshots", "Picture", "Cost"]));
+  const disk = takeFactLines(dialog);
+  expect(disk.map((line) => line.value)).toEqual([
+    "the disk: files, installed apps and settings.",
+    `${excludes}.`,
+    "About 0.7 s; calm-otter pauses for a moment.",
+    "1 of 5 for calm-otter after this.",
+    "Pictures are off in Settings, Snapshots.",
+    "It costs $0.005 a day until it is deleted.",
+  ]);
+  const described = document.getElementById(within(dialog).getByRole("textbox", { name: "Name" }).getAttribute("aria-describedby")!)!;
+  expect(described.querySelector("code")?.textContent).toBe("/run");
+  expect(described.querySelector("code")?.className).toContain("font-mono");
+  fireEvent.click(within(dialog).getByRole("checkbox", { name: "With its memory" }));
+  await waitFor(() => expect(takeFactLines(dialog)[0]?.value).toBe("the disk and the memory: a restore brings back its running apps, and the credentials in them. Up to 8 GiB more on pve-1's fast."));
+  expect(takeFactLines(dialog).map((line) => line.label)).toEqual(["Holds", "Leaves out", "Takes", "Snapshots", "Picture", "Cost"]);
+  expect(takeFactLines(dialog)[2]?.value).toBe("About 9.0 s; calm-otter pauses for a moment.");
+  cleanup();
+
+  const device = server([box()], {
+    snapshots: snapshotsView({
+      offer: { holds: ["disk"], scope: "device", whileRunning: "suspends", restore: "in-place", fork: "none", keeps: false, excludes: "/tmp, ~/.cache, the build cache", price: null },
+      screen: false,
+      counted: 4,
+    }),
+  });
+  const deviceSlot = boxPageAt(device.handlers, "box/box_1");
+  fireEvent.click(within(await deviceSlot.findByRole("region", { name: "Snapshots" })).getByRole("button", { name: "Take snapshot" }));
+  const deviceDialog = await deviceSlot.findByRole("alertdialog", { name: "Take a snapshot of calm-otter" });
+  await waitFor(() => expect(takeFactLines(deviceDialog).map((line) => line.label)).toEqual(["Holds", "Leaves out", "Takes", "Snapshots", "Cost"]));
+  const lines = takeFactLines(deviceDialog);
+  expect(lines.map((line) => line.value)).toEqual([
+    "the device: its disk and memory, with the apps open on it. The rest of calm-otter is not in it.",
+    "/tmp, ~/.cache, the build cache.",
+    "About 0.7 s; calm-otter suspends for a few seconds.",
+    "5 of 5 for calm-otter after this.",
+    "No charge: it is on the host's own storage.",
+  ]);
+  const codes = Array.from(document.getElementById(within(deviceDialog).getByRole("textbox", { name: "Name" }).getAttribute("aria-describedby")!)!.querySelectorAll("code")).map((code) => code.textContent);
+  expect(codes).toEqual(["/tmp", "~/.cache"]);
 });
 
 test("070 unit 6: a box whose plan refuses a take says why in the card with Take snapshot off, and a box whose backend has none says so", async () => {
