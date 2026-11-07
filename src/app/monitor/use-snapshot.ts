@@ -42,6 +42,17 @@ export function useMonitorSnapshot(machineId: string) {
   const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
+    const source = sourceFor(machineId);
+    const current = source.snapshot();
+    if (current) setReading({ machineId, snapshot: current });
+    return source.subscribe((next) => {
+      setReading({ machineId, snapshot: next });
+      setError(null);
+      setReloading(false);
+    });
+  }, [machineId]);
+
+  useEffect(() => {
     const element = container.current;
     if (!element) return;
     const source = sourceFor(machineId);

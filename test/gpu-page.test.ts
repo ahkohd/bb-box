@@ -171,6 +171,29 @@ test("071 unit 14: notices name a wrong card, a userspace that does not match, a
   assert.equal(otherCheckNotice(wrong), null);
 });
 
+test("071 unit 14: an unknown card reads as a card, two listed cards keep their indexes, and Proxmox LXC does not use the guest's index", () => {
+  const unknown = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  const listed = `card 1, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it listed card GPU-${unknown}, not its card GPU-${CARD}`;
+  const unseen = wrongCardNotice(box({ facts: [{ label: "GPU", value: listed }] }));
+  assert.match(unseen ?? "", /listed a card, not its card 1/);
+  assert.doesNotMatch(unseen ?? "", /listed card a card/);
+  const first = "11111111-1111-1111-1111-111111111111";
+  const second = "22222222-2222-2222-2222-222222222222";
+  const both = `card 4, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it listed cards GPU-${first} and GPU-${second}, not its card GPU-${CARD}`;
+  const docker = box({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: both }] });
+  const plural = wrongCardNotice(docker, [
+    { uuid: first, index: 0 },
+    { uuid: second, index: 1 },
+  ]);
+  assert.match(plural ?? "", /listed cards 0 and 1, not its card 4/);
+  assert.doesNotMatch(plural ?? "", /cards card/);
+  const other = "11111111-1111-1111-1111-111111111111";
+  const guest = `card 0, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it listed card GPU-${other}, not its card GPU-${CARD}`;
+  const lxc = wrongCardNotice(box({ facts: [{ label: "GPU", value: guest }] }), [{ uuid: other, index: 0 }]);
+  assert.match(lxc ?? "", /listed another card, not its card 0/);
+  assert.doesNotMatch(lxc ?? "", /listed card 0/);
+});
+
 test("071 unit 14: the card's last line says what a claim means, and a reading picks the box's model", () => {
   assert.match(gpuFooter(box(), "pve"), /share its memory and its time/);
   assert.match(gpuFooter(box({ gpuPart: "whole", claim: { card: CARD, part: "whole", generation: 1, answer: "granted" } }), "pve"), /on Proxmox LXC a whole card is fenced/);

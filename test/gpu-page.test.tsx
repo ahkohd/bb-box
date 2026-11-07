@@ -217,6 +217,22 @@ test("071 unit 14: a stopped shared box's words, and each notice", async () => {
   expect(dialog.textContent).toContain(USERSPACE_UPDATE_REFUSAL);
 });
 
+test("071 unit 14: the wrong-card notice uses the reading the GPU card loads", async () => {
+  const GiB = 1024 ** 3;
+  const listed = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const claim = "11111111-1111-1111-1111-111111111111";
+  const reading = snapshot();
+  reading.gpus = {
+    cards: [{ index: 1, uuid: listed, name: "NVIDIA RTX 4090", usagePercent: 10, memoryUsedBytes: GiB, memoryTotalBytes: 24 * GiB, temperatureC: 40, powerWatts: 30, powerLimitWatts: 450, shared: true, ownMemoryBytes: 0, ownProcesses: 0 }],
+    processes: [],
+  };
+  const fact = `card 0, shared, NVIDIA RTX 4090, 24 GiB: nvidia-smi in it listed card GPU-${listed}, not its card GPU-${claim}`;
+  const slot = open(page(boxView({ form: "Docker", backendLabel: "Docker on devpc", docker: true, claim: { card: claim, part: "shared", generation: 1, answer: "granted" }, facts: [{ label: "GPU", value: fact }] })), reading);
+  const notice = await slot.findByRole("region", { name: "On the wrong card" });
+  await waitFor(() => expect(notice.textContent).toContain("listed card 1, not its card 0"));
+  expect(notice.textContent).not.toContain("a card");
+});
+
 test("071 unit 14: the activity tiles and the GPU card agree on this box's use of a card", async () => {
   const GiB = 1024 ** 3;
   const reading = snapshot();

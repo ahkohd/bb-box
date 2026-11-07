@@ -24,6 +24,7 @@ export interface CardIdentity {
 export interface NamedCard {
   readonly uuid: string;
   readonly index: number | null;
+  readonly other?: boolean;
 }
 
 export interface GpuFactLines {
@@ -115,28 +116,48 @@ export function cardIdentity(box: Pick<BoxView, "claim" | "facts">): CardIdentit
   return { uuid: bareCardUuid(box.claim?.card ?? null), index: read?.index ?? null };
 }
 
-export function cardNames(box: Pick<BoxView, "claim" | "facts">, seen: readonly { readonly uuid?: string | null; readonly index: number }[] = []): NamedCard[] {
+export function cardNames(box: Pick<BoxView, "claim" | "facts" | "form" | "backendLabel">, seen: readonly { readonly uuid?: string | null; readonly index: number }[] = []): NamedCard[] {
   const identity = cardIdentity(box);
-  const names = new Map<string, number | null>();
-  const keep = (uuid: string | null, index: number | null) => {
+  const docker = dockerGpuBox(box);
+  const names = new Map<string, NamedCard>();
+  const keep = (uuid: string | null, index: number | null, other = false) => {
     if (!uuid) return;
     const known = names.get(uuid);
-    if (known === undefined || (known === null && index !== null)) names.set(uuid, index);
+    if (!known) {
+      names.set(uuid, { uuid, index: other ? null : index, other });
+      return;
+    }
+    if (known.other && !other) names.set(uuid, { uuid, index, other: false });
+    else if (!known.other && known.index === null && index !== null) names.set(uuid, { uuid, index, other: false });
   };
   keep(identity.uuid, identity.index);
-  for (const card of seen) keep(bareCardUuid(card.uuid), card.index);
-  return [...names].map(([uuid, index]) => ({ uuid, index }));
+  for (const card of seen) {
+    const uuid = bareCardUuid(card.uuid);
+    if (!uuid) continue;
+    if (!docker) {
+      if (uuid !== identity.uuid) keep(uuid, null, true);
+      continue;
+    }
+    keep(uuid, card.index);
+  }
+  return [...names.values()];
 }
 
 export function nameCardsIn(why: string, named: readonly NamedCard[]): string {
-  const byUuid = new Map(named.map((card) => [card.uuid, card.index]));
+  const byUuid = new Map(named.map((card) => [card.uuid, card]));
   const said = why.replace(/GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (found) => {
     const key = bareCardUuid(found);
-    if (!key || !byUuid.has(key)) return "a card";
-    const index = byUuid.get(key);
-    return index === null || index === undefined ? "its card" : `card ${index}`;
+    const card = key ? byUuid.get(key) : undefined;
+    if (!card) return "a card";
+    if (card.other) return "another card";
+    return card.index === null ? "its card" : `card ${card.index}`;
   });
-  return said.replace(/its card its card/g, "its card").replace(/card card (\d+)/g, "card $1");
+  return said
+    .replace(/its card its card/g, "its card")
+    .replace(/card card (\d+)/g, "card $1")
+    .replace(/cards card (\d+)((?: and card \d+)*)/g, (_match, first: string, rest: string) => `cards ${first}${rest.replace(/ card /g, " ")}`)
+    .replace(/card a card/g, "a card")
+    .replace(/card another card/g, "another card");
 }
 
 export function everyCardLine(box: Pick<BoxView, "gpu" | "facts">): string | null {
