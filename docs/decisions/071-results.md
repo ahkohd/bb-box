@@ -3,6 +3,22 @@
 What was measured and built for each unit of [071](071-gpu-boxes.md). Each
 unit keeps to its own section.
 
+## Status: done
+
+All 15 units were merged by 7 November 2026, the last being unit 15 in
+`d16b385a`. Each passed its tests, independent reviews and a live gate on a
+separate BB. A few rows were not run live, because the node's two cards
+were held by guests outside bb-box throughout and no card was ever free.
+Each is covered by tests, and runs once a card is free:
+
+- a whole card on Proxmox LXC: an acquire, and whole cards off leaving a
+  whole box as it is (unit 8's G1, G3 and G5, and unit 15);
+- a live switch between shared and whole, a move to a free card, and the
+  rows that need a whole box (unit 9's L, M and W);
+- none to whole with the userspace installed (unit 10);
+- a desktop's userspace update (unit 12, tested on the fake backend only);
+- the guide's Docker commands on a real card, beyond unit 11's gate.
+
 ## Unit 0: measurements on the node
 
 Measured on 31 October 2026, on main `7a8dbeab`, in the order of section

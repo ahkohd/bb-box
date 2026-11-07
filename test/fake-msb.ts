@@ -34,7 +34,6 @@ export interface FakeMsbHost {
   heads(): Record<string, string>;
   /** msb's images, by reference, with their labels. */
   images(): Record<string, Record<string, string>>;
-  /** Resolves when a build has moved `ref` into msb. */
   whenImage(ref: string): Promise<void>;
   home(name: string): string;
 }
