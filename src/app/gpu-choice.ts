@@ -1,7 +1,6 @@
 import type { GpuPart, GpuResizing, GpuRoom, CardRoom } from "../backends/types.ts";
 
-/** The line under the GPU menu keeps this height for every state, so nothing under it moves. Two lines from 640 px, three below. */
-export const GPU_LINE_CLASS = "h-[3lh] overflow-hidden text-xs leading-snug sm:h-[2lh]";
+export const GPU_LINE_CLASS = "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]";
 
 export const GPU_MENU_LABELS: Readonly<Record<GpuPart, string>> = { none: "None", shared: "Shared", whole: "Whole card" };
 
@@ -13,11 +12,13 @@ export interface GpuFormOffer {
   readonly gpuParts?: readonly GpuPart[] | null;
   readonly gpuRoom: GpuRoom | null;
   readonly unread: boolean;
+  readonly failed?: boolean;
+  readonly spare?: boolean;
   readonly reachesEveryCard: boolean;
   readonly canAddGpu: boolean;
 }
 
-export type GpuLineState = "reading" | "none" | "shared" | "whole" | "refused";
+export type GpuLineState = "reading" | "none" | "shared" | "whole" | "refused" | "failed";
 
 export interface GpuLine {
   readonly words: string;
@@ -31,9 +32,13 @@ export function gpuMenuShows(kind: { readonly os: string; readonly arch: string;
   return offers.some(hasCards);
 }
 
-export function gpuMenuParts(offers: readonly GpuFormOffer[]): readonly GpuPart[] {
-  const whole = offers.some((offer) => partsOf(offer).includes("whole") && offer.gpuRoom?.wholeOff !== true);
-  return whole ? ["none", "shared", "whole"] : ["none", "shared"];
+export function gpuMenuParts(offers: readonly GpuFormOffer[], noneForCpuKind = false): readonly GpuPart[] {
+  const listed = offers.flatMap((offer) => [...partsOf(offer)]);
+  const parts: GpuPart[] = [];
+  if (listed.includes("none") || noneForCpuKind) parts.push("none");
+  if (listed.includes("shared") || listed.includes("whole")) parts.push("shared");
+  if (offers.some((offer) => partsOf(offer).includes("whole") && offer.gpuRoom?.wholeOff !== true)) parts.push("whole");
+  return parts;
 }
 
 export function readingWords(hosts: readonly string[]): string {
@@ -41,13 +46,14 @@ export function readingWords(hosts: readonly string[]): string {
 }
 
 export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: number): GpuLine {
-  if (pending(offers)) return { words: readingWords(offers.map((offer) => offer.host)), blocked: true, state: "reading" };
   if (gpu === "none") {
     const offer = offers[0];
     const reach = offer?.reachesEveryCard ? ` ${DOCKER_REACH}` : "";
     const words = offer && !offer.canAddGpu ? `No GPU, and none can be added later on ${offer.label}.${offer.reachesEveryCard ? ` ${DOCKER_REACH}` : ""}` : `No GPU. You can add one later with Resize.${reach}`;
     return { words, blocked: false, state: "none" };
   }
+  if (offers.some((offer) => offer.failed)) return { words: "The cards could not be read.", blocked: true, state: "failed" };
+  if (pending(offers)) return { words: readingWords(offers.map((offer) => offer.host)), blocked: true, state: "reading" };
   for (const offer of offers) {
     const card = placedCard(offer, gpu);
     if (!card) continue;
@@ -62,11 +68,18 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
     const free = card.freeMiB === null ? "its free memory was not read" : `${gibWords(card.freeMiB)} free when read${offer.gpuRoom?.at ? `, ${ago(offer.gpuRoom.at, now)}` : ""}`;
     return { words: `${cardTitle(card)} on ${host}, shared with ${company}; ${free}. Boxes on a card share its memory.`, blocked: false, state: "shared" };
   }
+  const spare = offers.find((offer) => offer.spare);
+  if (spare) {
+    const host = spare.gpuRoom?.host || spare.host;
+    return { words: `A ready box on ${host} has this GPU, so Create takes that box.`, blocked: false, state: gpu === "whole" ? "whole" : "shared" };
+  }
   return { words: refusedWords(offers, gpu), blocked: true, state: "refused" };
 }
 
 export function gpuRowReason(offer: GpuFormOffer, gpu: GpuPart): string | null {
   if (gpu === "none") return null;
+  if (offer.failed) return "The cards could not be read";
+  if (offer.spare) return null;
   if (offer.unread && hasCards(offer)) return "Reading its cards…";
   if (placedCard(offer, gpu)) return null;
   return shortBlocks(offer, gpu);
@@ -115,7 +128,7 @@ function placedCard(offer: GpuFormOffer, gpu: GpuPart): CardRoom | null {
   const room = offer.gpuRoom;
   if (!room?.cards?.length) return null;
   if (room.parts && !room.parts.includes(gpu)) return null;
-  const open = room.cards.filter((card) => (gpu === "whole" ? canWhole(card, room) : canShare(card, room)));
+  const open = room.cards.filter((card) => (gpu === "whole" ? canWhole(card, room) : canShare(card, room, offer.spare === true)));
   if (!open.length) return null;
   const byIndex = (card: CardRoom) => card.index ?? 0;
   const ranked = [...open].sort((left, right) => {
@@ -128,9 +141,9 @@ function placedCard(offer: GpuFormOffer, gpu: GpuPart): CardRoom | null {
   return ranked[0] ?? null;
 }
 
-function canShare(card: CardRoom, room: GpuRoom): boolean {
+function canShare(card: CardRoom, room: GpuRoom, spare: boolean): boolean {
   if (card.whole || card.wholeBy) return false;
-  if (full(card, room)) return false;
+  if (!spare && full(card, room)) return false;
   return card.freeMiB === null || card.freeMiB >= (room.neededMiB ?? 0);
 }
 

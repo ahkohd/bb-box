@@ -172,13 +172,14 @@ export function useDesktopProblemShownOnce(desktopProblem: { readonly message: s
   }, [desktopProblem]);
 }
 
-function formOffer(offer: OfferView, room: GpuRoom | null, unread: boolean): GpuFormOffer {
+function formOffer(offer: OfferView, room: GpuRoom | null, unread: boolean, failed = false): GpuFormOffer {
   return {
     host: offer.hosts[0] || offer.label,
     label: offer.label,
     gpuParts: offer.gpuParts,
     gpuRoom: unread ? null : room,
     unread,
+    failed,
     reachesEveryCard: !!offer.cardReach,
     canAddGpu: offer.resizing?.gpu ? offer.resizing.gpu.add !== "no" : true,
   };
@@ -253,6 +254,7 @@ export function NewBox({
   const [gpuByKind, setGpuByKind] = useState<Readonly<Record<string, GpuPart>>>(() => (last.gpu && typeof last.gpu === "object" ? last.gpu : {}));
   const [cardRooms, setCardRooms] = useState<ReadonlyMap<string, GpuRoom | null> | null>(null);
   const [cardsFailed, setCardsFailed] = useState(false);
+  const [cardTry, setCardTry] = useState(0);
   const [making, setMaking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /** The Provider step's filters: what the boxes are, and the machine they run on. */
@@ -341,11 +343,13 @@ export function NewBox({
   const cardParts = (offer: OfferView) => offer.gpuParts?.some((part) => part !== "none") ?? false;
   const asForm = (offer: OfferView): GpuFormOffer => {
     if (cards !== undefined && cardRooms === null && !cardsFailed) return formOffer(offer, null, true);
+    if (cardsFailed && offer.gpuRoom === null && cardParts(offer)) return formOffer(offer, null, false, true);
     if (cardRooms) return formOffer(offer, cardRooms.get(offer.backend) ?? null, false);
-    return formOffer(offer, offer.gpuRoom, offer.gpuRoom === null && cardParts(offer));
+    return formOffer(offer, offer.gpuRoom, cards === undefined && offer.gpuRoom === null && cardParts(offer));
   };
   const cardMenu = gpuMenuShows(kind, shown.map((offer) => formOffer(offer, offer.gpuRoom, false)));
-  const menuParts = gpuMenuParts(shown.map(asForm));
+  const cpuSibling = !!kind?.gpu && kinds.some((candidate) => candidate.id !== kind.id && candidate.desktop && !candidate.gpu && candidate.os === kind.os && candidate.arch === kind.arch && candidate.windowing === kind.windowing);
+  const menuParts = gpuMenuParts(shown.map(asForm), cpuSibling);
   const gpuDefault = kind ? gpuWhenNotAsked(kind.id) : "none";
   const rememberedGpu = kind ? gpuByKind[kind.id] : undefined;
   const chosenGpu: GpuPart = rememberedGpu && menuParts.includes(rememberedGpu) ? rememberedGpu : menuParts.includes(gpuDefault) ? gpuDefault : (menuParts[0] ?? "none");
@@ -374,12 +378,12 @@ export function NewBox({
     return () => {
       stale = true;
     };
-  }, [open, cardMenu, kindId, cards !== undefined]);
+  }, [open, cardMenu, kindId, cards !== undefined, cardTry]);
   const takers = shown.filter((offer) => blockedWhy(offer) === null);
   // One offer is no choice: its row stands alone, checked, and nothing goes as `on` (044's first with room is that one).
   const choiceless = offers.length <= 1;
   const onOffer = choiceless ? (shown[0] ?? null) : (takers.find((offer) => offer.backend === on) ?? null);
-  const gpuLine = cardMenu ? gpuFormLine((onOffer ? [onOffer] : filtered).map(asForm), chosenGpu, Date.now()) : null;
+  const gpuPreview = onOffer ? [onOffer] : filtered.filter((offer) => blockedWhy(offer) === null);
   const presets = kind?.presets ?? [];
   const choices: Choice2[] = [...presets.map((preset) => preset.name), CUSTOM];
   const size: Choice2 = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
@@ -419,6 +423,8 @@ export function NewBox({
   const imageSpares = chosenImage && chosenImage !== "standard" ? (covering.find((candidate) => candidate.name === chosenImage)?.spares ?? []) : null;
   const readyOn = (offer: OfferView) =>
     !machine && !!kind && size === kind.defaultPreset && (imageSpares ? imageSpares.some((spare) => spare.kind === kind.id && spare.backend === offer.backend && spare.ready > 0) : offer.ready > 0);
+  const forGpu = (offer: OfferView): GpuFormOffer => ({ ...asForm(offer), spare: !!kind && readyOn(offer) && chosenGpu === gpuWhenNotAsked(kind.id) });
+  const gpuLine = cardMenu ? gpuFormLine(gpuPreview.map(forGpu), chosenGpu, Date.now()) : null;
   // With 1 GPU chosen, why no GPU would take the box (#603); a ready spare holds its GPU already.
   const placing = onOffer ? [onOffer] : shown;
   const gpuFull = gpuChoice && picked.gpu && !placing.some(readyOn) ? gpuFullNote(placing, Date.now()) : null;
@@ -702,15 +708,24 @@ export function NewBox({
                     onChange={(value) => {
                       if (!kind) return;
                       const part = value as GpuPart;
+                      if (part === "none" && cpuSibling) {
+                        pick({ gpu: false });
+                        return;
+                      }
                       const next = { ...gpuByKind, [kind.id]: part };
                       setGpuByKind(next);
                       remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, gpu: next, ...(Object.keys(edited).length ? { custom: edited } : {}) });
                       setProblem(null);
                     }}
                   />
-                  <p data-gpu-line data-gpu-state={gpuLine?.state} aria-live="polite" className={cn(GPU_LINE_CLASS, gpuLine?.state === "refused" ? "text-warning-text" : "text-muted-foreground")}>
+                  <p data-gpu-line data-gpu-state={gpuLine?.state} aria-live="polite" className={cn(GPU_LINE_CLASS, gpuLine?.state === "refused" || gpuLine?.state === "failed" ? "text-warning-text" : "text-muted-foreground")}>
                     {gpuLine?.words}
                   </p>
+                  {gpuLine?.state === "failed" ? (
+                    <button type="button" className="text-xs text-foreground underline underline-offset-2" onClick={() => setCardTry((tryAgain) => tryAgain + 1)}>
+                      Retry
+                    </button>
+                  ) : null}
                 </div>
               ) : gpuChoice ? (
                 // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
@@ -782,7 +797,7 @@ export function NewBox({
                   among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
-                  unavailable={(cardMenu ? gpuRowReason(asForm(offer), chosenGpu) : null) ?? blockedWhy(offer)}
+                  unavailable={(cardMenu ? gpuRowReason(forGpu(offer), chosenGpu) : null) ?? blockedWhy(offer)}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;

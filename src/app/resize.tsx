@@ -96,7 +96,8 @@ function fieldsOf(size: SizeView | null | undefined): Fields {
  * memory read back from a guest may not be a whole number of GiB; an empty disk leaves the disk as it is. Null when a part typed
  * is not a whole number.
  */
-function requestOf(choice: string, fields: Fields, now: Fields): Request | null {
+function requestOf(choice: string, fields: Fields, now: Fields, held: string | null): Request | null {
+  if (held !== null && choice === held) return {};
   if (choice !== CUSTOM) return { preset: choice };
   const request: { -readonly [K in keyof Request]: Request[K] } = {};
   for (const name of ["cores", "memoryGiB", "diskGiB"] as const) {
@@ -219,7 +220,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
     setStep({ at: "pick" });
   }, [open]);
 
-  const request = requestOf(choice, fields, fieldsOf(box?.sizeNow));
+  const request = requestOf(choice, fields, fieldsOf(box?.sizeNow), presetAtOpen);
   const gpuNow: GpuPart = box?.gpuPart ?? (box?.gpu ? "shared" : "none");
   const gpuSent = gpu !== gpuNow ? gpu : undefined;
   const key = JSON.stringify({ request, gpu: gpuSent ?? null });

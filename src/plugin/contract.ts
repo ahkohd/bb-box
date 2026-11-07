@@ -148,7 +148,6 @@ export interface BoxResult {
   readonly threads?: readonly ThreadOnBox[];
 }
 
-/** A GPU change the Resize dialog shows, from the plan a check or a resize made. */
 export interface GpuChangeView {
   readonly from: GpuPart;
   readonly to: GpuPart;
@@ -354,7 +353,6 @@ export const contract = defineRpcContract({
   /** A provider's profile for the form's (i): data the plugin has, and one capacity call to the provider. Asked only when opened. */
   provider: { input: z.object({ backend: z.string().min(1) }), output: z.custom<ProviderProfile>() },
   rooms: { input: z.object({ kind: z.string().min(1), size: size.optional() }), output: z.custom<OfferRoom[]>() },
-  /** A fresh reading of one kind's cards, for the New box form's GPU line. */
   "kind.cards": { input: z.object({ kind: z.string().min(1) }), output: z.custom<KindCards[]>() },
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */

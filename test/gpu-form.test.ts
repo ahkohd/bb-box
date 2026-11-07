@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { CardRoom, GpuResizing, GpuRoom } from "../src/backends/types.ts";
 import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, gpuWaysLine, withGpuPrograms, type GpuFormOffer } from "../src/app/gpu-choice.ts";
@@ -29,7 +30,7 @@ function offer(patch: Partial<GpuFormOffer> = {}): GpuFormOffer {
 const kind = { os: "linux", arch: "x86_64", desktop: false, windowing: "x11" as const };
 
 test("071 unit 13: the GPU line keeps one height", () => {
-  assert.equal(GPU_LINE_CLASS, "h-[3lh] overflow-hidden text-xs leading-snug sm:h-[2lh]");
+  assert.equal(GPU_LINE_CLASS, "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]");
 });
 
 test("071 unit 13: guests outside this install do not fill a card", () => {
@@ -113,4 +114,47 @@ test("071 unit 13: Resize names the way, and a move confirmation names the progr
   const words = "amber-fox restarts without card 1. Everything running in it stops.";
   assert.equal(withGpuPrograms(words, ": python3 (3310) has the GPU open"), "amber-fox restarts without card 1. Everything running in it stops: python3 (3310) has the GPU open.");
   assert.equal(withGpuPrograms("Everything running in amber-fox stops.", ": python3 (3310) has the GPU open"), "Everything running in amber-fox stops: python3 (3310) has the GPU open.");
+});
+
+test("071 unit 13: None is a GPU part only when an offer lists it, unless a CPU desktop stands beside it", () => {
+  const shared = offer({ gpuParts: ["shared"], gpuRoom: room([card({ index: 0, boxes: 0 })], { parts: ["shared"] }) });
+  const proxmox = offer({ gpuParts: ["shared", "whole"], gpuRoom: room([card({ index: 0, boxes: 0, freeForWhole: true })], { parts: ["shared", "whole"] }) });
+  assert.deepEqual(gpuMenuParts([shared]), ["shared"]);
+  assert.deepEqual(gpuMenuParts([shared], true), ["none", "shared"]);
+  assert.deepEqual(gpuMenuParts([proxmox]), ["shared", "whole"]);
+  assert.deepEqual(gpuMenuParts([proxmox], true), ["none", "shared", "whole"]);
+});
+
+test("071 unit 13: a ready spare of this GPU does not fill its card, and None does not wait on a reading", () => {
+  const full = offer({
+    spare: true,
+    gpuRoom: room([card({ index: 0, boxes: 2, own: 2 })], { limit: 2, parts: ["none", "shared"] }),
+  });
+  const shared = gpuFormLine([full], "shared", NOW);
+  assert.equal(shared.state, "shared");
+  assert.equal(shared.blocked, false);
+  assert.equal(gpuRowReason(full, "shared"), null);
+  const other = gpuFormLine([{ ...full, spare: false }], "shared", NOW);
+  assert.equal(other.state, "refused");
+  const unread = offer({ unread: true, gpuRoom: null });
+  assert.equal(gpuFormLine([unread], "none", NOW).state, "none");
+  assert.equal(gpuFormLine([unread], "none", NOW).blocked, false);
+  const failed = offer({ failed: true, gpuRoom: null, unread: false });
+  assert.equal(gpuFormLine([failed], "none", NOW).state, "none");
+  const again = gpuFormLine([failed], "shared", NOW);
+  assert.equal(again.state, "failed");
+  assert.equal(again.blocked, true);
+  assert.equal(again.words, "The cards could not be read.");
+});
+
+test("071 unit 13: the GPU form adds no doc comments, and the acquire helpers sit inside registerRpc", () => {
+  const gpu = readFileSync(new URL("../src/app/gpu-choice.ts", import.meta.url), "utf8");
+  const rpc = readFileSync(new URL("../src/plugin/rpc.ts", import.meta.url), "utf8");
+  const contract = readFileSync(new URL("../src/plugin/contract.ts", import.meta.url), "utf8");
+  assert.equal(gpu.includes("The line under the GPU menu keeps this height"), false);
+  assert.equal(rpc.includes("The form's size, with its GPU taken off"), false);
+  assert.equal(contract.includes("A GPU change the Resize dialog shows"), false);
+  assert.equal(contract.includes("A fresh reading of one kind's cards"), false);
+  assert.match(rpc, /\n {2}function sizeAndGpu/);
+  assert.match(rpc, /\n {2}function gpuChangeView/);
 });

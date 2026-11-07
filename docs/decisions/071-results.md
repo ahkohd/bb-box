@@ -5282,6 +5282,17 @@ had no reading for that machine.
 
 No node command was run from here.
 
+### Review
+
+A later review of the form and the dialog changed four behaviours, and the tests that lock them use offers with `gpuParts` set the way a provider sends them.
+
+- None is in the GPU menu when an offer's parts include it, or when a CPU desktop of the same windowing is offered beside it. Choosing None then acquires that CPU kind (`linux-desktop-cpu` on Docker and on a Proxmox desktop whose parts are shared, or shared and whole). A GPU desktop with no CPU desktop does not offer None.
+- A ready spare of the kind's default GPU, at the default size, does not fill the card, so Create stays on. A spare of another GPU still does. First with room names a card only on a provider the size can use.
+- A card reading that fails stays failed, with Retry. None does not wait on a reading, and Create stays on.
+- The line's height follows the form's width (`@container` and `@sm:h-[2lh]`), not the window. Resize does not check again when the opening size snaps to the box's preset, so Resize stays on while that plan is shown.
+
+The shots from the live gate were not taken again. The test BB and its backend were already gone, and this pass did not place a box on a GPU.
+
 ### Deviations from the note
 
 - None on a backend that cannot add a GPU later says "No GPU, and none can

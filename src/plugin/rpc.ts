@@ -162,29 +162,28 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     return task();
   };
 
-  /** The form's size, with its GPU taken off for box_acquire, which asks for a GPU beside the size. */
-function sizeAndGpu(size: (SizeRequest & { readonly gpu?: GpuPart }) | undefined): { size?: SizeRequest; gpu?: GpuPart } {
-  if (!size) return {};
-  const { gpu, ...rest } = size;
-  return { ...(Object.keys(rest).length ? { size: rest } : {}), ...(gpu !== undefined ? { gpu } : {}) };
-}
+  function sizeAndGpu(size: (SizeRequest & { readonly gpu?: GpuPart }) | undefined): { size?: SizeRequest; gpu?: GpuPart } {
+    if (!size) return {};
+    const { gpu, ...rest } = size;
+    return { ...(Object.keys(rest).length ? { size: rest } : {}), ...(gpu !== undefined ? { gpu } : {}) };
+  }
 
-function gpuChangeView(gpu: GpuResize | null | undefined) {
-  if (!gpu) return null;
-  return {
-    from: gpu.from,
-    to: gpu.to,
-    way: gpu.way,
-    stopped: gpu.stopped,
-    installs: gpu.installs,
-    words: gpu.words,
-    fromIndex: gpu.fromCard?.index ?? null,
-    toIndex: gpu.toCard?.index ?? null,
-    refusal: gpu.refusal?.person ?? (gpu.way === "no" ? gpu.words : null),
-    others: gpu.others,
-    changed: gpu.changedSinceAgreed?.person ?? null,
-  };
-}
+  function gpuChangeView(gpu: GpuResize | null | undefined) {
+    if (!gpu) return null;
+    return {
+      from: gpu.from,
+      to: gpu.to,
+      way: gpu.way,
+      stopped: gpu.stopped,
+      installs: gpu.installs,
+      words: gpu.words,
+      fromIndex: gpu.fromCard?.index ?? null,
+      toIndex: gpu.toCard?.index ?? null,
+      refusal: gpu.refusal?.person ?? (gpu.way === "no" ? gpu.words : null),
+      others: gpu.others,
+      changed: gpu.changedSinceAgreed?.person ?? null,
+    };
+  }
 
   /** Threads working on a box, which a restart for a resize would stop: the panel names them and asks. */
   class Working extends Error {
