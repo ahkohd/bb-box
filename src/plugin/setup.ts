@@ -13,7 +13,7 @@ import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index
 import { providerName } from "../core/provider-name.ts";
 import { joinChecks, joiningWords } from "../core/join-tries.ts";
 import type { BackendDriver, DoctorReport, GpuMarking, GuestOs, MachineAccess } from "../backends/types.ts";
-import { recordedGpu } from "../core/gpu.ts";
+import { boxResizing, recordedGpu } from "../core/gpu.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { chromePin, imageProgram, pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
@@ -1526,7 +1526,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     configuration,
     replyDrops: (options.liveChecks ?? liveChecksOn()) ? new ReplyDrops() : null,
     general,
-    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null, { log: boxLog.view(box.id), reach: reachOf(box) }),
+    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), boxResizing(backends.get(box.backend), box.kind), { log: boxLog.view(box.id), reach: reachOf(box) }),
     boxLog,
     snapshots,
     snapshotStore,

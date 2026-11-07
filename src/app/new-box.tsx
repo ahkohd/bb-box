@@ -180,7 +180,8 @@ function formOffer(offer: OfferView, room: GpuRoom | null, unread: boolean, fail
     unread,
     failed,
     reachesEveryCard: !!offer.cardReach,
-    canAddGpu: offer.resizing?.gpu ? offer.resizing.gpu.add !== "no" : true,
+    canAddGpu: !!offer.resizing?.gpu && offer.resizing.gpu.add !== "no",
+    addKnown: !!offer.resizing?.gpu,
   };
 }
 
@@ -428,7 +429,12 @@ export function NewBox({
   const imageSpares = chosenImage && chosenImage !== "standard" ? (covering.find((candidate) => candidate.name === chosenImage)?.spares ?? []) : null;
   const readyOn = (offer: OfferView) =>
     !machine && !!kind && size === kind.defaultPreset && (imageSpares ? imageSpares.some((spare) => spare.kind === kind.id && spare.backend === offer.backend && spare.ready > 0) : offer.ready > 0);
-  const forGpu = (offer: OfferView): GpuFormOffer => ({ ...asForm(offer), spare: !!kind && readyOn(offer) && chosenGpu === gpuWhenNotAsked(kind.id) });
+  const gpuAdd = (offer: OfferView): { canAddGpu: boolean; addKnown: boolean } => {
+    const sibling = gpuSibling?.offers.find((candidate) => candidate.backend === offer.backend);
+    const gpu = [offer.resizing?.gpu, sibling?.resizing?.gpu].find((candidate) => candidate && candidate.add !== "no") ?? offer.resizing?.gpu ?? sibling?.resizing?.gpu ?? null;
+    return gpu ? { canAddGpu: gpu.add !== "no", addKnown: true } : { canAddGpu: false, addKnown: false };
+  };
+  const forGpu = (offer: OfferView): GpuFormOffer => ({ ...asForm(offer), ...gpuAdd(offer), spare: !!kind && readyOn(offer) && chosenGpu === gpuWhenNotAsked(kind.id) });
   const sizeBlocked = chosenGpu !== "none" && !onOffer && filtered.length > 0 && gpuPreview.length === 0;
   const gpuLine = !cardMenu
     ? null

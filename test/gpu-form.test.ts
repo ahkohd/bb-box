@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { CardRoom, GpuResizing, GpuRoom } from "../src/backends/types.ts";
 import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, gpuWaysLine, withGpuPrograms, type GpuFormOffer } from "../src/app/gpu-choice.ts";
+import { boxResizing } from "../src/core/gpu.ts";
 
 const NOW = 1_700_000_000_000;
 
@@ -28,6 +29,22 @@ function offer(patch: Partial<GpuFormOffer> = {}): GpuFormOffer {
 }
 
 const kind = { os: "linux", arch: "x86_64", desktop: false, windowing: "x11" as const };
+
+test("071 unit 13: a CPU desktop takes the GPU rows from the GPU desktop on its backend", () => {
+  const sizes = { cores: "live" as const, memory: "live" as const, disk: "live" as const, shrinks: true };
+  const gpu = { add: "restart" as const, share: "live" as const, move: "restart" as const };
+  const backend = {
+    resizing(kind: string) {
+      if (kind === "linux-desktop-cpu") return sizes;
+      if (kind === "linux-desktop") return { ...sizes, gpu };
+      return null;
+    },
+  };
+  assert.deepEqual(boxResizing(backend, "linux-desktop-cpu")?.gpu, gpu);
+  assert.equal(boxResizing({ resizing: () => sizes }, "linux-desktop-cpu")?.gpu, undefined);
+  assert.equal(boxResizing({ resizing: (kind) => (kind === "linux-desktop" ? { ...sizes, gpu: { add: "no" as const, share: "live" as const, move: "no" as const } } : sizes) }, "linux-desktop-cpu")?.gpu, undefined);
+  assert.equal(gpuFormLine([offer({ canAddGpu: false, addKnown: false })], "none", NOW).words, "No GPU.");
+});
 
 test("071 unit 13: the GPU line keeps one height", () => {
   assert.equal(GPU_LINE_CLASS, "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]");

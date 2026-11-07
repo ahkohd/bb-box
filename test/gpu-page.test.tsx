@@ -7,6 +7,7 @@ import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 import { resizedNow } from "../src/app/resize.tsx";
+import { boxResizing } from "../src/core/gpu.ts";
 import { rowLine, rowWords } from "../src/app/row-line.ts";
 import { HOLDS_NO_CARD, USERSPACE_UPDATE_REFUSAL } from "../src/plugin/gpu-page.ts";
 
@@ -369,6 +370,40 @@ test("071 unit 13: a resize onto a whole card says that card to itself", () => {
   expect(resizedNow(size, { ...gpu, to: "shared", from: "none", fromIndex: null, words: "GPU: none → shared, card 0 · Live." }, true, false)).toBe(
     "It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 0 now, changed live.",
   );
+});
+
+test("071 unit 13: a CPU desktop's Resize offers the GPU rows its backend's GPU desktop accepts", async () => {
+  const sizes = { cores: "live" as const, memory: "live" as const, disk: "live" as const, shrinks: true };
+  const backend = {
+    resizing(kind: string) {
+      if (kind === "linux-desktop-cpu") return sizes;
+      if (kind === "linux-desktop") return { ...sizes, gpu: { add: "restart" as const, share: "live" as const, move: "restart" as const } };
+      return null;
+    },
+  };
+  const cpu = boxView({
+    kind: "linux-desktop-cpu",
+    kindLabel: "Linux desktop",
+    gpu: false,
+    gpuPart: "none",
+    claim: null,
+    desktop: true,
+    facts: [],
+    resizing: boxResizing(backend, "linux-desktop-cpu"),
+  });
+  const slot = open(page(cpu));
+  fireEvent.keyDown(await slot.findByRole("button", { name: "amber-fox actions" }), { key: "Enter" });
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Resize…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
+  expect(dialog.textContent).toContain("Adding, removing or moving a card restarts the box");
+  expect(dialog.textContent).not.toContain("does not change its GPU");
+  cleanup();
+  const plain = open(page(boxView({ ...cpu, resizing: boxResizing({ resizing: () => sizes }, "linux-desktop-cpu") })));
+  fireEvent.keyDown(await plain.findByRole("button", { name: "amber-fox actions" }), { key: "Enter" });
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Resize…" }));
+  const again = await screen.findByRole("alertdialog");
+  expect(again.querySelector("[data-gpu-section]")).toBeNull();
 });
 
 test("071 unit 13: Resize shows the plan's words", async () => {

@@ -16,6 +16,7 @@ export interface GpuFormOffer {
   readonly spare?: boolean;
   readonly reachesEveryCard: boolean;
   readonly canAddGpu: boolean;
+  readonly addKnown?: boolean;
 }
 
 export type GpuLineState = "reading" | "none" | "shared" | "whole" | "refused" | "failed";
@@ -49,7 +50,11 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
   if (gpu === "none") {
     const offer = offers[0];
     const reach = offer?.reachesEveryCard ? ` ${DOCKER_REACH}` : "";
-    const words = offer && !offer.canAddGpu ? `No GPU, and none can be added later on ${offer.label}.${offer.reachesEveryCard ? ` ${DOCKER_REACH}` : ""}` : `No GPU. You can add one later with Resize.${reach}`;
+    const words = !offer || offer.canAddGpu
+      ? `No GPU. You can add one later with Resize.${reach}`
+      : offer.addKnown === false
+        ? "No GPU."
+        : `No GPU, and none can be added later on ${offer.label}.${offer.reachesEveryCard ? ` ${DOCKER_REACH}` : ""}`;
     return { words, blocked: false, state: "none" };
   }
   if (pending(offers)) return { words: readingWords(offers.map((offer) => offer.host)), blocked: true, state: "reading" };
