@@ -1,7 +1,7 @@
 // The microsandbox backend (053) against a fake msb host (fake-msb.ts).
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { dockerKinds } from "../src/backends/docker/backend.ts";
@@ -44,6 +44,23 @@ function hooks() {
 
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
+
+function untilSeen(dir: string, met: () => boolean): Promise<void> {
+  if (met()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      watcher.close();
+      resolve();
+    };
+    const watcher = watch(dir, () => {
+      if (met()) finish();
+    });
+    if (met()) finish();
+  });
+}
 
 function after(args: readonly string[], flag: string): string[] {
   return args.flatMap((arg, i) => (arg === flag ? [args[i + 1]!] : []));
@@ -178,11 +195,12 @@ test("installs msb on a host that lacks it, once, and imports a kind's image fro
 test("a kind whose image neither msb nor Docker has is refused for now, and bb-box builds the image in a builder microVM, pulling only Docker's own, pinned, and removes the builder (053)", async () => {
   const { fake, backend } = setup({}, { imported: false });
   fake.docker.delete("bbbox/linux:1");
+  const built = fake.whenImage("bbbox/linux:1");
   await assert.rejects(
     backend.acquire(identity(), null, hooks().hooks, signal()),
     (error: unknown) => error instanceof BackendError && error.code === "no_capacity" && /has no image bbbox\/linux:1 yet\. bb-box is building it there in a microVM/.test(error.message),
   );
-  for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1"]; i++) await new Promise((r) => setTimeout(r, 25));
+  await built;
   assert.ok(fake.images()["bbbox/linux:1"], "built and moved into msb");
   const builder = fake.calls().find((call) => call[0] === "create" && call.includes("--name") && after(call, "--name")[0]!.startsWith("bb-box-builder-"))!;
   assert.equal(builder[1], BUILDER_IMAGE);
@@ -193,7 +211,7 @@ test("a kind whose image neither msb nor Docker has is refused for now, and bb-b
   assert.match(steps, /base64 -d \| tar -xz -C \/build/);
   assert.match(steps, /bash setup\/docker\/build\.sh --arch x86_64 --tag bbbox\/linux:1 linux /);
   assert.ok(fake.scripts.some(([name, , image]) => name === "transfer" && image === "bbbox/linux:1"));
-  for (let i = 0; i < 100 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSeen(join(fake.root, "sandboxes"), () => !fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")));
   assert.deepEqual(fake.sandboxes(), [], "the builder is removed, and no box was made");
   assert.ok(!fake.calls().some((call) => call[0] === "pull"));
   // The next box starts from the built image.
@@ -217,14 +235,15 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   assert.match(by["image.bbbox/linux:1-arm64"]!.fix ?? "", /bb-box builds it there in a microVM of its own/);
   assert.equal(by["image.bbbox/linux:1"], undefined, "no x86_64 image on an arm64 host");
   await assert.rejects(backend.acquire(identity("linux"), null, hooks().hooks, signal()), /does not offer linux boxes/);
+  const built = fake.whenImage("bbbox/linux:1-arm64");
   await assert.rejects(backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal()), /bb-box is building it there/);
-  for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1-arm64"]; i++) await new Promise((r) => setTimeout(r, 25));
+  await built;
   const { readFileSync } = await import("node:fs");
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /nohup sh -c .*build\.sh --arch arm64.*echo \$\? >\/build\/build\.exit/, "detached, as a heavy build has ended msb's exec session");
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /cat \/build\/build\.exit/);
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --tag bbbox\/linux:1-arm64 linux /);
   // The builder goes in the background after its image is in msb: the next box waits for that, so no fake reads a sandbox as it is removed.
-  for (let i = 0; i < 200 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSeen(join(fake.root, "sandboxes"), () => !fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")));
   const box = await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
   assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"], "msb's own disk");
   await backend.maintain(signal());
