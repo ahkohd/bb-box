@@ -280,7 +280,7 @@ export function checkKind(kind: BoxKind): void {
   assert.equal(new Set(ids).size, ids.length, `${kind.id} display IDs are unique`);
   for (const display of capabilities.displays) {
     assert.match(display.id, ID, `${kind.id} display ${display.id}`);
-    assert.ok(["rfb", "selkies"].includes(display.protocol), `${kind.id} display ${display.id} has a known protocol`);
+    assert.ok(["rfb", "selkies", "voxl"].includes(display.protocol), `${kind.id} display ${display.id} has a known protocol`);
     assert.equal(typeof display.resizable, "boolean");
   }
   if (capabilities.enrol) {

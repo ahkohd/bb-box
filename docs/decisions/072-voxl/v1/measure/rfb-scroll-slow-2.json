@@ -1,0 +1,28 @@
+{
+  "label": "rfb-scroll-slow-2",
+  "stream": "rfb",
+  "workload": "scroll",
+  "link": "slow",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene scroll fps=60.0 - Google Chrome",
+  "framesPerSecond": 3.5,
+  "longestGapMs": 322,
+  "longestGapAtSecond": 5.3,
+  "worstSecond": 3,
+  "latencyMs": {
+    "p50": 331,
+    "p99": 636,
+    "max": 636
+  },
+  "megabitsPerSecond": 9.19,
+  "framesShown": 71,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0,
+    "chrome (the workload)": 0.77,
+    "X server": 0.35
+  }
+}

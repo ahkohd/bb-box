@@ -117,8 +117,8 @@ test("kinds lists only kinds with a template", () => {
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
   assert.deepEqual(
     desktop.capabilities.displays,
-    [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }],
-    "xrandr resizes the GPU's screen, and video with NVENC is there by choice (#863)",
+    [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }, { id: "voxl", protocol: "voxl", resizable: true, byChoice: true }],
+    "xrandr resizes the GPU's screen, and video with NVENC is there by choice (#863), and voxl by choice (072)",
   );
   assert.equal(desktop.capabilities.gpu, true);
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
@@ -128,8 +128,9 @@ test("kinds lists only kinds with a template", () => {
     [
       { id: "desktop", protocol: "rfb", resizable: true },
       { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" },
+      { id: "voxl", protocol: "voxl", resizable: true, byChoice: true },
     ],
-    "Xtigervnc resizes, and Selkies streams it beside (056)",
+    "Xtigervnc resizes, and Selkies streams it beside (056), and voxl by choice (072)",
   );
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
   const wayland = setup({ "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }).backend.kinds().find((kind) => kind.id === "linux-desktop-wayland-cpu")!;
@@ -1354,7 +1355,7 @@ test("a GPU desktop is resized with xrandr as the box user, a size X cannot take
   const { backend, ssh } = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }, new MemoryStorage(), { sshBinary: binary });
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const [display] = (await backend.transports(desktop, "linux-desktop")).displays;
-  await display!.resize!({ width: 1600, height: 900 });
+  assert.equal(await display!.resize!({ width: 1600, height: 900 }), undefined, "on the GPU, xrandr set it");
   assert.match(readFileSync(log, "utf8"), /^:99 \S*\/run\/bb-box\/Xauthority --fb 1600x900\n$/);
   assert.ok(ssh.log().some((entry) => entry.target.startsWith("box@") && entry.command.includes("xrandr --fb 1600x900")), "it runs as the box user");
   await assert.rejects(display!.resize!({ width: 40000, height: 800 }), { message: `xrandr could not set the desktop to 40000x800: ${refusal}.` });
@@ -1363,7 +1364,7 @@ test("a GPU desktop is resized with xrandr as the box user, a size X cannot take
   // Its display service restarted without the GPU: Xtigervnc took the viewer's
   // SetDesktopSize, and xrandr would disconnect its output for an older size.
   writeFileSync(join(ssh.dir, "home", "192.0.2.100", "run", "bb-box", "display-mode"), "cpu\n");
-  await display!.resize!({ width: 1400, height: 900 });
+  assert.equal(await display!.resize!({ width: 1400, height: 900 }), "stream-server", "a viewer that sent no SetDesktopSize, as video's, has one sent (072)");
   assert.doesNotMatch(readFileSync(log, "utf8"), /1400x900/);
 
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());

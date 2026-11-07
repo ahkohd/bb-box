@@ -161,7 +161,7 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
       idleMinutes,
       monthlyLimitEurosBeforeVat: monthly === 0 ? null : monthly,
       sshFrom,
-      docker: docker.config,
+      docker: { ...docker.config, voxl: "off" },
     },
   };
 }

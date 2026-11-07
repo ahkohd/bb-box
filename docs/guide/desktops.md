@@ -80,6 +80,20 @@ If the video cannot start, the desktop shows over VNC, and a notification says '
 
 Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it. On Windows, a pasted image reaches the box's clipboard as the very file you pasted, not compressed again, which browsers and Office paste, and as a picture for apps that take only that; this needs a box made from a recent image. On a Mac it is the same; this needs a Tart Mac made from a recent image, or a pool Mac whose owner has run setup-mac.sh again since.
 
+### voxl, by choice
+
+[voxl](https://github.com/tembo/voxl) is another way to stream a Linux desktop on X11 as video. It is being tried, so a desktop uses it only when you choose it. It is offered on Docker and Proxmox LXC, for desktops made from a recent image.
+
+To stream one desktop through voxl, select **Stream with voxl** under **Display** in the toolbar's menu. It is ticked while the desktop streams through voxl. Your choice lasts for that box in that tab. Select it again to go back to the usual video.
+
+To stream every such desktop of a backend through voxl, turn on **Stream desktops with voxl** on that backend's page in [settings](settings.md), or run `bb box backend set docker --field voxl=true`, or `bb box backend set proxmox-lxc --field voxl=true`. Turn it off the same way to go back. Boxes need no restart, and **Stream with voxl** still works for one desktop either way.
+
+Through voxl, everything works as with the usual video, except:
+
+- people watching the agent do not see its pointer;
+- a desktop on a GPU encodes its video on the box's CPU, not its GPU;
+- voxl's video is 4:2:0, where the usual video is 4:4:4 in a browser that decodes it, so coloured text is a little softer.
+
 ### The pointer over video
 
 Video shows the box's pointer as the agent moves it, so you can see where it points while you watch. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.

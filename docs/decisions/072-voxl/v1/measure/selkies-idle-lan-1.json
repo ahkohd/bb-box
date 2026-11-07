@@ -1,0 +1,30 @@
+{
+  "label": "selkies-idle-lan-1",
+  "stream": "selkies",
+  "workload": "idle",
+  "link": "lan",
+  "seconds": 15,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene - Google Chrome",
+  "framesPerSecond": 0.1,
+  "longestGapMs": 0,
+  "longestGapAtSecond": null,
+  "worstSecond": 0,
+  "latencyMs": {
+    "p50": 1068314,
+    "p99": 1068314,
+    "max": 1068314
+  },
+  "megabitsPerSecond": 0.02,
+  "framesShown": 1,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0.29,
+    "voxl": 0,
+    "chrome (the workload)": 0.03,
+    "relay route (socat)": 0,
+    "X server": 0.03
+  }
+}

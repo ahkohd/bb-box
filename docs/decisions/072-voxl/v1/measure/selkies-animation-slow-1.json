@@ -1,0 +1,29 @@
+{
+  "label": "selkies-animation-slow-1",
+  "stream": "selkies",
+  "workload": "animation",
+  "link": "slow",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene animation fps=60.0 - Google Chrome",
+  "framesPerSecond": 58.5,
+  "longestGapMs": 38,
+  "longestGapAtSecond": 2.1,
+  "worstSecond": 55,
+  "latencyMs": {
+    "p50": 68,
+    "p99": 79,
+    "max": 83
+  },
+  "megabitsPerSecond": 6.42,
+  "framesShown": 1171,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0.35,
+    "voxl": 0,
+    "chrome (the workload)": 0.72,
+    "X server": 0.08
+  }
+}

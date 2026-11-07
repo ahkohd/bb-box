@@ -84,6 +84,7 @@ test("parses the fields, with the setup guide's defaults", () => {
     desktopsPerGpu: 4,
     reserveMemoryMiB: 4096,
     machineDockerHost: null,
+    voxl: "offered",
   });
   const all = dockerConfig({ privileged: false, "gpu-desktops": true, host: "ssh://builder@docker.example:2222", boxes: 3 });
   assert.equal(all.docker, false);
@@ -167,7 +168,7 @@ test("offers kinds by image, and its offers agree with Proxmox LXC's", async () 
   assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], [], []]);
   assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], [], []]);
   // wayvnc sends no still area again, so the Wayland desktop's viewer asks for it; Xtigervnc does, and Selkies is no RFB (056).
-  assert.deepEqual(kinds.map((kind) => kind.capabilities.displays.map((display) => display.refresh ?? null)), [[], [null, null], [null], ["viewer", null]]);
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.displays.map((display) => display.refresh ?? null)), [[], [null, null, null], [null, null], ["viewer", null]]);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
     assert.equal(kind.capabilities.command?.transport, "docker");
@@ -1044,7 +1045,7 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   const [gpuDisplay] = (await backend.transports(gpu, "linux-desktop")).displays;
   assert.deepEqual(gpuDisplay?.minSize, { width: 800, height: 600 });
   writeFileSync(join(fake.root, "containers", gpu.ref, "run", "bb-box", "display-mode"), "cpu\n");
-  await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal());
+  assert.equal(await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal()), "stream-server", "on the CPU, Xtigervnc takes the size by SetDesktopSize (072)");
   await assert.rejects(gpuDisplay!.resize!({ width: 0, height: 800 }, signal()), /cannot be 0 by 800 pixels/);
 });
 

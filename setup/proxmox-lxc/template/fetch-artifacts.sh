@@ -138,8 +138,8 @@ while IFS=$'\t' read -r name file url sha pin_arch; do
   case "$name" in '' | \#*) continue ;; esac
   [ "$pin_arch" = "$arch" ] || continue
   # The Wayland desktop streams with wayvnc, and Selkies capturing Sway
-  # (060), and has no GPU (048).
-  case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl) continue ;; esac
+  # (060), and has no GPU (048). voxl streams X11 only (072).
+  case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl | desktop-wayland-cpu:voxl) continue ;; esac
   # Only the Wayland desktop moves to Ubuntu 26.04; the X11 desktops stay on 24.04.
   case "$kind:$name" in desktop-wayland-cpu:*) ;; *-ubuntu26.04) continue ;; esac
   [ "$url" = - ] || fetch "$url" "$sha" "$file"

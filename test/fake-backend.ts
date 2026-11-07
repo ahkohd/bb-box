@@ -28,6 +28,7 @@ import { placementData, placementOf, placedOnSharedHost, type SlotKind, type Slo
 import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
+import { FakeVoxl } from "./fake-voxl.ts";
 import { fakeGroup, inGroup } from "./helpers.ts";
 import {
   type GuestOs,
@@ -66,6 +67,7 @@ import { openTerminal } from "../src/transports/terminal.ts";
 import { IDENTITY_STATE, IDENTITY_TOOL } from "../src/core/identity.ts";
 import { machineSizeOf } from "../src/core/gpu.ts";
 import {
+  LEFT_TO_STREAM_SERVER,
   TransportError,
   type BoxPointer,
   type ByteChannel,
@@ -218,6 +220,11 @@ export const FAKE_SELKIES_KIND: BoxKind = {
   capabilities: { ...FAKE_KINDS[1]!.capabilities, displays: [...FAKE_KINDS[1]!.capabilities.displays, { id: "selkies", protocol: "selkies", resizable: true }] },
 };
 
+export const FAKE_VOXL_KIND: BoxKind = {
+  ...FAKE_SELKIES_KIND,
+  capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: [...FAKE_SELKIES_KIND.capabilities.displays, { id: "voxl", protocol: "voxl", resizable: true, byChoice: true }] },
+};
+
 /** A Wayland desktop, which the plugin knows as one by its kind's ID (048). */
 export const FAKE_WAYLAND_KIND: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-wayland-cpu", label: "Linux desktop (Wayland)" };
 
@@ -283,6 +290,10 @@ export class FakeBackend implements Backend {
    * input and sends the clipboard and the cursor's shape, as bb-box-stream.exe for a Windows VM on a Mac (#865).
    */
   apartInput: FakeSelkies | null = null;
+  readonly voxl = new FakeVoxl();
+  resizeInBox: ((size: DisplaySize) => Promise<void | typeof LEFT_TO_STREAM_SERVER>) | null = null;
+  voxlChosen = false;
+  #voxlPort: Promise<number> | null = null;
   #apartPort: Promise<number> | null = null;
   /** Whether a box's video display leaves out the cursor its kind says, as a Windows image without the hardware cursor does. */
   cursorless = false;
@@ -634,9 +645,12 @@ export class FakeBackend implements Backend {
         protocol: display.protocol,
         resizable: display.resizable,
         ...(display.cursor && !this.cursorless ? { cursor: display.cursor } : {}),
+        ...(display.protocol === "voxl" ? { opensFirst: this.voxlChosen } : {}),
         open: async () =>
           this.#open() ??
-          (display.protocol === "selkies"
+          (display.protocol === "voxl"
+            ? { route: { type: "tcp", host: "127.0.0.1", port: await (this.#voxlPort ??= this.voxl.listen()) }, auth: { type: "none" } }
+            : display.protocol === "selkies"
             ? { route: { type: "tcp", host: "127.0.0.1", port: await (this.#selkiesPort ??= this.selkies.listen()) }, auth: { type: "none" } }
             : {
                 route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
@@ -659,8 +673,9 @@ export class FakeBackend implements Backend {
     return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell, identity.tool, identity.root, identity.bin), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
   }
 
-  async #resize(size: DisplaySize): Promise<void> {
+  async #resize(size: DisplaySize): Promise<void | typeof LEFT_TO_STREAM_SERVER> {
     this.resizes.push(size);
+    if (this.resizeInBox) return this.resizeInBox(size);
     this.displayResizing += 1;
     this.mostDisplayResizing = Math.max(this.mostDisplayResizing, this.displayResizing);
     try {
@@ -737,6 +752,9 @@ export class FakeBackend implements Backend {
     if (this.#apartPort) await this.#apartPort;
     this.#apartPort = null;
     await this.apartInput?.close();
+    if (this.#voxlPort) await this.#voxlPort;
+    this.#voxlPort = null;
+    await this.voxl.close();
   }
 
   #kind(kind: string): BoxKind {

@@ -7,8 +7,8 @@
 
 export type GuestOs = "linux" | "windows" | "macos";
 export type Arch = "x86_64" | "arm64";
-/** The desktop viewer picks its client by protocol: noVNC for "rfb", and for "selkies" the relay carries Selkies' WebSocket (056). */
-export type DisplayProtocol = "rfb" | "selkies";
+/** The desktop viewer picks its client by protocol: noVNC for "rfb", and for "selkies" the relay carries Selkies' WebSocket (056); for "voxl" it translates voxl's into the same video client's (072). */
+export type DisplayProtocol = "rfb" | "selkies" | "voxl";
 
 /** A two-way byte stream with backpressure. */
 export interface ByteChannel {
@@ -142,6 +142,7 @@ export interface Display {
    * image can, where the kind's says what its images can at best.
    */
   readonly cursor?: "stream" | "selkies";
+  readonly opensFirst?: boolean;
   /** Called once per viewer connection, because tickets can be single use. */
   open(signal?: AbortSignal): Promise<DisplayOpened>;
   /**
@@ -160,7 +161,7 @@ export interface Display {
    * display already has must succeed. Rejects with the box's reason when the
    * box refuses the size.
    */
-  resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
+  resize?(size: DisplaySize, signal?: AbortSignal): Promise<void | typeof LEFT_TO_STREAM_SERVER>;
   /**
    * Starts the display's server again, for one that stopped answering a
    * viewer's sign-in: wayvnc 0.7.2 can freeze there (#411). A sign-in that
@@ -203,6 +204,8 @@ export interface Display {
    */
   readonly minSize?: DisplaySize;
 }
+
+export const LEFT_TO_STREAM_SERVER = "stream-server";
 
 /** The smallest size a viewer sets a Linux or Windows desktop to: their apps are hard to use below it. */
 export const MIN_DESKTOP: DisplaySize = { width: 800, height: 600 };

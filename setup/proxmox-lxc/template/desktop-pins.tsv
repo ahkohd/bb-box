@@ -1,7 +1,7 @@
 # Desktop artifacts, pinned by SHA-256. Columns (tab separated): name, file, URL, SHA-256, architecture (x86_64 or arm64).
 # The NVIDIA installer is not here: fetch-artifacts.sh downloads the host's own driver version and checks NVIDIA's published SHA-256.
 # A name ending -ubuntu26.04 is for the Wayland desktop on Ubuntu 26.04; the same name without it, for 24.04.
-# tigervnc: SHA-256 of the file whose MD5 SourceForge lists for the release. chrome: from Google's stable Packages index, InRelease signed by EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796. virtualgl and selkies: GitHub release asset digest.
+# tigervnc: SHA-256 of the file whose MD5 SourceForge lists for the release. chrome: from Google's stable Packages index, InRelease signed by EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796. virtualgl, selkies and voxl: GitHub release asset digest. voxl is its source crate, which the desktop builds.
 tigervnc	tigervncserver_1.16.2-1ubuntu1_amd64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/amd64/tigervncserver_1.16.2-1ubuntu1_amd64.deb/download	55048dedc7707b9a242740711569b3ab96178f968437d29d4f86bbad7cce6162	x86_64
 virtualgl	virtualgl_3.1.5_amd64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_amd64.deb	df3f7788ce41b182a47c0d298e5cd6d2d63579522cb41825970b7726e825485e	x86_64
 chrome	google-chrome-stable_156.0.8078.79-1_amd64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_156.0.8078.79-1_amd64.deb	be1a1e161419f5c8272432f6860912550d8e29985e925913fa800493a0d0c955	x86_64
@@ -10,6 +10,7 @@ cua-driver-binary	cua-driver	-	5744fc102c9f75d011f0ab00f998668ba1f77a5c913c78d5f
 rustup	rustup-init	https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init	dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71	x86_64
 selkies	selkies-2.0.0-ubuntu24.04-amd64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu24.04-amd64.deb	bbaa4d71012b9374a753b7dfddc1da07e31f34b04277fe4fb3d045f18fd88391	x86_64
 selkies-ubuntu26.04	selkies-2.0.0-ubuntu26.04-amd64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu26.04-amd64.deb	4f1fa49d89f7601b87480168fa38d4f879b5d609b5b3510cef25a88eb4ace753	x86_64
+voxl	voxl-server-0.3.4.crate	https://github.com/tembo/voxl/releases/download/v0.3.4/voxl-server-0.3.4.crate	03609cf33ddac066a399ff9b5bfc24530578c6f2f8d5c22426e99dd9261aa20e	x86_64
 tigervnc	tigervncserver_1.16.2-1ubuntu1_arm64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/arm64/tigervncserver_1.16.2-1ubuntu1_arm64.deb/download	d20c746bb7e0b2cca7c24229e9a6de2050674a550ea767ee6669f75f47e0a068	arm64
 virtualgl	virtualgl_3.1.5_arm64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_arm64.deb	9ac238e8a18c06d84ef65444a591a7a5bb4c4ce9e8cfdd92f8a2aea35edbb5d7	arm64
 chrome	google-chrome-stable_156.0.8078.79-1_arm64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_156.0.8078.79-1_arm64.deb	dc66f2d96853153e350c4a0944da4503cae39c2fcbcdb4e0057c64f6c49202ff	arm64

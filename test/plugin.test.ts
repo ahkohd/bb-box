@@ -12,7 +12,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { connect, type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
@@ -23,7 +23,7 @@ import { inSlot } from "../src/core/device-host.ts";
 import { devicePaths } from "../src/device/paths.ts";
 import { DeviceServer } from "../src/device/server.ts";
 import { TestDriver } from "../src/device/test-driver.ts";
-import type { BoxPointer } from "../src/transports/types.ts";
+import { LEFT_TO_STREAM_SERVER, type BoxPointer } from "../src/transports/types.ts";
 import { BoxError, OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { IDENTITY_STATE } from "../src/core/identity.ts";
@@ -41,11 +41,14 @@ import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/
 import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
-import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_VOXL_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
+import { voxlVideo } from "./fake-voxl.ts";
 import { FakeSnapshots } from "./fake-snapshots.ts";
 import { readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
-import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
+import { fakeDaemon, fakeFfmpeg, joined, tempDir, testContext } from "./helpers.ts";
+import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
+import { DockerBackend } from "../src/backends/docker/backend.ts";
 
 const THREAD = "thr_one";
 const PROJECT = "prj_one";
@@ -3784,7 +3787,7 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, videoByDefault: false, sharp: null, switching: false });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, videoByDefault: false, streams: [], sharp: null, switching: false });
 });
 
 test("a box whose video is shown only by choice, as a Tart Mac's, offers video but opens VNC first; others open video", async (t) => {
@@ -3801,6 +3804,53 @@ test("a box whose video is shown only by choice, as a Tart Mac's, offers video b
   assert.deepEqual([chosen.video, chosen.videoByDefault], [true, false]);
   const usual = await state(FAKE_SELKIES_KIND);
   assert.deepEqual([usual.video, usual.videoByDefault], [true, true]);
+});
+
+test("the desktop route carries a box's voxl stream in the viewer's protocol; only the viewer with control reaches the box, sizes it and gets its clipboard; and the desktop state offers voxl by choice, or first where its backend chose it (072)", async (t) => {
+  const { harness, box, world } = await desktopBox({ kind: FAKE_VOXL_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const state = async () => (await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { video: boolean; videoByDefault: boolean; streams: string[] };
+  const offered = await state();
+  assert.deepEqual([offered.video, offered.videoByDefault, offered.streams], [true, true, ["selkies", "voxl"]]);
+  world.backend!.voxlChosen = true;
+  assert.deepEqual((await state()).streams, ["voxl", "selkies"]);
+  const voxl = world.backend!.voxl;
+  const rfb = world.backend!.rfb;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=voxl`);
+  const client = await until("the viewer's own voxl client", async () => voxl.clients[0]);
+  assert.equal(client.path, "/ws");
+  await voxl.everyone(voxlVideo(70_000, true));
+  const frame = await until("the frame, in the viewer's protocol", async () => session.sent.find((message): message is Uint8Array => typeof message !== "string"));
+  assert.deepEqual([frame[0], frame[1], (frame[2]! << 8) | frame[3]!, (frame[6]! << 8) | frame[7]!], [4, 0x11, 70_000 & 0xffff, 1920]);
+  const settle = async () => {
+    const before = client.received.filter((message) => message === "kf").length;
+    await session.receive("REQUEST_KEYFRAME");
+    await until("voxl to have it all", async () => client.received.filter((message) => message === "kf").length > before);
+  };
+  await session.receive("START_VIDEO");
+  await session.receive("kd,97");
+  await session.receive("r,1024x768");
+  await session.receive("CLIENT_FRAME_ACK 4464 0");
+  await voxl.everyone(JSON.stringify({ t: "clip", d: "copied" }));
+  await settle();
+  assert.deepEqual(client.received.filter((message) => message !== "kf"), ["v,1", "a,70000"], "without control, only watching");
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800], "no resize without control");
+  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard")), "no clipboard without control");
+
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
+  assert.equal(took.error, null);
+  await session.receive("kd,97");
+  await until("the key, in voxl's command", async () => client.received.includes("k,97,1"));
+  await session.receive("r,1024x768");
+  await until("the resize, through the backend's display", async () => rfb.width === 1024 && rfb.height === 768);
+  await settle();
+  assert.ok(!client.received.some((message) => typeof message === "string" && /^(sz|r),/.test(message)), "voxl is told no size: it follows the screen");
+  await voxl.everyone(JSON.stringify({ t: "clip", d: "copied again" }));
+  await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
+  await until("the held key released at hand-back", async () => client.received.includes("r"));
+  await session.close();
 });
 
 test("a box whose video comes from elsewhere, as a Windows VM's on a Mac, gets a viewer's keys on its own server, which gives the viewer with control its clipboard, and is told no size, while the pointer goes to the video's source (#865)", async (t) => {
@@ -4027,6 +4077,41 @@ test("a video display the backend resizes, as the GPU desktop with xrandr, takes
   assert.deepEqual(backend.resizes.at(-1), { width: 1024, height: 768 });
   assert.equal(backend.rfb.connections.length, rfbBefore, "no RFB connection to set the size or read it back");
   await session.close();
+});
+
+async function videoViewerResizes(t: TestContext, resizeInBox: NonNullable<FakeBackend["resizeInBox"]>): Promise<void> {
+  const { harness, app, world } = await start(undefined, { resize: "backend", kinds: [FAKE_VOXL_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_VOXL_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const backend = world.backend!;
+  backend.resizeInBox = resizeInBox;
+  backend.rfb.acceptResize = true;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=voxl`);
+  await until("the viewer's own voxl client", async () => backend.voxl.clients[0]);
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await session.receive("r,1024x768");
+  await until("the backend's resize", async () => backend.resizes.some((size) => size.width === 1024 && size.height === 768));
+  await until("the size on the VNC server", async () => backend.rfb.width === 1024 && backend.rfb.height === 768);
+  await session.close();
+}
+
+test("a video viewer's resize of a desktop its backend leaves to the stream server, as a GPU desktop drawn by the CPU, reaches the VNC server as SetDesktopSize (072)", async (t) => {
+  await videoViewerResizes(t, async () => LEFT_TO_STREAM_SERVER);
+});
+
+test("a video viewer's resize of a Docker GPU desktop that took the CPU, as when its GPU cannot be found, reaches Xtigervnc as SetDesktopSize: Docker's resize leaves the size to it (072)", async (t) => {
+  const docker = fakeDockerHost({ gpus: ["nvidia.com/gpu=GPU-0b1c2d3e-0000-0000-0000-000000000001"] });
+  const dockerBackend = new DockerBackend(dockerConfig({ "gpu-desktops": true }), testContext(), { binary: docker.binary, readyTimeoutMs: 2_000 });
+  t.after(() => dockerBackend.dispose?.());
+  const identity = { boxId: "bxdockercpu0001", threadId: THREAD, name: "calm-otter-cpu", kind: "linux-desktop", createdAt: 1_790_000_000_000, size: { cores: 4, memoryMiB: 8192, diskGiB: null, gpu: "shared" as const } };
+  const desktop = await dockerBackend.acquire(identity, null, { claim: async () => undefined, starting: async () => undefined, timing: () => undefined }, AbortSignal.timeout(20_000));
+  writeFileSync(join(docker.root, "containers", desktop.ref, "run", "bb-box", "display-mode"), "cpu\n");
+  const [shown] = (await dockerBackend.transports(desktop, "linux-desktop")).displays;
+  assert.equal(shown?.protocol, "rfb");
+  await videoViewerResizes(t, (size) => shown!.resize!(size));
 });
 
 test("a video display told a size first, as Selkies on Sway, hears it before the backend resizes the desktop, and the size the desktop kept after a resize that fails (the owner's note of 18 October 2026)", async (t) => {

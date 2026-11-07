@@ -39,7 +39,7 @@ export class FakeRfb {
   height: number;
   readonly password: string | null;
   readonly user: string | null;
-  readonly acceptResize: boolean;
+  acceptResize: boolean;
   /** When set, it answers no update request, as a wayvnc that lost the desktop does (0.7.2). */
   silent = false;
   shortKeys = 0;

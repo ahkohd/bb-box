@@ -19,8 +19,8 @@ test("valid settings parse with defaults", () => {
   assert.deepEqual(config.flavours.linux, { templates: [{ vmid: 9000, gpu: null }] });
   assert.deepEqual(config.flavours.desktop.templates, []);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, []);
-  assert.deepEqual(config.desktop, { perGpu: null });
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 3 }).desktop, { perGpu: 3 });
+  assert.deepEqual(config.desktop, { perGpu: null, voxl: "offered" });
+  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 3 }).desktop, { perGpu: 3, voxl: "offered" });
   assert.deepEqual(config.reserve, { memoryMiB: 4096, diskGiB: 50 });
 });
 

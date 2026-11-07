@@ -20,6 +20,7 @@ import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
+import { videoStreams } from "./desktop.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, readableState, unreadReason } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
@@ -257,11 +258,16 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           throw error;
         },
       );
-      const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && desktopDisplays(box.capabilities.displays).some((display) => display.protocol === "selkies");
-      const videoByDefault = video && !desktopDisplays(box.capabilities.displays).some((display) => display.protocol === "selkies" && display.byChoice);
+      const videoOn = app.configuration.document.general.video ?? GENERAL_DEFAULTS.video;
+      const selkies = box ? (desktopDisplays(box.capabilities.displays).find((display) => display.protocol === "selkies") ?? null) : null;
+      const mayHaveVoxl = !!box && videoOn && desktopDisplays(box.capabilities.displays).some((display) => display.protocol === "voxl");
+      const voxl = mayHaveVoxl ? await app.desktops.voxl(box.id).catch(() => null) : null;
+      const streams = videoStreams(selkies !== null, voxl);
+      const video = !!box && videoOn && streams.length > 0;
+      const videoByDefault = video && (voxl === "chosen" || (selkies !== null && !selkies.byChoice));
       const sharp = box ? await app.desktops.sharp(box.id).catch(() => null) : null;
       const switching = !!box && app.desktops.switching(box.id);
-      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, videoByDefault, sharp, switching };
+      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, videoByDefault, streams, sharp, switching };
     },
     "desktop.sharp": async ({ threadId, box: ref, on }) => {
       try {

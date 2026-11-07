@@ -9,6 +9,7 @@
 
 import { endpointOf } from "../../host/relay.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import type { VoxlOffer } from "../voxl.ts";
 
 export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"] as const;
 export type DockerKind = (typeof DOCKER_KINDS)[number];
@@ -38,6 +39,7 @@ export interface DockerConfig {
   readonly desktopsPerGpu: number;
   readonly reserveMemoryMiB: number;
   readonly machineDockerHost: string | null;
+  readonly voxl: VoxlOffer;
 }
 
 export const DOCKER_DEFAULTS = {
@@ -63,6 +65,7 @@ export const DOCKER_KEYS = {
   network: "network",
   boxes: "boxes",
   reserveMemoryMiB: "reserve-memory-mib",
+  voxl: "voxl",
 } as const;
 
 export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
@@ -119,6 +122,14 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "boxes",
     default: false,
   },
+  [DOCKER_KEYS.voxl]: {
+    type: "boolean",
+    label: "Stream desktops with voxl",
+    description:
+      "Shows Linux desktops on X11 through voxl in the viewer, in place of Selkies or VNC. Off, they show as before, and each desktop's Display menu can still pick Stream with voxl. Only desktops from an image built with voxl have it.",
+    group: "boxes",
+    default: false,
+  },
   [DOCKER_KEYS.desktopsPerGpu]: {
     type: "number",
     label: "Boxes per card",
@@ -161,6 +172,10 @@ function number(values: Readonly<Record<string, unknown>>, key: string, fallback
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
   return fallback;
+}
+
+export function voxlOfferOf(setting: unknown): VoxlOffer {
+  return setting === true ? "chosen" : "offered";
 }
 
 /** An image reference as bb-box passes it to docker: no spaces or quotes, and no leading "-". */
@@ -224,8 +239,10 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const reserveMemoryMiB = number(values, DOCKER_KEYS.reserveMemoryMiB, DOCKER_DEFAULTS.reserveMemoryMiB);
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
+  const voxl = voxlOfferOf(values[DOCKER_KEYS.voxl]);
+
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, gpus: gpu, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null } };
+  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, gpus: gpu, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null, voxl } };
 }
 
 export function machineDockerHost(backends: readonly { readonly type: string; readonly fields: Readonly<Record<string, unknown>> }[], hostId: string): string | null {

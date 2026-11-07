@@ -1,0 +1,30 @@
+{
+  "label": "voxl-animation-slow-3",
+  "stream": "voxl",
+  "workload": "animation",
+  "link": "slow",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene animation fps=60.0 - Google Chrome",
+  "framesPerSecond": 59.9,
+  "longestGapMs": 26,
+  "longestGapAtSecond": 9.7,
+  "worstSecond": 59,
+  "latencyMs": {
+    "p50": 45,
+    "p99": 53,
+    "max": 57
+  },
+  "megabitsPerSecond": 5.15,
+  "framesShown": 1199,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0,
+    "chrome (the workload)": 0.76,
+    "voxl": 0.31,
+    "relay route (socat)": 0,
+    "X server": 0.08
+  }
+}
