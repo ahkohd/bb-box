@@ -24,10 +24,10 @@ export interface TypedField {
 }
 
 export type ActedInput =
-  | { readonly type: "click"; readonly button: MouseButton; readonly count: 1 | 2; readonly point: InputPoint; readonly area: InputArea | null }
-  | { readonly type: "scroll"; readonly point: InputPoint }
+  | { readonly type: "click"; readonly button: MouseButton; readonly count: 1 | 2; readonly point: InputPoint; readonly area: InputArea | null; readonly window?: InputArea | null }
+  | { readonly type: "scroll"; readonly point: InputPoint; readonly window?: InputArea | null }
   | { readonly type: "keys"; readonly key: string; readonly modifiers: readonly string[] }
-  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean };
+  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean; readonly window?: InputArea | null };
 
 export type PersonInput =
   | { readonly type: "pointer"; readonly x: number; readonly y: number; readonly buttons: number }
@@ -40,10 +40,10 @@ export type InputSpace = "screen" | "picture";
 export type InputSource = "agent" | "person";
 
 export type InputEvent =
-  | { readonly at: number; readonly by: InputSource; readonly type: "click"; readonly space: InputSpace; readonly button: MouseButton; readonly count: 1 | 2; readonly x: number; readonly y: number; readonly area: InputArea | null }
-  | { readonly at: number; readonly by: InputSource; readonly type: "scroll"; readonly space: InputSpace; readonly x: number; readonly y: number }
+  | { readonly at: number; readonly by: InputSource; readonly type: "click"; readonly space: InputSpace; readonly button: MouseButton; readonly count: 1 | 2; readonly x: number; readonly y: number; readonly area: InputArea | null; readonly window?: InputArea | null }
+  | { readonly at: number; readonly by: InputSource; readonly type: "scroll"; readonly space: InputSpace; readonly x: number; readonly y: number; readonly window?: InputArea | null }
   | { readonly at: number; readonly by: InputSource; readonly type: "keys"; readonly chord: KeyChord }
-  | { readonly at: number; readonly by: InputSource; readonly type: "typing"; readonly characters: number; readonly space: InputSpace; readonly area: InputArea | null; readonly secret: boolean }
+  | { readonly at: number; readonly by: InputSource; readonly type: "typing"; readonly characters: number; readonly space: InputSpace; readonly area: InputArea | null; readonly secret: boolean; readonly window?: InputArea | null }
   | { readonly at: number; readonly by: "person"; readonly type: "pointer"; readonly space: "picture"; readonly x: number; readonly y: number; readonly buttons: number };
 
 export const INPUT_EVENTS_MOST = 20_000;
@@ -141,14 +141,15 @@ function isShortcutKey(key: string): boolean {
   return key === "Space" || /^[\x21-\x7e]$/.test(key);
 }
 
-function windowsAltGr(shown: readonly Modifier[]): boolean {
-  return shown.includes("ctrl") && shown.includes("alt");
+function ctrlAltIsAltGr(os: GuestOs): boolean {
+  return os === "windows";
 }
 
-export function pressOf(key: string | null, held: readonly HeldModifier[]): KeyPress {
+export function pressOf(key: string | null, held: readonly HeldModifier[], os: GuestOs): KeyPress {
   const shown = MODIFIER_ORDER.filter((modifier) => held.some((each) => each.modifier === modifier));
   if (key !== null && isNamedKey(key)) return { type: "keys", chord: { key, modifiers: shown } };
-  const makesCharacters = held.some((each) => each.kind === "characters") || windowsAltGr(shown);
+  const altGr = ctrlAltIsAltGr(os) && shown.includes("ctrl") && shown.includes("alt");
+  const makesCharacters = held.some((each) => each.kind === "characters") || altGr;
   const commands = held.some((each) => each.kind === "command");
   if (key === null || !isShortcutKey(key) || !commands || makesCharacters) return TYPING;
   return { type: "keys", chord: { key, modifiers: shown } };
@@ -164,7 +165,7 @@ function agentModifier(name: string, os: GuestOs): HeldModifier {
 }
 
 export function agentPress(key: string, modifiers: readonly string[], os: GuestOs): KeyPress {
-  return pressOf(keyName(key), modifiers.map((each) => agentModifier(each, os)));
+  return pressOf(keyName(key), modifiers.map((each) => agentModifier(each, os)), os);
 }
 
 const SECRET_ROLE = /password|secure/i;
@@ -250,7 +251,7 @@ interface Recording {
   readonly events: InputEvent[];
   readonly held: Map<number, HeldModifier>;
   lastPointer: { at: number; x: number; y: number; buttons: number } | null;
-  typing: { readonly secret: boolean } | null;
+  typing: { readonly secret: boolean; readonly window: InputArea | null } | null;
 }
 
 export class RecordingInputs {
@@ -289,10 +290,10 @@ export class RecordingInputs {
     const at = this.#boxSeconds(recording, sentAt);
     switch (input.type) {
       case "click":
-        this.#push(recording, { at, by: "agent", type: "click", space: "screen", button: input.button, count: input.count, x: input.point.x, y: input.point.y, area: input.area });
+        this.#push(recording, { at, by: "agent", type: "click", space: "screen", button: input.button, count: input.count, x: input.point.x, y: input.point.y, area: input.area, window: input.window ?? null });
         return;
       case "scroll":
-        this.#push(recording, { at, by: "agent", type: "scroll", space: "screen", x: input.point.x, y: input.point.y });
+        this.#push(recording, { at, by: "agent", type: "scroll", space: "screen", x: input.point.x, y: input.point.y, window: input.window ?? null });
         return;
       case "keys": {
         recording.typing = null;
@@ -302,10 +303,10 @@ export class RecordingInputs {
         return;
       }
       case "typing": {
-        const started = input.characters > 0 ? { secret: input.secret } : recording.typing;
+        const started = input.characters > 0 ? { secret: input.secret, window: input.window ?? null } : recording.typing;
         if (!started) return;
         recording.typing = input.characters > 0 ? started : null;
-        this.#push(recording, { at, by: "agent", type: "typing", characters: input.characters, space: "screen", area: input.area, secret: started.secret });
+        this.#push(recording, { at, by: "agent", type: "typing", characters: input.characters, space: "screen", area: input.area, secret: started.secret, window: started.window });
         return;
       }
     }
@@ -335,7 +336,7 @@ export class RecordingInputs {
     if (!input.down) return;
     const key = keysymKey(input.keysym);
     if (key === null && !keysymTypes(input.keysym)) return;
-    const press = pressOf(key, [...recording.held.values()]);
+    const press = pressOf(key, [...recording.held.values()], recording.os);
     if (press.type === "typing") this.#push(recording, { at, by: "person", type: "typing", characters: 1, space: "picture", area: null, secret: true });
     else this.#push(recording, { at, by: "person", type: "keys", chord: press.chord });
   }

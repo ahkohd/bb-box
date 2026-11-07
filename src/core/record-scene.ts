@@ -113,10 +113,12 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   const clicks: PlacedClick[] = inputs.flatMap((input) => {
     if (input.type !== "click") return [];
     const scale = spaceScale(input.space);
-    return [{ at: time(input.at), x: input.x * scale, y: input.y * scale, button: input.button, count: input.count, area: scaled(input.area, scale) }];
+    return [{ at: time(input.at), x: input.x * scale, y: input.y * scale, button: input.button, count: input.count, area: scaled(input.area, scale), window: scaled(input.window ?? null, scale) }];
   });
-  const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space) }] : []));
-  const typing: PlacedTyping[] = inputs.flatMap((input) => (input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret }] : []));
+  const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space), window: scaled(input.window ?? null, spaceScale(input.space)) }] : []));
+  const typing: PlacedTyping[] = inputs.flatMap((input) =>
+    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, window: scaled(input.window ?? null, spaceScale(input.space)) }] : [],
+  );
   const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
   return {
     scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },

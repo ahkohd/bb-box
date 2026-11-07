@@ -112,12 +112,9 @@ export interface FakeDesktop {
   wayland?: boolean;
   /** Cua is on macOS. */
   mac?: boolean;
-  /** As a driver before Cua 0.30: no lifecycle sessions, so no tool takes a session and its agent cursor cannot be hidden. */
-  noSessions?: boolean;
-  /** Named sessions the driver has ended, which refuse every call until start_session starts them again. */
-  endedNamed?: string[];
-  /** Whether each named session's agent cursor shows, as set_agent_cursor_enabled left it. */
-  agentCursors?: Record<string, boolean>;
+  sessionlessLikeCuaBefore030?: boolean;
+  endedNamedSessions?: string[];
+  agentCursorShownBySession?: Record<string, boolean>;
   /** How many more launches by name Windows' shell cannot look up yet, as just after a box starts. */
   lookupBusy?: number;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
@@ -457,7 +454,7 @@ export class FakeCua {
   }
 
   tools(): { name: string; inputSchema: { type: "object"; properties: Record<string, unknown> } }[] {
-    const sessions = !this.#load().noSessions;
+    const sessions = !this.#load().sessionlessLikeCuaBefore030;
     const names = [...TOOLS_WITHOUT_SESSION, ...(sessions ? TOOLS_TAKING_SESSION : TOOLS_TAKING_SESSION.filter((name) => !LIFECYCLE_TOOLS.includes(name)))];
     return names.map((name) => ({ name, inputSchema: { type: "object", properties: sessions && TOOLS_TAKING_SESSION.includes(name) ? { session: { type: "string" } } : {} } }));
   }
@@ -465,23 +462,23 @@ export class FakeCua {
   #lifecycle(tool: string, args: Args): Result | null {
     const session = typeof args.session === "string" ? args.session : null;
     const desktop = this.#load();
-    if (session !== null && (desktop.noSessions || !TOOLS_TAKING_SESSION.includes(tool))) return text(`${tool} takes no session.`, { code: "invalid_arguments" }, true);
-    if (!LIFECYCLE_TOOLS.includes(tool) && !(session !== null && desktop.endedNamed?.includes(session))) return null;
-    if (desktop.noSessions) return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
+    if (session !== null && (desktop.sessionlessLikeCuaBefore030 || !TOOLS_TAKING_SESSION.includes(tool))) return text(`${tool} takes no session.`, { code: "invalid_arguments" }, true);
+    if (!LIFECYCLE_TOOLS.includes(tool) && !(session !== null && desktop.endedNamedSessions?.includes(session))) return null;
+    if (desktop.sessionlessLikeCuaBefore030) return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
     if (tool === "start_session") {
-      this.#change((changed) => void (changed.endedNamed = (changed.endedNamed ?? []).filter((name) => name !== session)));
+      this.#change((changed) => void (changed.endedNamedSessions = (changed.endedNamedSessions ?? []).filter((name) => name !== session)));
       return text(`Session '${session ?? "implicit"}' is active.`, { active: true, session: session ?? "implicit" });
     }
-    if (session !== null && desktop.endedNamed?.includes(session)) return text(`session has ended; tool call '${tool}' was rejected. Call start_session with session '${session}' to start it again, or use a new session label.`, undefined, true);
+    if (session !== null && desktop.endedNamedSessions?.includes(session)) return text(`session has ended; tool call '${tool}' was rejected. Call start_session with session '${session}' to start it again, or use a new session label.`, undefined, true);
     if (tool === "set_agent_cursor_enabled") {
-      this.#change((changed) => void (changed.agentCursors = { ...changed.agentCursors, [session ?? ""]: args.enabled === true }));
+      this.#change((changed) => void (changed.agentCursorShownBySession = { ...changed.agentCursorShownBySession, [session ?? ""]: args.enabled === true }));
       return text(`Agent cursor for session '${session}' ${args.enabled === true ? "enabled" : "disabled"}.`);
     }
     this.#change((changed) => {
-      const left = { ...changed.agentCursors };
+      const left = { ...changed.agentCursorShownBySession };
       delete left[session ?? ""];
-      changed.agentCursors = left;
-      changed.endedNamed = [...(changed.endedNamed ?? []), session ?? ""];
+      changed.agentCursorShownBySession = left;
+      changed.endedNamedSessions = [...(changed.endedNamedSessions ?? []), session ?? ""];
     });
     return text(`Session '${session}' ended.`);
   }
@@ -653,7 +650,7 @@ export class FakeCua {
     if (typeof token !== "string") return text("Give element_token or x and y.", { code: "invalid_arguments" }, true);
     const [prefix, id, read, key, session] = token.split("|");
     if (prefix !== this.#prefix) return text("element_token is not from this session. Call get_window_state again.", { code: "stale_token" }, true);
-    if (session && desktop.endedNamed?.includes(session)) return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);
+    if (session && desktop.endedNamedSessions?.includes(session)) return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);
     if (Number(id) !== window.id) return text("element_token belongs to another window.", { code: "invalid_arguments" }, true);
     if (Number(read) !== this.#reads.get(window.id)) {
       return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);

@@ -128,8 +128,10 @@ them:
   ASCII letter, digit or symbol; any other character is typing.
 - Shift alone makes characters, and so do AltGr and its kin
   (`ISO_Level3_Shift`, `ISO_Level5_Shift`, `Mode_switch`), Option on a
-  macOS desktop, and Ctrl with Alt, which is AltGr on Windows. A key with
-  any of them is typing, unless it is a named key such as an arrow.
+  macOS desktop, and, on a Windows desktop only, Ctrl with Alt, which is
+  AltGr there. A key with any of them is typing, unless it is a named key
+  such as an arrow. On Linux, X11 or Wayland, AltGr is a key of its own, so
+  Ctrl+Alt+T is a shortcut and shows its pill.
 - Through noVNC in a Mac's browser, Option comes as `Mode_switch` or
   `ISO_Level3_Shift`. bb-box's viewer sends a macOS desktop Command and
   Option as its server names them: Meta and Alt, or Alt and Meta where the
@@ -177,6 +179,15 @@ On by default; `zoom: false` at the stop turns it off.
   without panning on. It stays out for at least 1.5 s after it arrives.
   The events after the change are grouped and framed afresh; a group the
   view could reach only after its last event is not zoomed.
+- **An action's own result is not outside.** A change that touches the
+  window an action was in, within 0.5 s of it, is that action's result and
+  keeps the zoom: the typed line, even where the panel's changed title
+  merges with it into one region, or a window moving as it is dragged.
+  The log carries the window of each of the agent's clicks, scrolls and
+  typing; without one, the element's frame or the click's place stands in,
+  and a drag's start and end. A change elsewhere, or later, still ends the
+  zoom. One that opens over the same window within the half second, as a
+  dialog can, keeps it.
 - **Still while reading.** A caption's hold, a still frame, holds the view
   too.
 - **Cuts keep the motion.** A cut still stretch is trimmed so it never

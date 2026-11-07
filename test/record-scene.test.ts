@@ -482,6 +482,16 @@ test("a key that makes a character, with AltGr, a Mac's Option or Windows' Ctrl+
   for (const [key, modifiers] of chords) agent.acted("pc", { type: "keys", key, modifiers });
   const agents = agent.end("pc")!;
   assert.deepEqual(pressed(agents), ["typing", "typing", "typing", "Ctrl+S", "Alt+F4"]);
+  const linuxCtrlAlt = personKeys("linux", [
+    [XK_CONTROL_L, true],
+    [XK_ALT_L, true],
+    [0x74, true],
+  ]);
+  assert.deepEqual(pressed(linuxCtrlAlt), ["Ctrl+Alt+T"], "on Linux, AltGr is a key of its own, so Ctrl and Alt make a shortcut");
+  const linuxAgent = new RecordingInputs(() => 5_000);
+  linuxAgent.begin("x11", 0, "linux");
+  linuxAgent.acted("x11", { type: "keys", key: "t", modifiers: ["ctrl", "alt"] });
+  assert.deepEqual(pressed(linuxAgent.end("x11")!), ["Ctrl+Alt+T"]);
   assert.doesNotMatch(JSON.stringify([altGr, noVncOption, windowsAltGr, pastAscii, screenSharing, tart, agents]), /€|@|é|É|å|Å/, "no typed character is kept");
 });
 
@@ -604,4 +614,34 @@ test("where the driver's agent cursor was hidden for the whole recording, the cl
   assert.equal(hidden.scene?.agentCursor, false);
   assert.ok(planClip(hidden, 1).scene!.pointer.glides.length > 0, "the pointer glides to the agent's click");
   assert.equal(planClip(prepared, 1).scene!.pointer.glides.length, 0);
+});
+
+test("a change that touches the window just acted in, within half a second, is the action's own result and keeps the zoom; one elsewhere, or later, still ends it (073)", () => {
+  const field = { x: 640, y: 345, width: 640, height: 450 };
+  const window = { x: 640, y: 320, width: 640, height: 480 };
+  const clicks = [{ at: 2, x: 900, y: 500, button: "left" as const, count: 1 as const, area: null, window }];
+  const typing = [
+    { at: 3.5, characters: 50, area: field, secret: false, window },
+    { at: 3.6, characters: 0, area: null, secret: false, window },
+  ];
+  const typedWithTitle = { at: 3.3, x: 148, y: 4, width: 948, height: 392 };
+  assert.ok(cameraAt(camera({ clicks, typing, changes: [typedWithTitle] }), 4).zoom > 1.5, "the typed line, merged with the panel's title, keeps the zoom");
+  const titleOnly = { at: 3.3, x: 148, y: 4, width: 948, height: 330 };
+  assert.ok(cameraAt(camera({ clicks, typing, changes: [titleOnly] }), 4).zoom > 1.5, "as does a change only in the window's title, not the field");
+  assert.ok(cameraAt(camera({ clicks, changes: [{ ...titleOnly, at: 2.3 }] }), 2.9).zoom > 1.5, "and in the window of a click, away from where it landed");
+  const elsewhere = { at: 3.3, x: 1300, y: 0, width: 620, height: 600 };
+  assert.equal(cameraAt(camera({ clicks, typing, changes: [elsewhere] }), 4.4).zoom, 1, "a change beside the window still ends it");
+  const later = { ...typedWithTitle, at: 4.3 };
+  assert.equal(cameraAt(camera({ clicks, typing, changes: [later] }), 5.4).zoom, 1, "and so does one over it, long after the action");
+
+  const samples = Array.from({ length: 90 }, (_, index) => {
+    const at = 4 + index / 30;
+    const dragging = at >= 5 && at <= 6;
+    const share = Math.min(1, Math.max(0, at - 5));
+    return { at, x: 900 - 200 * share, y: 300 - 70 * share, buttons: dragging ? 1 : 0 };
+  });
+  const movedWindow = { at: 5.5, x: 580, y: 4, width: 1064, height: 828 };
+  const dragged = camera({ samples, changes: [movedWindow] });
+  assert.ok(cameraAt(dragged, 5.9).zoom > 1.5, "the dragged window's own move keeps the view on the drag");
+  assert.ok(cameraAt(dragged, 6.3).zoom > 1.5, "through its end");
 });

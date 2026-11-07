@@ -28,6 +28,7 @@ export const PAN_INSTEAD_S = 0.6;
 export const BIG_CHANGE_SHARE = 0.4;
 export const OUTSIDE_CHANGE_SHARE = 0.1;
 export const OUTSIDE_SEEN_S = 1.5;
+export const OWN_RESULT_S = 0.5;
 
 export interface PointerSample {
   readonly at: number;
@@ -43,12 +44,14 @@ export interface PlacedClick {
   readonly button: MouseButton;
   readonly count: 1 | 2;
   readonly area: InputArea | null;
+  readonly window?: InputArea | null;
 }
 
 export interface PlacedScroll {
   readonly at: number;
   readonly x: number;
   readonly y: number;
+  readonly window?: InputArea | null;
 }
 
 export interface PlacedTyping {
@@ -56,6 +59,7 @@ export interface PlacedTyping {
   readonly characters: number;
   readonly area: InputArea | null;
   readonly secret: boolean;
+  readonly window?: InputArea | null;
 }
 
 export interface ChangedRegion extends InputArea {
@@ -390,17 +394,50 @@ function viewOfMembers(scene: Scene, members: readonly Focus[]): View {
   return viewFor(scene, unionOf(members.map((each) => each.area)), members.length === 1);
 }
 
+interface Action {
+  readonly from: number;
+  readonly to: number;
+  readonly places: readonly InputArea[];
+}
+
+function placesOf(...places: (InputArea | null | undefined)[]): InputArea[] {
+  return places.filter((place): place is InputArea => !!place);
+}
+
+function actionsOf(scene: Scene, pointer: PointerPlan): Action[] {
+  const frameAt = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
+  return [
+    ...scene.clicks.map((click) => ({ from: click.at, to: click.at, places: placesOf(click.window, click.area, pointArea(click.x, click.y)) })),
+    ...scene.scrolls.map((scroll) => ({ from: scroll.at, to: scroll.at, places: placesOf(scroll.window, pointArea(scroll.x, scroll.y)) })),
+    ...scene.typing.map((typing) => ({ from: typing.at, to: typing.at, places: placesOf(typing.window, typing.area) })),
+    ...pointer.drags.map((drag) => {
+      const start = frameAt(drag.from);
+      const end = frameAt(drag.to);
+      return { from: drag.from, to: drag.to, places: placesOf(start && pointArea(start.x, start.y), end && pointArea(end.x, end.y)) };
+    }),
+  ];
+}
+
+function touches(change: InputArea, place: InputArea): boolean {
+  if (place.width > 0 && place.height > 0) return overlap(change, place) > 0;
+  return place.x >= change.x && place.x <= change.x + change.width && place.y >= change.y && place.y <= change.y + change.height;
+}
+
+function actionsOwn(actions: readonly Action[], change: ChangedRegion): boolean {
+  return actions.some((action) => change.at >= action.from - OWN_RESULT_S && change.at <= action.to + OWN_RESULT_S && action.places.some((place) => touches(change, place)));
+}
+
 function showsOutside(scene: Scene, view: View, change: ChangedRegion): boolean {
   const screen = scene.width * scene.height;
   return areaOf(change) > screen * BIG_CHANGE_SHARE || areaOf(change) - overlap(change, viewArea(scene, view)) > screen * OUTSIDE_CHANGE_SHARE;
 }
 
-function outsideChangeAt(scene: Scene, members: readonly Focus[]): number | null {
+function outsideChangeAt(scene: Scene, members: readonly Focus[], actions: readonly Action[]): number | null {
   const view = viewOfMembers(scene, members);
   if (view.zoom === 1) return null;
   const first = members[0]!.at;
   const until = Math.min(scene.length, members.at(-1)!.at + LINGER_S);
-  const outside = scene.changes.filter((change) => change.at > first && change.at < until && showsOutside(scene, view, change)).map((change) => change.at);
+  const outside = scene.changes.filter((change) => change.at > first && change.at < until && showsOutside(scene, view, change) && !actionsOwn(actions, change)).map((change) => change.at);
   return outside.length ? Math.min(...outside) : null;
 }
 
@@ -413,12 +450,12 @@ function earliest(a: number | null, b: number | null): number | null {
   return a === null ? b : b === null ? a : Math.min(a, b);
 }
 
-function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][]): Group[] {
+function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][], actions: readonly Action[]): Group[] {
   const planned: Group[] = [];
   const queue: Unplanned[] = groups.map((members) => ({ members, endsAt: null }));
   while (queue.length) {
     const { members, endsAt } = queue.shift()!;
-    const outsideAt = earliest(outsideChangeAt(scene, members), endsAt);
+    const outsideAt = earliest(outsideChangeAt(scene, members, actions), endsAt);
     const later = outsideAt === null ? [] : members.filter((each) => each.at > outsideAt);
     if (later.length) {
       queue.unshift({ members: members.filter((each) => each.at <= outsideAt!), endsAt: outsideAt }, { members: later, endsAt });
@@ -436,7 +473,7 @@ function sameView(a: View, b: View): boolean {
 export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
   const full = FULL(scene);
   const keys: CameraKey[] = [{ at: 0, view: full }];
-  const groups = splitAtOutsideChanges(scene, closeGroups(scene, focusesOf(scene, pointer)));
+  const groups = splitAtOutsideChanges(scene, closeGroups(scene, focusesOf(scene, pointer)), actionsOf(scene, pointer));
   const last = () => keys.at(-1)!;
   const moveTo = (arrive: number, view: View) => {
     const current = last();

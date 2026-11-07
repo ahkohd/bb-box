@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![An agent writes a note in Mousepad on a Linux box: the clip zooms in where it clicks and types, draws its pointer, light over the desktop and dark over the page, zooms out as the window is dragged and as the Save dialog opens, and shows Typing, Ctrl+A, Ctrl+S and Esc in pills at the bottom](../media/recording.webp)
+![An agent writes a note in Mousepad on a Linux box: the clip zooms in where it clicks and types, draws its pointer, light over the desktop and dark over the page, pans to the window's title as it is dragged, zooms out as the Save dialog opens, and shows Typing, Ctrl+A, Ctrl+S and Esc in pills at the bottom](../media/recording.webp)
 
 ## What a clip shows
 
@@ -15,7 +15,7 @@ bb-box draws its own pointer over the clip, larger than the screen's: an arrow w
 - Each click shows a ring where it lands, drawn as the pointer is, in its colours: blue for a right click, and two quick rings for a double click.
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
 - Each shortcut or special key shows in a small pill at the bottom, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
-- A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together, which type characters on Windows. A shortcut's key is a letter, digit or ASCII symbol.
+- A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
 - When the agent types into a field it named, one "Typing" pill shows while it goes on. The pill never shows what was typed.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
 - Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
@@ -30,7 +30,7 @@ On macOS and Windows, the computer-use driver draws its own pointer on the scree
 
 The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. It holds still while you read, and zooms back out between bursts of work.
 
-When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. The clicks after it get a zoom of their own.
+When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 
 It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field bb-box cannot tell.
 

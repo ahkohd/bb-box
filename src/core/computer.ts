@@ -1162,15 +1162,16 @@ export class Computer {
   #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
     if (!this.#deps.onInput) return;
     const area = target.element?.frame ?? null;
+    const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
     if (input.action === "set_value") {
       const value = input.value ?? "";
-      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value) }, sentAt);
+      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), window }, sentAt);
       return;
     }
     if (!point) return;
-    if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point }, sentAt);
-    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null }, sentAt);
+    if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point, window }, sentAt);
+    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, window }, sentAt);
   }
 
   #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
@@ -1184,12 +1185,12 @@ export class Computer {
     return { x: window.x + x * scaleX, y: window.y + y * scaleY };
   }
 
-  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null): void {
+  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null, window: Rect | null): void {
     if (!this.#deps.onInput) return;
     const typed = text ?? "";
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed) };
+      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), window: window ? toArea(window) : null };
     use.typedInput = { input, sentAt: Date.now() };
   }
 
@@ -1217,8 +1218,10 @@ export class Computer {
     let readBack: string | null = null;
     let popup: Popup | undefined;
     let target: Target | null = null;
+    let typedWindow: Rect | null = null;
     if (input.ref !== undefined) {
       const { snapshot, element } = await this.#element(use, input.ref);
+      typedWindow = snapshot.window;
       popup = use.state.popups.get(snapshot.window.id);
       args = { pid: snapshot.window.pid, window_id: snapshot.window.id, ...this.#token(snapshot, element) };
       label = `${element.ref} (${describe(element.role, element.label)})`;
@@ -1231,13 +1234,14 @@ export class Computer {
     } else if (input.window !== undefined) {
       popup = use.state.popups.get(input.window);
       const window = popup?.window ?? (await this.#window(use, input.window));
+      typedWindow = window;
       args = { pid: window.pid, window_id: window.id };
       label = `window ${window.id}`;
       before = use.state.snapshots.get(window.id) ?? null;
     } else {
       throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
     }
-    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null);
+    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null, typedWindow);
     const count = input.text?.length ?? 0;
     const what = keys ? `Pressed ${input.keys!.trim()}` : `Typed ${count} character${count === 1 ? "" : "s"}`;
     const tool = keys ? "press_key" : "type_text";
