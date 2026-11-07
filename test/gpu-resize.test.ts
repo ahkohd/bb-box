@@ -137,7 +137,7 @@ test("071 unit 9, section 8, running: shared to whole with no other box on its c
   assert.equal(other.claim?.card, B, "no other box goes on the card while it is whole");
   const back = await backend.planResize(whole, "linux", size("shared"), [], signal());
   assert.equal(back.gpu?.way, "live");
-  assert.equal(back.gpu?.words, "GPU: whole card 0 → shared · Live. Card 0 opens to other boxes, with no limit on how many. They share its memory and its time. Nothing in quiet-elm stops.");
+  assert.equal(back.gpu?.words, "GPU: whole card 0 → shared · Live. Card 0 opens to other boxes, up to 4. They share its memory and its time. Nothing in quiet-elm stops.");
   const shared = await backend.resize(whole, "linux", size("shared"), { restart: false }, signal());
   assert.deepEqual(bridge.node.powerLog().slice(before).filter((line) => line.endsWith(` ${vmid}`)), []);
   assert.deepEqual(shared.claim, { card: A, part: "shared", generation: 3, answer: "granted" });

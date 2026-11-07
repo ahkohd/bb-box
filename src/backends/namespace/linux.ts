@@ -38,7 +38,7 @@ export function linuxShapeFor(size: MachineSize): { readonly cores: number; read
 }
 
 export function linuxDockerConfig(): DockerConfig {
-  const parsed = parseDockerPart({ id: "namespace-linux", hosts: [], fields: { [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpuDesktops]: false, [DOCKER_KEYS.reserveMemoryMiB]: 0 } });
+  const parsed = parseDockerPart({ id: "namespace-linux", hosts: [], fields: { [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpus]: false, [DOCKER_KEYS.reserveMemoryMiB]: 0 } });
   if (!parsed.ok) throw new Error(`bb-box's Docker settings for Namespace's Linux boxes are wrong: ${parsed.problems.map((each) => each.message).join("; ")}`);
   return { ...parsed.config, voxl: "off" };
 }

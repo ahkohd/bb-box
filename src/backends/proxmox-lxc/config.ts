@@ -43,6 +43,7 @@ import {
   type ProxmoxNetwork,
   type VmidRange,
 } from "../proxmox/settings.ts";
+import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import {
   fieldLabel,
   isSecret,
@@ -89,10 +90,11 @@ export interface LxcConfig {
   readonly proxmox: ProxmoxConnection;
   readonly flavours: Readonly<Record<LxcFlavour, LxcFlavourConfig>>;
   readonly desktop: {
-    /** The most desktop boxes each GPU runs at once, or null for no limit. */
+    /** The most boxes each card runs at once, desktops and servers together, or null for no limit. */
     readonly perGpu: number | null;
     readonly voxl: VoxlOffer;
   };
+  readonly gpuMemoryMiB: number;
   readonly vmids: VmidRange;
   readonly network: ProxmoxNetwork;
   /** A null key means bb-box generates one and shows its public key. */
@@ -112,6 +114,8 @@ export const LXC_DEFAULTS = {
   sshUser: "box",
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
+  boxesPerCard: BOXES_PER_CARD,
+  gpuMemoryMiB: SERVER_GPU_MIB,
 } as const;
 
 export const LXC_PREFIX = "proxmox-lxc-";
@@ -136,6 +140,9 @@ export const LXC_KEYS = {
   sshUser: "proxmox-lxc-ssh-user",
   perGpu: "proxmox-lxc-desktops-per-gpu",
   voxl: "proxmox-lxc-voxl",
+  boxesPerCard: "proxmox-lxc-boxes-per-card",
+  wholeCards: "proxmox-lxc-whole-cards",
+  gpuMemoryMiB: "proxmox-lxc-gpu-memory-mib",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
@@ -173,7 +180,7 @@ const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readon
   desktop: {
     name: "GPU desktop",
     templates:
-      "The CT templates Linux desktops on a GPU are linked clones of. One line per template: its VMID, and, for a template with a card's device lines, a space and that GPU's ID, such as the UUID nvidia-smi -L shows. A template with no GPU ID serves every card the host's GPU helper gives, and desktops with no GPU. Empty turns these desktops off.",
+      "The CT templates Linux desktops on a GPU are linked clones of. One line per template: its VMID. A template serves every card the host's GPU helper gives, and desktops with no GPU. A line with a GPU ID after the VMID, such as the UUID nvidia-smi -L shows, still reads, for a template made with one card's device lines; the ID is no longer needed once the helper is there. Empty turns these desktops off.",
   },
   "desktop-cpu": {
     name: "CPU desktop",
@@ -294,10 +301,8 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   ...flavourSettings("desktop-cpu"),
   [LXC_KEYS.perGpu]: {
     type: "number",
-    label: "Proxmox LXC: desktops per GPU",
-    description:
-      "The most Linux desktops each GPU runs at once. A new one goes to the GPU with the fewest, and is refused when every GPU runs this many. 0 means no limit.",
-    default: 0,
+    label: "Proxmox LXC: desktops per GPU (replaced)",
+    description: `Replaced by boxes per card, and read only while that is unset: a value set here is kept, 0 for no limit included. Empty in both, a card runs at most ${BOXES_PER_CARD} boxes.`,
   },
   [LXC_KEYS.voxl]: {
     type: "boolean",
@@ -373,7 +378,28 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
  * Wayland flavour (048) only the templates are a field, as warm counts are
  * the configuration's, by kind.
  */
-const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = flavourSettings("desktop-wayland-cpu");
+const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
+  ...flavourSettings("desktop-wayland-cpu"),
+  [LXC_KEYS.boxesPerCard]: {
+    type: "number",
+    label: "Proxmox LXC: boxes per card",
+    description: `The most boxes running on one card, desktops and servers together. 0 means no limit. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops per GPU's value where it was set, else ${BOXES_PER_CARD}.`,
+    default: BOXES_PER_CARD,
+  },
+  [LXC_KEYS.wholeCards]: {
+    type: "boolean",
+    label: "Proxmox LXC: whole cards",
+    description: "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. Not set here, the install-wide option general.wholeCards says, off unless it is set.",
+  },
+  [LXC_KEYS.gpuMemoryMiB]: {
+    type: "number",
+    label: "Proxmox LXC: GPU memory a new box needs (MiB)",
+    description: `The memory, in MiB, a card must have free when last read for a new server box to be placed on it. A start-up check, not a limit on what the box uses. A desktop needs at least ${DESKTOP_GPU_MIB} MiB.`,
+    default: SERVER_GPU_MIB,
+  },
+};
+
+const REPLACED: Readonly<Record<string, string>> = { [LXC_KEYS.perGpu]: LXC_KEYS.boxesPerCard };
 
 /**
  * The backend's fields in bb-box's configuration (029): the settings above
@@ -393,6 +419,9 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [flavourKey("desktop-cpu", "templates"), "boxes"],
   [flavourKey("desktop-wayland-cpu", "templates"), "boxes"],
   [LXC_KEYS.voxl, "boxes"],
+  [LXC_KEYS.boxesPerCard, "gpus"],
+  [LXC_KEYS.wholeCards, "gpus"],
+  [LXC_KEYS.gpuMemoryMiB, "gpus"],
   [LXC_KEYS.perGpu, "advanced"],
   [LXC_KEYS.bridge, "advanced"],
   [LXC_KEYS.subnet, "advanced"],
@@ -408,7 +437,15 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
   FIELD_GROUPS.map(([key, group]) => {
     const setting = LXC_SETTINGS[key] ?? LATER_SETTINGS[key]!;
-    const field = { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor;
+    const replacedBy = REPLACED[key];
+    const replaces = Object.keys(REPLACED).find((old) => REPLACED[old] === key);
+    const field = {
+      ...setting,
+      label: fieldLabel(setting.label),
+      group,
+      ...(replacedBy ? { replacedBy: replacedBy.slice(LXC_PREFIX.length) } : {}),
+      ...(replaces ? { replaces: replaces.slice(LXC_PREFIX.length) } : {}),
+    } as FieldDescriptor;
     // The Linux templates have a default of their own now that no earlier key stands in for it.
     if (key === flavourKey("linux", "templates")) {
       Object.assign(field, { default: String(LXC_DEFAULTS.linuxTemplate), description: FLAVOUR_WORDS.linux.templates });
@@ -559,8 +596,12 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
   const network = checkNetwork(values, LXC_KEYS, LXC_DEFAULTS, vmids, problem);
   const ssh = checkSsh(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
-  const perGpu = number(values, LXC_KEYS.perGpu, 0);
-  if (!wholeInRange(perGpu, 0, 1_000)) problem(LXC_KEYS.perGpu, "Use 0 or more for the desktops per GPU.");
+  const perCardKey = isSet(values[LXC_KEYS.boxesPerCard]) ? LXC_KEYS.boxesPerCard : isSet(values[LXC_KEYS.perGpu]) ? LXC_KEYS.perGpu : null;
+  const perGpu = perCardKey ? number(values, perCardKey, LXC_DEFAULTS.boxesPerCard) : LXC_DEFAULTS.boxesPerCard;
+  if (perCardKey && !wholeInRange(perGpu, 0, 1_000)) problem(perCardKey, perCardKey === LXC_KEYS.perGpu ? "Use 0 or more for the desktops per GPU." : "Use a whole number from 0 to 1000 for the boxes per card, 0 for no limit.");
+  const gpuMemoryMiB = number(values, LXC_KEYS.gpuMemoryMiB, LXC_DEFAULTS.gpuMemoryMiB);
+  if (!wholeInRange(gpuMemoryMiB, 0, MOST_GPU_MEMORY_MIB)) problem(LXC_KEYS.gpuMemoryMiB, `Use a whole number of MiB from 0 to ${MOST_GPU_MEMORY_MIB} for the GPU memory a new box needs.`);
+  if (isSet(values[LXC_KEYS.wholeCards]) && typeof values[LXC_KEYS.wholeCards] !== "boolean") problem(LXC_KEYS.wholeCards, "Whole cards is true or false.");
 
   const reserve = checkReserve(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
@@ -571,6 +612,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
       proxmox,
       flavours,
       desktop: { perGpu: perGpu > 0 ? perGpu : null, voxl: values[LXC_KEYS.voxl] === true ? "chosen" : "offered" },
+      gpuMemoryMiB,
       vmids,
       network,
       ssh,

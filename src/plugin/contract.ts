@@ -11,6 +11,7 @@ import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { GpuPart, GpuRoom, ResizeWay, SizePart } from "../backends/types.ts";
 import type { GpuMate } from "./gpu-page.ts";
+import type { SettingsCards } from "./gpu-settings.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { EndedBox } from "../core/box-log.ts";
 import type { BoxSnapshotsView, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, TakeCheck } from "./snapshot-card.ts";
@@ -369,6 +370,7 @@ export const contract = defineRpcContract({
   "images.refresh": { input: z.null(), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
   "images.build": { input: z.object({ image: z.string().min(1) }), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
   "config.get": { input: z.null(), output: z.custom<ConfigState>() },
+  "config.cards": { input: z.object({ backend: z.string().min(1) }), output: z.custom<SettingsCards>() },
   /** Problems with a draft, saving nothing. `test`, a backend's ID, also runs its doctor against the draft, within 30 s. */
   "config.check": { input: z.object({ draft, test: z.string().min(1).optional(), read: z.boolean().optional() }), output: z.custom<CheckResult>() },
   /**

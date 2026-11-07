@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +23,10 @@ export { backendPart };
 
 export const FOLDED_GROUPS: ReadonlySet<FieldGroup> = new Set(["ios-hosts", "advanced"]);
 
-const GROUP_WORDS: Readonly<Partial<Record<FieldGroup, string>>> = {
+export const GROUP_WORDS: Readonly<Partial<Record<FieldGroup, string>>> = {
   credentials: "Kept secret: BB Box never shows them again, only whether each is set.",
   boxes: "What new boxes start from, and what they may do.",
+  gpus: "Limits and defaults for the boxes on its cards. No setting here changes a box's own GPU: that is chosen when a box is made, and by Resize.",
   "ios-hosts": "iOS boxes as macOS users on a shared Mac or VM, ready in seconds.",
 };
 
@@ -77,8 +78,16 @@ function shownValue(value: FieldValue | SecretState): string | null {
   return String(value);
 }
 
+function replacedValue(form: BackendForm, field: FieldView): FieldValue | null {
+  if (!field.replaces) return null;
+  const value = form.draft.current(backendFieldPath(form.config.id, field.replaces));
+  return value === null || value === "" ? null : (value as FieldValue);
+}
+
 export function effectiveOf(form: BackendForm, field: FieldView): Effective | null {
   if (field.type === "boolean") return null;
+  const replaced = replacedValue(form, field);
+  if (replaced !== null) return { value: String(replaced), from: `from ${field.replaces}, the field it replaces` };
   const source = inheritSource(form.state.document, form.driver.fields, form.config.id);
   const inherited = source ? inheritedValues(form.driver.fields, formValues(form), source)[field.key] : undefined;
   if (inherited !== undefined && field.inherits && source) {
@@ -216,7 +225,8 @@ export function PlainFieldRow({ form, field, path, label, effective, disabled }:
   const describe = describedBy(ids.help, problem && ids.problem, conflict && ids.conflict, blank && !off && effective && ids.effective);
   const write = (value: PlainValue) => draft.set(path, plain(value));
   if (field.type === "boolean") {
-    const checked = current === null ? field.default === true : current === true;
+    const replaced = replacedValue(form, field);
+    const checked = current === null ? (replaced !== null ? replaced === true : field.default === true) : current === true;
     return (
       <FieldShell draft={draft} path={path} ids={ids} label={label} help={field.description ?? ""} problem={problem}>
         <Checkbox id={ids.control} path={path} label={label} checked={checked} disabled={disabled} onChange={(value) => write(value)} />
@@ -332,7 +342,9 @@ function groupSummary(form: BackendForm, fields: readonly FieldView[]): string {
   return `${on ? "On" : "Off"} · ${sets}`;
 }
 
-export function FieldCards({ form, groups, forced }: { form: BackendForm; groups: readonly { readonly id: FieldGroup; readonly fields: readonly FieldView[] }[]; forced: (path: Path) => boolean }) {
+export type GroupRenderer = (group: { readonly id: FieldGroup; readonly title: string; readonly fields: readonly FieldView[] }) => ReactNode | null;
+
+export function FieldCards({ form, groups, forced, custom }: { form: BackendForm; groups: readonly { readonly id: FieldGroup; readonly fields: readonly FieldView[] }[]; forced: (path: Path) => boolean; custom?: GroupRenderer }) {
   const { nav } = useSettings();
   const holding = (focus: Path | undefined) => groups.filter((group) => group.fields.some((field) => backendFieldPath(form.config.id, field.key) === focus)).map((group) => group.id);
   const [unfolded, setUnfolded] = useState<ReadonlySet<FieldGroup>>(() => new Set(holding(nav.arrival?.focus)));
@@ -345,6 +357,8 @@ export function FieldCards({ form, groups, forced }: { form: BackendForm; groups
     <>
       {groups.map((group) => {
         const title = GROUPS.find((each) => each.id === group.id)?.title ?? group.id;
+        const own = custom?.({ id: group.id, title, fields: group.fields });
+        if (own) return <Fragment key={group.id}>{own}</Fragment>;
         const folded = FOLDED_GROUPS.has(group.id);
         const held = group.fields.some((field) => forced(backendFieldPath(form.config.id, field.key)));
         const open = !folded || held || unfolded.has(group.id);

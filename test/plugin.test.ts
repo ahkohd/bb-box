@@ -7379,7 +7379,7 @@ test("071 unit 8, round 2: while whole cards are off, the schemas agents get for
   const turned = await app.configuration.apply({ ...before, general: { ...before.general, wholeCards: true } }, before.revision);
   assert.ok(turned.ok, JSON.stringify(turned.ok ? null : turned));
   assert.deepEqual((await gpuOf("box_acquire"))?.enum, ["none", "shared", "whole"]);
-  assert.match((await gpuOf("box_acquire"))?.description ?? "", /where this install has whole cards on/);
+  assert.match((await gpuOf("box_acquire"))?.description ?? "", /where its provider has whole cards on/);
   assert.deepEqual((await gpuOf("box_fork"))?.enum, ["none", "shared", "whole"]);
   assert.deepEqual((await gpuOf("box_resize"))?.enum, ["none", "shared", "whole"]);
   assert.match((await help(["resize"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself\./);

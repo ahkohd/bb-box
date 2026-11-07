@@ -7,7 +7,7 @@ import { DockerBackend, containerName } from "../src/backends/docker/backend.ts"
 import { Boxes, type BoxesDeps } from "../src/core/boxes.ts";
 import { Backends } from "../src/backends/index.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
-import type { DockerConfig } from "../src/backends/docker/config.ts";
+import { parseDockerPart, type DockerConfig } from "../src/backends/docker/config.ts";
 import type { ConfigDocument, GeneralConfig } from "../src/core/document.ts";
 import { blockWords, cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
 import { OPERATOR, SPARES } from "../src/core/boxes.ts";
@@ -977,4 +977,67 @@ test("071 unit 9, words: the boxes that fill a Docker card are named in one pair
   assert.equal(blockWords(limit, titles, { to: "person" }), "card 0 has 4 boxes, the most a card may have (lone-pine in thread \"Train the model\", quiet-elm as a spare, amber-fox as your machine and calm-reef of another install)");
   assert.equal(blockWords(limit, titles, { to: "agent", threadId: null }), "card 0 has 4 boxes, the most a card may have (lone-pine, quiet-elm, amber-fox and calm-reef of another install)");
   assert.equal(blockWords({ is: "held", card, holders: [holders[0]!] }, titles, { to: "person" }), "card 0 has lone-pine (in thread \"Train the model\") running", "outside brackets a thread keeps its own");
+});
+
+test("071 unit 15: Docker's GPU fields: gpus, boxes-per-card and gpu-memory-mib, with gpu-desktops and desktops-per-gpu read while the new key is unset and a value set there kept", () => {
+  assert.equal(dockerConfig({}).gpus, false);
+  assert.equal(dockerConfig({ "gpu-desktops": true }).gpus, true, "the old key still turns GPU boxes on");
+  assert.equal(dockerConfig({ "gpu-desktops": true, gpus: false }).gpus, false, "the new key wins once set");
+  assert.equal(dockerConfig({ gpus: true }).gpus, true);
+  assert.equal(dockerConfig({}).boxesPerCard, 4);
+  assert.equal(dockerConfig({ "desktops-per-gpu": 2 }).boxesPerCard, 2);
+  assert.equal(dockerConfig({ "desktops-per-gpu": 2, "boxes-per-card": 3 }).boxesPerCard, 3);
+  assert.equal(dockerConfig({}).gpuMemoryMiB, 1024);
+  assert.equal(dockerConfig({ "gpu-memory-mib": 2048 }).gpuMemoryMiB, 2048);
+  for (const [fields, path] of [[{ "boxes-per-card": 0 }, "boxes-per-card"], [{ "desktops-per-gpu": 0 }, "desktops-per-gpu"], [{ "gpu-memory-mib": -5 }, "gpu-memory-mib"], [{ "whole-cards": "yes" }, "whole-cards"]] as const) {
+    const parsed = parseDockerPart({ id: "docker", hosts: [], fields: fields as Record<string, FieldValue> });
+    assert.ok(!parsed.ok && parsed.problems.some((problem) => problem.path === path), `${path}: ${JSON.stringify(parsed)}`);
+  }
+});
+
+test("071 unit 15: a Docker server's GPU memory need is the backend's GPU memory a new box needs; a desktop's stays 384 MiB", async () => {
+  const card1500 = { gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A, 1500)] };
+  assert.equal((await setup({}, card1500).backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true, "1,024 MiB unset");
+  const strict = setup({ "gpu-memory-mib": 2048 }, card1500).backend;
+  const refused = await strict.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
+  assert.match(refused.message ?? "", /card 0 has 1500 MiB free when last read, less than the 2048 MiB a new server needs/);
+  assert.equal((await strict.capacity("linux-desktop", { ...SMALL, gpu: "shared" }, [], signal())).ok, true);
+  assert.equal((await strict.gpuRoom("linux")).neededMiB, 2048);
+});
+
+test("071 unit 15 gate: a Docker limit lowered below a card's boxes names them in the cards in use and stops none", async () => {
+  const one = { gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)] };
+  const { fake, backend, context } = setup({ "boxes-per-card": 3 }, one);
+  await backend.acquire(identity("linux", "shared", "thr_abc123", "lone-pine"), null, hooks(), signal());
+  await backend.acquire(identity("linux", "shared", "thr_abc123", "calm-reef"), null, hooks(), signal());
+  const lower = new DockerBackend(dockerConfig({ "gpu-desktops": true, "boxes-per-card": 1 }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const inUse = await lower.cardsInUse(signal());
+  assert.equal(inUse.is, "read");
+  if (inUse.is !== "read") return;
+  assert.deepEqual([inUse.limit, inUse.counts, inUse.cards.map((each) => each.counted)], [1, "running-or-stopped", [2]]);
+  assert.deepEqual(inUse.cards[0]!.holders.map((holder) => holder.is === "box" && [holder.name, holder.part, holder.running]).sort(), [["calm-reef", "shared", true], ["lone-pine", "shared", true]]);
+  assert.equal(fake.containers().length, 2, "a lower limit stops nothing");
+  const off = setup({ "gpu-desktops": false }, one).backend;
+  assert.deepEqual(await off.cardsInUse(signal()), { is: "unread", host: "the local Docker host", why: "GPU boxes are off, so bb-box does not read the cards.", setup: "setup/docker/README.md#gpu-boxes" });
+});
+
+test("071 unit 15 gate: turning whole cards off on Docker leaves a whole box whole, and refuses only new whole cards", async () => {
+  const fake = fakeDockerHost(TWO_CARDS);
+  const config = dockerConfig({ "gpu-desktops": true });
+  let whole = true;
+  const context = { ...testContext(new MemoryStorage(), "test"), wholeCards: () => whole };
+  const backend = new DockerBackend(config, context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const box = await backend.acquire(identity("linux", "whole", "thr_abc123", "quiet-elm"), null, hooks(), signal());
+  assert.equal(box.claim?.part, "whole");
+  whole = false;
+  await assert.rejects(backend.acquire(identity("linux", "whole"), null, hooks(), signal()));
+  const inUse = await backend.cardsInUse(signal());
+  assert.ok(inUse.is === "read");
+  if (inUse.is !== "read") return;
+  assert.deepEqual(inUse.cards.flatMap((each) => each.holders.filter((holder) => holder.part === "whole").map((holder) => holder.is === "box" && holder.name)), ["quiet-elm"]);
+  await backend.stop(box, signal());
+  const started = await backend.start(box, signal());
+  assert.equal(started && "claim" in started ? started.claim?.part : null, "whole", "it starts with its card to itself");
+  const shared = await backend.acquire(identity("linux", "shared"), null, hooks(), signal());
+  assert.notEqual(shared.claim?.card, box.claim?.card, "the whole box's card still takes no shared box");
 });

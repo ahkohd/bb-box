@@ -8,6 +8,7 @@
 // Proxmox LXC templates (setup/docker/README.md).
 
 import { endpointOf } from "../../host/relay.ts";
+import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import type { VoxlOffer } from "../voxl.ts";
 
@@ -36,7 +37,8 @@ export interface DockerConfig {
   /** The most bb-box containers on the host, counting every install's. */
   readonly boxes: number;
   readonly gpus: boolean;
-  readonly desktopsPerGpu: number;
+  readonly boxesPerCard: number;
+  readonly gpuMemoryMiB: number;
   readonly reserveMemoryMiB: number;
   readonly machineDockerHost: string | null;
   readonly voxl: VoxlOffer;
@@ -48,7 +50,8 @@ export const DOCKER_DEFAULTS = {
   waylandImage: `bbbox/linux-desktop-wayland:${IMAGE_VERSION}`,
   network: "bbbox",
   boxes: 10,
-  desktopsPerGpu: 4,
+  boxesPerCard: BOXES_PER_CARD,
+  gpuMemoryMiB: SERVER_GPU_MIB,
   reserveMemoryMiB: 4096,
 } as const;
 
@@ -60,6 +63,10 @@ export const DOCKER_KEYS = {
   desktopImage: "desktop-image",
   waylandImage: "wayland-desktop-image",
   privileged: "privileged",
+  gpus: "gpus",
+  boxesPerCard: "boxes-per-card",
+  wholeCards: "whole-cards",
+  gpuMemoryMiB: "gpu-memory-mib",
   gpuDesktops: "gpu-desktops",
   desktopsPerGpu: "desktops-per-gpu",
   network: "network",
@@ -95,7 +102,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [DOCKER_KEYS.desktopImage]: {
     type: "string",
     label: "Desktop image",
-    description: "The image Linux desktops run: those drawn by the CPU, and those on a GPU when GPU desktops are on. setup/docker/build.sh builds it. Empty turns them off.",
+    description: "The image Linux desktops run: those drawn by the CPU, and those on a GPU when GPU boxes are on. setup/docker/build.sh builds it. Empty turns them off.",
     group: "boxes",
     default: DOCKER_DEFAULTS.desktopImage,
   },
@@ -114,13 +121,43 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "boxes",
     default: true,
   },
-  [DOCKER_KEYS.gpuDesktops]: {
+  [DOCKER_KEYS.gpus]: {
     type: "boolean",
     label: "GPU boxes",
     description:
-      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them.",
-    group: "boxes",
+      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them. Not set here, the replaced gpu-desktops says, off unless it is set.",
+    group: "gpus",
     default: false,
+    replaces: DOCKER_KEYS.gpuDesktops,
+  },
+  [DOCKER_KEYS.boxesPerCard]: {
+    type: "number",
+    label: "Boxes per card",
+    description: `The most boxes on one card, servers and desktops together, running or stopped, of every install that uses the host. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops-per-gpu's value where it was set, else ${BOXES_PER_CARD}.`,
+    group: "gpus",
+    default: DOCKER_DEFAULTS.boxesPerCard,
+    replaces: DOCKER_KEYS.desktopsPerGpu,
+  },
+  [DOCKER_KEYS.wholeCards]: {
+    type: "boolean",
+    label: "Whole cards",
+    description:
+      "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. A whole card is where bb-box places boxes, not a fence. Not set here, the install-wide option general.wholeCards says, off unless it is set.",
+    group: "gpus",
+  },
+  [DOCKER_KEYS.gpuMemoryMiB]: {
+    type: "number",
+    label: "GPU memory a new box needs (MiB)",
+    description: `The memory, in MiB, a card must have free when last read for a new server box to be placed on it. A start-up check, not a limit on what the box uses. A desktop needs at least ${DESKTOP_GPU_MIB} MiB.`,
+    group: "gpus",
+    default: DOCKER_DEFAULTS.gpuMemoryMiB,
+  },
+  [DOCKER_KEYS.gpuDesktops]: {
+    type: "boolean",
+    label: "GPU desktops (replaced)",
+    description: "Replaced by GPU boxes, and read only while that is unset.",
+    group: "advanced",
+    replacedBy: DOCKER_KEYS.gpus,
   },
   [DOCKER_KEYS.voxl]: {
     type: "boolean",
@@ -132,10 +169,10 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [DOCKER_KEYS.desktopsPerGpu]: {
     type: "number",
-    label: "Boxes per card",
-    description: "The most boxes on one card, servers and desktops together, running or stopped, of every install that uses the host.",
+    label: "Desktops per GPU (replaced)",
+    description: "Replaced by Boxes per card, and read only while that is unset.",
     group: "advanced",
-    default: DOCKER_DEFAULTS.desktopsPerGpu,
+    replacedBy: DOCKER_KEYS.boxesPerCard,
   },
   [DOCKER_KEYS.network]: {
     type: "string",
@@ -165,6 +202,10 @@ function text(values: Readonly<Record<string, unknown>>, key: string, fallback =
   const value = values[key];
   if (value === undefined || value === null) return fallback;
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null;
 }
 
 function number(values: Readonly<Record<string, unknown>>, key: string, fallback: number): number {
@@ -222,7 +263,7 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!linux && !desktop && !wayland) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
   // On unless set to false (041).
   const privileged = values[DOCKER_KEYS.privileged] !== false;
-  const gpu = values[DOCKER_KEYS.gpuDesktops] === true;
+  const gpu = (isSet(values[DOCKER_KEYS.gpus]) ? values[DOCKER_KEYS.gpus] : values[DOCKER_KEYS.gpuDesktops]) === true;
   const images: Record<DockerKind, string | null> = {
     linux: linux || null,
     "linux-desktop-cpu": desktop || null,
@@ -234,15 +275,19 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!NETWORK.test(network)) problem(DOCKER_KEYS.network, `Docker: "${network}" is not a Docker network name.`);
   const boxes = number(values, DOCKER_KEYS.boxes, DOCKER_DEFAULTS.boxes);
   if (!Number.isInteger(boxes) || boxes < 1) problem(DOCKER_KEYS.boxes, "Docker: the most boxes must be a whole number, at least 1.");
-  const desktopsPerGpu = number(values, DOCKER_KEYS.desktopsPerGpu, DOCKER_DEFAULTS.desktopsPerGpu);
-  if (!Number.isInteger(desktopsPerGpu) || desktopsPerGpu < 1) problem(DOCKER_KEYS.desktopsPerGpu, "Docker: boxes per card must be a whole number, at least 1.");
+  const perCardKey = isSet(values[DOCKER_KEYS.boxesPerCard]) ? DOCKER_KEYS.boxesPerCard : DOCKER_KEYS.desktopsPerGpu;
+  const boxesPerCard = number(values, perCardKey, DOCKER_DEFAULTS.boxesPerCard);
+  if (!Number.isInteger(boxesPerCard) || boxesPerCard < 1) problem(perCardKey, "Docker: boxes per card must be a whole number, at least 1.");
+  const gpuMemoryMiB = number(values, DOCKER_KEYS.gpuMemoryMiB, DOCKER_DEFAULTS.gpuMemoryMiB);
+  if (!Number.isInteger(gpuMemoryMiB) || gpuMemoryMiB < 0 || gpuMemoryMiB > MOST_GPU_MEMORY_MIB) problem(DOCKER_KEYS.gpuMemoryMiB, `Docker: the GPU memory a new box needs must be a whole number of MiB from 0 to ${MOST_GPU_MEMORY_MIB}.`);
+  if (isSet(values[DOCKER_KEYS.wholeCards]) && typeof values[DOCKER_KEYS.wholeCards] !== "boolean") problem(DOCKER_KEYS.wholeCards, "Docker: whole cards is true or false.");
   const reserveMemoryMiB = number(values, DOCKER_KEYS.reserveMemoryMiB, DOCKER_DEFAULTS.reserveMemoryMiB);
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   const voxl = voxlOfferOf(values[DOCKER_KEYS.voxl]);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, gpus: gpu, desktopsPerGpu, reserveMemoryMiB, machineDockerHost: machineTarget || null, voxl } };
+  return { ok: true, config: { host: host || null, machine: machineId, images, docker: privileged, network, boxes, gpus: gpu, boxesPerCard, gpuMemoryMiB, reserveMemoryMiB, machineDockerHost: machineTarget || null, voxl } };
 }
 
 export function machineDockerHost(backends: readonly { readonly type: string; readonly fields: Readonly<Record<string, unknown>> }[], hostId: string): string | null {

@@ -59,6 +59,10 @@ export function gpuWhenNotAsked(kind: string, settings: GpuWhenNotAsked = {}): G
   return gpuPartsOf(id).includes(chosen) ? chosen : "none";
 }
 
+export function gpuForSpare(part: GpuPart): GpuPart {
+  return part === "whole" ? "shared" : part;
+}
+
 export function chooseGpu(kind: string, asked?: GpuPart, settings: GpuWhenNotAsked = {}): GpuChoice {
   if (asked === undefined) return { ok: true, gpu: gpuWhenNotAsked(kind, settings) };
   if (!holdsCard(asked)) return { ok: true, gpu: asked };
@@ -165,18 +169,20 @@ export function userspaceRestoreWords(recorded: SnapshotGpu | null, hostDriver: 
   return null;
 }
 
+const TURN_WHOLE_ON = "turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true";
+
 export const WHOLE_CARDS_OFF = {
-  person: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
+  person: `Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or ${TURN_WHOLE_ON}.`,
   agent: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
 } as const;
 
 export const WHOLE_CARDS_OFF_FOR_FORK = {
-  person: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn whole cards on with bb box option set general.wholeCards=true. bb-box copied nothing.",
+  person: `Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ${TURN_WHOLE_ON}. bb-box copied nothing.`,
   agent: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.",
 } as const;
 
 export const WHOLE_CARDS_OFF_FOR_RESIZE = {
-  person: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn whole cards on with bb box option set general.wholeCards=true. bb-box changed nothing.",
+  person: `Not resized: whole cards are off on this install. Keep the GPU shared, or ${TURN_WHOLE_ON}. bb-box changed nothing.`,
   agent: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
 } as const;
 
@@ -223,4 +229,6 @@ export function gpuPlanChangedWords(name: string, agreed: GpuResize, now: GpuRes
   };
 }
 
-export const WHOLE_CARDS_OFF_IN_LIST = "Whole cards are off on this install: ask the user if a box needs a card to itself.";
+export function wholeCardsOffInList(provider: string): string {
+  return `Whole cards are off on ${provider}: ask the user if a box needs a card to itself.`;
+}

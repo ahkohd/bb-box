@@ -2,7 +2,7 @@ import { OPERATOR, SPARES } from "../../core/boxes.ts";
 import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, type CardCheck, type SeenCard } from "../card-check.ts";
 import type { CardClaim, CardPlacement, CardRoom, GpuPart, GpuRefusal } from "../types.ts";
 
-export const DESKTOP_GPU_MIB = 384;
+export { DESKTOP_GPU_MIB } from "../card-check.ts";
 export const ALL_CARDS_DEVICE = "nvidia.com/gpu=all";
 export const READING_FRESH_MS = 15_000;
 export const READING_KEPT_MS = 60_000;

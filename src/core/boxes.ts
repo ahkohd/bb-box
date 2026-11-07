@@ -103,7 +103,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
+import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, gpuForSpare, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 import {
   DESKTOP_GPU_CHECK,
   USERSPACE_READ,
@@ -1404,9 +1404,9 @@ export class Boxes {
       const offered = [...new Set(everywhere.flatMap((candidate) => (candidate.kind.capabilities.device ? offeredModels(candidate.kind.capabilities.device) : [])))];
       throw new BoxError("unknown_device", `No backend offers the ${askedDevice} now.${offered.length ? ` The ${wanted} devices offered are: ${offered.join(", ")}.` : ""}`);
     }
-    const gpuChoice = chooseGpu(input.kind, input.gpu);
+    const gpuChoice = chooseGpu(input.kind, input.gpu, (await this.#deps.general()).gpuWhenNotAsked);
     if (!gpuChoice.ok) throw new BoxError("unsupported", gpuChoice.message);
-    const askedGpu = gpuChoice.gpu;
+    const askedGpu = input.threadId === SPARES ? gpuForSpare(gpuChoice.gpu) : gpuChoice.gpu;
     const gpuAsked = input.gpu !== undefined;
     const gpuFor = (kind: BoxKind) => gpuOnOffer(kind, askedGpu, gpuAsked);
     const forAgent = who.is === "agent";

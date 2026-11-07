@@ -1582,7 +1582,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     kinds: async () => {
       const config = await general();
       const offered = backends.kinds();
-      return kindViews(offered, config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id), await gpuRooms(offered), boxes.sharedHostsByKind());
+      return kindViews(offered, config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id), await gpuRooms(offered), boxes.sharedHostsByKind(), config.gpuWhenNotAsked);
     },
     async providerProfile(backendId, signal) {
       const status = backends.statuses().find((candidate) => candidate.id === backendId);

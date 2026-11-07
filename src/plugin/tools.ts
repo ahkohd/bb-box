@@ -17,7 +17,7 @@ import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
-import { WHOLE_CARDS_OFF_IN_LIST } from "../core/gpu.ts";
+import { wholeCardsOffInList } from "../core/gpu.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Chapter } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -365,14 +365,20 @@ export function gpuPartsText(kind: KindView, now = Date.now()): string {
         const asks = room.parts.filter((part) => part !== "none").map((part) => `gpu ${part}`);
         const parts = `${listWords(room.parts, "or")}; ask with ${asks.join(" or ")}`;
         words.push(` GPU${on}: ${parts} (${room.host ?? offer.name}: ${room.cards.length} ${room.cards.length === 1 ? "card" : "cards"}; ${cards.join("; ")}${read}${needs}).`);
-        if (room.wholeOff) words.push(` ${WHOLE_CARDS_OFF_IN_LIST}`);
+        if (room.wholeOff) words.push(` ${wholeCardsOffInList(offer.name)}`);
       } else if (room?.parts && !room.parts.includes("shared") && room.withheld && offer.gpuParts?.includes("shared")) {
         words.push(` No GPU${on} now: ${room.withheld}.`);
       }
       if (kind.desktop && offer.gpuParts?.includes("none") && offer.gpuParts.includes("shared")) words.push(` gpu none${on} gives a desktop drawn by the CPU, from the same image.`);
       return words;
     })
-    .join("");
+    .join("")
+    .concat(gpuDefaultText(kind));
+}
+
+function gpuDefaultText(kind: KindView): string {
+  if (!kind.gpuWhenNotAsked || !kind.offers.some((offer) => offer.gpuParts?.some((part) => part !== "none"))) return "";
+  return ` With gpu left out, a box of this kind gets gpu ${kind.gpuWhenNotAsked}.`;
 }
 
 export function cardReachText(kind: KindView): string {
@@ -423,13 +429,13 @@ export function gpuParameter(wholeCards: boolean) {
         .enum(["none", "shared", "whole"])
         .optional()
         .describe(
-          "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box, where this install has whole cards on. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do, the room on each card, and whether whole cards are on.",
+          "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself, on which bb-box places no other box, where its provider has whole cards on. Left out: the kind's GPU when not asked for, which box_list gives; shared for linux-desktop and none for linux unless the user changed it. Only linux and linux-desktop take one, where a provider has cards; box_list says which do, the room on each card, and whether whole cards are on.",
         )
     : z
         .enum(["none", "shared"])
         .optional()
         .describe(
-          "The box's GPU: none, or shared, one card other boxes may share. Left out: shared for linux-desktop, none for linux. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
+          "The box's GPU: none, or shared, one card other boxes may share. Left out: the kind's GPU when not asked for, which box_list gives; shared for linux-desktop and none for linux unless the user changed it. Only linux and linux-desktop take one, where a provider has cards; box_list says which do and the room on each card.",
         );
 }
 

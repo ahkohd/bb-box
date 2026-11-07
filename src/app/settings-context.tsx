@@ -1,9 +1,11 @@
 import { createContext, useContext } from "react";
+import type { GpuPart } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument, ImageBake, Problem } from "../core/document.ts";
+import { gpuWhenNotAsked, isGpuPart } from "../core/gpu.ts";
 import type { ApplyResult, ConfigState } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { submittedWrite, type InstantWrite, type Operation } from "./settings-drafts.ts";
-import { backendPath, candidateOf, fileIsStored, filePath, hostPath, imageBakePath, imagePath, plain, snapshotPath, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import { backendFieldPath, backendPath, candidateOf, fileIsStored, filePath, hostPath, imageBakePath, imagePath, plain, snapshotPath, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
 import type { Instant } from "./settings-saving.tsx";
 import type { SettingsNav } from "./settings-nav.ts";
 import { machineHostId } from "./settings-status.ts";
@@ -41,6 +43,8 @@ export interface SettingsWrites {
   removeBackend(state: ConfigState, config: BackendConfig, what: string): InstantWrite;
   hostOn(state: ConfigState, config: BackendConfig, host: string, on: boolean, what: string): InstantWrite;
   kindOn(state: ConfigState, id: string, on: boolean, what: string): InstantWrite;
+  kindGpu(state: ConfigState, id: string, gpu: GpuPart, what: string): InstantWrite;
+  backendField(state: ConfigState, config: BackendConfig, key: string, value: boolean, what: string): InstantWrite;
   general(state: ConfigState, key: GeneralAtOnce, value: boolean | string, what: string, say?: (value: PlainValue) => string): InstantWrite;
   monitor(state: ConfigState, key: MonitorAtOnce, value: boolean, what: string): InstantWrite;
   snapshots(state: ConfigState, key: SnapshotsAtOnce, value: boolean, what: string): InstantWrite;
@@ -56,6 +60,8 @@ export const switchKey = {
   removeBackend: (id: string) => `remove-backend:${id}`,
   host: (id: string, name: string) => `host:${id}:${name}`,
   kind: (id: string) => `kind:${id}`,
+  kindGpu: (id: string) => `kind-gpu:${id}`,
+  backendField: (id: string, key: string) => `backend-field:${id}:${key}`,
   general: (key: string) => `general:${key}`,
   monitor: (key: string) => `monitor:${key}`,
   snapshots: (key: string) => `snapshots:${key}`,
@@ -116,6 +122,15 @@ export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknow
     kindOn(state, id, on, what) {
       const path = `kinds/${id}/enabled`;
       return pathWrite(state, switchKey.kind(id), what, path, plain(on), on, settingWords(path, onOff));
+    },
+    kindGpu(state, id, gpu, what) {
+      const path = `kinds/${id}/gpu`;
+      const stored = gpu === gpuWhenNotAsked(id) ? null : gpu;
+      return pathWrite(state, switchKey.kindGpu(id), what, path, plain(stored), gpu, settingWords(path, (value) => (isGpuPart(value) ? value : gpuWhenNotAsked(id))));
+    },
+    backendField(state, config, key, value, what) {
+      const path = backendFieldPath(config.id, key);
+      return pathWrite(state, switchKey.backendField(config.id, key), what, path, plain(value), value, settingWords(path, onOff));
     },
     general(state, key, value, what, say = onOff) {
       const path = `general/${key}`;

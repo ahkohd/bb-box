@@ -3783,7 +3783,7 @@ test("071 unit 8, lead: gpu whole is refused while whole cards are off on this i
     message: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
-    message: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn whole cards on with bb box option set general.wholeCards=true.",
+    message: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true.",
   });
   assert.deepEqual(asked, [], "no provider was asked");
   assert.deepEqual(await world.boxes.list(THREAD), []);
@@ -3919,7 +3919,7 @@ test("071 unit 11: box_resize refuses, for each audience and changing nothing, a
   world.general = { ...world.general, wholeCards: false };
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), {
     code: "unsupported",
-    message: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn whole cards on with bb box option set general.wholeCards=true. bb-box changed nothing.",
+    message: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. bb-box changed nothing.",
     agentMessage: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
   });
   const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
@@ -4239,4 +4239,20 @@ test("071 unit 9, Fable 5: a check is consumed once the backend's resize is call
   cards.addTo = 2;
   const done = await world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true });
   assert.equal(done.changed, true, "the failed call consumed the check, so this one is not compared with it");
+});
+
+test("071 unit 15: a request that leaves gpu out gets its kind's GPU when not asked for from the settings; a spare of a kind whose GPU is whole is made shared; a part asked for wins", async () => {
+  const world = setup({ id: "fake:cards" });
+  world.general = { ...world.general, wholeCards: true, gpuWhenNotAsked: { linux: "shared" } };
+  world.backend = new FakeBackend({ root: tempDir("gpu-default"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:cards", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS, boxesPerCard: 10 });
+  const left = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(left.size?.gpu, "shared", "the kind's setting, not bb-box's own none");
+  const asked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
+  assert.equal(asked.size?.gpu, "none");
+  world.general = { ...world.general, gpuWhenNotAsked: { linux: "whole" } };
+  const spare = await ready(world.boxes, await world.boxes.acquire({ threadId: SPARES, projectId: null, kind: "linux" }));
+  assert.equal(spare.size?.gpu, "shared", "a spare is never whole");
+  const whole = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
+  assert.equal(whole.size?.gpu, "whole");
+  assert.notEqual(whole.id, spare.id, "a whole box never takes a spare");
 });

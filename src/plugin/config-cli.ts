@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
-import type { DoctorReport } from "../backends/types.ts";
+import { GPU_PARTS, type DoctorReport, type GpuPart } from "../backends/types.ts";
 import { withoutSecretVersions, type ConfigDocument, type Problem } from "../core/document.ts";
 import { digestOf } from "../core/saves.ts";
 import { PRESETS, type Preset } from "../core/sizes.ts";
@@ -533,7 +533,7 @@ export function configCommands(configuration: Configuration) {
     }),
     "kind set": cliCommand({
       summary:
-        "Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only.",
+        "Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only.",
       positionals: [{ name: "kind", description: "The kind, such as linux. bb box kinds lists those on offer.", required: true }],
       options: {
         ...saveOptions,
@@ -548,6 +548,7 @@ export function configCommands(configuration: Configuration) {
         "largest-memory-gib": { type: "string", description: "The most memory in GiB a custom size may ask for." },
         "largest-disk-gib": { type: "string", description: "The most disk in GiB a custom size may ask for." },
         spares: { type: "integer", min: 0, max: 100, description: "Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none." },
+        gpu: { type: "enum", values: GPU_PARTS, description: "The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice: none, shared or whole. linux and linux-desktop only." },
         reset: { type: "boolean", description: "Go back to bb-box's own sizes and switch for the kind first." },
       },
       run: async ({ positionals, options }, ctx) => {
@@ -562,6 +563,7 @@ export function configCommands(configuration: Configuration) {
           size,
           largest,
           ...(options.spares !== undefined ? { spares: options.spares } : {}),
+          ...(options.gpu ? { gpu: options.gpu as GpuPart } : {}),
           ...(options.reset ? { reset: true } : {}),
         };
         return save(

@@ -725,7 +725,7 @@ test("071 unit 8, lead: a fork with a whole card is refused while whole cards ar
   const records = state.store.records().length;
   const live = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { gpu: "whole" }));
   assert.equal(live.code, "unsupported");
-  assert.equal(live.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn whole cards on with bb box option set general.wholeCards=true. bb-box copied nothing.");
+  assert.equal(live.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. bb-box copied nothing.");
   assert.equal((live as BoxError).agentMessage, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
   assert.equal(state.store.records().length, records, "nothing was taken");
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's record was made");

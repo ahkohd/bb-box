@@ -49,7 +49,7 @@
 | [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line. |
 | [`bb box backend host set`](#bb-box-backend-host-set) | Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working. |
 | [`bb box backend host remove`](#bb-box-backend-host-remove) | Remove a host from a backend. Refused while it has boxes, as on the settings page. |
-| [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only. |
+| [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only. |
 | [`bb box option list`](#bb-box-option-list) | List the general and Monitor options: each one's value now, its default, and what it does. |
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
 | [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.&lt;backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them. |
@@ -846,11 +846,11 @@ Options:
 
 ## bb box kind set
 
-Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only.
+Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only.
 
 ```text
 Usage:
-  bb box kind set <kind> [--json] [--check] [--revision <n>] [--operation <value>] [--on] [--off] [--make-default] [--default-preset <small|medium|large>] [--preset <small|medium|large>] [--cores <1-1024>] [--memory-gib <value>] [--disk-gib <value>] [--largest-cores <1-1024>] [--largest-memory-gib <value>] [--largest-disk-gib <value>] [--spares <0-100>] [--reset]
+  bb box kind set <kind> [--json] [--check] [--revision <n>] [--operation <value>] [--on] [--off] [--make-default] [--default-preset <small|medium|large>] [--preset <small|medium|large>] [--cores <1-1024>] [--memory-gib <value>] [--disk-gib <value>] [--largest-cores <1-1024>] [--largest-memory-gib <value>] [--largest-disk-gib <value>] [--spares <0-100>] [--gpu <none|shared|whole>] [--reset]
 
 Arguments:
   <kind>  The kind, such as linux. bb box kinds lists those on offer. (required)
@@ -872,6 +872,7 @@ Options:
   --largest-memory-gib <value>   The most memory in GiB a custom size may ask for.
   --largest-disk-gib <value>     The most disk in GiB a custom size may ask for.
   --spares <0-100>               Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none.
+  --gpu <none|shared|whole>      The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice: none, shared or whole. linux and linux-desktop only.
   --reset                        Go back to bb-box's own sizes and switch for the kind first.
   --help, -h                     Show this help and exit
 ```
