@@ -2,7 +2,9 @@
 
 Status: accepted, 7 November 2026, with the owner's direction of the same
 day built in (see [The owner's direction](#the-owners-direction)). Unit V1
-is being built: see [Units](#units).
+is built, and measured on Docker in [072 results](072-results.md); its
+Proxmox LXC template and GPU desktops wait for the lead's node (see
+[Units](#units)).
 
 Extends [060](060-every-desktop-streams-as-video-through-one-viewer.md):
 the panel keeps one video client and one viewer protocol, and voxl becomes
@@ -160,9 +162,12 @@ its own WebSocket to the box's voxl and translates:
 
 Computer use drives Cua Driver in the box, which reads windows and takes
 its own screenshots through its own X connection; `box_record` records in
-the box (059). Neither reads a stream, so voxl changes neither. While voxl
-runs it hides the X cursor; the live check looks at screenshots and a
-recording taken then.
+the box (059). Neither reads a stream, so voxl changes neither. Checked
+live while a viewer watched through voxl: `computer_windows`,
+`computer_launch`, `computer_screenshot`, `computer_observe`,
+`computer_type` and `computer_act` each did what it says, and a
+`box_record` clip showed the pointer where it was, though voxl hides the
+X cursor while it runs.
 
 People watching the agent see no pointer through voxl: it sends no
 position, and draws none. Selkies draws it in. This stays an open
@@ -173,9 +178,10 @@ question for the owner's trial (see below).
 Today a Proxmox LXC GPU desktop streams RFB by default and Selkies with
 NVENC by choice (#863); a Docker GPU desktop, RFB only. voxl on a GPU
 desktop captures NVIDIA's Xorg with GetImage and encodes with x264 on the
-box's CPU, taking cores from the box's own work. Its cost at 1920x1080 is
-measured on a CPU desktop in V1's live check; on a GPU
-desktop it is measured through the lead before the owner's trial there.
+box's CPU, taking cores from the box's own work. Its cost at 1920x1080 on
+a CPU desktop is in [072 results](072-results.md): about a third of a core
+for a busy screen. On a GPU desktop it is measured through the lead before
+the owner's trial there.
 
 ### 7. The option, and how to turn it back
 

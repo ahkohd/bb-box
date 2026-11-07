@@ -1,0 +1,29 @@
+{
+  "label": "voxl-animation-lan-2",
+  "stream": "voxl",
+  "workload": "animation",
+  "link": "lan",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene animation fps=60.0 - Google Chrome",
+  "framesPerSecond": 59.9,
+  "longestGapMs": 30,
+  "longestGapAtSecond": 6.9,
+  "worstSecond": 59,
+  "latencyMs": {
+    "p50": 16,
+    "p99": 22,
+    "max": 31
+  },
+  "megabitsPerSecond": 5.15,
+  "framesShown": 1199,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "chrome (the workload)": 0.72,
+    "voxl": 0.32,
+    "selkies": 0,
+    "X server": 0.06
+  }
+}

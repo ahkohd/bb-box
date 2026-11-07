@@ -1,0 +1,29 @@
+{
+  "label": "selkies-scroll-slow-1",
+  "stream": "selkies",
+  "workload": "scroll",
+  "link": "slow",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene scroll fps=60.0 - Google Chrome",
+  "framesPerSecond": 59.7,
+  "longestGapMs": 275,
+  "longestGapAtSecond": 1.9,
+  "worstSecond": 39,
+  "latencyMs": {
+    "p50": 89,
+    "p99": 671,
+    "max": 721
+  },
+  "megabitsPerSecond": 6.37,
+  "framesShown": 1194,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0.39,
+    "voxl": 0,
+    "chrome (the workload)": 0.76,
+    "X server": 0.07
+  }
+}

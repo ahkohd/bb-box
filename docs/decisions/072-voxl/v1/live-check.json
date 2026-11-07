@@ -1,0 +1,56 @@
+[
+  {
+    "name": "the viewer opens the box through voxl, as its backend chose",
+    "ok": true,
+    "detail": "stream=voxl, picture 1920x1080, box screen 1920x1080",
+    "ms": 919
+  },
+  {
+    "name": "Stream with voxl is in the Display menu, ticked",
+    "ok": true,
+    "detail": "ticked",
+    "ms": 357
+  },
+  {
+    "name": "taking control gives this viewer the desktop",
+    "ok": true,
+    "detail": "You have control",
+    "ms": 67
+  },
+  {
+    "name": "a click and typing reach the box: the pointer lands where it was clicked, and the keys reach the app under it",
+    "ok": true,
+    "detail": "pointer at X=600 Y=450; saved \"voxl types this, through BB\"",
+    "ms": 1217
+  },
+  {
+    "name": "the box's clipboard reaches this computer's",
+    "ok": true,
+    "detail": "\"copied in the box\"",
+    "ms": 2029
+  },
+  {
+    "name": "this computer's clipboard reaches the box, and is pasted where the cursor is",
+    "ok": true,
+    "detail": "box clipboard \"pasted from the browser\"; Mousepad's text, selected and copied in the box: \"before pasted from the browser\"",
+    "ms": 4151
+  },
+  {
+    "name": "resizing the viewer resizes the box's screen, and voxl's picture follows",
+    "ok": true,
+    "detail": "screen 1920x1080 -> 856x726, picture 1920x1080 -> 856x726; back to 1120x906",
+    "ms": 1097
+  },
+  {
+    "name": "the wheel scrolls in the box",
+    "ok": true,
+    "detail": "the text area's pixels changed (9a76b2258d71 -> dbcac7fed4d2)",
+    "ms": 3738
+  },
+  {
+    "name": "handing back gives the agent control, and the viewer keeps watching through voxl",
+    "ok": true,
+    "detail": "stream=voxl",
+    "ms": 194
+  }
+]

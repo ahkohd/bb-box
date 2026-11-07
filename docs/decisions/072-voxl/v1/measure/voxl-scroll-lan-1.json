@@ -1,0 +1,29 @@
+{
+  "label": "voxl-scroll-lan-1",
+  "stream": "voxl",
+  "workload": "scroll",
+  "link": "lan",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene scroll fps=60.0 - Google Chrome",
+  "framesPerSecond": 60,
+  "longestGapMs": 34,
+  "longestGapAtSecond": 15.6,
+  "worstSecond": 60,
+  "latencyMs": {
+    "p50": 32,
+    "p99": 39,
+    "max": 52
+  },
+  "megabitsPerSecond": 3.52,
+  "framesShown": 1200,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "selkies": 0,
+    "voxl": 0.29,
+    "X server": 0.07,
+    "chrome (the workload)": 0.8
+  }
+}

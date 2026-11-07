@@ -1,0 +1,29 @@
+{
+  "label": "selkies-animation-lan-2",
+  "stream": "selkies",
+  "workload": "animation",
+  "link": "lan",
+  "seconds": 20,
+  "sizes": [
+    "1920x1080"
+  ],
+  "scene": "scene animation fps=60.0 - Google Chrome",
+  "framesPerSecond": 59,
+  "longestGapMs": 39,
+  "longestGapAtSecond": 4.9,
+  "worstSecond": 56,
+  "latencyMs": {
+    "p50": 53,
+    "p99": 69,
+    "max": 87
+  },
+  "megabitsPerSecond": 6.48,
+  "framesShown": 1181,
+  "unreadableFrames": 0,
+  "cpuCores": {
+    "voxl": 0,
+    "selkies": 0.37,
+    "chrome (the workload)": 0.66,
+    "X server": 0.06
+  }
+}
