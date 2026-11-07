@@ -54,7 +54,7 @@
 // app's windows' tree, with no title, bounds or app (#402).
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
@@ -127,6 +127,26 @@ export interface FakeDesktop {
    * Cua on Windows then says the click failed its foreground check (#484).
    */
   trayMenus?: boolean;
+}
+
+const desktopPause = new Int32Array(new SharedArrayBuffer(4));
+
+export function writeDesktopFile(file: string, desktop: FakeDesktop): void {
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, JSON.stringify(desktop));
+  renameSync(temp, file);
+}
+
+export function readDesktopFile(file: string): FakeDesktop {
+  const deadline = performance.now() + 1_000;
+  for (;;) {
+    try {
+      return JSON.parse(readFileSync(file, "utf8")) as FakeDesktop;
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || performance.now() >= deadline) throw error;
+    }
+    Atomics.wait(desktopPause, 0, 0, 2);
+  }
 }
 
 export function emptyDesktop(): FakeDesktop {
@@ -386,14 +406,14 @@ export class FakeCua {
   readonly #session: number;
 
   #load(): FakeDesktop {
-    if (this.#file && existsSync(this.#file)) this.#memory = JSON.parse(readFileSync(this.#file, "utf8")) as FakeDesktop;
+    if (this.#file && existsSync(this.#file)) this.#memory = readDesktopFile(this.#file);
     return this.#memory;
   }
 
   #change<T>(update: (desktop: FakeDesktop) => T): T {
     const desktop = this.#load();
     const result = update(desktop);
-    if (this.#file) writeFileSync(this.#file, JSON.stringify(desktop));
+    if (this.#file) writeDesktopFile(this.#file, desktop);
     return result;
   }
 
