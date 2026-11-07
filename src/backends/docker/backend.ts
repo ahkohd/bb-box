@@ -85,7 +85,7 @@ import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { IDENTITY_VARIABLE } from "../../core/identity.ts";
 import { dockerImageBuilding } from "./building.ts";
 import { backendsOn, daemonKey, daemonShare, engineKey, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_RESIZE } from "../../core/gpu.ts";
+import { wholeCardsOff, wholeCardsOffForResize } from "../../core/gpu.ts";
 import type { CardCheck } from "../card-check.ts";
 import {
   ALL_CARDS_DEVICE,
@@ -849,7 +849,7 @@ export class DockerBackend implements Backend {
   #partRefusal(kind: string, part: GpuPart): GpuRefusal | null {
     if (part === "none") return kind === "linux-desktop" ? { person: `${this.label} gives linux-desktop boxes a GPU. Ask for a linux-desktop-cpu box for a desktop drawn by the CPU.`, agent: "Not made: a linux-desktop on Docker always has a GPU. Ask for a linux-desktop-cpu box, or ask the user. bb-box changed nothing." } : null;
     if (!this.#gpuParts(kind)?.includes(part)) {
-      if (part === "whole" && this.#gpuParts(kind)?.includes("shared")) return WHOLE_CARDS_OFF;
+      if (part === "whole" && this.#gpuParts(kind)?.includes("shared")) return wholeCardsOff(this);
       return {
         person: `${this.label} gives ${kind} boxes no GPU${this.#config.gpus ? "" : ": GPU boxes are off in its settings"}. Ask for gpu none.`,
         agent: `Not made: ${this.label} gives ${kind} boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.`,
@@ -1597,7 +1597,7 @@ export class DockerBackend implements Backend {
       };
       return change("no", words, refusal);
     }
-    if (to === "whole" && !this.#wholeOn()) return change("no", WHOLE_CARDS_OFF_FOR_RESIZE.person, WHOLE_CARDS_OFF_FOR_RESIZE);
+    if (to === "whole" && !this.#wholeOn()) return change("no", wholeCardsOffForResize(this).person, wholeCardsOffForResize(this));
     const shared = this.#sharedDaemonRefusal(to);
     if (shared) {
       const refusal = { person: shared.person, agent: shared.agent.replace(/^Not made: /, "Not resized: ") };

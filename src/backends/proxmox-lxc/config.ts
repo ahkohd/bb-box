@@ -382,13 +382,13 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
   [LXC_KEYS.boxesPerCard]: {
     type: "number",
     label: "Proxmox LXC: boxes per card",
-    description: `The most of this install's boxes running on one card, desktops and servers together. 0 means no limit. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops per GPU's value where it was set, else ${BOXES_PER_CARD}.`,
+    description: `The most of this install's boxes running on one card, desktops and servers together. 0 means no limit. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, it reads desktops-per-gpu where that is set, else ${BOXES_PER_CARD}.`,
     default: BOXES_PER_CARD,
   },
   [LXC_KEYS.wholeCards]: {
     type: "boolean",
     label: "Proxmox LXC: whole cards",
-    description: "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. Not set here, the install-wide option general.wholeCards says, off unless it is set.",
+    description: "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. Not set here, it follows the install-wide option general.wholeCards, off unless that is set.",
   },
   [LXC_KEYS.gpuMemoryMiB]: {
     type: "number",

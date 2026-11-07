@@ -5554,6 +5554,27 @@ reverting the fix alone.
 After the fixes, on the rebased branch: `npm run typecheck` clean, and
 `npm test` as below.
 
+### After Fable's review
+
+Fable said no-go. Its first two findings, the form's first choice and the
+rebase onto unit 13, and its fifth, the doc comment, are Astra's, fixed
+above. The other two:
+
+- **Whole cards refusals said "off on this install"** where one backend
+  refused while another had whole cards on. A backend's refusal, for an
+  acquire, a fork or a resize, now names it: "Whole cards are off on Docker,
+  so no box gets a card to itself there", with that backend's section and
+  `bb box backend set <its ID> --field whole-cards=true`. Core's refusal,
+  when no backend that is on has whole cards on, still says "this install",
+  which is then true. Test: `docker-gpus.test.ts`, whole cards off; it fails
+  when Docker's refusal goes back to the install's words.
+- **The decision's table** gave Whole cards a default of on. The decision
+  now says, after its reviews, that unset follows `general.wholeCards`, off
+  unless set, from the owner's decision of 6 November 2026.
+
+Fable's wording for the field help is taken: "Empty, it reads
+desktops-per-gpu where that is set, else 4", and the like.
+
 ### Still open
 
 - **The Desktop type in the New box form** opens on the CPU desktop where

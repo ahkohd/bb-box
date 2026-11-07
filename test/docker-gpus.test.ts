@@ -180,8 +180,8 @@ test("071 unit 11: a whole box takes a card no box holds, and the card then take
   assert.equal(refused.agentMessage, "Not made: no card on fake-docker is free for a whole card now: card 0 has lone-pine and quiet-elm-" + String(counter) + " running and card 1 is quiet-elm's whole card. Release one of your own boxes on card 0 (lone-pine and quiet-elm-" + String(counter) + "), ask for gpu shared, or ask the user. bb-box changed nothing.");
   const off = setup().backend;
   const said = await off.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal());
-  assert.match(said.message!, /^Whole cards are off on this install/);
-  assert.match(said.agentMessage!, /^Not made: whole cards are off on this install/);
+  assert.equal(said.message, "Whole cards are off on Docker, so no box gets a card to itself there. Ask for gpu shared, or turn Whole cards on in Docker's GPUs section in BB Box's settings, or with bb box backend set test --field whole-cards=true.");
+  assert.equal(said.agentMessage, "Not made: whole cards are off on Docker. Ask for gpu shared, or ask the user. bb-box changed nothing.");
   await assert.rejects(off.acquire(identity("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && /whole cards are off/.test(error.agentMessage ?? ""));
 });
 

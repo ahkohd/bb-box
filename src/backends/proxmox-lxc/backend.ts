@@ -42,7 +42,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Gue
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { forkCapacityWords, forkRefusalWords } from "../../core/snapshot-refusals.ts";
-import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, gpuPartsOffered, gpuPlanChangedWords, holdsCard, kindWithGpu, offersGpuPart, sameGpuPlan } from "../../core/gpu.ts";
+import { gpuPartsOffered, wholeCardsOff, wholeCardsOffForFork, wholeCardsOffForResize, gpuPlanChangedWords, holdsCard, kindWithGpu, offersGpuPart, sameGpuPlan } from "../../core/gpu.ts";
 import { isDriverVersion } from "../../core/gpu-userspace.ts";
 import { GPU_RESTART_SECONDS, helperNotReadyRefusal, noDriverRefusal, noSharedCardRefusal, noWholeCardRefusal, placementOf, plannedChange, startFirstRefusal, unmarkedRefusal, type OtherOnCard, type PlanBox } from "./gpu-resize.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
@@ -1651,7 +1651,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.clearForkGpu(box.boxId);
     const desktop = currentKindId(box.kind) === "linux-desktop";
     if (gpu !== "none" && !desktop) throw new BackendError("unsupported", `A fork of a ${box.kind} box takes gpu none. Fork it with gpu none. bb-box copied nothing.`);
-    if (gpu === "whole" && !this.#wholeOn()) throw new BackendError("unsupported", WHOLE_CARDS_OFF_FOR_FORK.person, WHOLE_CARDS_OFF_FOR_FORK.agent);
+    if (gpu === "whole" && !this.#wholeOn()) throw new BackendError("unsupported", wholeCardsOffForFork(this).person, wholeCardsOffForFork(this).agent);
     if (gpu === "none") {
       if (desktop) this.#forkGpu.set(box.boxId, { part: "none", card: null, reservation: null, node: "" });
       return;
@@ -2017,7 +2017,7 @@ export class ProxmoxLxcBackend implements Backend {
       await hooks.claim(this.#guest(api.node, id, acquiring.template, box.boxId, null, null, acquiring.build));
     };
     try {
-      if (gpuPart === "whole" && !this.#wholeOn()) throw refusedWith("unsupported", WHOLE_CARDS_OFF);
+      if (gpuPart === "whole" && !this.#wholeOn()) throw refusedWith("unsupported", wholeCardsOff(this));
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
         resumed = true;
@@ -2561,7 +2561,7 @@ export class ProxmoxLxcBackend implements Backend {
       return { is: "refused", refusal: helperNotReadyRefusal(api.node, facts.box, ready?.why ?? "it has no GPU helper to give a box a card", ready?.fix ?? "Run bb box doctor."), way: "no" };
     }
     if (to === "whole") {
-      if (!this.#wholeOn()) return { is: "refused", refusal: WHOLE_CARDS_OFF_FOR_RESIZE, way: "no" };
+      if (!this.#wholeOn()) return { is: "refused", refusal: wholeCardsOffForResize(this), way: "no" };
       const wholeNot = await this.#wholeHelperReady(api, view, signal);
       if (wholeNot) return { is: "refused", refusal: helperNotReadyRefusal(api.node, facts.box, wholeNot.why, wholeNot.fix), way: "no" };
     }
@@ -5141,7 +5141,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async #choice(api: Proxmox, offer: Offer, guests: readonly PoolGuest[], pending: readonly Pending[], signal?: AbortSignal, gpu: GpuPart = gpuPartOf(offer, null), threadId: string | null = null): Promise<Choice> {
-    if (gpu === "whole" && !this.#wholeOn()) return refusedChoice(this.#leastUsed(offer.config.templates, guests), WHOLE_CARDS_OFF);
+    if (gpu === "whole" && !this.#wholeOn()) return refusedChoice(this.#leastUsed(offer.config.templates, guests), wholeCardsOff(this));
     if (offer.flavour === "linux" && gpu !== "none") return this.#serverChoice(api, offer, guests, signal, cardPartOf(gpu), threadId);
     if (offer.flavour === "desktop" && gpu === "none") {
       return offersGpuPart(offer.kind, "none") ? this.#noCardChoice(offer, guests, api.node) : this.#choose(forkOfDesktopWithNoCard(offer), guests, pending, api.node);

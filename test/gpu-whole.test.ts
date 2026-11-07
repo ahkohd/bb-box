@@ -392,11 +392,11 @@ test("071 unit 8, lead: whole cards are off unless the install turns them on: no
   const linux = { desktop: false, offers: [{ name: "Proxmox LXC on pve", gpuParts: ["none", "shared"], gpuRoom: { ...room, at: 1_000 } }] } as unknown as KindView;
   assert.match(gpuPartsText(linux, 1_000), /: none or shared; ask with gpu shared \(.*\)\. Whole cards are off on [^:]+: ask the user if a box needs a card to itself\.$/);
   const refused = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
-  assert.equal(refused.message, "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true.");
-  assert.equal(refused.agentMessage, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(refused.message, "Whole cards are off on Proxmox LXC on pve, so no box gets a card to itself there. Ask for gpu shared, or turn Whole cards on in Proxmox LXC on pve's GPUs section in BB Box's settings, or with bb box backend set proxmox-lxc --field whole-cards=true.");
+  assert.equal(refused.agentMessage, "Not made: whole cards are off on Proxmox LXC on pve. Ask for gpu shared, or ask the user. bb-box changed nothing.");
   const before = clones(bridge);
   await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && error.agentMessage === refused.agentMessage);
-  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on Proxmox LXC on pve. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
   assert.equal(clones(bridge), before);
   assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, [])).ok, true, "shared is as before");
 });

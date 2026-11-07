@@ -125,7 +125,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "GPU boxes",
     description:
-      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them. Not set here, the replaced gpu-desktops says, off unless it is set.",
+      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them. Not set here, it reads gpu-desktops, off unless that is set.",
     group: "gpus",
     default: false,
     replaces: DOCKER_KEYS.gpuDesktops,
@@ -133,7 +133,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [DOCKER_KEYS.boxesPerCard]: {
     type: "number",
     label: "Boxes per card",
-    description: `The most boxes on one card, servers and desktops together, running or stopped, of every install that uses the host. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, the replaced desktops-per-gpu's value where it was set, else ${BOXES_PER_CARD}.`,
+    description: `The most boxes on one card, servers and desktops together, running or stopped, of every install that uses the host. A lower limit stops nothing that runs: no new box goes on a card over it until it has room. Empty, it reads desktops-per-gpu where that is set, else ${BOXES_PER_CARD}.`,
     group: "gpus",
     default: DOCKER_DEFAULTS.boxesPerCard,
     replaces: DOCKER_KEYS.desktopsPerGpu,
@@ -142,7 +142,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "Whole cards",
     description:
-      "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. A whole card is where bb-box places boxes, not a fence. Not set here, the install-wide option general.wholeCards says, off unless it is set.",
+      "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. A whole card is where bb-box places boxes, not a fence. Not set here, it follows the install-wide option general.wholeCards, off unless that is set.",
     group: "gpus",
   },
   [DOCKER_KEYS.gpuMemoryMiB]: {

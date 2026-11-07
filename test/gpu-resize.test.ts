@@ -421,7 +421,7 @@ test("071 unit 9: a GPU change is refused before anything changes, for each audi
   const shared = await server(bridge, backend, "shared", "quiet-elm");
   const wholeOff = bridge.backend({ wholeCards: false });
   const offPlan = await wholeOff.planResize(shared.guest, "linux", size("whole"), [], signal());
-  assert.equal(offPlan.gpu?.refusal?.agent, "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.");
+  assert.equal(offPlan.gpu?.refusal?.agent, "Not resized: whole cards are off on Proxmox LXC on pve. Keep the GPU shared, or ask the user. bb-box changed nothing.");
 
   const timer = new ClaimsBridge();
   withUserspace(timer);

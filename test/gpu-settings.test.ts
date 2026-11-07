@@ -279,7 +279,7 @@ test("071 unit 15 gate: turning whole cards off leaves a whole box as it is: its
   bridge.pass();
   assert.equal(whole.claim?.part, "whole");
   options.wholeCards = false;
-  await assert.rejects(backend.acquire(identity("linux", "whole"), null, hooks(), new AbortController().signal), /Whole cards are off on this install/);
+  await assert.rejects(backend.acquire(identity("linux", "whole"), null, hooks(), new AbortController().signal), /Whole cards are off on Proxmox LXC on pve, so no box gets a card to itself there/);
   const inUse = await backend.cardsInUse();
   assert.ok(inUse.is === "read");
   if (inUse.is !== "read") return;
