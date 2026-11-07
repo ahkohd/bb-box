@@ -6,6 +6,7 @@ import type { BoxPageState, Contract, MonitorReach, MonitorSnapshot } from "../s
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
+import { resizedNow } from "../src/app/resize.tsx";
 import { rowLine, rowWords } from "../src/app/row-line.ts";
 import { HOLDS_NO_CARD, USERSPACE_UPDATE_REFUSAL } from "../src/plugin/gpu-page.ts";
 
@@ -272,6 +273,58 @@ test("071 unit 13: Resize keeps the button enabled when the size snaps to the bo
   await new Promise((resolve) => setTimeout(resolve, 400));
   expect(gpuNone).toBe(1);
   release();
+});
+
+test("071 unit 13: a resize that changes the GPU names it when it has finished", async () => {
+  const sizeNow = { cores: 2, memoryGiB: 4, diskGiB: 16, words: "2 cores, 4 GiB memory, 16 GiB disk" };
+  const box = boxView({
+    sizeNow,
+    size: "2 cores, 4 GiB memory, 16 GiB disk",
+    resizing: { cores: "live", memory: "live", disk: "live", shrinks: true, gpu: { add: "restart", share: "live", move: "restart" } },
+  });
+  const empty = { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null };
+  const presets = [{ name: "small", cores: 2, memoryGiB: 4, diskGiB: 16, words: sizeNow.words }];
+  const gpu = {
+    from: "shared" as const,
+    to: "none" as const,
+    way: "restart" as const,
+    stopped: false,
+    installs: null,
+    words: "GPU: shared, card 1 → none · Restart. amber-fox restarts without card 1. Everything running in it stops.",
+    fromIndex: 1,
+    toIndex: null,
+    refusal: null,
+    others: [],
+    changed: null,
+  };
+  const rpc = handlers(page(box));
+  rpc.resize = (input: { size?: { gpu?: string }; check?: boolean; restart?: boolean }) => {
+    const plan = input.size?.gpu === "none" ? { parts: [], room: { ok: true, message: null }, downSeconds: 15, gpu } : null;
+    if (input.check || !input.restart) return { ...empty, from: sizeNow, to: sizeNow, presets, plan };
+    return {
+      ...empty,
+      from: sizeNow,
+      to: sizeNow,
+      presets,
+      plan,
+      changed: true,
+      box: { ...box, gpu: false, gpuPart: "none", lastResize: { to: sizeNow, at: Date.now(), state: "done", restart: true, ms: 1000, error: null } },
+    };
+  };
+  const [panel] = app.navPanels;
+  const slot = renderSlot(panel!, { subPath: `box/${BOX}` }, { rpc, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "Train the model" }) } } });
+  const card = await slot.findByRole("region", { name: "GPU card" });
+  fireEvent.click(within(card).getByRole("button", { name: "Change…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.keyDown(within(dialog).getByRole("combobox", { name: "GPU" }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "None" }));
+  await waitFor(() => expect(dialog.textContent).toContain("Everything running in it stops"));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize…" }));
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Restart and resize" }));
+  expect(await within(dialog).findByText("It has 2 cores · 4 GiB · 16 GiB disk and no GPU now, after a restart.")).toBeTruthy();
+  expect(resizedNow("2 cores · 4 GiB · 16 GiB disk", { ...gpu, from: "none", to: "shared", fromIndex: null, toIndex: 1, words: "GPU: none → shared, card 1 · Restart." }, true, true)).toBe(
+    "It has 2 cores · 4 GiB · 16 GiB disk and a shared GPU on card 1 now, after a restart.",
+  );
 });
 
 test("071 unit 13: Resize shows the plan's words", async () => {

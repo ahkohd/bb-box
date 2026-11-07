@@ -5286,10 +5286,11 @@ No node command was run from here.
 
 A later review of the form and the dialog changed four behaviours, and the tests that lock them use offers with `gpuParts` set the way a provider sends them.
 
-- None is in the GPU menu when an offer's parts include it, or when a CPU desktop of the same windowing is offered beside it. Choosing None then acquires that CPU kind (`linux-desktop-cpu` on Docker and on a Proxmox desktop whose parts are shared, or shared and whole). A GPU desktop with no CPU desktop does not offer None.
+- None is in the GPU menu when an offer's parts include it, or when a CPU desktop of the same windowing is offered beside it. Choosing None then acquires that CPU kind (`linux-desktop-cpu` on Docker and on a Proxmox desktop whose parts are shared, or shared and whole). That CPU desktop keeps the same menu and the same line ("No GPU. You can add one later with Resize."). The older None / 1 GPU menu stays only where no offer has card parts. A GPU desktop with no CPU desktop does not offer None.
 - A ready spare of the kind's default GPU, at the default size, does not fill the card, so Create stays on. A spare of another GPU still does. First with room names a card only on a provider the size can use.
-- A card reading that fails stays failed, with Retry. The cards RPC says which provider failed, instead of an empty room, and None does not wait on a reading.
-- The line's height follows the form's width (`@container` and `@sm:h-[2lh]`), not the window. Resize does not check again when the opening size snaps to the box's preset, so Resize stays on while that plan is shown.
+- A card reading that fails stays failed, with Retry on the same line as "The cards could not be read." The cards RPC says which provider failed, instead of an empty room, and None does not wait on a reading.
+- The line's height follows the form's width (`@container` and `@sm:h-[2lh]`), not the window. Choosing None on a desktop keeps that line and that menu. Resize does not check again when the opening size snaps to the box's preset, so Resize stays on while that plan is shown.
+- When the size check leaves no provider, the line says "No provider has room for this size: see below." and Create stays off. A resize that changes the GPU names it in the success line, as "and no GPU" or "and a shared GPU on card 1", before "now".
 - The remembered GPU and the cards callback have no doc comments. The names `gpu` and `cards` carry that.
 
 The shots from the live gate were not taken again. The test BB and its backend were already gone, and this pass did not place a box on a GPU.

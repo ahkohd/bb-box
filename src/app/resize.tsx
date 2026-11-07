@@ -21,6 +21,7 @@ import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { message } from "./common.tsx";
 import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
 import { LargestLine, type AskedParts } from "./largest-line.tsx";
+import { gpuPartWords } from "../core/gpu.ts";
 import { withoutRaiseLargest } from "../core/largest-words.ts";
 
 /** How long the dialog waits after a change before it checks the size. */
@@ -44,6 +45,18 @@ export function canResize(box: BoxView): boolean {
 function words(size: SizeView, ways: Resizing | null): string {
   const disk = size.diskGiB !== null ? `${size.diskGiB} GiB disk` : ways?.disk === "no" ? null : "base disk";
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB`, disk].filter(Boolean).join(" · ");
+}
+
+function gpuNowWords(gpu: GpuChangeView): string {
+  if (gpu.to === "none") return "no GPU";
+  const named = gpuPartWords(gpu.to);
+  return gpu.toIndex === null ? named : `${named} on card ${gpu.toIndex}`;
+}
+
+export function resizedNow(size: string, gpu: GpuChangeView | null | undefined, changed: boolean, restart: boolean): string {
+  const named = gpu && gpu.from !== gpu.to ? ` and ${gpuNowWords(gpu)}` : "";
+  const how = changed ? (restart ? ", after a restart" : ", changed live") : "";
+  return `It has ${size}${named} now${how}.`;
 }
 
 /** A part's value as the dialog shows it: memory and disk in GiB, a base disk as "base". */
@@ -375,7 +388,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
               : step.at === "threads"
                 ? `${workingOnWords(step.threads, box.name)}. ${step.threads.length === 1 ? "Its" : "Their"} work stops while it restarts.`
                 : step.at === "done"
-                  ? `It has ${words(step.answer.to ?? step.answer.from!, box.resizing ?? null)} now${step.answer.changed ? (step.answer.box?.lastResize?.restart ? ", after a restart" : ", changed live") : ""}.`
+                  ? resizedNow(words(step.answer.to ?? step.answer.from!, box.resizing ?? null), step.answer.plan?.gpu, step.answer.changed, !!step.answer.box?.lastResize?.restart)
                   : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`}
           </AlertDialogDescription>
           {step.at === "threads" ? <ThreadChips threads={step.threads} /> : null}
