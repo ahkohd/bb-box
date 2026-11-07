@@ -2,8 +2,13 @@ import type { CardPlacement, GpuPart, GpuRefusal, GpuResize, ResizeWay } from ".
 import type { CardMemory } from "./gpu-claims.ts";
 import type { HelperCard } from "./gpu-marking.ts";
 import { agentChoices, blockWords, PERSON, type CardBlock, type CardNamer } from "./gpu-refusals.ts";
+import { USERSPACE_INSTALL_SECONDS, startFirstWords } from "../../core/gpu-userspace.ts";
 
 export const GPU_RESTART_SECONDS = 15;
+
+export function gpuRestartSeconds(installs: string | null): number {
+  return GPU_RESTART_SECONDS + (installs ? USERSPACE_INSTALL_SECONDS : 0);
+}
 
 export interface PlanBox {
   readonly name: string;
@@ -62,6 +67,7 @@ export interface GpuPlanInput {
   readonly others: readonly OtherOnCard[];
   readonly limit: number | null;
   readonly fromHeldBy: string | null;
+  readonly installs: string | null;
 }
 
 export function gpuPlanWords(input: GpuPlanInput): string {
@@ -76,13 +82,15 @@ export function gpuPlanWords(input: GpuPlanInput): string {
     if (from === "whole") return `GPU: whole ${named(fromCard)} → shared · While stopped. ${capitalised(named(fromCard))} opens to other boxes now. ${capitalised(name)} is stopped: it goes on a card with room when it next starts, ${named(fromCard)} first. Nothing starts now.`;
     return `GPU: none → shared · While stopped. ${capitalised(name)} is stopped: it gets a shared GPU from its next start, on ${named(toCard)} if it has room then. Nothing starts now.`;
   }
-  const seconds = `in about ${GPU_RESTART_SECONDS} s`;
+  const seconds = `in about ${gpuRestartSeconds(input.installs)} s`;
   if (to === "none") {
     return `GPU: ${from}, ${named(fromCard)} → none · Restart. ${capitalised(name)} restarts without ${named(fromCard)}, ${seconds}. Everything running in it stops.${box.desktop ? " Its desktop is then drawn by the CPU." : ""}`;
   }
   if (from === "none" || !fromCard) {
     const how = to === "whole" ? "to itself" : sharedWith(others);
-    return `GPU: ${from} → ${to}, ${named(toCard)} · Restart. ${capitalised(name)} restarts, gets ${toCard ? sized(toCard) : "a card"}, ${how}, ${seconds}. Everything running in it stops.${box.desktop ? " Its desktop is then drawn by the GPU." : ""}`;
+    const card = toCard ? sized(toCard) : "a card";
+    const gets = input.installs ? `NVIDIA's userspace ${input.installs} and ${card}` : card;
+    return `GPU: ${from} → ${to}, ${named(toCard)} · Restart. ${capitalised(name)} restarts, gets ${gets}, ${how}, ${seconds}. Everything running in it stops.${box.desktop ? " Its desktop is then drawn by the GPU." : ""}`;
   }
   if (to === "shared") {
     const up = input.limit === null ? "with no limit on how many" : `up to ${input.limit}`;
@@ -104,7 +112,7 @@ export function plannedChange(input: GpuPlanInput, refusal: GpuRefusal | null = 
     fromCard: input.fromCard,
     toCard: input.toCard,
     stopped: input.box.stopped,
-    installs: null,
+    installs: input.installs,
     others: input.others,
     words: refusal ? refusal.person : gpuPlanWords(input),
     refusal,
@@ -149,17 +157,10 @@ export function unmarkedRefusal(box: PlanBox): GpuRefusal {
   };
 }
 
-export function userspaceRefusal(box: PlanBox, driver: string | null, userspace: string | null): GpuRefusal {
-  const host = driver ?? "(not reported)";
-  if (box.stopped && userspace === null) {
-    return {
-      person: `Start ${box.name} first: bb-box reads whether it has NVIDIA's userspace for the host's driver ${host} in a running box. Nothing changes.`,
-      agent: `Not resized: ${box.name} is stopped, and bb-box reads whether it has NVIDIA's userspace for the host's driver ${host} only in a running box. Start it with box_start, or ask the user. bb-box changed nothing.`,
-    };
-  }
-  const has = userspace === null ? "none" : userspace;
-  return {
-    person: `Not changed: ${box.name} has NVIDIA's userspace ${has}, not the host's driver ${host}, so a card would not work in it, and bb-box does not install it yet. Make a new box with the GPU it needs.`,
-    agent: `Not resized: ${box.name} has NVIDIA's userspace ${has}, not the host's driver ${host}, so a card would not work in it. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
-  };
+export function startFirstRefusal(box: PlanBox, driver: string): GpuRefusal {
+  return startFirstWords(box.name, driver);
+}
+
+export function noDriverRefusal(node: string, box: PlanBox): GpuRefusal {
+  return helperNotReadyRefusal(node, box, "its GPU helper reports no NVIDIA driver, so bb-box cannot tell which userspace a card needs", "Run bb box doctor.");
 }

@@ -31,6 +31,10 @@ export function kindNamingNoGpu(kind: string): string | null {
   return KIND_WITH_NO_GPU.get(currentKindId(kind)) ?? null;
 }
 
+export function kindWithGpu(kind: string): string {
+  return kindNamingNoGpu(kind) ?? kind;
+}
+
 export function gpuPartsOf(kind: string): readonly GpuPart[] {
   return KINDS_WITH_CARDS.includes(currentKindId(kind)) ? GPU_PARTS : ["none"];
 }
@@ -189,12 +193,12 @@ export function gpuPlanSummary(plan: GpuResize): string {
   }
   if (plan.way === "live") return plan.to === "whole" ? `could change to a whole card live, on ${to}` : `could open ${from} to other boxes live`;
   if (plan.to === "none") return `would lose ${from} with a restart`;
-  if (plan.from === "none") return `would get ${to}${plan.to === "whole" ? " whole" : ""} with a restart`;
+  if (plan.from === "none") return `would get ${plan.installs ? `NVIDIA's userspace ${plan.installs} and ` : ""}${to}${plan.to === "whole" ? " whole" : ""} with a restart`;
   return `would move to ${to} with a restart`;
 }
 
 export function sameGpuPlan(agreed: GpuResize, now: GpuResize): boolean {
-  return agreed.from === now.from && agreed.to === now.to && agreed.way === now.way && agreed.stopped === now.stopped && (agreed.toCard?.card ?? null) === (now.toCard?.card ?? null);
+  return agreed.from === now.from && agreed.to === now.to && agreed.way === now.way && agreed.stopped === now.stopped && (agreed.toCard?.card ?? null) === (now.toCard?.card ?? null) && (now.installs === null || now.installs === agreed.installs);
 }
 
 export function gpuPlanChangedWords(name: string, agreed: GpuResize, now: GpuResize, because: GpuRefusal | null): GpuRefusal {

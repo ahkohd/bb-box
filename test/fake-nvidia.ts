@@ -20,6 +20,7 @@ export interface FakeNvidia {
   cardCheckThrows: boolean;
   running: boolean;
   hostThrows: boolean;
+  checkFinishes: boolean;
 }
 
 export function fakeNvidia(start: Partial<FakeNvidia> = {}): FakeNvidia {
@@ -40,6 +41,7 @@ export function fakeNvidia(start: Partial<FakeNvidia> = {}): FakeNvidia {
     cardCheckThrows: false,
     running: false,
     hostThrows: false,
+    checkFinishes: true,
     ...start,
   };
 }
@@ -73,7 +75,7 @@ function answer(nvidia: FakeNvidia, call: FakeCall, options: RunOptions | undefi
             `kernel-driver ${nvidia.driver}`,
             `apt ${nvidia.apt.length ? nvidia.apt.join(" ") : "none"}`,
             ...nvidia.processes.map((process) => `gpu-process ${process}`),
-            "check done",
+            ...(nvidia.checkFinishes ? ["check done"] : []),
             "",
           ].join("\n"),
         ),
@@ -108,8 +110,8 @@ function answer(nvidia: FakeNvidia, call: FakeCall, options: RunOptions | undefi
     case "desktop-check":
       return Promise.resolve(
         nvidia.display === "gpu"
-          ? ok('display-mode gpu\ndisplay-reason DISPLAY_MODE=auto\nvideo {"frames":12}\nnvenc yes\ndesktop check done\n')
-          : ok('display-mode cpu\ndisplay-reason no NVIDIA device nodes\nvideo {"frames":12}\nnvenc no\ndesktop check done\n'),
+          ? ok('ready-wait 30\ndisplay-mode gpu\ndisplay-reason DISPLAY_MODE=auto\nselkies-http 200\nvideo {"frames":12}\nnvenc yes\nnvenc-sessions 0 1\ndesktop check done\n')
+          : ok('ready-wait 30\ndisplay-mode cpu\ndisplay-reason no NVIDIA device nodes\nselkies-http 200\nvideo {"frames":12}\nnvenc no\nnvenc-sessions 0 0\ndesktop check done\n'),
       );
   }
 }

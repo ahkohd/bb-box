@@ -197,7 +197,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
-  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
   --help, -h                   Show this help and exit
 ```
 
@@ -262,7 +262,7 @@ Options:
   --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
   --check                      Only say what would change, how, and whether there is room.
   --force                      Restart it even while threads are working on it, which ends their work.
-  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
+  --gpu <value>                The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.
   --help, -h                   Show this help and exit
 ```
 

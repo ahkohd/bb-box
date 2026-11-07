@@ -33,12 +33,13 @@ export interface GpuProcess {
   readonly name: string;
 }
 
-export type UpdateCheck = { readonly ok: true; readonly processes: readonly GpuProcess[] } | { readonly ok: false; readonly why: string };
+export type UpdateCheck = { readonly ok: true; readonly processes: readonly GpuProcess[] } | { readonly ok: false; readonly why: string; readonly transient?: boolean };
 
 export const UPDATE_DIR = "/var/tmp/bb-box-nvidia-update";
 export const UPDATE_LOCK = "/run/bb-box-nvidia-update.lock";
 export const UPDATE_SCRIPT = `${UPDATE_DIR}/nvidia-userspace-update.sh`;
 export const UPDATE_FREE_MIB = 2048;
+export const USERSPACE_INSTALL_SECONDS = 60;
 
 const READ_DONE = "userspace read";
 const UPDATE_RUNNING = "update running";
@@ -56,6 +57,10 @@ export const USERSPACE_READ =
 function valueAfter(lines: readonly string[], key: string): string | null {
   const line = lines.find((candidate) => candidate === key || candidate.startsWith(`${key} `));
   return line === undefined ? null : line.slice(key.length).trim();
+}
+
+export function isDriverVersion(text: string | null): text is string {
+  return !!text && VERSION.test(text);
 }
 
 function versionOf(text: string | null): UserspaceVersion {
@@ -151,10 +156,10 @@ export function installCommand(): string {
 
 export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
-  if (lines.includes(UPDATE_RUNNING)) return { ok: false, why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another" };
+  if (lines.includes(UPDATE_RUNNING)) return { ok: false, why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another", transient: true };
   if (!lines.includes(CHECK_DONE)) {
     const said = lines.find((line) => /sudo|password|not permitted|denied/i.test(line));
-    return { ok: false, why: said ? `lets bb-box run nothing as root (${said.replace(/\.$/, "")})` : "did not finish bb-box's check" };
+    return said ? { ok: false, why: `lets bb-box run nothing as root (${said.replace(/\.$/, "")})` } : { ok: false, why: "did not finish bb-box's check", transient: true };
   }
   const arch = valueAfter(lines, "arch");
   if (arch !== "x86_64") return { ok: false, why: `runs on ${arch || "an unknown architecture"}, and NVIDIA's userspace is for x86_64 boxes only` };
@@ -182,6 +187,22 @@ export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
     return match ? [{ pid: Number(match[1]), name: match[2]!.trim() || "?" }] : [];
   });
   return { ok: true, processes };
+}
+
+export function cannotInstallWords(box: string, why: string, transient = false): { readonly person: string; readonly agent: string } {
+  if (transient) return { person: `Not changed: ${box} ${why}. Try again in a minute.`, agent: `Not resized: ${box} ${why}. Try again in a minute, or ask the user. bb-box changed nothing.` };
+  const toldWhatToDo = /\. [A-Z]/.test(why);
+  return {
+    person: `Not changed: ${box} ${why}.${toldWhatToDo ? "" : " Make a new box with the GPU it needs."}`,
+    agent: `Not resized: ${box} ${why}.${toldWhatToDo ? "" : " Acquire a new box with the GPU it needs, or ask the user."} bb-box changed nothing.`,
+  };
+}
+
+export function startFirstWords(box: string, driver: string): { readonly person: string; readonly agent: string } {
+  return {
+    person: `Start ${box} first: NVIDIA's userspace ${driver}, which a card needs, is installed in a running box. Nothing changes.`,
+    agent: `Not resized: ${box} is stopped, and a card needs NVIDIA's userspace ${driver} in it, which bb-box installs only in a running box. Start it with box_start, then resize it again, or ask the user. bb-box changed nothing.`,
+  };
 }
 
 export function lastLines(text: string, count = 6): string {
@@ -258,25 +279,53 @@ export function judgeAnyCard(output: string): { readonly ok: true } | { readonly
 
 const DESKTOP_DONE = "desktop check done";
 
+export const DESKTOP_READY_WAIT_S = 30;
+export const SELKIES_PROCESS = "[s]elkies --addr=127.0.0.1 --port=5980";
+
 export const DESKTOP_GPU_CHECK =
-  `printf 'display-mode %s\\n' "$(cat /run/bb-box/display-mode 2>/dev/null || echo none)"; ` +
-  `printf 'display-reason %s\\n' "$(cat /run/bb-box/display-reason 2>/dev/null)"; ` +
-  `printf 'video %s\\n' "$(timeout 30 node /usr/local/libexec/bb-box/selkies-probe.mjs 5980 3 2>&1 | tail -1)"; ` +
-  `n=no; for p in $(pgrep -u "$(id -un)" -x selkies) $(pgrep -u "$(id -un)" -x python3); do grep -q libnvidia-encode "/proc/$p/maps" 2>/dev/null && n=yes; done; ` +
+  `r=\${BB_BOX_ROOT:-}; w=\${BB_BOX_READY_WAIT_S:-${DESKTOP_READY_WAIT_S}}; d=$(( $(date +%s%3N) + w * 1000 )); ` +
+  `left() { echo $(( d - $(date +%s%3N) )); }; secs() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }; ` +
+  `while [ ! -s "$r/run/bb-box/display-mode" ] && [ "$(left)" -gt 500 ]; do sleep 0.5; done; ` +
+  `s=000; while :; do l=$(left); [ "$l" -gt 0 ] || break; [ "$l" -le 2000 ] || l=2000; s=$(curl -s -o /dev/null -m "$(secs "$l")" -w '%{http_code}' http://127.0.0.1:5980/); [ "$s" = 200 ] && break; [ "$(left)" -gt 500 ] || break; sleep 0.5; done; ` +
+  `printf 'ready-wait %s\\n' "$w"; ` +
+  `printf 'display-mode %s\\n' "$(cat "$r/run/bb-box/display-mode" 2>/dev/null || echo none)"; ` +
+  `printf 'display-reason %s\\n' "$(cat "$r/run/bb-box/display-reason" 2>/dev/null)"; ` +
+  `printf 'selkies-http %s\\n' "$s"; ` +
+  `sc() { nvidia-smi --query-gpu=encoder.stats.sessionCount --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '; }; ` +
+  `o=$(mktemp); b=$(sc); m=; v=; while :; do l=$(left); [ "$l" -ge 1500 ] || break; t=$(( l - 500 )); [ "$t" -le 3000 ] || t=3000; q=$(( t / 2 )); [ "$q" -le 1000 ] || q=1000; ` +
+  `timeout "$(secs $(( t + 400 )))" node /usr/local/libexec/bb-box/selkies-probe.mjs 5980 "$(secs "$t")" > "$o" 2>&1 & p=$!; sleep "$(secs "$q")"; m=$(sc); wait "$p"; ` +
+  `v=$(tail -1 "$o"); case "$v" in *'"frames":0,'*) ;; *'"frames":'*) break ;; esac; done; ` +
+  `printf 'video %s\\n' "$v"; rm -f "$o"; printf 'nvenc-sessions %s %s\\n' "\${b:-none}" "\${m:-none}"; ` +
+  `n=no; for p in $(pgrep -u "$(id -un)" -f '${SELKIES_PROCESS}'); do grep -q libnvidia-encode "/proc/$p/maps" 2>/dev/null && n=yes; done; ` +
   `echo "nvenc $n"; echo '${DESKTOP_DONE}'`;
 
 export function judgeDesktopCheck(output: string): string | null {
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.includes(DESKTOP_DONE)) return "the desktop's check did not finish";
+  const waited = valueAfter(lines, "ready-wait") ?? String(DESKTOP_READY_WAIT_S);
   const mode = valueAfter(lines, "display-mode");
+  if (!mode || mode === "none") return `its display had not started ${waited} s after its start`;
   if (mode !== "gpu") {
     const reason = valueAfter(lines, "display-reason");
-    return `its desktop came up on ${mode === "cpu" ? "the CPU" : `display mode ${mode ?? "none"}`}${reason ? ` (${reason})` : ""}`;
+    return `its desktop came up on ${mode === "cpu" ? "the CPU" : `display mode ${mode}`}${reason ? ` (${reason})` : ""}`;
   }
+  const http = valueAfter(lines, "selkies-http");
+  if (http !== "200") return `its desktop's video was not ready ${waited} s after its start: Selkies on 127.0.0.1:5980 ${!http || http === "000" ? "did not answer" : `answered HTTP ${http}`}`;
   const video = valueAfter(lines, "video") ?? "";
-  if (!/"frames":[1-9]/.test(video)) return `its desktop's video sent no frames${video ? ` (${video})` : ""}`;
+  if (!/"frames":[1-9]/.test(video)) return `its desktop's video sent no frames ${waited} s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent bb-box's probe no video${video ? ` (${video})` : ""}`;
   if (valueAfter(lines, "nvenc") !== "yes") return "its desktop's video is not encoded with NVENC";
+  const [before, during] = (valueAfter(lines, "nvenc-sessions") ?? "").split(" ").map((count) => (/^\d+$/.test(count) ? Number(count) : null));
+  if (before === null || during === null || before === undefined || during === undefined) return "bb-box could not read its card's encoder sessions in the box, so it cannot tell that its video is encoded with NVENC";
+  if (during <= before) return `its desktop's video is not encoded with NVENC: its card's encoder sessions did not rise while bb-box's probe watched it (${before} before, ${during} during)`;
   return null;
+}
+
+export function unfinishedUpdate(update: UserspaceUpdate | null | undefined): boolean {
+  return update?.state === "updating" || update?.state === "unknown" || update?.state === "failed";
+}
+
+export function gpuPartToRetry(resize: { readonly to: { readonly gpu?: string } } | null | undefined): string {
+  return resize?.to.gpu === "whole" ? "whole" : "shared";
 }
 
 export function restartedSinceUpdate(update: UserspaceUpdate | null | undefined): { readonly userspaceUpdate?: UserspaceUpdate } {

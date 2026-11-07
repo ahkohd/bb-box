@@ -13,6 +13,8 @@ import {
   asRoot,
   judgeAnyCard,
   judgeDesktopCheck,
+  DESKTOP_GPU_CHECK,
+  SELKIES_PROCESS,
   judgeReading,
   judgeUpdateCheck,
   planWords,
@@ -201,7 +203,7 @@ test("071 unit 12: bb-box's check of a box refuses, before anything changes, ano
   assert.deepEqual(check({ "free-mib": "900" }), { ok: false, why: "has 900 MiB free in /var/tmp, and NVIDIA's installer and its files need 2 GiB" });
   assert.deepEqual(check({ "kernel-driver": "570.86" }), { ok: false, why: "sees the host's NVIDIA driver as 570.86, not 580.142 as the host reports it" });
   assert.deepEqual(judgeUpdateCheck("sudo: a password is required\n", "580.142"), { ok: false, why: "lets bb-box run nothing as root (sudo: a password is required)" });
-  assert.deepEqual(judgeUpdateCheck("arch x86_64\n", "580.142"), { ok: false, why: "did not finish bb-box's check" });
+  assert.deepEqual(judgeUpdateCheck("arch x86_64\n", "580.142"), { ok: false, why: "did not finish bb-box's check", transient: true });
   const busy = judgeUpdateCheck("arch x86_64\nos ubuntu 24.04\nimage bb-box\nfree-mib 9000\nkernel-driver 580.142\napt none\ngpu-process 3310 python3\ngpu-process 812 Xorg\ncheck done\n", "580.142");
   assert.deepEqual(busy, { ok: true, processes: [{ pid: 3310, name: "python3" }, { pid: 812, name: "Xorg" }] });
 });
@@ -248,16 +250,85 @@ test("071 unit 12: the checks after an update's restart: a card listed with CUDA
   assert.deepEqual(judgeAnyCard("Failed to initialize NVML: Driver/library version mismatch\ncuinit 999\n"), { ok: false, why: "nvidia-smi in it listed no card (Failed to initialize NVML: Driver/library version mismatch / cuinit 999)" });
   const desktop = (changes: Record<string, string>) =>
     judgeDesktopCheck(
-      Object.entries({ "display-mode": "gpu", "display-reason": "DISPLAY_MODE=auto", video: '{"frames":12}', nvenc: "yes", ...changes })
+      Object.entries({ "ready-wait": "30", "display-mode": "gpu", "display-reason": "DISPLAY_MODE=auto", "selkies-http": "200", video: '{"frames":12}', nvenc: "yes", "nvenc-sessions": "0 1", ...changes })
         .map(([key, value]) => `${key} ${value}`)
         .concat("desktop check done")
         .join("\n"),
     );
   assert.equal(desktop({}), null);
   assert.equal(desktop({ "display-mode": "cpu", "display-reason": "host NVIDIA driver '580.142' does not match the template's '570.86'" }), "its desktop came up on the CPU (host NVIDIA driver '580.142' does not match the template's '570.86')");
-  assert.equal(desktop({ video: '{"frames":0}' }), 'its desktop\'s video sent no frames ({"frames":0})');
+  assert.equal(desktop({ video: '{"frames":0}' }), 'its desktop\'s video sent no frames 30 s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent bb-box\'s probe no video ({"frames":0})');
   assert.equal(desktop({ nvenc: "no" }), "its desktop's video is not encoded with NVENC");
   assert.equal(judgeDesktopCheck("display-mode gpu\n"), "the desktop's check did not finish");
+  assert.equal(desktop({ "display-mode": "none" }), "its display had not started 30 s after its start");
+  assert.equal(desktop({ "selkies-http": "000" }), "its desktop's video was not ready 30 s after its start: Selkies on 127.0.0.1:5980 did not answer");
+  assert.equal(desktop({ "selkies-http": "502" }), "its desktop's video was not ready 30 s after its start: Selkies on 127.0.0.1:5980 answered HTTP 502");
+  assert.equal(desktop({ "nvenc-sessions": "1 1" }), "its desktop's video is not encoded with NVENC: its card's encoder sessions did not rise while bb-box's probe watched it (1 before, 1 during)");
+  assert.equal(desktop({ "nvenc-sessions": "none none" }), "bb-box could not read its card's encoder sessions in the box, so it cannot tell that its video is encoded with NVENC");
+});
+
+function desktopBin(curlAnswersFrom: number | null, framesFrom: number | null = 2, curlHangs = false): { readonly bin: string; readonly pgrepArgs: string } {
+  const bin = tempDir("desktop-check-bin");
+  const calls = join(bin, "curl-calls");
+  const pgrepArgs = join(bin, "pgrep-args");
+  const answer = curlHangs ? 'while [ $# -gt 0 ]; do [ "$1" = -m ] && m=$2; shift; done; sleep "${m:-2}"; printf 000; exit 28' : curlAnswersFrom === null ? 'printf 000; exit 7' : `n=$(( $(cat "${calls}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${calls}"; if [ "$n" -ge ${curlAnswersFrom} ]; then printf 200; else printf 000; exit 7; fi`;
+  writeFileSync(join(bin, "curl"), `#!/bin/sh\n${answer}\n`);
+  const sessions = join(bin, "sessions");
+  const probes = join(bin, "probes");
+  writeFileSync(join(bin, "node"), `#!/bin/sh\necho 1 > "${sessions}"\nsleep "$3"\necho 0 > "${sessions}"\nn=$(( $(cat "${probes}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${probes}"\nif [ "$n" -ge ${framesFrom ?? 1_000_000} ]; then echo '{"frames":7,"keys":1,"kbytes":10}'; else echo '{"frames":0,"keys":0,"kbytes":0}'; fi\n`);
+  writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncat "${sessions}" 2>/dev/null || echo 0\n`);
+  writeFileSync(join(bin, "pgrep"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${pgrepArgs}"\n`);
+  for (const name of ["curl", "node", "nvidia-smi", "pgrep"]) chmodSync(join(bin, name), 0o755);
+  return { bin, pgrepArgs };
+}
+
+function desktopCheck(root: string, bin: string, waitS: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", ["-c", DESKTOP_GPU_CHECK], { env: { ...process.env, BB_BOX_ROOT: root, BB_BOX_READY_WAIT_S: String(waitS), PATH: `${bin}:${process.env.PATH}` } });
+    let out = "";
+    child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
+    child.on("error", reject);
+    child.on("close", () => resolve(out));
+  });
+}
+
+test("071 unit 10, the gate's finding: the desktop's check after a restart waits, up to its bound, for the display and for Selkies to answer, then judges its video; and it reads NVENC only in Selkies' own process", async () => {
+  const root = tempDir("desktop-check-root");
+  mkdirSync(join(root, "run", "bb-box"), { recursive: true });
+  const late = desktopBin(2);
+  const checking = desktopCheck(root, late.bin, 20);
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  writeFileSync(join(root, "run", "bb-box", "display-mode"), "gpu\n");
+  const out = await checking;
+  assert.match(out, /^display-mode gpu$/m, "it waited for the display to start");
+  assert.match(out, /^selkies-http 200$/m, "and for Selkies, which answered on its second try");
+  assert.equal(judgeDesktopCheck(out), "its desktop's video is not encoded with NVENC", "then it judged the video");
+  assert.match(out, /^nvenc-sessions 0 1$/m, "and read the card's encoder sessions before and while its probe streamed");
+  assert.match(out, /^video \{"frames":7,/m, "its first probe got no frames, as from a stream not yet flowing, so it probed again");
+  const asked = readFileSync(late.pgrepArgs, "utf8").split("\n");
+  assert.ok(asked.includes("-f") && asked.includes(SELKIES_PROCESS), `NVENC is looked for in Selkies' own process: ${asked.join(" ")}`);
+  assert.ok(!asked.includes("python3"), "not in any python3");
+
+  const never = desktopBin(null);
+  assert.equal(judgeDesktopCheck(await desktopCheck(root, never.bin, 1)), "its desktop's video was not ready 1 s after its start: Selkies on 127.0.0.1:5980 did not answer");
+  const empty = tempDir("desktop-check-empty");
+  assert.equal(judgeDesktopCheck(await desktopCheck(empty, desktopBin(1).bin, 1)), "its display had not started 1 s after its start");
+});
+
+test("071 unit 10, Astra on a674ddea: the desktop's check keeps within its bound: each try of Selkies and each probe is cut to the time left, so a stream that never flows is judged on time", async () => {
+  const root = tempDir("desktop-check-bound");
+  mkdirSync(join(root, "run", "bb-box"), { recursive: true });
+  writeFileSync(join(root, "run", "bb-box", "display-mode"), "gpu\n");
+  const started = Date.now();
+  const out = await desktopCheck(root, desktopBin(1, null).bin, 5);
+  const elapsed = (Date.now() - started) / 1000;
+  assert.ok(elapsed < 5.6, `it said 5 s, and took ${elapsed.toFixed(2)} s`);
+  assert.equal(judgeDesktopCheck(out), "its desktop's video sent no frames 5 s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent bb-box's probe no video ({\"frames\":0,\"keys\":0,\"kbytes\":0})");
+  const hanging = Date.now();
+  const silent = await desktopCheck(root, desktopBin(null, 2, true).bin, 3);
+  const waited = (Date.now() - hanging) / 1000;
+  assert.ok(waited < 3.6, `a Selkies that never answers is tried only in the time left: it said 3 s, and took ${waited.toFixed(2)} s`);
+  assert.equal(judgeDesktopCheck(silent), "its desktop's video was not ready 3 s after its start: Selkies on 127.0.0.1:5980 did not answer");
 });
 
 test("071 unit 12: bb-box's commands run as root through one wrapper, its quoting kept, and its check runs whole from its script on stdin, writing nothing in the box", { skip: process.getuid?.() !== 0 ? "needs root, as bb-box's commands in a box do" : false }, () => {
@@ -328,6 +399,7 @@ test("071 unit 12: the update's check reports an earlier update still running, a
     assert.deepEqual(judgeUpdateCheck(held.out.replace(/^arch .*$/m, "arch x86_64").replace(/^free-mib .*$/m, "free-mib 9000"), "580.142"), {
       ok: false,
       why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another",
+      transient: true,
     });
   } finally {
     process.kill(-holder.pid!, "SIGKILL");

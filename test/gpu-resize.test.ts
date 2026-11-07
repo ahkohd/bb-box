@@ -389,7 +389,7 @@ test("071 unit 9 gate: a restart that is granted its card but cannot start leave
   assert.deepEqual(bridge.lines(fox.vmid), cardLines(CARD_A, "server"), "it holds the new card's lines");
 });
 
-test("071 unit 9: a GPU change is refused before anything changes, for each audience, where the helper has writes off or is missing, on a guest with a card's lines and no marker, without the host's userspace, and for whole while whole cards are off", async () => {
+test("071 unit 9: a GPU change is refused before anything changes, for each audience, where the helper has writes off or is missing, on a guest with a card's lines and no marker, a stopped box without the host's userspace (unit 10 installs it in a running one), and for whole while whole cards are off", async () => {
   const off = new ClaimsBridge({ writes: "off" });
   withUserspace(off);
   const offBackend = off.backend();
@@ -410,13 +410,12 @@ test("071 unit 9: a GPU change is refused before anything changes, for each audi
 
   const bare = await server(bridge, backend, "none", "pale-moss");
   bridge.userspaceIn(bare.vmid, null);
-  assert.deepEqual((await backend.planResize(bare.guest, "linux", size("shared"), [], signal())).gpu?.refusal, {
-    person: "Not changed: pale-moss has NVIDIA's userspace none, not the host's driver 580.142, so a card would not work in it, and bb-box does not install it yet. Make a new box with the GPU it needs.",
-    agent: "Not resized: pale-moss has NVIDIA's userspace none, not the host's driver 580.142, so a card would not work in it. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.",
-  });
+  const installing = (await backend.planResize(bare.guest, "linux", size("shared"), [], signal())).gpu;
+  assert.equal(installing?.refusal, null, "unit 10 installs the userspace in place of this refusal");
+  assert.equal(installing?.installs, DRIVER);
   await stopped(bridge, backend, bare.guest);
   withUserspace(bridge, null);
-  assert.equal((await backend.planResize(bare.guest, "linux", size("shared"), [], signal())).gpu?.refusal?.agent, "Not resized: pale-moss is stopped, and bb-box reads whether it has NVIDIA's userspace for the host's driver 580.142 only in a running box. Start it with box_start, or ask the user. bb-box changed nothing.");
+  assert.equal((await backend.planResize(bare.guest, "linux", size("shared"), [], signal())).gpu?.refusal?.agent, "Not resized: pale-moss is stopped, and a card needs NVIDIA's userspace 580.142 in it, which bb-box installs only in a running box. Start it with box_start, then resize it again, or ask the user. bb-box changed nothing.");
   withUserspace(bridge);
 
   const shared = await server(bridge, backend, "shared", "quiet-elm");

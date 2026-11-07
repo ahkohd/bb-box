@@ -327,6 +327,8 @@ export interface GpuResize {
 export interface ResizeOptions {
   readonly restart: boolean;
   readonly agreed?: GpuResize | null;
+  readonly installUserspace?: (driver: string, signal?: AbortSignal) => Promise<void>;
+  readonly restarting?: () => Promise<void>;
 }
 
 export type ResizeTarget = MachineSize & { readonly gpu?: GpuPart };

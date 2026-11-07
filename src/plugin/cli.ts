@@ -206,8 +206,8 @@ function resizeGpuOption(app: BbBox) {
       type: "string",
       get description() {
         return wholeCardsOn(app)
-          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; on Proxmox LXC adding a GPU, removing it or moving to another card needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed."
-          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.";
+          ? "The box's GPU: none; shared, one card other boxes may share; or whole, a card to itself. Left out, the GPU stays as it is. Shared and whole switch live where the box's card allows; on Proxmox LXC adding a GPU, removing it or moving to another card needs --restart, and on Docker it cannot be done. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed."
+          : "The box's GPU: none, or shared, one card other boxes may share. Left out, the GPU stays as it is. On Proxmox LXC adding or removing a GPU needs --restart, and on Docker it cannot be done. A box with no NVIDIA userspace for the host's driver gets it installed in the same restart, about 60 s more, and a linux-desktop-cpu box becomes a GPU desktop, linux-desktop. A stopped box stays stopped. A resize whose plan changed since its --check is refused, saying what changed.";
       },
     },
   } as const;
