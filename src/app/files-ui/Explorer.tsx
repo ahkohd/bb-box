@@ -14,6 +14,7 @@ import {
 } from "./tree.ts";
 import type { FilesScope } from "./files-scope.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
+import { FilePlusGlyph } from "./file-plus.tsx";
 import { SearchResults } from "./SearchResults.tsx";
 
 export interface ExplorerProps {
@@ -269,8 +270,8 @@ export function Explorer({
           isSpinning={isLoading}
           onClick={onRefresh}
         />
-        <ExplorerAction icon="FileAdd" label="New file" onClick={() => beginCreate("", "file")} />
-        <ExplorerAction icon="FolderAdd" label="New folder" onClick={() => beginCreate("", "directory")} />
+        <ExplorerAction icon="FilePlus" label="New file" onClick={() => beginCreate("", "file")} />
+        <ExplorerAction icon="FolderPlus" label="New folder" onClick={() => beginCreate("", "directory")} />
       </div>
 
       {isSearching && scope !== null ? (
@@ -651,11 +652,15 @@ function ExplorerAction({
         isActive === true && "text-foreground",
       )}
     >
-      <Icon
-        name={icon}
-        aria-hidden
-        className={cn("size-3.5", isSpinning === true && "animate-spin")}
-      />
+      {icon === "FilePlus" ? (
+        <FilePlusGlyph className={cn(isSpinning === true && "animate-spin")} />
+      ) : (
+        <Icon
+          name={icon}
+          aria-hidden
+          className={cn("size-3.5", isSpinning === true && "animate-spin")}
+        />
+      )}
     </button>
   );
 }
