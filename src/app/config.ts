@@ -108,7 +108,6 @@ export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): K
   return Object.keys(entry).length ? entry : undefined;
 }
 
-/** "2 cores · 4 GiB · the image's own disk". */
 export function sizeWords(size: MachineSize): string {
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${gib(size.memoryMiB)} GiB`, size.diskGiB === null ? "the image's own disk" : `${size.diskGiB} GiB`].join(" · ");
 }

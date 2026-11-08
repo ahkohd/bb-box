@@ -2266,7 +2266,6 @@ export function forgetThreadTitles(): void {
   knownTitles.clear();
 }
 
-/** The titles of the threads whose boxes the page lists, fetched once each. A thread with no title is called this box's thread. */
 export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, _threadId: string): string {
   return thread.title?.trim() || thread.titleFallback?.trim() || "this box's thread";
 }

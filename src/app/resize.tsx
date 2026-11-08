@@ -530,7 +530,6 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
               </div>
             ) : null}
             {refusal !== null ? (
-              // The answer to Resize: nothing changed, and why.
               <div role="alert" className="space-y-0.5 text-xs leading-snug">
                 <p className="text-destructive-text">Not resized</p>
                 <p className="text-foreground">{withoutRaiseLargest(refusal)}</p>

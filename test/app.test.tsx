@@ -7205,7 +7205,6 @@ test("the Boxes page manages a thread's boxes with the Box panel's menu: Stop, S
   const { handlers, changes } = server([box(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
   const list = boxesPage(handlers);
   expect(await list.findByText("calm-otter")).toBeTruthy();
-  // The panel's menu, without "New thread…", whose "this thread" names none here; the Open thread arrow heads the thread's card, once.
   let menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Copy address", "Stop", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
