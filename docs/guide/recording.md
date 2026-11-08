@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![Mousepad on a Linux desktop: the clip zooms in, draws an arrow, an I-beam and a pointing hand, and shows a Typing pill, a step with a play mark, a passed result with a tick, a failed result with a cross, and a warning](../media/recording.webp)
+![Mousepad on a Linux desktop, with the typed line in the note. The clip draws an I-beam and a Typing pill, a step, a passed result, a failed result, a warning, a resize cursor on the window's edge, and an open hand on the title bar](../media/recording.webp)
 
 ## What a clip shows
 
@@ -12,8 +12,8 @@ A clip shows the box's whole screen, up to 1280 pixels wide and 30 frames a seco
 
 bb-box draws its own pointer over the clip, larger than the screen's. The arrow is the usual shape. A link or a button shows a pointing hand, a text field an I-beam, and a drag an open hand for the whole drag. A drag that starts on a window's edge or corner shows a resize cursor instead. The I-beam stays from the click in the field until the pointer glides on to the next place, and it stays through the Typing pill. The pointer is black with a white outline and a soft shadow over light parts of the screen, and white with a black outline over dark ones. It changes only when what is under it stays lighter or darker for half a second, and a hand or a resize cursor holds for at least a third of a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
 
-- Each click shows a ring where it lands, drawn in the pointer's fill: blue for a right click, and two quick rings for a double click.
-- While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
+- Each click shows a ring where it lands, drawn in the pointer's fill: blue for a right click, and two quick rings for a double click. The ring grows and fades within 0.4 seconds. It is a band, and it does not stay as a disc under the pointer.
+- While the pointer moves with the button held, a soft disc stays under it, so a drag shows as one movement. A button held still is a click, and the disc does not stay.
 - Each shortcut or special key shows in a small pill, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
 - Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
@@ -25,11 +25,11 @@ A pill sits below the region it would cover, or above it when below does not fit
 
 On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
-![A zoomed Mousepad window with an I-beam and a Typing pill under the text area, and a step caption with a play mark](../media/recording-zoom.png)
+![Mousepad showing the line "A long line for the clip, kept in the note.", with an I-beam in the text area and a Typing pill beside the window. A step caption sits above](../media/recording-zoom.png)
 
 ### Zooms
 
-The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. A typing zoom frames the region the typing changed, or the field, and zooms out as far as it needs to, down to no zoom, so that region is never cut off. A call that never says it has finished is framed at the moment it started. A drag that starts in a named window frames that window where the drag ends. The clip holds still while you read, and zooms back out between bursts of work.
+The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. A typing zoom frames the region the typing changed. When that region is the whole field and the field is too large to zoom, it frames a line at the caret instead, so the camera still eases in, and a long line stays inside the frame. It zooms out as far as it needs to, down to no zoom, so that region is never cut off. A call that never says it has finished is framed at the moment it started. A drag that starts in a named window frames that window where the drag ends. The clip holds still while you read, and zooms back out between bursts of work.
 
 When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. A click that closes its own window zooms out too. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 
@@ -50,7 +50,7 @@ A key pill starts with a keyboard mark, and a warning uses an amber one. The mar
 
 The next step replaces both. Each caption stays up long enough to read, even where still stretches are cut or the clip plays faster.
 
-![A step caption with a play mark and a failed result with a red cross, over a zoomed Mousepad window, with a pointing hand on an open menu](../media/recording-step.png)
+![A step caption and a failed result, "The save was cancelled", over a Mousepad window. An open hand is on the title bar, and the note shows the typed line](../media/recording-step.png)
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 

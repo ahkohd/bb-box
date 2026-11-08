@@ -31,6 +31,8 @@ export const BIG_CHANGE_SHARE = 0.4;
 export const OUTSIDE_CHANGE_SHARE = 0.1;
 export const OUTSIDE_SEEN_S = 1.5;
 export const OWN_RESULT_S = 0.5;
+const CARET_LINE_PX = 36;
+const CARET_BAND_PX = 640;
 
 export interface PointerSample {
   readonly at: number;
@@ -242,21 +244,33 @@ function buttonOf(buttons: number): MouseButton {
 export function pressesOf(samples: readonly PointerSample[]): Press[] {
   const presses: Press[] = [];
   let open: { from: number; x: number; y: number; buttons: number; moved: number } | null = null;
+  let resting = false;
+  const finish = (to: number) => {
+    if (!open) return;
+    const drag = open.moved > CLICK_MOVE_PX;
+    presses.push({ from: open.from, to: drag ? to : open.from, x: open.x, y: open.y, button: buttonOf(open.buttons), drag });
+    open = null;
+  };
   for (const sample of samples) {
-    if (open && open.buttons && !sample.buttons) {
-      const held = sample.at - open.from;
-      const drag = held > CLICK_MOST_S || open.moved > CLICK_MOVE_PX;
-      presses.push({ from: open.from, to: sample.at, x: open.x, y: open.y, button: buttonOf(open.buttons), drag });
-      open = null;
-    } else if (open && open.buttons) {
-      open.moved = Math.max(open.moved, distance(open, sample));
+    if (resting) {
+      if (!sample.buttons) resting = false;
+      continue;
     }
-    if (!open && sample.buttons) open = { from: sample.at, x: sample.x, y: sample.y, buttons: sample.buttons, moved: 0 };
+    if (open && !sample.buttons) {
+      finish(sample.at);
+      continue;
+    }
+    if (open) {
+      open.moved = Math.max(open.moved, distance(open, sample));
+      if (open.moved <= CLICK_MOVE_PX && sample.at - open.from > CLICK_MOST_S) {
+        finish(open.from);
+        resting = true;
+      }
+      continue;
+    }
+    if (sample.buttons) open = { from: sample.at, x: sample.x, y: sample.y, buttons: sample.buttons, moved: 0 };
   }
-  if (open) {
-    const last = samples.at(-1)!;
-    presses.push({ from: open.from, to: last.at, x: open.x, y: open.y, button: buttonOf(open.buttons), drag: true });
-  }
+  if (open) finish(samples.at(-1)!.at);
   return presses;
 }
 
@@ -341,11 +355,28 @@ export function typingFocus(scene: Scene, typing: PlacedTyping, pointer: Pointer
     if (!typing.area && typing.window && overlap(change, typing.window) > 0) return true;
     return !typing.area && !typing.window;
   };
-  const near = scene.changes.filter((change) => change.at >= span.from - 0.3 && change.at <= span.to + 0.5 && within(change) && areaOf(change) > 0);
+  const near = scene.changes.filter((change) => change.at >= span.from - 0.3 && change.at <= span.to + 0.5 && within(change) && areaOf(change) > 0 && !fieldRepaint(change, typing.area));
   if (near.length) return unionOf(near);
-  if (typing.area && areaOf(typing.area) > 0) return typing.area;
-  const frame = pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(span.to * CLIP_FPS)))];
-  return frame ? pointArea(frame.x, frame.y) : null;
+  const field = typing.area && areaOf(typing.area) > 0 ? typing.area : null;
+  if (field && viewContaining(scene, field).zoom >= ZOOM_LEAST) return field;
+  return caretLine(scene, field, pointer, span.to);
+}
+
+function fieldRepaint(change: InputArea, field: InputArea | null | undefined): boolean {
+  if (change.height <= CARET_LINE_PX * 3) return false;
+  if (!field || areaOf(field) <= 0) return true;
+  return overlap(change, field) > areaOf(field) / 2;
+}
+
+function caretLine(scene: Scene, field: InputArea | null, pointer: PointerPlan, at: number): InputArea | null {
+  const frame = pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(at * CLIP_FPS)))];
+  if (!frame) return field;
+  if (!field) return pointArea(frame.x, frame.y);
+  const height = Math.min(CARET_LINE_PX, field.height);
+  const y = Math.min(field.y + Math.max(0, field.height - height), Math.max(field.y, frame.y - height / 2));
+  const width = Math.min(field.width, CARET_BAND_PX);
+  const x = Math.min(field.x + Math.max(0, field.width - width), Math.max(field.x, frame.x - width / 2));
+  return { x, y, width, height };
 }
 
 export function pillRegion(scene: Scene, pointer: PointerPlan, from: number, to: number): InputArea | null {
@@ -372,7 +403,7 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
     const end = at(drag.to);
     if (!start || !end) return [];
     const click = scene.clicks
-      .filter((each) => each.window && Math.abs(each.at - drag.from) <= 0.5 && coversPoint(each.window, start.x, start.y, EDGE_PX))
+      .filter((each) => each.window && Math.abs(each.at - drag.from) <= DRAG_CLICK_S && coversPoint(each.window, start.x, start.y, TITLE_PX))
       .sort((a, b) => Math.abs(a.at - drag.from) - Math.abs(b.at - drag.from))[0];
     if (click?.window) {
       const moved = { x: click.window.x + end.x - start.x, y: click.window.y + end.y - start.y, width: click.window.width, height: click.window.height };
@@ -624,6 +655,8 @@ export function cameraMoves(keys: readonly CameraKey[]): Span[] {
 
 export const SHAPE_HOLD_S = 0.3;
 const EDGE_PX = 10;
+const TITLE_PX = 36;
+const DRAG_CLICK_S = 2;
 const FLUSH_PX = 2;
 
 export interface ShapeSpan {

@@ -6,6 +6,8 @@ import { chordWords, planKeyPills, TYPING_WORDS } from "../src/core/record-keys.
 import {
   CLIP_FPS,
   GLIDE_S,
+  RING_S,
+  ZOOM_LEAST,
   ZOOM_MOST,
   ZOOM_POINT,
   cameraAt,
@@ -22,7 +24,7 @@ import {
   viewCovers,
   type Scene,
 } from "../src/core/record-motion.ts";
-import { GRID_COLUMNS, GRID_ROWS, areaOnClip, planScene, pointerVariants, sceneCommands, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
+import { GRID_COLUMNS, GRID_ROWS, areaOnClip, planScene, pointerVariants, sceneCommands, sceneHead, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
 import { ringArt } from "../src/core/record-art.ts";
 import { cursorArt, cursorCanvas } from "../src/core/record-cursors.ts";
 import { pngPixels } from "../src/core/png.ts";
@@ -389,8 +391,13 @@ test("the pointer's commands move it each frame it moves, show it from when it i
   assert.match(commands[0]!, /^0\.000 overlay@arrowl x \d+, overlay@arrowl y \d+;$/, "a dark screen, so the light arrow");
   assert.ok(commands.includes("0.000 overlay@arrowl enable 1;"));
   const ring = commands.filter((line) => line.includes("overlay@ringll0"));
-  assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+, overlay@ringll0 enable 1;$/);
-  assert.equal(ring[1], "3.067 overlay@ringll0 enable 0;");
+  assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+;$/);
+  assert.equal(ring.length, 1, "a stage is placed once; it cannot be left enabled");
+  const head = sceneHead(plan, 1).graph;
+  assert.match(head, /overlay@ringll0=x=0:y=0:enable='between\(t,3\.000,3\.067\)'/);
+  assert.match(head, /between\(t,3\.333,3\.400\)/);
+  assert.equal(RING_S, 0.4);
+  assert.doesNotMatch(head, /between\(t,3\.\d+,3\.[5-9]/, "every stage of the ring is gone by 0.4 s");
   const times = commands.map((line) => Number(line.split(" ")[0]));
   assert.deepEqual(times, [...times].sort((a, b) => a - b), "in time order");
   assert.ok(plan.frame && plan.art.some((art) => art.name === "corner.png"));
@@ -504,6 +511,27 @@ test("a drag whose press names a window frames that window where the drag ends (
   const moved = { x: window.x + end.x - start.x, y: window.y + end.y - start.y, width: window.width, height: window.height };
   assert.ok(viewCovers(SCREEN, view, moved), `the window at the end stays in frame at zoom ${view.zoom}`);
   assert.ok(view.zoom < ZOOM_POINT);
+  const laterSamples = samples.map((sample) => ({ ...sample, at: sample.at + 1.4 }));
+  const later = scene({ samples: laterSamples, clicks: [{ at: 1.2, x: 500, y: 240, button: "left" as const, count: 1 as const, area: null, window }] });
+  const laterPointer = planPointer(later);
+  const laterView = cameraAt(planCamera(later, laterPointer), 3.6);
+  const laterStart = laterPointer.frames[Math.round(2.6 * CLIP_FPS)]!;
+  const laterEnd = laterPointer.frames[Math.round(3.4 * CLIP_FPS)]!;
+  const laterMoved = { x: window.x + laterEnd.x - laterStart.x, y: window.y + laterEnd.y - laterStart.y, width: window.width, height: window.height };
+  assert.ok(viewCovers(SCREEN, laterView, laterMoved), "a click that named the window a moment earlier still frames it where the drag ends");
+  const titleSamples = [
+    { at: 1, x: 700, y: 175, buttons: 0 },
+    { at: 1.3, x: 700, y: 175, buttons: 1 },
+    { at: 2, x: 860, y: 250, buttons: 1 },
+    { at: 2.2, x: 860, y: 250, buttons: 0 },
+  ];
+  const byTitle = scene({ samples: titleSamples, clicks: [{ at: 1.2, x: 700, y: 220, button: "left" as const, count: 1 as const, area: null, window }] });
+  const titlePointer = planPointer(byTitle);
+  const titleView = cameraAt(planCamera(byTitle, titlePointer), 2.2);
+  const titleStart = titlePointer.frames[Math.round(1.3 * CLIP_FPS)]!;
+  const titleEnd = titlePointer.frames[Math.round(2 * CLIP_FPS)]!;
+  const titleMoved = { x: window.x + titleEnd.x - titleStart.x, y: window.y + titleEnd.y - titleStart.y, width: window.width, height: window.height };
+  assert.ok(titleView.zoom > 1 && viewCovers(SCREEN, titleView, titleMoved), "a drag by the title, just above the window, still frames it");
 });
 
 test("typing into a large text area zooms on where the text appears, or on the pointer, not on the whole area (073)", () => {
@@ -513,11 +541,35 @@ test("typing into a large text area zooms on where the text appears, or on the p
   const elsewhere = { at: 3.25, x: 1700, y: 10, width: 60, height: 12 };
   const pointer = planPointer(scene({ clicks: [{ at: 2.5, x: 900, y: 500, button: "left", count: 1, area: null }] }));
   assert.deepEqual(typingFocus(scene({ typing: [typing], changes: [line, elsewhere] }), typing, pointer), { x: 650, y: 380, width: 300, height: 18 }, "the text as it appears, inside the field");
-  assert.deepEqual(typingFocus(scene({ typing: [typing] }), typing, pointer), area, "else the element's frame");
+  assert.deepEqual(typingFocus(scene({ typing: [typing] }), typing, pointer), { x: 644, y: 482, width: 640, height: 36 }, "else a line at the caret, when the field itself would not zoom");
   const unplaced = { ...typing, area: null };
   assert.deepEqual(typingFocus(scene({ typing: [unplaced] }), unplaced, pointer), { x: 900, y: 500, width: 0, height: 0 }, "else where the pointer is");
   const camera = planCamera(scene({ clicks: [{ at: 2.5, x: 900, y: 500, button: "left", count: 1, area: null }], typing: [typing], changes: [line] }), pointer);
   assert.ok(cameraAt(camera, 3.4).zoom > 1.5, "the click and the typing after it stay zoomed in");
+});
+
+test("a button, typing into a large field, and a dialog each zoom in, and the camera is out between them (073)", () => {
+  const button = { x: 80, y: 40, width: 72, height: 28 };
+  const field = { x: 40, y: 80, width: 900, height: 860 };
+  const dialogButton = { x: 700, y: 520, width: 88, height: 32 };
+  const clicks = [
+    { at: 2, x: 116, y: 54, button: "left" as const, count: 1 as const, area: button, role: "push button" },
+    { at: 8, x: 240, y: 180, button: "left" as const, count: 1 as const, area: field, role: "text" },
+    { at: 14, x: 744, y: 536, button: "left" as const, count: 1 as const, area: dialogButton, role: "push button" },
+  ];
+  const typing = [
+    { at: 8.4, characters: 48, area: field, secret: false, role: "text" },
+    { at: 9.2, characters: 0, area: null, secret: false },
+  ];
+  const keys = camera({ clicks, typing, changes: [{ at: 8.6, ...field }], length: 20 });
+  assert.ok(cameraAt(keys, 2.2).zoom >= ZOOM_LEAST, "in on the button");
+  assert.equal(cameraAt(keys, 5).zoom, 1, "out before the field");
+  const typed = cameraAt(keys, 9);
+  assert.ok(typed.zoom >= ZOOM_LEAST, "in on the line, not the whole field");
+  assert.ok(viewCovers(SCREEN, typed, { x: 220, y: 168, width: 80, height: 16 }), "the caret stays in frame");
+  assert.ok(!viewCovers(SCREEN, typed, field), "the whole editor is not the frame");
+  assert.equal(cameraAt(keys, 12).zoom, 1, "out before the dialog");
+  assert.ok(cameraAt(keys, 14.2).zoom >= ZOOM_LEAST, "in on the dialog's button");
 });
 
 test("a typing zoom keeps the whole changed region inside the frame, and zooms less instead of cropping it (073)", () => {
@@ -855,6 +907,44 @@ test("a click's ring is drawn as the pointer is: a band of the pointer's fill be
   assert.ok(ringPixel("left", "light")[0]! > 200, "a light ring by a light pointer");
   const right = ringPixel("right", "dark");
   assert.ok(right[2]! > 200 && right[0]! < 120, "a right click's ring is blue");
+  const first = ringArt(POINTER_HEIGHT, 0, "left", "dark");
+  assert.ok(pixelAt(first.png, first.width / 2, first.height / 2)[3]! < 16, "the ring is a band, not a filled disc");
+});
+
+test("a button held still is a click's ring, not a disc left under the pointer (073)", () => {
+  const samples = [{ at: 0, x: 400, y: 300, buttons: 0 }, ...Array.from({ length: 24 }, (_, index) => ({ at: 2 + index * 0.25, x: 400, y: 300, buttons: index === 23 ? 0 : 1 }))];
+  const planned = scene({
+    samples,
+    length: 10,
+    clicks: [{ at: 2, x: 400, y: 300, button: "left" as const, count: 1 as const, area: null, role: "textbox" }],
+    typing: [
+      { at: 2.5, characters: 24, area: null, secret: false, role: "textbox" },
+      { at: 3.2, characters: 0, area: null, secret: false },
+    ],
+  });
+  const pointer = planPointer(planned);
+  assert.deepEqual(pointer.drags, []);
+  assert.equal(pointer.rings.length, 1);
+  assert.equal(shapeAt(pointerShapes(planned), 4), "ibeam");
+  const shown = planScene(
+    facts({
+      samples: samples.map((sample) => ({ ...sample, at: 1000 + sample.at })),
+      inputs: [
+        click(2, 400, 300),
+        { at: 1002.5, by: "agent", type: "typing", characters: 24, space: "screen", area: null, secret: false, role: "textbox" },
+        { at: 1003.2, by: "agent", type: "typing", characters: 0, space: "screen", area: null, secret: false },
+      ],
+    }),
+    SCREEN,
+    1000,
+    10,
+    { zoom: false, frame: false },
+  );
+  assert.equal(shown.art.some((art) => art.name === "press.png"), false);
+  const head = sceneHead(shown, 1).graph;
+  assert.doesNotMatch(head, /overlay@press/);
+  assert.match(head, /between\(t,2\.000,2\.067\)/);
+  assert.doesNotMatch(head, /between\(t,2\.\d+,2\.[5-9]/);
 });
 
 test("the stop reads the brightness grid, a line a second of each cell's brightness, and keeps none that is cut short (073)", () => {

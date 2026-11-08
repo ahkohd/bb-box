@@ -279,11 +279,6 @@ export function sceneCommands(plan: ScenePlan): string {
       lines.push({ at: Math.max(visibleFrom, at(span.from)), order: 2, text: `${target} enable 1` });
       if (index < plan.inks.length - 1) lines.push({ at: to, order: 0, text: `${target} enable 0` });
     });
-    if (press) {
-      for (const drag of plan.pointer.drags) {
-        lines.push({ at: drag.from, order: 2, text: "overlay@press enable 1" }, { at: drag.to, order: 0, text: "overlay@press enable 0" });
-      }
-    }
   }
   for (const ring of plan.pointer.rings) {
     const style: RingStyle = { kind: ring.kind, variant: ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS))) };
@@ -291,8 +286,7 @@ export function sceneCommands(plan: ScenePlan): string {
       const image = art(`ring-${style.kind}-${style.variant}-${stage}.png`);
       const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
       const target = ringTarget(style, stage);
-      lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}, ${target} enable 1` });
-      lines.push({ at: round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS), order: 0, text: `${target} enable 0` });
+      lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}` });
     }
   }
   return lines
@@ -321,6 +315,26 @@ function piecewise(keys: readonly CameraKey[], value: (view: View) => number, ge
   return parts.length === 1 ? parts[0]!.replace(/^gte\(it,0\.000\)\*/, "") : parts.join("+");
 }
 
+function shown(spans: readonly string[]): string {
+  return spans.length ? `'${spans.join("+")}'` : "0";
+}
+
+function ringShown(plan: ScenePlan, kind: string, variant: string, stage: number): string {
+  return shown(
+    plan.pointer.rings.flatMap((ring) => {
+      const ink = ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS)));
+      if (ring.kind !== kind || ink !== variant) return [];
+      const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
+      const to = round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS);
+      return [`between(t,${from.toFixed(3)},${to.toFixed(3)})`];
+    }),
+  );
+}
+
+function dragShown(plan: ScenePlan): string {
+  return shown(plan.pointer.drags.map((drag) => `between(t,${drag.from.toFixed(3)},${drag.to.toFixed(3)})`));
+}
+
 export function zoomFilter(plan: ScenePlan): string {
   const { width, height } = plan.content;
   if (!plan.zooms) return `scale=${width}:${height}:flags=bicubic`;
@@ -343,10 +357,11 @@ export function sceneHead(plan: ScenePlan, firstInput: number): { readonly graph
     const ring = /^ring-(left|right)-(dark|light)-(\d)\.png$/.exec(art.name);
     const cursor = /^cursor-(.+)-(dark|light)\.png$/.exec(art.name);
     const target = ring ? ringTarget({ kind: ring[1] as "left" | "right", variant: ring[2] as PointerVariant }, Number(ring[3])) : cursor ? cursorTarget(art.name) : "overlay@press";
+    const enable = ring ? ringShown(plan, ring[1]!, ring[2]!, Number(ring[3])) : art.name === "press.png" ? dragShown(plan) : "0";
     const next = into();
     const source = cursor ? `c${index}` : `${input}:v`;
     if (cursor) lines.push(`[${input}:v]scale=iw/2:ih/2:flags=lanczos[${source}]`);
-    lines.push(`[${label}][${source}]${target}=x=0:y=0:enable=0[${next}]`);
+    lines.push(`[${label}][${source}]${target}=x=0:y=0:enable=${enable}[${next}]`);
     label = next;
   });
   const zoomed = into();

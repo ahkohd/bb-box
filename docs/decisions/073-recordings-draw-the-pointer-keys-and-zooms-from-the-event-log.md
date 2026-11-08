@@ -7,7 +7,10 @@ Amended again the same day: a secret call does not lengthen a public
 Typing pill, an I-beam holds through that pill and until the pointer
 moves on, a drag frames its window at the end, a click that removes
 its window zooms out, and the words and marks are Inter and the
-owner's icons.
+owner's icons. [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+supersedes the soft disc under a button that is held still, and the
+rule that a typing zoom uses the whole field when that field would
+not zoom.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
@@ -114,8 +117,11 @@ while recording loses it, and the clip is made from the sampler alone.
   the pointer's inks as it is there: a band of its fill between thin edges
   of its outline's ink. The hand and the open hand are white on a light
   screen, so their rings are light there. A right click is blue. Two rings
-  0.12 s apart mark a double click. While a button is held, a soft disc
-  stays under the pointer, so a drag shows as one.
+  0.12 s apart mark a double click. While the pointer moves with the
+  button held, a soft disc stays under it, so a drag shows as one.
+  [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+  supersedes a disc under a button that is held still: that is a click,
+  and its ring is gone within the 0.4 s.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
   Home, End, Page Up and Down, Delete) shows as a small pill, "Ctrl+S" or
   "⌘K", for 1.2 s after its last press. The same key pressed again within
@@ -201,7 +207,11 @@ On by default; `zoom: false` at the stop turns it off.
 
 - **Focus** comes from real events only: clicks, drags, scrolls and typing
   that is not secret. Typing's focus is the region that changed while the
-  call went on, or else the element's frame, or else the pointer. A call
+  call went on, or else the element's frame, or else the pointer. A field
+  whose frame would not reach 1.3x is framed on a line at the caret
+  instead, so the camera still eases in
+  ([074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)).
+  A change that is the whole field repainting is not the line. A call
   that never closes is framed at the moment it started, so later typing
   does not widen it. The view contains that region. If it does not fit
   at 1.3x, the zoom goes lower, down to no zoom, so the region is never
