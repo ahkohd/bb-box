@@ -840,6 +840,16 @@ function server(initial: BoxView[], options: { cards?: Record<string, SettingsCa
       throw new Error("The Monitor is off.");
     },
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
+    "files.home": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.list": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.read": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.readRange": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.write": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.create": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.rename": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.delete": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.search": () => ({ error: "This box has no shell, so its files cannot be read." }),
+    "files.names": () => ({ error: "This box has no shell, so its files cannot be read." }),
     "monitor.history": () => null,
   };
   return { handlers, changes, asked, copyInBox, operations, receipts };
@@ -994,6 +1004,7 @@ test("the app registers the Boxes panel, a desktop tab, a device tab with a phon
     ["desktop", "Desktop"],
     ["device", "Device"],
     ["terminal", "Terminal"],
+    ["files", "Files"],
   ]);
   expect(app.threadPanelActions.find((action) => action.id === "device")!.icon).toBe("bb-box/phone");
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["boxes", "Boxes", "desktop"]]);
@@ -1106,6 +1117,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Open desktop",
     "Open in browser",
     "Open terminal",
+    "Open files",
     "Open on the Boxes page",
     "Copy address",
     "New thread on this box…",
@@ -2219,7 +2231,7 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   await fixed.findByText("real-box");
   expect(fixed.queryByRole("button", { name: "Stop" })).toBeNull();
   const menu = await openMenu(fixed.getByRole("button", { name: "real-box actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open on the Boxes page", "Copy address", "New thread on this box…", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Open on the Boxes page", "Copy address", "New thread on this box…", "Check now", "Release…"]);
 });
 
 test("a row starts a child thread on its box, and opens it", async () => {
@@ -7150,7 +7162,7 @@ test("the Boxes page manages a thread's boxes with the Box panel's menu: Stop, S
   expect(await list.findByText("calm-otter")).toBeTruthy();
   // The panel's menu, without "New thread on this box…", whose "this thread" names none here; the Open thread arrow heads the thread's card, once.
   let menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Copy address", "Stop", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Copy address", "Stop", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
   expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
   // A stopped box offers Start.
@@ -7677,7 +7689,7 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Open on the Boxes page", "Copy address", "Check now"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Open files", "Open on the Boxes page", "Copy address", "Check now"]);
 
   cleanup();
   // Only the machine it runs on, no boxes of its own: the list, not the empty state.
@@ -9077,9 +9089,10 @@ test("F-22: each panel tab has an icon of its own: a monitor for Desktop, a phon
     ["desktop", "bb-box/monitor"],
     ["device", "bb-box/phone"],
     ["terminal", "bb-box/terminal"],
+    ["files", "bb-box/folder"],
   ]);
   const declared = (packageJson as { bb: { branding: { experimental_icons: Record<string, string> } } }).bb.branding.experimental_icons;
-  expect([declared.monitor, declared.phone, declared.terminal]).toEqual(["./assets/monitor.svg", "./assets/phone.svg", "./assets/terminal.svg"]);
+  expect([declared.monitor, declared.phone, declared.terminal, declared.folder]).toEqual(["./assets/monitor.svg", "./assets/phone.svg", "./assets/terminal.svg", "./assets/folder.svg"]);
 });
 
 test("F-22b: a row title keeps the name whole, then badges by rank, Simulator, Emulator, Shared and the form before Desktop, and cuts the model, then drops it, before any badge", () => {
@@ -10123,7 +10136,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   expect(within(notice).getByRole("link", { name: "Open BB Box settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect((maple.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
   expect((maple.getByRole("button", { name: "Terminal" }) as HTMLButtonElement).disabled).toBe(true);
-  const reasons = maple.getByText("Terminal and Stop are off: its backend is not in settings.");
+  const reasons = maple.getByText("Terminal, Files and Stop are off: its backend is not in settings.");
   expect(maple.getByRole("button", { name: "Stop" }).getAttribute("aria-describedby")).toBe(reasons.id);
   let menu = await openMenu(maple.getByRole("button", { name: "maple-row actions" }));
   expect(items(menu)).toEqual(["Copy address", "New thread on this box…Its backend is not in settings (disabled)", "Resize…Its backend is not in settings (disabled)", "Check now", "Forget…"]);
@@ -10143,7 +10156,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   const silence = reed.getByRole("region", { name: "Fake host does not answer" });
   expect(within(silence).getByText(/cannot check, stop, start or resize reed-marsh through it/)).toBeTruthy();
   expect((reed.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(reed.getByText("Terminal and Stop are off: Fake host does not answer.")).toBeTruthy();
+  expect(reed.getByText("Terminal, Files and Stop are off: Fake host does not answer.")).toBeTruthy();
   menu = await openMenu(reed.getByRole("button", { name: "reed-marsh actions" }));
   expect(items(menu)).toEqual(["Copy address", "New thread on this box…Fake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
@@ -10155,7 +10168,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   expect(within(reach).getByText(/^It did not answer a command\. Since .+, bb-box cannot reach it on pve-3, so it cannot read it or run commands in it\. You can still stop, start or release it: those go through Fake host\.$/)).toBeTruthy();
   expect(within(reach).getByText("bb-box checks again in 4 min.")).toBeTruthy();
   expect((fern.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(false);
-  expect(fern.getByText("Terminal is off: fern-hollow does not answer.")).toBeTruthy();
+  expect(fern.getByText("Terminal and Files are off: fern-hollow does not answer.")).toBeTruthy();
   fireEvent.click(within(reach).getByRole("button", { name: "Check now" }));
   await waitFor(() => expect(changes).toContain("refresh box_8"));
   menu = await openMenu(fern.getByRole("button", { name: "fern-hollow actions" }));
@@ -10168,7 +10181,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   const list = boxesPage(handlers);
   await list.findByText("reed-marsh");
   menu = await openMenu(list.getByRole("button", { name: "reed-marsh actions" }));
-  expect(items(menu)).toEqual(["Open terminal", "Copy address", "StopFake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
+  expect(items(menu)).toEqual(["Open terminal", "Open files", "Copy address", "StopFake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
   expect(within(list.getByText("reed-marsh").closest("[data-resource-row]") as HTMLElement).queryByRole("button", { name: "Stop" })).toBeNull();
 });

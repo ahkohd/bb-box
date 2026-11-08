@@ -73,6 +73,7 @@ export function opensFrom(nav: Pick<BoxesNav, "go">, origins: readonly Origin[])
   return {
     screen: (box, screen) => nav.go(boxView(box.id, screen, origins)),
     terminal: (box) => nav.go(boxView(box.id, "terminal", origins)),
+    files: (box) => nav.go(boxView(box.id, "files", origins)),
   };
 }
 

@@ -331,7 +331,7 @@ const TO_BOXES_PAGE = (subPath: string) => ({ method: "toPluginPanel", path: "de
 
 test("a desktop box's Open menu offers its page first, then its desktop and terminal, each opening the box's view, whose way back is its page", async () => {
   const monitor = openMonitor("box:bx_desk");
-  expect(items(await openViews())).toEqual(["Open details", "Open desktop", "Open terminal"]);
+  expect(items(await openViews())).toEqual(["Open details", "Open desktop", "Open terminal", "Open files"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open desktop" }));
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk/desktop"));
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
@@ -368,7 +368,7 @@ test("the Open button's tooltip names the box, as a view of it when its menu lis
 test("a stopped box's views are in the menu, disabled, each with the reason, and open nothing", async () => {
   const monitor = openMonitor("host_stopped");
   const menu = await openViews();
-  expect(items(menu)).toEqual(["Open details", "Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
+  expect(items(menu)).toEqual(["Open details", "Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)", "Open filesdeep-elm is stopped (disabled)"]);
   fireEvent.click(within(menu).getAllByRole("menuitem")[1]!);
   expect(monitor.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
 });
@@ -489,7 +489,7 @@ test("a thread's box lists, after a divider and a Threads label, the thread that
   const menu = await openViews();
   expect(within(menu).getAllByRole("separator")).toHaveLength(1);
   expect(within(menu).getByText("Threads")).toBeTruthy();
-  expect(items(menu)).toEqual(["Open details", "Open terminal", "Builds the release", "Runs the tests on the box"]);
+  expect(items(menu)).toEqual(["Open details", "Open terminal", "Open files", "Builds the release", "Runs the tests on the box"]);
   expect(threadLabels(menu)).toEqual(["Builds the release, idle", "Runs the tests on the box, working"]);
   const working = within(menu).getByRole("menuitem", { name: "Runs the tests on the box, working" });
   expect(within(working).getByLabelText("Working")).toBeTruthy();
@@ -553,7 +553,7 @@ test("the keyboard moves from the views to the threads in order, past the divide
   await screen.findByRole("menu");
   const focused = () => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent;
   await waitFor(() => expect(focused()).toBe("Open details"));
-  for (const next of ["Open desktop", "Open terminal", "First thread, working", "Second thread, idle"]) {
+  for (const next of ["Open desktop", "Open terminal", "Open files", "First thread, working", "Second thread, idle"]) {
     fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
     await waitFor(() => expect(focused()).toBe(next));
   }
@@ -579,7 +579,7 @@ for (const [why, replacement] of [["missing", undefined], ["throws", () => { thr
       cleanup();
       openMonitor("host_lxc");
       const held = await openViews();
-      expect(items(held)).toEqual(["Open details", "Open terminal"]);
+      expect(items(held)).toEqual(["Open details", "Open terminal", "Open files"]);
       expect(within(held).queryByRole("separator")).toBeNull();
       cleanup();
       openMonitor("host_build");

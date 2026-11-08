@@ -19,11 +19,12 @@ import type { BoxView } from "../plugin/views.ts";
 import { hasViewer, OPERATOR } from "./common.tsx";
 import { hostOf, notInSettings, releaseUnfinished, silentWhy, unreachableWhy } from "./box-words.ts";
 import { pageUrl } from "./desktop.tsx";
-import { CameraGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { CameraGlyph, FolderGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
 import { canResize, ResizeDialog } from "./resize.tsx";
 import { screensOf } from "./screens.ts";
 import { canOpenTerminal } from "./terminal.tsx";
+import { canOpenFiles } from "./files-open.ts";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh" | "forget" | "enrol";
 
@@ -143,7 +144,8 @@ export function BoxMenu({
   const inBrowser = machine ? machine.inBrowser : true;
   const offersNewThread = !!thread && thread.offersThread && !thread.held && ready && box.enrol.state === "enrolled";
   const offersTerminal = !onPage && canOpenTerminal(box);
-  const opensSomething = viewsOpen || offersTerminal || !!onBoxesPage || !!box.address || offersNewThread;
+  const offersTheFiles = !onPage && canOpenFiles(box);
+  const opensSomething = viewsOpen || offersTerminal || offersTheFiles || !!onBoxesPage || !!box.address || offersNewThread;
   const stop = machine ? machine.stop : () => thread?.act("stop");
   const start = machine ? machine.start : () => thread?.act("start");
   const check = machine ? machine.check : () => thread?.act("refresh");
@@ -196,6 +198,12 @@ export function BoxMenu({
             <DropdownMenuItem onSelect={() => opens.terminal(box)}>
               <TerminalGlyph />
               Open terminal
+            </DropdownMenuItem>
+          ) : null}
+          {offersTheFiles ? (
+            <DropdownMenuItem onSelect={() => opens.files(box)}>
+              <FolderGlyph />
+              Open files
             </DropdownMenuItem>
           ) : null}
           {onBoxesPage ? (

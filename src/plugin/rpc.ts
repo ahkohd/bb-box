@@ -24,6 +24,7 @@ import { desktopDisplays, type GpuPart, type GpuResize } from "../backends/types
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { MONITOR_OFF_WORDS, monitorRpcHandlers, readableState, unreadReason } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
+import { filesHandlers } from "./box-fs.ts";
 import { answered, boxSnapshotsView, forkPreview, keepPreview, PERSON, personStanding, restorePreview, restoreStopped, TakeChecks, type BoxSnapshotsView, type SnapshotChange } from "./snapshot-card.ts";
 import { bulkApply, bulkCheck, snapshotsTab } from "./snapshots-tab.ts";
 import { standingOfRecord } from "../core/snapshots.ts";
@@ -556,5 +557,6 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const result = await app.setDockerHost(hostId, enabled, false, operation);
       return { result, hosts: await app.dockerHosts.list() };
     },
+    ...filesHandlers(boxes),
   }));
 }

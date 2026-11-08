@@ -4,7 +4,8 @@ import type { MachineEntry } from "../plugin/contract.ts";
 import type { Busy } from "../monitor/busy.ts";
 import { BoxBadges, deviceModelOf, hasViewer, IconButton, systemName } from "./common.tsx";
 import { canOpenTerminal } from "./terminal.tsx";
-import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { canOpenFiles } from "./files-open.ts";
+import { BoxGlyph, FolderGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { useResizeNote } from "./resize.tsx";
 import { ThreadChips } from "./thread-chips.tsx";
 import { BoxMenu } from "./box-menu.tsx";
@@ -70,6 +71,7 @@ export function MachineRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => opens.screen(box, "desktop")} /> : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => opens.terminal(box)} /> : null}
+        {canOpenFiles(box) ? <IconButton label="Open files" icon={<FolderGlyph />} onClick={() => opens.files(box)} /> : null}
         {stops && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
         {stops && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
         <BoxMenu box={box} of={{ owner: "yours", inBrowser: true, stop: onStop, start: onStart, remove: onRemove, forget: onForget }} opens={opens} resizing={resizing} onResizing={setResizing} />

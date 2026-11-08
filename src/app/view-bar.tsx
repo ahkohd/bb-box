@@ -8,7 +8,8 @@ import { whyClosed } from "./box-opens.tsx";
 import { silentWhy } from "./box-words.ts";
 import { followPageLink, type PageLink } from "./box-nav.tsx";
 import type { BoxViewName } from "./box-route.ts";
-import { MonitorGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { FolderGlyph, MonitorGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { offersFiles } from "./files-open.ts";
 import { screensOf, screenWord } from "./screens.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { LoadingText } from "./monitor/metric-parts.tsx";
@@ -27,10 +28,12 @@ export function boxViews(box: BoxView): ViewChoice[] {
   const why = silentWhy(box) ?? whyClosed(box);
   const screens = screensOf(box).map((screen): ViewChoice => ({ view: screen, words: screenWord(box, screen), why }));
   const terminal: ViewChoice[] = box.terminal || box.state !== "ready" ? [{ view: "terminal", words: "Terminal", why }] : [];
-  return [...screens, ...terminal];
+  const files: ViewChoice[] = offersFiles(box) ? [{ view: "files", words: "Files", why }] : [];
+  return [...screens, ...terminal, ...files];
 }
 
 export function viewGlyph(view: BoxViewName, className?: string): ReactNode {
+  if (view === "files") return <FolderGlyph className={className} />;
   if (view === "terminal") return <TerminalGlyph className={className} />;
   return view === "device" ? <PhoneGlyph className={className} /> : <MonitorGlyph className={className} />;
 }
