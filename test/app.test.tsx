@@ -10758,7 +10758,7 @@ test("070 unit 6: the Snapshots card sits after Activity and before the facts, w
   expect(within(card).getByText("Kept")).toBeTruthy();
   expect(within(card).getByText(/The undo of the restore to "Thu 09:15" at /)).toBeTruthy();
   expect(within(card).getByText("Signed in to the staging site.")).toBeTruthy();
-  expect(card.textContent).toContain("kept until 29 Nov");
+  expect(card.textContent).toContain("kept until Sun 29 Nov");
   expect(card.textContent).toContain("by you · 1.2 GB");
   expect(within(card).getByText("Snapshots hold the disk. They go when calm-otter is released.")).toBeTruthy();
   expect(within(card).queryByRole("button", { name: /^Fork/ }), "no Fork where the backend forks none: no dead controls").toBeNull();
@@ -11453,10 +11453,10 @@ test("070 unit 8: Keep… opens on the date bb-box plans, says what keeping cost
   await waitFor(() => expect(date.value).toBe("2026-11-29"));
   expect(document.activeElement).toBe(date);
   expect(within(dialog).getByText(/copies this snapshot in full into a template that cannot start/)).toBeTruthy();
-  expect(within(dialog).getByRole("button", { name: "Keep until 29 Nov" })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Keep until Sun 29 Nov" })).toBeTruthy();
   fireEvent.change(date, { target: { value: "2026-12-24" } });
   expect(await within(dialog).findByText(/a release would not finish/)).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Keep until 24 Dec" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep until Thu 24 Dec" }));
   await waitFor(() => expect(changes).toContain('snapshot.keep {"box":"box_1","snapshot":"snaaaaaaaaaaaa","until":"2026-12-24"}'));
   await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(trigger));

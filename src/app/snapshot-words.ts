@@ -25,7 +25,7 @@ export function snapshotDay(at: number): string {
 export const KEEP_SOON_MS = 3 * DAY_MS;
 
 export function keepDay(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(at);
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(at);
 }
 
 export function keepWords(keptUntil: number, now: number): { readonly words: string; readonly soon: boolean } {

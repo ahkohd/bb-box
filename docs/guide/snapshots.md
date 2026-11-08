@@ -350,7 +350,7 @@ BB Box also compares its records with each backend's snapshots every few minutes
 
 The Boxes page has a third tab, Snapshots, after Machines and Threads, with its count, at `/plugins/bb-box/desktop/snapshots`. The line under the tabs says how many snapshots there are, undos apart, how many agents took, the space they use by host where known, and what paid ones cost a month; then, in amber, what needs you: keeps that end within 7 days, failed takes, snapshots that are incomplete, unavailable, lost or found.
 
-Each box with snapshots has a card: its name, a link to its page while it lives; its kind; where it lives; its thread, or "Your machine"; and for a box that is gone, "released 12 Oct". Each row is as on a box's page, and also says what it holds and its life: "goes with the box", "kept until 29 Nov", or "held copy on pve-1". Restore, Fork and the row's menu work as on the box's page; for a released box, Restore is off with "its box was released: fork it into a new box instead".
+Each box with snapshots has a card: its name, a link to its page while it lives; its kind; where it lives; its thread, or "Your machine"; and for a box that is gone, "released 12 Oct". Each row is as on a box's page, and also says what it holds and its life: "goes with the box", "kept until Sun 29 Nov", or "held copy on pve-1". Restore, Fork and the row's menu work as on the box's page; for a released box, Restore is off with "its box was released: fork it into a new box instead".
 
 Search finds a snapshot by its name, its note, its box's name or its thread's title. Filters, with counts, choose by where it lives, what it holds, who took it, kept, undos and keeps that end within 7 days. Sort by newest, oldest, largest, price or box name.
 
