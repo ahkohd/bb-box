@@ -9,6 +9,7 @@ import {
   rangeScript,
   readScript,
   renameScript,
+  SEARCH_PER_FILE,
   searchScript,
   warmScript,
   WARM_OUT,
@@ -302,6 +303,7 @@ export function parseSearch(stdout: string, os: GuestOs, cut = false): FilesSear
   let engine: "rg" | "grep" = "grep";
   const hits: FsHit[] = [];
   const files = new Set<string>();
+  const perFile = new Map<string, number>();
   let truncated = cut;
   for (const line of lines) {
     if (!line || line === OUTPUT_CUT) {
@@ -326,6 +328,12 @@ export function parseSearch(stdout: string, os: GuestOs, cut = false): FilesSear
       truncated = true;
       continue;
     }
+    const kept = perFile.get(hit.path) ?? 0;
+    if (kept >= SEARCH_PER_FILE) {
+      truncated = true;
+      continue;
+    }
+    perFile.set(hit.path, kept + 1);
     files.add(hit.path);
     hits.push(hit);
   }

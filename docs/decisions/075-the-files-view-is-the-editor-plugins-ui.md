@@ -28,5 +28,6 @@ Changed:
 ## Consequences
 
 - 074 still decides the transport, the limits, the hash guard, the search corpus, device boxes, and what a failure may say. A listing of names does not count as that searchable copy: search keeps reading the box until the copy is warm.
+- The save checks the file's hash and then writes through the file. The short window between that check and the write is accepted, as in common editors, since a writer that does not coordinate can always land in it.
 - The plugin's copyright and permission notice on the [Third-party software](../../THIRD-PARTY.md) page covers this port.
 - A person creates, renames or deletes from the view, as [076](076-the-files-view-can-create-rename-and-delete.md) decides. An agent still does it with `box_run`.

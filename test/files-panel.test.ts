@@ -7,7 +7,7 @@ function record(id: string, threadId: string): BoxRecord {
   return { id, threadId, state: "ready", device: null, capabilities: { os: "linux", command: { program: "sh" }, displays: [] } } as unknown as BoxRecord;
 }
 
-test("the files RPC opens any box that is not a spare, and a plugin cannot call it", async () => {
+test("the files RPC opens any box that is not a spare, and refuses a plugin or a call with no caller", async () => {
   let calls = 0;
   const records = new Map<string, BoxRecord>([
     ["bx_other", record("bx_other", "thr_other")],
@@ -35,10 +35,12 @@ test("the files RPC opens any box that is not a spare, and a plugin cannot call 
   if (home.error) return;
   assert.equal(home.path, "/home/box");
   const plain = await handlers["files.home"]({ box: "bx_mine" });
-  assert.equal(plain.error, null);
-  if (plain.error) return;
-  assert.equal(plain.path, "/home/box");
-  const spare = await handlers["files.home"]({ box: "bx_spare" });
+  assert.deepEqual(plain, { error: FILES_FROM_PANEL });
+  const mine = await handlers["files.home"]({ box: "bx_mine" }, { experimental_caller: { kind: "client" } });
+  assert.equal(mine.error, null);
+  if (mine.error) return;
+  assert.equal(mine.path, "/home/box");
+  const spare = await handlers["files.home"]({ box: "bx_spare" }, { experimental_caller: { kind: "client" } });
   assert.equal(spare.error, "That box is gone.");
   assert.equal(calls, 2);
 });

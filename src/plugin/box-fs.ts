@@ -52,8 +52,8 @@ interface FilesCall {
 }
 
 function panelOnly(context?: FilesCall): { error: string } | null {
-  if (context?.experimental_caller?.kind === "plugin") return { error: FILES_FROM_PANEL };
-  return null;
+  if (context?.experimental_caller?.kind === "client") return null;
+  return { error: FILES_FROM_PANEL };
 }
 
 function warmLater(boxes: Boxes, box: BoxRecord, root: string): void {

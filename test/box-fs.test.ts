@@ -44,6 +44,7 @@ import {
   LIST_CAP,
   NAME_CAP,
   OPEN_BYTES,
+  SEARCH_PER_FILE,
   WARM_OUT,
   createScript,
   deleteScript,
@@ -84,6 +85,25 @@ function shRun(env?: Record<string, string>): FsRun {
   return async (script, options) => shell(script, options.stdin ? Buffer.from(options.stdin) : undefined, env);
 }
 
+function pathWithoutRg(): string {
+  const bin = join(tempDir("fs-no-rg"), "bin");
+  mkdirSync(bin);
+  const lookup = "/usr/bin:/bin";
+  for (const name of ["sh", "grep", "mktemp", "cat", "rm", "sha256sum", "base64", "stat", "find", "head", "tr", "wc", "cut", "dirname", "readlink"]) {
+    const found = spawnSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf8", env: { ...process.env, PATH: lookup } }).stdout.trim();
+    if (found) symlinkSync(found, join(bin, name));
+  }
+  const rest = (process.env.PATH ?? "").split(":").filter((dir) => dir && dir !== bin && !existsSync(join(dir, "rg")));
+  return [bin, ...rest].join(":");
+}
+
+function searchWays(): { env: Record<string, string> | undefined; engine: "rg" | "grep" }[] {
+  const ways: { env: Record<string, string> | undefined; engine: "rg" | "grep" }[] = [{ env: { PATH: pathWithoutRg() }, engine: "grep" }];
+  const rg = spawnSync("sh", ["-c", "command -v rg"], { encoding: "utf8" });
+  if (rg.status === 0 && rg.stdout.trim()) ways.push({ env: undefined, engine: "rg" });
+  return ways;
+}
+
 function sparse(path: string, bytes: number): void {
   const fd = openSync(path, "w");
   ftruncateSync(fd, bytes);
@@ -96,13 +116,16 @@ test("a guarded write leaves a file that changed, and an overwrite replaces it",
   writeFileSync(path, "one\n");
   const opened = sha("one\n");
   writeFileSync(path, "two\n");
+  const before = statSync(path);
   const run = shRun();
   const conflict = await writeFileAt(linux, path, "three\n", opened, run);
   assert.equal(conflict.error, null);
   assert.equal(conflict.outcome, "conflict");
   assert.equal(conflict.currentSha256, sha("two\n"));
   assert.equal(readFileSync(path, "utf8"), "two\n");
-  assert.equal(existsSync(`${path}.conflict`), false);
+  assert.equal(statSync(path).ino, before.ino);
+  assert.equal(statSync(path).mode, before.mode);
+  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "three\n");
   const replaced = await writeFileAt(linux, path, "three\n", null, run);
   assert.equal(replaced.error, null);
   assert.equal(replaced.outcome, "written");
@@ -122,6 +145,7 @@ test("a guarded write does not create a file that is gone", async () => {
   assert.equal(answer.outcome, "conflict");
   assert.equal(answer.currentSha256, null);
   assert.equal(existsSync(path), false);
+  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "x\n");
   const created = await writeFileAt(linux, path, "x\n", null, shRun());
   assert.equal(created.error, null);
   assert.equal(created.outcome, "written");
@@ -134,10 +158,10 @@ test("a Windows write compares the hash and can refuse", () => {
   assert.match(script, /Get-FileHash/);
   assert.match(script, /CONFLICT/);
   assert.match(script, /\$bbFilesNow -ne \$bbFilesExpected/);
-  assert.match(script, /\.conflict/);
-  const aside = script.indexOf("$bbFilesAside");
-  const onto = script.indexOf("[IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true)");
-  assert.ok(aside > 0 && onto > aside);
+  assert.match(script, /\.conflict-/);
+  assert.match(script, /CreateNew/);
+  assert.doesNotMatch(script, /\$bbFilesAside/);
+  assert.match(script, /Get-FileHash -Algorithm SHA256 -LiteralPath \$bbFilesTmp/);
   assert.equal(singleQuoted(script).some((part) => part.includes("`t")), false);
   assert.doesNotMatch(script, /printenv|Get-ChildItem Env:/);
 });
@@ -224,37 +248,39 @@ test("search uses ripgrep or grep, skips hidden files and .git, and a regex stay
   writeFileSync(join(dir, ".secret"), "needle in a hidden file\n");
   writeFileSync(join(dir, ".git", "config"), "needle in git\n");
   const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  const script = searchScript("linux", dir, "needle", flags);
+  assert.match(script, /grep -RInH /);
+  assert.doesNotMatch(script, /--exclude-dir='\.\*'/);
+  for (const way of searchWays()) {
+    const found = await searchDirectory(linux, dir, "needle", flags, shRun(way.env), new SearchCorpus(undefined, () => 0), () => undefined);
+    assert.equal(found.error, null);
+    if (found.error) return;
+    assert.equal(found.engine, way.engine);
+    assert.deepEqual(found.hits.map((hit) => hit.path), ["src/app.ts"]);
+    assert.equal(found.hits[0]?.preview.includes("needle"), true);
+    const hidden = await searchDirectory(linux, dir, "needle", { ...flags, hidden: true }, shRun(way.env), new SearchCorpus(undefined, () => 0), () => undefined);
+    assert.equal(hidden.error, null);
+    if (hidden.error) return;
+    assert.equal(hidden.hits.some((hit) => hit.path === ".secret"), true);
+    assert.equal(hidden.hits.some((hit) => hit.path.includes(".git")), false);
+    const pattern = await searchDirectory(linux, dir, "n..dle", { ...flags, regex: true }, shRun(way.env), new SearchCorpus(undefined, () => 0), () => undefined);
+    assert.equal(pattern.error, null);
+    if (pattern.error) return;
+    assert.notEqual(pattern.engine, "memory");
+    assert.equal(pattern.hits[0]?.path, "src/app.ts");
+  }
   let calls = 0;
-  const run: FsRun = async (script, options) => {
+  const run: FsRun = async (scriptText, options) => {
     calls += 1;
-    return shRun()(script, options);
+    return shRun()(scriptText, options);
   };
   const corpus = new SearchCorpus(undefined, () => 0);
-  const found = await searchDirectory(linux, dir, "needle", flags, run, corpus, () => undefined);
-  assert.equal(calls, 1);
-  assert.equal(found.error, null);
-  if (found.error) return;
-  assert.equal(found.engine === "rg" || found.engine === "grep", true);
-  assert.deepEqual(found.hits.map((hit) => hit.path), ["src/app.ts"]);
-  assert.equal(found.hits[0]?.preview.includes("needle"), true);
-  const hidden = await searchDirectory(linux, dir, "needle", { ...flags, hidden: true }, run, corpus, () => undefined);
-  assert.equal(hidden.error, null);
-  if (hidden.error) return;
-  assert.equal(hidden.hits.some((hit) => hit.path === ".secret"), true);
-  assert.equal(hidden.hits.some((hit) => hit.path.includes(".git")), false);
   corpus.load(dir, ["src/app.ts"], [{ path: "src/app.ts", text: "const needle = 1;\n", size: 18, mtime: 1 }], false);
-  const before = calls;
   const memory = await searchDirectory(linux, dir, "needle", flags, run, corpus, () => undefined);
-  assert.equal(calls, before);
+  assert.equal(calls, 0);
   assert.equal(memory.error, null);
   if (memory.error) return;
   assert.equal(memory.engine, "memory");
-  const pattern = await searchDirectory(linux, dir, "n..dle", { ...flags, regex: true }, run, corpus, () => undefined);
-  assert.equal(calls, before + 1);
-  assert.equal(pattern.error, null);
-  if (pattern.error) return;
-  assert.notEqual(pattern.engine, "memory");
-  assert.equal(pattern.hits[0]?.path, "src/app.ts");
 });
 
 test("a warm corpus answers later searches until it is partial or stale", async () => {
@@ -281,21 +307,24 @@ test("a warm corpus answers later searches until it is partial or stale", async 
 test("listing names does not make an empty corpus answer a search", async () => {
   const dir = tempDir("fs-names-then-search");
   writeFileSync(join(dir, "a.ts"), "needle\n");
-  let calls = 0;
-  const run: FsRun = async (script, options) => {
-    calls += 1;
-    return shRun()(script, options);
-  };
-  const corpus = new SearchCorpus(undefined, () => 1_000);
-  const names = await listNames(linux, dir, run, corpus);
-  assert.equal(names.error, null);
-  assert.equal(corpus.covers(dir), false);
-  const found = await searchDirectory(linux, dir, "needle", { matchCase: false, wholeWord: false, regex: false, hidden: false }, run, corpus, () => undefined);
-  assert.equal(found.error, null);
-  if (found.error) return;
-  assert.notEqual(found.engine, "memory");
-  assert.equal(found.hits[0]?.path, "a.ts");
-  assert.ok(calls >= 2);
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  for (const way of searchWays()) {
+    let calls = 0;
+    const run: FsRun = async (script, options) => {
+      calls += 1;
+      return shRun(way.env)(script, options);
+    };
+    const corpus = new SearchCorpus(undefined, () => 1_000);
+    const names = await listNames(linux, dir, run, corpus);
+    assert.equal(names.error, null);
+    assert.equal(corpus.covers(dir), false);
+    const found = await searchDirectory(linux, dir, "needle", flags, run, corpus, () => undefined);
+    assert.equal(found.error, null);
+    if (found.error) return;
+    assert.equal(found.engine, way.engine);
+    assert.equal(found.hits[0]?.path, "a.ts");
+    assert.ok(calls >= 2);
+  }
 });
 
 test("an empty folder stays listed after the searchable copy is warmed", async () => {
@@ -465,34 +494,60 @@ test("a save writes through the file, so the mode and a symlink stay", async () 
   assert.equal(statSync(target).mode & 0o777, 0o755);
 });
 
-test("a change that lands during a save is kept, and the new text is left beside the file", async () => {
-  const dir = tempDir("fs-race");
+test("an existing conflict file is kept, and the next name is used", async () => {
+  const dir = tempDir("fs-conflict-next");
+  const path = join(dir, "note.txt");
+  writeFileSync(path, "two\n");
+  writeFileSync(`${path}.conflict`, "keep\n");
+  const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun());
+  assert.equal(answer.error, null);
+  assert.equal(answer.outcome, "conflict");
+  assert.equal(readFileSync(path, "utf8"), "two\n");
+  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "keep\n");
+  assert.equal(readFileSync(`${path}.conflict-2`, "utf8"), "three\n");
+});
+
+test("a conflict file that is a link is not followed", async () => {
+  const dir = tempDir("fs-conflict-link");
+  const path = join(dir, "note.txt");
+  const other = join(dir, "other.txt");
+  writeFileSync(path, "two\n");
+  writeFileSync(other, "safe\n");
+  symlinkSync(other, `${path}.conflict`);
+  const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun());
+  assert.equal(answer.error, null);
+  assert.equal(answer.outcome, "conflict");
+  assert.equal(readFileSync(path, "utf8"), "two\n");
+  assert.equal(readFileSync(other, "utf8"), "safe\n");
+  assert.equal(lstatSync(`${path}.conflict`).isSymbolicLink(), true);
+  assert.equal(readFileSync(`${path}.conflict-2`, "utf8"), "three\n");
+});
+
+test("the saved hash is the text that was sent, even when the file changes as it is written", async () => {
+  const dir = tempDir("fs-token");
   const path = join(dir, "note.txt");
   writeFileSync(path, "one\n");
-  const before = statSync(path).ino;
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  const marker = join(dir, "poisoned");
+  const readlink = spawnSync("/bin/sh", ["-c", "command -v readlink"], { encoding: "utf8", env: { ...process.env, PATH: `/usr/bin:/bin:${process.env.PATH ?? ""}` } }).stdout.trim() || "readlink";
   writeFileSync(
-    join(bin, "sha256sum"),
+    join(bin, "cat"),
     `#!/bin/sh
-data=$(cat; printf x)
+exec 3>&1
+${readlink} /proc/\$\$/fd/3 > '${dir}/fd'
+out=\$(/bin/cat '${dir}/fd')
+data=\$(/bin/cat; /usr/bin/printf x)
 data=\${data%x}
-if [ ! -f '${marker}' ]; then
-  touch '${marker}'
-  printf 'agent\\n' > '${path}'
-fi
-printf '%s' "$data" | PATH=/usr/bin:/bin sha256sum | cut -d ' ' -f 1
+/usr/bin/printf '%s' "\$data"
+if [ "\$out" = '${path}' ]; then /usr/bin/printf 'later\\n' > '${path}'; fi
 `,
   );
-  chmodSync(join(bin, "sha256sum"), 0o755);
+  chmodSync(join(bin, "cat"), 0o755);
   const wrote = await writeFileAt(linux, path, "person\n", sha("one\n"), shRun({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
   assert.equal(wrote.error, null);
-  assert.equal(wrote.outcome, "conflict");
-  if (wrote.error === null && wrote.outcome === "conflict") assert.equal(wrote.currentSha256, sha("agent\n"));
-  assert.equal(readFileSync(path, "utf8"), "agent\n");
-  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "person\n");
-  assert.equal(statSync(path).ino, before);
+  assert.equal(wrote.outcome, "written");
+  if (wrote.error === null && wrote.outcome === "written") assert.equal(wrote.sha256, sha("person\n"));
+  assert.equal(readFileSync(path, "utf8"), "later\n");
 });
 
 test("a name with a backslash keeps its hash and its place in the tree", async () => {
@@ -535,8 +590,8 @@ test("a name with a backslash keeps its hash and its place in the tree", async (
 test("a search that is cut short keeps the first hits", async () => {
   const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
   const script = searchScript("linux", "/home/box", "the", flags);
-  assert.match(script, /--max-count/);
-  assert.match(script, /-m 40/);
+  assert.match(script, new RegExp(`--max-count' '${SEARCH_PER_FILE + 1}'`));
+  assert.match(script, new RegExp(`-m ${SEARCH_PER_FILE + 1}( |$)`));
   const hit = JSON.stringify({ type: "match", data: { path: { text: "a.ts" }, lines: { text: "the\n" }, line_number: 1, submatches: [{ start: 0 }] } });
   const run: FsRun = async () => ({
     exitCode: 0,
@@ -554,6 +609,46 @@ test("a search that is cut short keeps the first hits", async () => {
   const failed: FsRun = async () => ({ exitCode: 0, stdout: "ERR\tunreadable\n", stderr: "", timedOut: false, truncated: false });
   const bad = await searchDirectory(linux, "/home/box", "the", flags, failed, new SearchCorpus(), () => undefined);
   assert.match(bad.error ?? "", /cannot be read/);
+});
+
+test("forty-one matches in one file are marked truncated, and forty are not", async () => {
+  const dir = tempDir("fs-per-file");
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  const many = join(dir, "many.txt");
+  for (const way of searchWays()) {
+    writeFileSync(many, `${Array.from({ length: SEARCH_PER_FILE + 1 }, (_, index) => `needle ${index}`).join("\n")}\n`);
+    const over = await searchDirectory(linux, dir, "needle", flags, shRun(way.env), new SearchCorpus(), () => undefined);
+    assert.equal(over.error, null);
+    if (over.error) return;
+    assert.equal(over.engine, way.engine);
+    assert.equal(over.truncated, true);
+    assert.equal(over.hits.length, SEARCH_PER_FILE);
+    assert.equal(over.hits.every((hit) => hit.path === "many.txt"), true);
+    writeFileSync(many, `${Array.from({ length: SEARCH_PER_FILE }, (_, index) => `needle ${index}`).join("\n")}\n`);
+    const exact = await searchDirectory(linux, dir, "needle", flags, shRun(way.env), new SearchCorpus(), () => undefined);
+    assert.equal(exact.error, null);
+    if (exact.error) return;
+    assert.equal(exact.engine, way.engine);
+    assert.equal(exact.truncated, false);
+    assert.equal(exact.hits.length, SEARCH_PER_FILE);
+  }
+});
+
+test("a Windows search builds the hidden-file test in the script, and PowerShell can parse it", () => {
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  const shown = searchScript("windows", "C:\\Users\\box", "the", flags);
+  const hidden = searchScript("windows", "C:\\Users\\box", "the", { ...flags, hidden: true });
+  assert.doesNotMatch(shown, /flags\.hidden/);
+  assert.doesNotMatch(hidden, /flags\.hidden/);
+  assert.match(shown, /\$_\.FullName\.Substring\(\$bbFilesRoot\.Length\) -notmatch/);
+  assert.match(hidden, /-and \(\$true\)/);
+  const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+  if (pwsh.error || pwsh.status !== 0) return;
+  const check = "$script = [Console]::In.ReadToEnd(); $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors); if ($errors -and $errors.Count -gt 0) { $errors | ForEach-Object { $_.ToString() }; exit 1 }";
+  for (const script of [shown, hidden]) {
+    const parsed = spawnSync("pwsh", ["-NoProfile", "-Command", check], { input: script, encoding: "utf8" });
+    assert.equal(parsed.status, 0, `${parsed.stdout}\n${parsed.stderr}`);
+  }
 });
 
 test("the warm budget covers the encoded corpus, and the script stops before the cap", () => {
