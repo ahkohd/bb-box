@@ -223,7 +223,7 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   };
   const plan = planClip(prepared, 1);
   assert.equal(plan.fps, 30);
-  assert.deepEqual(plan.scene!.art.map((art) => art.name), ["ring-left-light-0.png", "ring-left-light-1.png", "ring-left-light-2.png", "ring-left-light-3.png", "ring-left-light-4.png", "ring-left-light-5.png", "pointer-light.png", "corner.png"]);
+  assert.deepEqual(plan.scene!.art.map((art) => art.name), ["ring-left-light-0.png", "ring-left-light-1.png", "ring-left-light-2.png", "ring-left-light-3.png", "ring-left-light-4.png", "ring-left-light-5.png", "cursor-arrow-light.png", "corner.png"]);
   const missing = run(recordMakeScript(plan), home);
   assert.equal(missing.status, RECORD_STOP_EXITS.failed, "no drawing, no clip");
   assert.match(missing.stderr, /drawing was not delivered/);
@@ -232,6 +232,6 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
   assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-light-0.png"), encoded);
-  assert.match(encoded, /-i pointer-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
-  for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "pointer-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
+  assert.match(encoded, /-i cursor-arrow-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
+  for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "cursor-arrow-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
 });

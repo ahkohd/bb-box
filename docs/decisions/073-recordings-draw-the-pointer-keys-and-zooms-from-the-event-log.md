@@ -1,8 +1,8 @@
 # 073: Recordings draw the pointer, keys and zooms from the event log
 
 Status: accepted, 7 November 2026, for the launch polish. Amended
-8 November 2026: a typing zoom keeps the changed region in frame, and one
-typing call is one pill.
+8 November 2026: a typing zoom keeps the changed region in frame, one
+typing call is one pill, and the pointer is the owner's cursor set.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
@@ -77,17 +77,26 @@ while recording loses it, and the clip is made from the sampler alone.
 ### What is drawn
 
 - **The pointer.** The screen's own pointer is left out of the capture
-  where the box samples it, and bb-box draws a larger arrow, about a
-  thirtieth of the screen's height, no shadow. It is in the style of
-  Bibata Modern, but bb-box's own: no file, path or geometry of Bibata's,
-  which is GPL-3.0. Seven corners, each rounded by its own fillet, an
-  outline of even width, about a twelfth of its height, and edges softened
-  over 0.9 px. It comes in two inks: dark with a light outline, and light
-  with a dark outline. It follows the latest source that moved it. A jump,
-  as the agent's clicks are, glides over 0.5 s to arrive as the click
-  lands, on the web-demo skill's curve, `cubic-bezier(0.23, 1, 0.32, 1)`.
-  A person's motion is smoothed over five frames, centred, so it does not
-  lag.
+  where the box samples it, and bb-box draws the owner's cursors. Each is
+  a 32 unit square with a white outline and a soft shadow, one unit below
+  and half a unit of blur, at 25% black. The dark parts are black. On a
+  dark part of the screen the black and white swap, and the shadow stays.
+  The arrow is the default, its hotspot at the tip. A link or a button
+  uses the pointing hand, a text field the I-beam, and a drag the open
+  hand from the moment the button goes down until it comes up. There is
+  no closed hand. A drag that starts on a window's edge or corner uses a
+  resize cursor: left and right, or up and down, for an edge; a diagonal
+  for a corner; a one-way arrow when that edge can only move one way. A
+  pane divider uses the column cursor, or the up and down cursor when the
+  divider is wider than it is tall. When the edge cannot be told, the
+  drag keeps the open hand. A shape changes when the event happens and
+  then holds for at least 0.3 s, so it does not flicker. The arrow reads
+  as about 26 pixels on a 1280-wide clip. It is drawn at twice that and
+  scaled down, so a 2x zoom stays sharp. It follows the latest source
+  that moved it. A jump, as the agent's clicks are, glides over 0.5 s to
+  arrive as the click lands, on the web-demo skill's curve,
+  `cubic-bezier(0.23, 1, 0.32, 1)`. A person's motion is smoothed over
+  five frames, centred, so it does not lag.
 - **Which ink.** The stop's pass that finds still stretches also writes
   the screen's brightness, a grid of 16 by 9 cells, once a second. The
   pointer is dark over a cell lighter than 150 of 255 and light over one
@@ -96,9 +105,10 @@ while recording loses it, and the clip is made from the sampler alone.
   brightness chooses.
 - **Clicks.** A ring grows and fades over 0.4 s where each click lands, in
   the pointer's inks as it is there: a band of its fill between thin edges
-  of its outline's ink, blue for a right click, two rings 0.12 s apart for
-  a double click. While a button is held, a soft
-  disc stays under the pointer, so a drag shows as one.
+  of its outline's ink. The hand and the open hand are white on a light
+  screen, so their rings are light there. A right click is blue. Two rings
+  0.12 s apart mark a double click. While a button is held, a soft disc
+  stays under the pointer, so a drag shows as one.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
   Home, End, Page Up and Down, Delete) shows as a small pill, "Ctrl+S" or
   "⌘K", for 1.2 s after its last press. The same key pressed again within

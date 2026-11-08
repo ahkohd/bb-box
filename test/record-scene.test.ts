@@ -13,12 +13,16 @@ import {
   keptMotion,
   planCamera,
   planPointer,
+  pointerShapes,
+  shapeAt,
+  SHAPE_HOLD_S,
   typingFocus,
   viewCovers,
   type Scene,
 } from "../src/core/record-motion.ts";
 import { GRID_COLUMNS, GRID_ROWS, areaOnClip, planScene, pointerVariants, sceneCommands, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
-import { pointerArt, ringArt } from "../src/core/record-art.ts";
+import { ringArt } from "../src/core/record-art.ts";
+import { cursorArt, cursorCanvas } from "../src/core/record-cursors.ts";
 import { pngPixels } from "../src/core/png.ts";
 import { clipGraph, driverDrawsAgentCursor, parsePrepared, planClip, withAgentCursorHidden, type Prepared } from "../src/core/record.ts";
 import { personInput } from "../src/core/selkies.ts";
@@ -329,8 +333,8 @@ test("still stretches are cut around the motion: glides, rings, pills' first sec
 test("the pointer's commands move it each frame it moves, show it from when it is known, and switch each ring stage on and off in turn (073)", () => {
   const plan = planScene(facts({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(3, 500, 400)] }), SCREEN, 1000, 5, { zoom: true, frame: true });
   const commands = sceneCommands(plan).trim().split("\n");
-  assert.match(commands[0]!, /^0\.000 overlay@pointerl x \d+, overlay@pointerl y \d+;$/, "a dark screen, so the light arrow");
-  assert.ok(commands.includes("0.000 overlay@pointerl enable 1;"));
+  assert.match(commands[0]!, /^0\.000 overlay@arrowl x \d+, overlay@arrowl y \d+;$/, "a dark screen, so the light arrow");
+  assert.ok(commands.includes("0.000 overlay@arrowl enable 1;"));
   const ring = commands.filter((line) => line.includes("overlay@ringll0"));
   assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+, overlay@ringll0 enable 1;$/);
   assert.equal(ring[1], "3.067 overlay@ringll0 enable 0;");
@@ -609,27 +613,100 @@ function pixelAt(png: Buffer, x: number, y: number): readonly number[] {
 }
 
 const POINTER_HEIGHT = 36;
-const POINTER_SCALE = POINTER_HEIGHT / 20;
+const CURSOR = cursorCanvas(SCREEN.width, 1280);
 
-test("the pointer is a rounded arrow of BB Box's own, dark with a light edge or light with a dark edge, with soft edges and its tip where it points (073)", () => {
-  for (const [variant, fill, edge] of [
-    ["dark", 24, 250],
-    ["light", 250, 24],
-  ] as const) {
-    const art = pointerArt(POINTER_HEIGHT, variant);
-    assert.equal(art.name, `pointer-${variant}.png`);
-    const body = pixelAt(art.png, 6.5 * POINTER_SCALE, 11 * POINTER_SCALE);
-    assert.deepEqual([body[0], body[3]], [fill, 255], `${variant}: the body is filled`);
-    const rim = pixelAt(art.png, 3.5 * POINTER_SCALE, 11 * POINTER_SCALE);
-    assert.ok(Math.abs(rim[0]! - edge) < 40 && rim[3]! > 200, `${variant}: the edge is the other ink, ${rim.join(",")}`);
-    assert.equal(pixelAt(art.png, 17 * POINTER_SCALE, 14.1 * POINTER_SCALE)[3], 0, `${variant}: the wing's corner is rounded off`);
-    assert.equal(pixelAt(art.png, 14 * POINTER_SCALE + 1, 19.9 * POINTER_SCALE + 1)[3], 0, `${variant}: and the tail's`);
-    assert.ok(pixelAt(art.png, art.hotX + 1, art.hotY + 1)[3]! > 0, `${variant}: the tip is at the hot spot`);
-    assert.equal(pixelAt(art.png, art.hotX - 2, art.hotY - 2)[3], 0, `${variant}: and nothing is drawn beyond it`);
-    const { rgba } = pngPixels(art.png);
-    const soft = [...Array(rgba.length / 4).keys()].filter((index) => rgba[index * 4 + 3]! > 0 && rgba[index * 4 + 3]! < 255).length;
-    assert.ok(soft > art.width * 2, `${variant}: soft edges, ${soft} pixels partly covered`);
+function viewPixel(png: Buffer, width: number, x: number, y: number): readonly number[] {
+  return pixelAt(png, (x / 32) * width, (y / 32) * width);
+}
+
+function inkNearHotspot(png: Buffer, width: number, hotX: number, hotY: number): boolean {
+  const { rgba } = pngPixels(png);
+  const hx = hotX * 2;
+  const hy = hotY * 2;
+  for (let y = hy - 8; y <= hy + 8; y++) {
+    for (let x = hx - 8; x <= hx + 8; x++) {
+      if (x < 0 || y < 0 || x >= width || y >= width) continue;
+      if (rgba[(y * width + x) * 4 + 3]! > 200 && Math.hypot(x - hx, y - hy) <= 8) return true;
+    }
   }
+  return false;
+}
+
+test("the pointer is the owner's arrow, hand, I-beam and grab, each dark on a light screen and light on a dark one, with the hotspot on the shape (073)", () => {
+  for (const variant of ["dark", "light"] as const) {
+    const arrow = cursorArt("arrow", variant, CURSOR);
+    assert.equal(arrow.hotX, Math.round((8.4 / 32) * (arrow.width / 2)));
+    assert.equal(arrow.hotY, Math.round((8.4 / 32) * (arrow.width / 2)));
+    assert.ok(inkNearHotspot(arrow.png, arrow.width, arrow.hotX, arrow.hotY), `${variant}: the arrow's ink meets the tip`);
+    assert.equal(pixelAt(arrow.png, Math.max(0, arrow.hotX * 2 - 8), Math.max(0, arrow.hotY * 2 - 8))[3], 0, `${variant}: nothing is drawn beyond the tip`);
+    const body = viewPixel(arrow.png, arrow.width, 14, 14);
+    assert.ok(body[3]! > 200 && (variant === "dark" ? body[0]! < 40 : body[0]! > 200), `${variant}: the arrow's fill follows the screen, ${body.join(",")}`);
+    const { rgba, width, height } = pngPixels(arrow.png);
+    let solid = height;
+    for (let y = height - 1; y >= 0; y--) {
+      for (let x = 0; x < width; x++) if (rgba[(y * width + x) * 4 + 3]! > 200) {
+        solid = y;
+        y = -1;
+        break;
+      }
+    }
+    let shadow = false;
+    for (let y = solid + 3; y < height; y++) for (let x = 0; x < width; x++) if (rgba[(y * width + x) * 4 + 3]! > 0) shadow = true;
+    assert.ok(shadow, `${variant}: the shadow falls below the shape`);
+  }
+  for (const shape of ["hand", "ibeam", "grab"] as const) {
+    const art = cursorArt(shape, "dark", CURSOR);
+    assert.ok(inkNearHotspot(art.png, art.width, art.hotX, art.hotY), `${shape}: the hotspot is on the shape`);
+  }
+  const east = cursorArt("e", "dark", CURSOR);
+  const west = cursorArt("w", "dark", CURSOR);
+  assert.ok(Math.abs(east.hotX + west.hotX - east.width / 2) <= 1, "mirroring the east cursor makes the west one");
+  assert.ok(pixelAt(west.png, west.hotX * 2, west.hotY * 2)[3]! > 200, "the west tip is drawn");
+  const across = cursorArt("ew", "dark", CURSOR);
+  const down = cursorArt("ns", "dark", CURSOR);
+  const { rgba, width } = pngPixels(across.png);
+  let tipX = 0;
+  let tipY = 0;
+  for (let y = 0; y < across.height; y++) {
+    for (let x = 0; x < width; x++) if (rgba[(y * width + x) * 4 + 3]! > 200 && x >= tipX) {
+      tipX = x;
+      tipY = y;
+    }
+  }
+  const centre = across.width / 2;
+  const turned = pixelAt(down.png, centre + (tipY - centre), centre - (tipX - centre));
+  assert.ok(turned[3]! > 100, "turning the left-right cursor a quarter turn makes the up-down one");
+});
+
+test("the pointer is a hand on a button, an I-beam on a text field, a grab while dragging, and a resize cursor on a window's edge (073)", () => {
+  const button = { at: 2, x: 400, y: 300, button: "left" as const, count: 1 as const, area: null, role: "push button" };
+  const field = { at: 4, x: 700, y: 500, button: "left" as const, count: 1 as const, area: null, role: "textbox" };
+  const unknown = { at: 6, x: 200, y: 200, button: "left" as const, count: 1 as const, area: null, role: "document" };
+  const shapes = pointerShapes(scene({ clicks: [button, field, unknown] }));
+  assert.equal(shapeAt(shapes, 2.1), "hand");
+  assert.equal(shapeAt(shapes, 4.1), "ibeam");
+  assert.equal(shapeAt(pointerShapes(scene({ clicks: [{ at: 8, x: 10, y: 10, button: "left", count: 1, area: null, role: "text" }] })), 8.1), "ibeam", "a text area's role is text");
+  assert.equal(shapeAt(shapes, 6.1), "arrow", "an unknown role keeps the arrow");
+  const quick = pointerShapes(scene({ clicks: [button, { ...field, at: 2.1 }] }));
+  assert.equal(shapeAt(quick, 2.2), "hand", "a shape holds for at least 0.3 s");
+  assert.equal(shapeAt(quick, 2.1 + SHAPE_HOLD_S + 0.05), "ibeam");
+  const drag = (x: number, y: number) => [
+    { at: 1, x, y, buttons: 0 },
+    { at: 1.2, x, y, buttons: 1 },
+    { at: 1.5, x: x + 40, y: y + 30, buttons: 1 },
+    { at: 1.8, x: x + 80, y: y + 40, buttons: 0 },
+  ];
+  const window = { x: 500, y: 200, width: 700, height: 400 };
+  const grabbed = pointerShapes(scene({ samples: drag(300, 300), clicks: [{ at: 1.2, x: 300, y: 300, button: "left", count: 1, area: null, role: "button" }] }));
+  assert.equal(shapeAt(grabbed, 1.4), "grab", "a drag keeps the open hand when the edge cannot be told");
+  const edge = pointerShapes(scene({ samples: drag(1196, 400), clicks: [{ at: 1, x: 800, y: 400, button: "left", count: 1, area: null, role: "frame", window }] }));
+  assert.equal(shapeAt(edge, 1.4), "ew");
+  const corner = pointerShapes(scene({ samples: drag(1196, 204), clicks: [{ at: 1, x: 800, y: 400, button: "left", count: 1, area: null, window }] }));
+  assert.equal(shapeAt(corner, 1.4), "ne");
+  const flush = pointerShapes(scene({ samples: drag(4, 400), clicks: [{ at: 1, x: 200, y: 400, button: "left", count: 1, area: null, window: { x: 0, y: 100, width: 640, height: 480 } }] }));
+  assert.equal(shapeAt(flush, 1.4), "e");
+  const split = pointerShapes(scene({ samples: drag(960, 400), clicks: [{ at: 1, x: 960, y: 400, button: "left", count: 1, area: { x: 956, y: 200, width: 8, height: 400 }, role: "separator", window }] }));
+  assert.equal(shapeAt(split, 1.4), "col");
 });
 
 function grid(at: number, brightness: (column: number, row: number) => number): BrightnessGrid {
@@ -655,10 +732,10 @@ test("the pointer is dark over a light part of the screen and light over a dark 
     5,
     { zoom: false, frame: false },
   );
-  assert.deepEqual(plan.art.filter((art) => art.name.startsWith("pointer-")).map((art) => art.name), ["pointer-dark.png", "pointer-light.png"]);
+  assert.deepEqual(plan.art.filter((art) => art.name.startsWith("cursor-")).map((art) => art.name), ["cursor-arrow-dark.png", "cursor-arrow-light.png"]);
   assert.deepEqual(plan.ringStyles, [{ kind: "left", variant: "light" }, { kind: "left", variant: "dark" }], "each click's ring matches the pointer where it lands");
   const commands = sceneCommands(plan);
-  assert.match(commands, /overlay@pointerl enable 1;[\s\S]*overlay@pointerl enable 0;[\s\S]*overlay@pointerd enable 1;/, "one pointer shows at a time");
+  assert.match(commands, /overlay@arrowl enable 1;[\s\S]*overlay@arrowl enable 0;[\s\S]*overlay@arrowd enable 1;/, "one pointer shows at a time");
   assert.match(commands, /overlay@ringld0 x/);
 });
 

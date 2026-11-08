@@ -1176,12 +1176,12 @@ export class Computer {
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
     if (input.action === "set_value") {
       const value = input.value ?? "";
-      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), window }, sentAt);
+      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role: target.element?.role ?? null, window }, sentAt);
       return;
     }
     if (!point) return;
     if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point, window }, sentAt);
-    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, window }, sentAt);
+    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, role: target.element?.role ?? null, window }, sentAt);
   }
 
   #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
@@ -1200,7 +1200,7 @@ export class Computer {
     const typed = text ?? "";
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), window: window ? toArea(window) : null };
+      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
     use.typedInput = { input, sentAt: Date.now() };
   }
 
