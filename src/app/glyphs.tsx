@@ -85,7 +85,6 @@ export function HighResolutionGlyph(props: Props) {
   );
 }
 
-/** A folder. */
 export function FolderGlyph(props: Props) {
   return (
     <Stroked {...props}>
