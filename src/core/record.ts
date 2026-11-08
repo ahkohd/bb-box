@@ -14,7 +14,7 @@ import type { GuestOs } from "../transports/types.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
 import type { InputEvent } from "./record-input.ts";
 import { CLIP_FPS, keptMotion, type ChangedRegion, type PointerSample } from "./record-motion.ts";
-import { GRID_COLUMNS, GRID_ROWS, bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type BrightnessGrid, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
+import { GRID_COLUMNS, GRID_ROWS, areaOnClip, bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type BrightnessGrid, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
 
 export { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind };
 
@@ -379,6 +379,17 @@ export function skipWords(seconds: number): string {
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
+function pillClearOf(top: number, height: number, tall: number, gap: number, minY: number, maxY: number, fallback: number): number {
+  const bottom = top + height;
+  const below = bottom + gap;
+  const above = top - gap - tall;
+  if (below >= minY && below <= maxY) return Math.round(below);
+  if (above >= minY && above <= maxY) return Math.round(above);
+  const overlap = (y: number) => Math.max(0, Math.min(y + tall, bottom) - Math.max(y, top));
+  const edge = overlap(maxY) < overlap(minY) ? maxY : minY;
+  return Math.round(Number.isFinite(edge) ? edge : fallback);
+}
+
 export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneOptions = DEFAULT_SCENE_OPTIONS): ClipPlan {
   const layout = prepared.layout;
   const size = { width: prepared.width, height: prepared.height };
@@ -455,7 +466,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     if (to - from < 0.2) return [];
     const at = pointerOnClip(planned!, each.from);
     const tall = pill(fontSize);
-    const y =
+    const clear =
       position === "top"
         ? at && at.y > inner * 0.8
           ? captionY(1) + tall + gap
@@ -463,6 +474,10 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
         : at && at.y < inner * 0.2
           ? captionY(0) - tall - gap
           : inset + edge;
+    const bandTop = position === "top" ? captionY(1) + pill(fontSize) + gap : inset + edge;
+    const bandBottom = position === "top" ? inset + inner - dock - tall : captionY(0) - gap - tall;
+    const region = each.avoid && each.avoid.width > 0 && each.avoid.height > 0 ? areaOnClip(planned!, each.avoid, each.from) : null;
+    const y = region ? pillClearOf(region.y + inset, region.height, tall, gap, Math.min(bandTop, bandBottom), Math.max(bandTop, bandBottom), clear) : clear;
     return [{ look: "key", text: each.text, size: fontSize, x: "centre", y, from, to }];
   });
   const overlays: Overlay[] = [

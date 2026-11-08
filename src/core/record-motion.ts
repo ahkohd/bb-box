@@ -1,4 +1,5 @@
 import type { InputArea, MouseButton } from "./record-input.ts";
+import { TYPING_GAP_S } from "./record-keys.ts";
 
 export const CLIP_FPS = 30;
 export const GLIDE_S = 0.5;
@@ -44,6 +45,7 @@ export interface PlacedClick {
   readonly button: MouseButton;
   readonly count: 1 | 2;
   readonly area: InputArea | null;
+  readonly role?: string | null;
   readonly window?: InputArea | null;
 }
 
@@ -59,6 +61,7 @@ export interface PlacedTyping {
   readonly characters: number;
   readonly area: InputArea | null;
   readonly secret: boolean;
+  readonly role?: string | null;
   readonly window?: InputArea | null;
 }
 
@@ -285,6 +288,7 @@ export interface CameraKey {
 interface Focus {
   readonly at: number;
   readonly area: InputArea;
+  readonly contain: boolean;
 }
 
 const pointArea = (x: number, y: number): InputArea => ({ x, y, width: 0, height: 0 });
@@ -307,15 +311,46 @@ function overlap(a: InputArea, b: InputArea): number {
   return width > 0 && height > 0 ? width * height : 0;
 }
 
+export function typingSpan(typing: PlacedTyping, all: readonly PlacedTyping[]): { readonly from: number; readonly to: number } {
+  const later = all.filter((each) => each.at > typing.at + 1e-6).sort((a, b) => a.at - b.at);
+  let to = typing.at;
+  for (const each of later) {
+    if (each.characters > 1 && each.at - to > TYPING_GAP_S) break;
+    to = each.at;
+    if (each.characters === 0) break;
+  }
+  return { from: typing.at, to };
+}
+
 export function typingFocus(scene: Scene, typing: PlacedTyping, pointer: PointerPlan): InputArea | null {
-  if (typing.secret) return null;
-  const zooms = (area: InputArea) => viewFor(scene, area, false).zoom > 1;
-  if (typing.area && zooms(typing.area)) return typing.area;
-  const within = (change: InputArea) => !typing.area || overlap(change, typing.area) > 0;
-  const near = scene.changes.filter((change) => change.at >= typing.at - 0.3 && change.at <= typing.at + 1.2 && within(change) && areaOf(change) <= (scene.width * scene.height) / 6);
-  if (near.length && zooms(unionOf(near))) return unionOf(near);
-  const frame = pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(typing.at * CLIP_FPS)))];
+  if (typing.secret || !typing.characters) return null;
+  const span = typingSpan(typing, scene.typing);
+  const within = (change: InputArea) => {
+    if (typing.area && overlap(change, typing.area) > 0) return true;
+    if (!typing.area && typing.window && overlap(change, typing.window) > 0) return true;
+    return !typing.area && !typing.window;
+  };
+  const near = scene.changes.filter((change) => change.at >= span.from - 0.3 && change.at <= span.to + 0.5 && within(change) && areaOf(change) > 0);
+  if (near.length) return unionOf(near);
+  if (typing.area && areaOf(typing.area) > 0) return typing.area;
+  const frame = pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(span.to * CLIP_FPS)))];
   return frame ? pointArea(frame.x, frame.y) : null;
+}
+
+export function pillRegion(scene: Scene, pointer: PointerPlan, from: number, to: number): InputArea | null {
+  const regions: InputArea[] = [];
+  for (const typing of scene.typing) {
+    if (!typing.characters || typing.secret) continue;
+    const span = typingSpan(typing, scene.typing);
+    if (to < span.from - 0.2 || from > span.to + 1.2) continue;
+    const focus = typingFocus(scene, typing, pointer);
+    if (focus && areaOf(focus) > 0) regions.push(focus);
+  }
+  if (regions.length) return unionOf(regions);
+  const clicked = scene.clicks.filter((click) => click.area && areaOf(click.area) > 0 && click.at >= from - 1.2 && click.at <= to + 0.2).map((click) => click.area!);
+  const changed = scene.changes.filter((change) => change.at >= from - 0.4 && change.at <= to + 0.4 && areaOf(change) > 0 && areaOf(change) <= scene.width * scene.height * 0.5 && (clicked.length === 0 || clicked.some((area) => overlap(change, area) > 0)));
+  const areas = [...changed, ...clicked];
+  return areas.length ? unionOf(areas) : null;
 }
 
 export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
@@ -324,19 +359,19 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
     const at = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
     const start = at(drag.from);
     const end = at(drag.to);
-    return start && end ? [{ at: drag.from, area: pointArea(start.x, start.y) }, { at: drag.to, area: pointArea(end.x, end.y) }] : [];
+    return start && end ? [{ at: drag.from, area: pointArea(start.x, start.y), contain: false }, { at: drag.to, area: pointArea(end.x, end.y), contain: false }] : [];
   });
   const focuses: Focus[] = [
     ...pointer.rings.map((ring) => {
       const click = scene.clicks.find((each) => Math.abs(each.at - ring.at) < 0.001);
-      return { at: ring.at, area: small(click?.area ?? null) ? click!.area! : pointArea(ring.x, ring.y) };
+      return { at: ring.at, area: small(click?.area ?? null) ? click!.area! : pointArea(ring.x, ring.y), contain: false };
     }),
-    ...scene.scrolls.map((scroll) => ({ at: scroll.at, area: pointArea(scroll.x, scroll.y) })),
-    ...drags,
+    ...scene.scrolls.map((scroll) => ({ at: scroll.at, area: pointArea(scroll.x, scroll.y), contain: false })),
+    ...drags.map((drag) => ({ ...drag, contain: false })),
     ...scene.typing.flatMap((typing) => {
       if (!typing.characters) return [];
       const area = typingFocus(scene, typing, pointer);
-      return area ? [{ at: typing.at, area }] : [];
+      return area ? [{ at: typing.at, area, contain: areaOf(area) > 0 }] : [];
     }),
   ];
   return focuses.sort((a, b) => a.at - b.at);
@@ -344,18 +379,50 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
 
 const FULL = (scene: { width: number; height: number }): View => ({ zoom: 1, x: scene.width / 2, y: scene.height / 2 });
 
-export function viewFor(scene: { width: number; height: number }, area: InputArea, single: boolean): View {
-  const margin = Math.max(area.width, area.height) * 0.25 + scene.width * 0.04;
-  const width = area.width + margin * 2;
-  const height = area.height + margin * 2;
-  const fits = Math.min(scene.width / width, scene.height / height);
-  const zoom = single && area.width === 0 && area.height === 0 ? ZOOM_POINT : Math.min(ZOOM_MOST, fits);
-  if (zoom < ZOOM_LEAST) return FULL(scene);
-  const halfWidth = scene.width / zoom / 2;
-  const halfHeight = scene.height / zoom / 2;
+function fitZoom(scene: { width: number; height: number }, area: InputArea, margin: number): number {
+  const width = Math.max(1, area.width + margin * 2);
+  const height = Math.max(1, area.height + margin * 2);
+  return Math.min(scene.width / width, scene.height / height);
+}
+
+function placeView(scene: { width: number; height: number }, zoom: number, area: InputArea): View {
+  const safe = Math.max(1, zoom);
+  const halfWidth = scene.width / safe / 2;
+  const halfHeight = scene.height / safe / 2;
   const x = Math.min(scene.width - halfWidth, Math.max(halfWidth, area.x + area.width / 2));
   const y = Math.min(scene.height - halfHeight, Math.max(halfHeight, area.y + area.height / 2));
-  return { zoom: Math.round(zoom * 1000) / 1000, x: Math.round(x), y: Math.round(y) };
+  return { zoom: Math.round(safe * 1000) / 1000, x: Math.round(x), y: Math.round(y) };
+}
+
+export function viewFor(scene: { width: number; height: number }, area: InputArea, single: boolean): View {
+  const margin = Math.max(area.width, area.height) * 0.25 + scene.width * 0.04;
+  const fits = fitZoom(scene, area, margin);
+  const zoom = single && area.width === 0 && area.height === 0 ? ZOOM_POINT : Math.min(ZOOM_MOST, fits);
+  if (zoom < ZOOM_LEAST) return FULL(scene);
+  return placeView(scene, zoom, area);
+}
+
+export function viewCovers(scene: { width: number; height: number }, view: View, area: InputArea): boolean {
+  const shown = viewArea(scene, view);
+  const slack = 1.5;
+  return area.x >= shown.x - slack && area.y >= shown.y - slack && area.x + area.width <= shown.x + shown.width + slack && area.y + area.height <= shown.y + shown.height + slack;
+}
+
+export function viewContaining(scene: { width: number; height: number }, area: InputArea): View {
+  if (area.width <= 0 || area.height <= 0) return viewFor(scene, area, true);
+  const pad = scene.width * 0.04;
+  const generous = Math.max(area.width, area.height) * 0.25 + pad;
+  const candidates = [generous, pad, 0].map((margin) => Math.min(ZOOM_MOST, fitZoom(scene, area, margin))).filter((zoom) => zoom >= 1);
+  for (const zoom of candidates) {
+    const view = placeView(scene, zoom, area);
+    if (viewCovers(scene, view, area)) return view;
+  }
+  const bare = Math.min(ZOOM_MOST, fitZoom(scene, area, 0));
+  if (bare >= 1) {
+    const view = placeView(scene, bare, area);
+    if (viewCovers(scene, view, area)) return view;
+  }
+  return FULL(scene);
 }
 
 function viewArea(scene: { width: number; height: number }, view: View): InputArea {
@@ -382,8 +449,7 @@ function closeGroups(scene: Scene, focuses: readonly Focus[]): Focus[][] {
     const split: Focus[][] = [[]];
     for (const member of members) {
       const current = split.at(-1)!;
-      const widened = unionOf([...current.map((each) => each.area), member.area]);
-      if (current.length && viewFor(scene, widened, false).zoom === 1 && viewOfMembers(scene, current).zoom > 1) split.push([member]);
+      if (current.length && viewOfMembers(scene, [...current, member]).zoom === 1 && viewOfMembers(scene, current).zoom > 1) split.push([member]);
       else current.push(member);
     }
     return split;
@@ -391,7 +457,9 @@ function closeGroups(scene: Scene, focuses: readonly Focus[]): Focus[][] {
 }
 
 function viewOfMembers(scene: Scene, members: readonly Focus[]): View {
-  return viewFor(scene, unionOf(members.map((each) => each.area)), members.length === 1);
+  const area = unionOf(members.map((each) => each.area));
+  if (members.some((each) => each.contain)) return viewContaining(scene, area);
+  return viewFor(scene, area, members.length === 1);
 }
 
 interface Action {

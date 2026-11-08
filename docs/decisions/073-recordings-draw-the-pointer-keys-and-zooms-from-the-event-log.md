@@ -1,7 +1,9 @@
 # 073: Recordings draw the pointer, keys and zooms from the event log
 
-Status: accepted, 7 November 2026, for the launch polish. Extends
-[059](059-agents-record-their-desktop-box-with-box-record.md).
+Status: accepted, 7 November 2026, for the launch polish. Amended
+8 November 2026: a typing zoom keeps the changed region in frame, and one
+typing call is one pill.
+Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
 
@@ -81,10 +83,11 @@ while recording loses it, and the clip is made from the sampler alone.
   which is GPL-3.0. Seven corners, each rounded by its own fillet, an
   outline of even width, about a twelfth of its height, and edges softened
   over 0.9 px. It comes in two inks: dark with a light outline, and light
-  with a dark outline. It follows the latest source that moved it. A jump, as the agent's clicks
-  are, glides over 0.5 s to arrive as the click lands, on the web-demo
-  skill's curve, `cubic-bezier(0.23, 1, 0.32, 1)`. A person's motion is
-  smoothed over five frames, centred, so it does not lag.
+  with a dark outline. It follows the latest source that moved it. A jump,
+  as the agent's clicks are, glides over 0.5 s to arrive as the click
+  lands, on the web-demo skill's curve, `cubic-bezier(0.23, 1, 0.32, 1)`.
+  A person's motion is smoothed over five frames, centred, so it does not
+  lag.
 - **Which ink.** The stop's pass that finds still stretches also writes
   the screen's brightness, a grid of 16 by 9 cells, once a second. The
   pointer is dark over a cell lighter than 150 of 255 and light over one
@@ -99,11 +102,16 @@ while recording loses it, and the clip is made from the sampler alone.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
   Home, End, Page Up and Down, Delete) shows as a small pill, "Ctrl+S" or
   "⌘K", for 1.2 s after its last press. The same key pressed again within
-  0.8 s counts up, "↓ ×3". Typing shows one pill, "Typing", from its first
-  key to 0.6 s after its last; Backspace within it is part of it.
-- **Where pills go.** Centred at the bottom, above a dock or taskbar, or at
-  the top below the captions when the captions are at the bottom or the
-  pointer is in the bottom fifth of the picture.
+  0.8 s counts up, "↓ ×3". One typing call shows one pill, "Typing", from
+  the moment the text is in the field, for at least 1 s and until 0.6 s
+  after the call's last key. A slow call is still one pill. Keys the
+  driver echoes during the call do not add a pill, and do not hide it.
+  Backspace within the call is part of it.
+- **Where pills go.** Below the region the action changed, or above it
+  when below does not fit, or at the screen edge that covers less of it.
+  The pill stays clear of the captions and of a dock or taskbar. With no
+  region to avoid, it sits at the bottom, or at the top when the captions
+  are at the bottom or the pointer is in the bottom fifth.
 - **Framing**, on by default: the screen inset by 3.5% of the clip's
   width on a plain background, with corners rounded to 1% of the width,
   no shadow. The background is near-black, `#161618`, or near-white,
@@ -169,13 +177,16 @@ today.
 On by default; `zoom: false` at the stop turns it off.
 
 - **Focus** comes from real events only: clicks, drags, scrolls and typing
-  that is not secret. Typing's focus is its element's frame, or else the
-  region that changed on the screen while it went on, or else the pointer.
-  Chords keep a zoom but do not move it.
+  that is not secret. Typing's focus is the region that changed while the
+  call went on, or else the element's frame, or else the pointer. The view
+  contains that region. If it does not fit at 1.3x, the zoom goes lower,
+  down to no zoom, so the region is never cropped. Chords keep a zoom but
+  do not move it.
 - **Groups.** Events less than 3 s apart form a group. A group's view is
   its events' bounds, a quarter larger on each side, at most 2x and at
-  least 1.3x, else no zoom: a single click zooms 1.8x. The view stays on
-  the screen.
+  least 1.3x, else no zoom: a single click zooms 1.8x. A typing group that
+  must keep its region in frame may go below 1.3x. The view stays on the
+  screen.
 - **Moves** take 0.9 s, eased in and out (cubic): in, to arrive 0.15 s
   before the group's first event; out, 1.5 s after its last. When the next
   group starts soon after, the view pans to it instead of zooming out.

@@ -14,14 +14,14 @@ bb-box draws its own pointer over the clip, larger than the screen's: an arrow w
 
 - Each click shows a ring where it lands, drawn as the pointer is, in its colours: blue for a right click, and two quick rings for a double click.
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
-- Each shortcut or special key shows in a small pill at the bottom, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
+- Each shortcut or special key shows in a small pill, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
 - Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
-- When the agent types into a field it named, one "Typing" pill shows while it goes on. The pill never shows what was typed.
+- When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. The pill never shows what was typed.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
 - Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
 
-The pill moves to the top when the pointer is near the bottom of the screen, so it does not cover what was clicked.
+A pill sits below the region it would cover, or above it when below does not fit, so it does not hide the line that was typed. With nothing to avoid, it sits at the bottom, and moves to the top when the pointer is near the bottom of the screen.
 
 On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
@@ -29,7 +29,7 @@ On macOS and Windows, the computer-use driver draws its own pointer on the scree
 
 ### Zooms
 
-The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. It holds still while you read, and zooms back out between bursts of work.
+The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. A typing zoom frames the region the typing changed, or the field, and zooms out as far as it needs to, down to no zoom, so that region is never cut off. It holds still while you read, and zooms back out between bursts of work.
 
 When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 

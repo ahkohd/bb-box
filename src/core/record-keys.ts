@@ -1,4 +1,4 @@
-import type { KeyChord, Modifier } from "./record-input.ts";
+import type { InputArea, KeyChord, Modifier } from "./record-input.ts";
 
 export const KEY_SHOWN_S = 1.2;
 export const SAME_KEY_S = 0.8;
@@ -17,6 +17,7 @@ export interface PlacedKeys {
 export interface PlacedKeyTyping {
   readonly at: number;
   readonly secret: boolean;
+  readonly characters: number;
 }
 
 export interface KeyPill {
@@ -24,6 +25,7 @@ export interface KeyPill {
   readonly to: number;
   readonly text: string;
   readonly typing: boolean;
+  readonly avoid?: InputArea | null;
 }
 
 const MAC_MODIFIERS: Readonly<Record<Modifier, string>> = { ctrl: "⌃", alt: "⌥", shift: "⇧", super: "⌘" };
@@ -61,17 +63,57 @@ const sameChord = (a: KeyChord, b: KeyChord) => a.key === b.key && a.modifiers.j
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 const editsTyping = (chord: KeyChord) => !chord.modifiers.length && (chord.key === "Backspace" || chord.key === "Delete");
 
+interface TypingCall {
+  readonly from: number;
+  readonly shown: number;
+  readonly to: number;
+  readonly secret: boolean;
+}
+
 export function planKeyPills(keys: readonly PlacedKeys[], typing: readonly PlacedKeyTyping[], style: KeyStyle, length: number): KeyPill[] {
-  const typed = [...typing].sort((a, b) => a.at - b.at);
+  const typed = [...typing].sort((a, b) => a.at - b.at || b.characters - a.characters);
   const nearTyping = (at: number) => typed.some((each) => Math.abs(each.at - at) <= TYPING_GAP_S);
-  const edits = keys.filter((each) => editsTyping(each.chord) && nearTyping(each.at)).map((each) => ({ at: each.at, secret: false }));
-  const bursts: { from: number; to: number; secret: boolean }[] = [];
-  for (const each of [...typed, ...edits].sort((a, b) => a.at - b.at)) {
-    const last = bursts.at(-1);
-    if (last && each.at - last.to <= TYPING_GAP_S) bursts[bursts.length - 1] = { ...last, to: each.at, secret: last.secret || each.secret };
-    else bursts.push({ from: each.at, to: each.at, secret: each.secret });
+  const edits = keys.filter((each) => editsTyping(each.chord) && nearTyping(each.at)).map((each): PlacedKeyTyping => ({ at: each.at, secret: false, characters: 1 }));
+  const calls: TypingCall[] = [];
+  let open: { from: number; last: number; secret: boolean } | null = null;
+  const close = (shown: number) => {
+    if (!open) return;
+    calls.push({ from: open.from, shown, to: open.last, secret: open.secret });
+    open = null;
+  };
+  for (const each of [...typed, ...edits].sort((a, b) => a.at - b.at || b.characters - a.characters)) {
+    if (each.characters === 0) {
+      if (open) {
+        open.last = each.at;
+        close(each.at);
+      }
+      continue;
+    }
+    if (!open) {
+      const previous = calls.at(-1);
+      if (previous && each.characters === 1 && each.at - previous.to <= TYPING_GAP_S) {
+        calls[calls.length - 1] = { ...previous, to: each.at };
+        continue;
+      }
+      open = { from: each.at, last: each.at, secret: each.secret };
+      continue;
+    }
+    if (each.at - open.last > TYPING_GAP_S) {
+      close(open.from);
+      open = { from: each.at, last: each.at, secret: each.secret };
+      continue;
+    }
+    open.last = each.at;
+    if (each.characters > 1) open.secret ||= each.secret;
   }
-  const typingPills = bursts.filter((burst) => !burst.secret).map((burst): KeyPill => ({ from: burst.from, to: Math.max(burst.to + TYPING_AFTER_S, burst.from + TYPING_LEAST_S), text: TYPING_WORDS, typing: true }));
+  if (open) close(open.from);
+  const bursts: TypingCall[] = [];
+  for (const call of calls) {
+    const last = bursts.at(-1);
+    if (last && call.from - last.to <= TYPING_GAP_S) bursts[bursts.length - 1] = { from: last.from, shown: last.shown, to: Math.max(last.to, call.to), secret: last.secret || call.secret };
+    else bursts.push(call);
+  }
+  const typingPills = bursts.filter((burst) => !burst.secret).map((burst): KeyPill => ({ from: burst.shown, to: Math.max(burst.to + TYPING_AFTER_S, burst.shown + TYPING_LEAST_S), text: TYPING_WORDS, typing: true }));
   const pressed = keys.filter((each) => !(editsTyping(each.chord) && nearTyping(each.at))).sort((a, b) => a.at - b.at);
   const runs: { from: number; last: number; chord: KeyChord; count: number }[] = [];
   for (const each of pressed) {

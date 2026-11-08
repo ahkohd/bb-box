@@ -14,9 +14,10 @@ import {
   planCamera,
   planPointer,
   typingFocus,
+  viewCovers,
   type Scene,
 } from "../src/core/record-motion.ts";
-import { GRID_COLUMNS, GRID_ROWS, planScene, pointerVariants, sceneCommands, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
+import { GRID_COLUMNS, GRID_ROWS, areaOnClip, planScene, pointerVariants, sceneCommands, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
 import { pointerArt, ringArt } from "../src/core/record-art.ts";
 import { pngPixels } from "../src/core/png.ts";
 import { clipGraph, driverDrawsAgentCursor, parsePrepared, planClip, withAgentCursorHidden, type Prepared } from "../src/core/record.ts";
@@ -217,11 +218,11 @@ test("keys show as chords, counted when repeated, and typing as one pill; Backsp
     { at: 9, chord: chord("s", "ctrl") },
   ];
   const typing = [
-    { at: 5, secret: false },
-    { at: 5.8, secret: false },
-    { at: 7, secret: false },
-    { at: 12, secret: true },
-    { at: 12.5, secret: true },
+    { at: 5, secret: false, characters: 1 },
+    { at: 5.8, secret: false, characters: 1 },
+    { at: 7, secret: false, characters: 1 },
+    { at: 12, secret: true, characters: 1 },
+    { at: 12.5, secret: true, characters: 1 },
   ];
   const pills = planKeyPills(keys, typing, "pc", 20);
   assert.deepEqual(pills.map((pill) => [pill.text, pill.from, pill.to]), [
@@ -230,6 +231,42 @@ test("keys show as chords, counted when repeated, and typing as one pill; Backsp
     ["Ctrl+S", 9, 10.2],
   ]);
   assert.ok(!pills.some((pill) => pill.from >= 12), "the password's typing shows nothing");
+});
+
+test("one typing call is one pill, from when the text is in, including a Mac's slow call and the keys it echoes (073)", () => {
+  const chord = (key: string, ...modifiers: string[]) => normalChord(key, modifiers);
+  const slow = planKeyPills(
+    [
+      { at: 15, chord: chord("a", "cmd") },
+      { at: 16.4, chord: chord("s", "cmd") },
+    ],
+    [
+      { at: 10.5, secret: false, characters: 57 },
+      { at: 13.2, secret: false, characters: 0 },
+    ],
+    "mac",
+    30,
+  );
+  assert.deepEqual(
+    slow.map((pill) => [pill.text, pill.from]),
+    [
+      [TYPING_WORDS, 13.2],
+      ["⌘A", 15],
+      ["⌘S", 16.4],
+    ],
+  );
+  const echoed = planKeyPills(
+    [],
+    [
+      { at: 10.5, secret: false, characters: 57 },
+      { at: 11, secret: true, characters: 1 },
+      { at: 12.4, secret: true, characters: 1 },
+      { at: 13.2, secret: false, characters: 0 },
+    ],
+    "mac",
+    30,
+  );
+  assert.deepEqual(echoed.map((pill) => [pill.text, pill.from]), [[TYPING_WORDS, 13.2]]);
 });
 
 test("only Shift is typing, and so is Option on a Mac; a person's printable keys are logged as typing, never as the character (073)", () => {
@@ -292,7 +329,7 @@ test("still stretches are cut around the motion: glides, rings, pills' first sec
 test("the pointer's commands move it each frame it moves, show it from when it is known, and switch each ring stage on and off in turn (073)", () => {
   const plan = planScene(facts({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(3, 500, 400)] }), SCREEN, 1000, 5, { zoom: true, frame: true });
   const commands = sceneCommands(plan).trim().split("\n");
-  assert.match(commands[0]!, /^0\.000 overlay@pointerl x \d+, overlay@pointerl y \d+;$/, "a dark screen, so the light pointer");
+  assert.match(commands[0]!, /^0\.000 overlay@pointerl x \d+, overlay@pointerl y \d+;$/, "a dark screen, so the light arrow");
   assert.ok(commands.includes("0.000 overlay@pointerl enable 1;"));
   const ring = commands.filter((line) => line.includes("overlay@ringll0"));
   assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+, overlay@ringll0 enable 1;$/);
@@ -323,6 +360,32 @@ test("a framed clip insets the screen on a background that matches its brightnes
   assert.equal(planClip({ ...prepared, scene: { ...prepared.scene!, luma: 30 } }, 1).scene!.frame!.background, "161618");
 });
 
+test("a key pill sits below the region it would cover, or above it when below does not fit (073)", () => {
+  const line = { at: 3.2, x: 180, y: 16, width: 520, height: 28 };
+  const typing: InputEvent = { at: 1003, by: "agent", type: "typing", characters: 40, space: "screen", area: { x: 160, y: 8, width: 600, height: 48 }, secret: false };
+  const prepared: Prepared = {
+    ended: "stopped",
+    recorded: 8,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    cuts: [],
+    events: [],
+    position: "bottom",
+    scene: facts({ samples: [{ at: 1000, x: 700, y: 500, buttons: 0 }], changes: [line], inputs: [typing] }),
+  };
+  const plan = planClip(prepared, 1, { zoom: true, frame: false });
+  const pill = plan.overlays.find((overlay) => overlay.look === "key")!;
+  const placed = areaOnClip(plan.scene!, line, 3);
+  assert.ok(pill.y >= placed.y + placed.height, `the pill at ${pill.y} is below the line, which ends at ${placed.y + placed.height}`);
+  const low: InputEvent = { ...typing, area: { x: 400, y: 980, width: 700, height: 40 } };
+  const covered = planClip({ ...prepared, position: "top", scene: facts({ samples: [{ at: 1000, x: 700, y: 400, buttons: 0 }], changes: [{ ...line, y: 990, height: 36 }], inputs: [low] }) }, 1, { zoom: true, frame: false });
+  const lowPill = covered.overlays.find((overlay) => overlay.look === "key")!;
+  const lowLine = areaOnClip(covered.scene!, { ...line, y: 990, height: 36 }, 3);
+  const lowTall = Math.round(covered.fontSize * 2.1);
+  assert.ok(lowPill.y + lowTall <= lowLine.y + 1, `the pill at ${lowPill.y} is above a line at the bottom of the picture`);
+});
+
 test("the stop's facts carry the sampler's pointer, the changed regions and the brightness; a person's Selkies input is read as pointer places and keys (073)", () => {
   const stdout = `{"ended":"stopped","recorded":12.5,"size":"1920x1080","start":1000.000,"position":"top","cuts":[[1.5,3]],"pointer":"drawn","lag":0.09,"luma":71.2,"keys":"pc"}\nP screen 1920 1080\nP 1000.100 10 20 0\nP 1000.400 15 25 1\nC 2.250 400 300 120 24\n`;
   const prepared = parsePrepared(stdout)!;
@@ -340,9 +403,24 @@ test("typing into a large text area zooms on where the text appears, or on the p
   const elsewhere = { at: 3.25, x: 1700, y: 10, width: 60, height: 12 };
   const pointer = planPointer(scene({ clicks: [{ at: 2.5, x: 900, y: 500, button: "left", count: 1, area: null }] }));
   assert.deepEqual(typingFocus(scene({ typing: [typing], changes: [line, elsewhere] }), typing, pointer), { x: 650, y: 380, width: 300, height: 18 }, "the text as it appears, inside the field");
-  assert.deepEqual(typingFocus(scene({ typing: [typing] }), typing, pointer), { x: 900, y: 500, width: 0, height: 0 }, "else where the pointer is");
+  assert.deepEqual(typingFocus(scene({ typing: [typing] }), typing, pointer), area, "else the element's frame");
+  const unplaced = { ...typing, area: null };
+  assert.deepEqual(typingFocus(scene({ typing: [unplaced] }), unplaced, pointer), { x: 900, y: 500, width: 0, height: 0 }, "else where the pointer is");
   const camera = planCamera(scene({ clicks: [{ at: 2.5, x: 900, y: 500, button: "left", count: 1, area: null }], typing: [typing], changes: [line] }), pointer);
   assert.ok(cameraAt(camera, 3.4).zoom > 1.5, "the click and the typing after it stay zoomed in");
+});
+
+test("a typing zoom keeps the whole changed region inside the frame, and zooms less instead of cropping it (073)", () => {
+  const line = { at: 3.4, x: 40, y: 360, width: 1500, height: 28 };
+  const field = { x: 30, y: 280, width: 1700, height: 520 };
+  const typing = { at: 3, characters: 57, area: field, secret: false };
+  const click = { at: 2.4, x: 900, y: 540, button: "left" as const, count: 1 as const, area: null };
+  const planned = scene({ clicks: [click], typing: [typing], changes: [line] });
+  const pointer = planPointer(planned);
+  assert.deepEqual(typingFocus(planned, typing, pointer), { x: line.x, y: line.y, width: line.width, height: line.height });
+  const view = cameraAt(planCamera(planned, pointer), 3.5);
+  assert.ok(viewCovers(SCREEN, view, line), `the line stays inside at zoom ${view.zoom}`);
+  assert.ok(view.zoom < 1.8, "a line that does not fit at the usual zoom is framed wider");
 });
 
 test("a key pill lasts its own time even where a caption's hold freezes the clip after it (073)", () => {
@@ -627,12 +705,14 @@ test("a change that touches the window just acted in, within half a second, is t
   const typedWithTitle = { at: 3.3, x: 148, y: 4, width: 948, height: 392 };
   assert.ok(cameraAt(camera({ clicks, typing, changes: [typedWithTitle] }), 4).zoom > 1.5, "the typed line, merged with the panel's title, keeps the zoom");
   const titleOnly = { at: 3.3, x: 148, y: 4, width: 948, height: 330 };
-  assert.ok(cameraAt(camera({ clicks, typing, changes: [titleOnly] }), 4).zoom > 1.5, "as does a change only in the window's title, not the field");
+  const titleView = cameraAt(camera({ clicks, typing, changes: [titleOnly] }), 4);
+  assert.ok(titleView.zoom > 1 && viewCovers(SCREEN, titleView, field), "as does a change only in the window's title, not the field");
   assert.ok(cameraAt(camera({ clicks, changes: [{ ...titleOnly, at: 2.3 }] }), 2.9).zoom > 1.5, "and in the window of a click, away from where it landed");
   const elsewhere = { at: 3.3, x: 1300, y: 0, width: 620, height: 600 };
-  assert.equal(cameraAt(camera({ clicks, typing, changes: [elsewhere] }), 4.4).zoom, 1, "a change beside the window still ends it");
-  const later = { ...typedWithTitle, at: 4.3 };
-  assert.equal(cameraAt(camera({ clicks, typing, changes: [later] }), 5.4).zoom, 1, "and so does one over it, long after the action");
+  const tight = [{ ...typing[0]!, area: { x: 860, y: 470, width: 80, height: 28 } }, typing[1]!];
+  assert.equal(cameraAt(camera({ clicks, typing: tight, changes: [elsewhere] }), 4.4).zoom, 1, "a change beside the window still ends it");
+  const later = { at: 4.3, x: 0, y: 0, width: 1920, height: 280 };
+  assert.equal(cameraAt(camera({ clicks, typing, changes: [later] }), 5.4).zoom, 1, "and so does one long after the action, outside the view");
 
   const samples = Array.from({ length: 90 }, (_, index) => {
     const at = 4 + index / 30;

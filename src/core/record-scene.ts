@@ -8,6 +8,7 @@ import {
   RING_STAGES,
   cameraAt,
   cameraMoves,
+  pillRegion,
   planCamera,
   planPointer,
   type CameraKey,
@@ -123,7 +124,7 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   return {
     scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },
     keys,
-    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret })),
+    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret, characters: each.characters })),
   };
 }
 
@@ -189,7 +190,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const pointer = planPointer(scene);
   const camera = options.zoom ? planCamera(scene, pointer) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
-  const pills = planKeyPills(keys, keyTyping, facts.keys, length);
+  const pills = planKeyPills(keys, keyTyping, facts.keys, length).map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
   const drawsPointer = facts.pointer === "drawn" && pointer.frames.length > 0 && pointer.visibleFrom !== null;
   const kept: Span[] = [
     ...(drawsPointer ? pointer.glides : []),
@@ -334,6 +335,17 @@ export function frameTail(plan: ScenePlan, from: string, cornerInput: number, cl
     `[f3][k3f]overlay=${right}:${bottom}[f4]`,
   ];
   return { graph: lines.join(";\n"), last: "f4" };
+}
+
+export function areaOnClip(plan: ScenePlan, area: InputArea, t: number): InputArea {
+  const view = cameraAt(plan.camera, t);
+  const width = plan.source.width / view.zoom;
+  const height = plan.source.height / view.zoom;
+  const left = Math.min(plan.source.width - width, Math.max(0, view.x - width / 2));
+  const top = Math.min(plan.source.height - height, Math.max(0, view.y - height / 2));
+  const scaleX = plan.content.width / width;
+  const scaleY = plan.content.height / height;
+  return { x: (area.x - left) * scaleX, y: (area.y - top) * scaleY, width: area.width * scaleX, height: area.height * scaleY };
 }
 
 export function pointerOnClip(plan: ScenePlan, t: number): { readonly x: number; readonly y: number } | null {
