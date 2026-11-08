@@ -74,8 +74,10 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
   const choose = (next: Choice) => onChange({ status: "ready", value: { kind: next.kind, ...(next.size ? { size: next.size } : {}), ...(next.image ? { image: next.image } : {}) } });
   const preset = kind?.presets.find((candidate) => candidate.name === size);
   const imageWords = image ? (imageOptions.find((option) => option.value === image)?.label.replace(/ · .*$/, "") ?? image) : null;
-  const waiting = kind ? `${kind.label}${preset ? ` · ${preset.words}` : ""}${imageWords ? ` · ${imageWords}` : ""}` : problem ? `${PRODUCT} is unavailable.` : kinds && kinds.length === 0 ? NO_KIND : "Loading…";
+  const none = !problem && kinds !== null && kinds.length === 0;
+  const waiting = kind ? `${kind.label}${preset ? ` · ${preset.words}` : ""}${imageWords ? ` · ${imageWords}` : ""}` : problem ? `${PRODUCT} is unavailable.` : none ? "No box to offer" : "Loading…";
   return (
+    <div className="min-w-0 space-y-1">
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="sm" aria-label="New box options" className="h-7 gap-1 px-2 text-xs text-muted-foreground" disabled={!kind}>
@@ -117,5 +119,7 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+    {none ? <p className="text-xs leading-snug text-muted-foreground">{NO_KIND}</p> : null}
+    </div>
   );
 }

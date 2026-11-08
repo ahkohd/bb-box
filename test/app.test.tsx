@@ -2255,6 +2255,7 @@ test("a box a thread runs on is released or stopped only once the user says so",
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
   dialog = await screen.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
   fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   expect(changes).toEqual(["release (forced) box_1"]);
@@ -8100,8 +8101,9 @@ test("New box's new-thread inputs stay off when no kind can run a thread", async
   renderSlot(inputs!, { value: null, onChange: (next: { status: string; reason?: string }) => values.push(next) }, { rpc: server([], { kinds: [] }).handlers, pluginId: "bb-box", context: { projectId: "proj_1" } });
   const trigger = await screen.findByRole("button", { name: "New box options" });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(true));
-  expect(trigger.textContent).toContain("BB Box offers no kind that a thread can run on.");
+  expect(trigger.textContent).toContain("No box to offer");
   expect(trigger.textContent).not.toContain("Loading");
+  expect(screen.getByText("BB Box offers no kind that a thread can run on. Set a backend up in BB Box's settings and turn it on.")).toBeTruthy();
   expect(values.at(-1)?.status).toBe("blocked");
 });
 
@@ -11604,6 +11606,7 @@ test("070 unit 8 review: Release and delete what you kept, then Release anyway f
   fireEvent.click(within(menu).getByRole("menuitem", { name: /Release again/ }));
   fireEvent.click(within(await slot.findByRole("alertdialog", { name: "Release calm-otter again?" })).getByRole("button", { name: "Release and delete what you kept" }));
   const anyway = await slot.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  expect(slot.getAllByRole("alertdialog")).toHaveLength(1);
   fireEvent.click(within(anyway).getByRole("button", { name: "Release anyway" }));
   await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "release").map((call) => call.input)).toEqual([
     { threadId: THREAD, box: "box_1", deleteKept: true },
