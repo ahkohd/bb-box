@@ -250,6 +250,26 @@ test("a warm corpus answers later searches until it is partial or stale", async 
   assert.deepEqual([...names.paths].sort(), ["a.ts", "b.md"]);
 });
 
+test("listing names does not make an empty corpus answer a search", async () => {
+  const dir = tempDir("fs-names-then-search");
+  writeFileSync(join(dir, "a.ts"), "needle\n");
+  let calls = 0;
+  const run: FsRun = async (script, options) => {
+    calls += 1;
+    return shRun()(script, options);
+  };
+  const corpus = new SearchCorpus(undefined, () => 1_000);
+  const names = await listNames(linux, dir, run, corpus);
+  assert.equal(names.error, null);
+  assert.equal(corpus.covers(dir), false);
+  const found = await searchDirectory(linux, dir, "needle", { matchCase: false, wholeWord: false, regex: false, hidden: false }, run, corpus, () => undefined);
+  assert.equal(found.error, null);
+  if (found.error) return;
+  assert.notEqual(found.engine, "memory");
+  assert.equal(found.hits[0]?.path, "a.ts");
+  assert.ok(calls >= 2);
+});
+
 test("a folder that does not fit is not searched from memory", async () => {
   const dir = tempDir("fs-partial");
   writeFileSync(join(dir, "small.txt"), "keep\n");

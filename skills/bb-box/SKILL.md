@@ -279,7 +279,7 @@ can put the box back to it.
 
 ## A box's files
 
-A person opens a box's own files from the box's row, its page, or the Files tab beside the thread. That view is the box user's files, not the thread workspace. A device box has no Files view. Agents still read and change files with `box_run`, or from the terminal.
+A person opens a box's own files from the box's row, its page, or the Files tab beside the thread. That view is the box user's files, not the thread workspace: a tree, tabs, search, go to file, find in the file, and a Markdown preview. A device box has no Files view. Agents still read and change files with `box_run`, or from the terminal. Creating, renaming and deleting a file is a command in the box, not a button in the view.
 
 ## Desktops and computer use
 

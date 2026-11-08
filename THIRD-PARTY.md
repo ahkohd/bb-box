@@ -17,7 +17,7 @@ bb-box does not redistribute the software it installs on hosts or puts in images
 | [xterm.js](https://github.com/xtermjs/xterm.js) and its fit add-on (`@xterm/xterm`, `@xterm/addon-fit`) | MIT | The terminal. `src/app/xterm-css.ts` is a copy of xterm.js's stylesheet, with its notice. |
 | `zod`, `undici`, `@radix-ui/react-slot` | MIT | |
 | [Hugeicons](https://github.com/hugeicons/hugeicons-react)' free icons and React component (`@hugeicons/core-free-icons`, `@hugeicons/react`) | MIT | The Monitor's icons (066). |
-| [bb-plugin-files-editor](https://github.com/abdoutelb/bb-plugin-files-editor) | MIT | The files view takes its layout and shortcuts from this plugin. The notice is below. bb-box rewrites the reading and writing. |
+| [bb-plugin-files-editor](https://github.com/abdoutelb/bb-plugin-files-editor) | MIT | The files view is this plugin's explorer, tabs, editor, search, go to file and find bar, ported into the panel. bb-box reads and writes the box user's files. The notice is below. |
 
 ### bb-plugin-files-editor
 

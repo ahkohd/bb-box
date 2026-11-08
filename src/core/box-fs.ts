@@ -496,6 +496,7 @@ export class SearchCorpus {
   #root = "";
   #at: number | null = null;
   #partial = false;
+  #texts = false;
   #names: string[] = [];
   #files = new Map<string, CorpusFile>();
   #bytes = 0;
@@ -520,7 +521,7 @@ export class SearchCorpus {
   }
 
   covers(root: string): boolean {
-    return this.#root === root && !this.#partial && this.#at !== null && this.#now() - this.#at < CORPUS_FRESH_MS;
+    return this.#texts && this.#root === root && !this.#partial && this.#at !== null && this.#now() - this.#at < CORPUS_FRESH_MS;
   }
 
   namesFor(root: string): readonly string[] | null {
@@ -543,14 +544,19 @@ export class SearchCorpus {
       if (!this.#keep(file)) dropped = true;
     }
     this.#partial = partial || dropped;
+    this.#texts = !this.#partial;
   }
 
   rememberNames(root: string, names: readonly string[], truncated: boolean): void {
     if (this.#root !== root) {
       this.#files.clear();
       this.#bytes = 0;
+      this.#texts = false;
       this.#partial = truncated;
-    } else if (truncated) this.#partial = true;
+    } else if (truncated) {
+      this.#partial = true;
+      this.#texts = false;
+    }
     this.#root = root;
     this.#names = [...names];
     this.#at = this.#now();
@@ -562,6 +568,7 @@ export class SearchCorpus {
     this.#names = [];
     this.#at = null;
     this.#partial = false;
+    this.#texts = false;
     this.#root = "";
   }
 
