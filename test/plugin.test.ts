@@ -4556,7 +4556,7 @@ test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_s
   const deleteOnce = ["snapshot", "delete", box.name, once.id, "--thread", THREAD, "--request", "req-gone"];
   assert.equal((await harness.behavior.runCli(deleteOnce)).exitCode, 0);
   assert.equal((await harness.behavior.runCli(deleteOnce)).stdout, `Snapshot ${once.id} of box ${box.name} was deleted already, with that request.\n`);
-  assert.equal((await harness.behavior.runCli(takeOnce)).stdout, `Snapshot ${once.id} of box ${box.name} was asked for with that request already, and is no longer in bb-box's records.\n`);
+  assert.equal((await harness.behavior.runCli(takeOnce)).stdout, `Snapshot ${once.id} of box ${box.name} was asked for with that request already, and is no longer in BB Box's records.\n`);
 
   const doctor = JSON.parse((await harness.behavior.runCli(["doctor", "--json"])).stdout ?? "{}") as { sections: { title: string; report: { checks: { id: string; status: string }[] } }[] };
   assert.deepEqual(doctor.sections.find((section) => section.title === "Snapshots")?.report.checks.map((check) => [check.id, check.status]), [["snapshots", "ok"]]);
@@ -7596,7 +7596,7 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   const check = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10", "--check"]);
   assert.equal(check.exitCode, 0, check.stderr);
   assert.match(check.stdout ?? "", /^Keeping "old image" \(sn\w+\) of box .* until \d{4}-\d{2}-\d{2} makes it yours: no agent can delete it, it outlives its box's release, and a fork of it after then is one of your machines\./);
-  assert.match(check.stdout ?? "", /bb-box first copies this snapshot in full into a template that cannot start: .*\nNothing changed\.\n$/);
+  assert.match(check.stdout ?? "", /BB Box first copies this snapshot in full into a template that cannot start: .*\nNothing changed\.\n$/);
   assert.equal(app.snapshotStore.record(record!.id)?.keptUntil, null, "--check changes nothing");
   const kept = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10"]);
   assert.match(kept.stdout ?? "", /^Kept "old image" \(sn\w+\) of box .* until \d{4}-\d{2}-\d{2}\./);

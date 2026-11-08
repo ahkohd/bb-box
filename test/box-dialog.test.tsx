@@ -60,14 +60,43 @@ test("a dialog uses one shell: a plain title, no shadow, a gap in the footer, an
   expect(title?.className).toContain("text-base");
   expect(title?.className).toContain("font-normal");
   expect(title?.className).not.toContain("font-semibold");
-  const footer = dialog.querySelector("div.shrink-0.flex-row");
+  const footer = screen.getByRole("button", { name: "Release" }).parentElement;
   expect(footer?.className).toContain("gap-2");
+  expect(footer?.className).toContain("sm:flex-row");
+  expect(footer?.className).toContain("whitespace-normal");
   const release = screen.getByRole("button", { name: "Release" });
   expect(release.className).toContain("bg-destructive");
   expect(release.className).toContain("text-destructive-foreground");
   expect(DIALOG_CONTENT).toContain("shadow-none");
   expect(DIALOG_TITLE).toContain("font-normal");
   expect(DIALOG_FOOTER).toContain("gap-2");
+  expect(DIALOG_FOOTER).toContain("flex-col");
+  expect(DIALOG_FOOTER).toContain("sm:flex-row");
+  expect(DIALOG_FOOTER).not.toMatch(/(^| )flex-row /);
+});
+
+test("a narrow dialog stacks its footer, with the main button last, and lets a long label wrap", () => {
+  render(
+    <BoxDialog
+      open
+      onClose={() => {}}
+      title="Release calm-otter again?"
+      footer={
+        <>
+          <DialogCancel>Cancel</DialogCancel>
+          <DialogButton variant="outline">Release and delete what you kept</DialogButton>
+          <DialogButton danger>Release again</DialogButton>
+        </>
+      }
+    />
+  );
+  const footer = screen.getByRole("button", { name: "Release again" }).parentElement;
+  const buttons = footer ? Array.from(footer.querySelectorAll("button"), (button) => button.textContent) : [];
+  expect(buttons).toEqual(["Cancel", "Release and delete what you kept", "Release again"]);
+  expect(footer?.className).toContain("flex-col");
+  expect(footer?.className).not.toContain("flex-col-reverse");
+  expect(footer?.className).toContain("whitespace-normal");
+  expect(footer?.className).toContain("sm:flex-row");
 });
 
 test("a dialog shows its busy label and the refusal, and returns focus to the button that opened it", async () => {

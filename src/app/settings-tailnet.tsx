@@ -10,6 +10,7 @@ import { Card, Group, Rows } from "./settings-parts.tsx";
 import { isSecretState } from "./config.ts";
 import { plain, problemPath, TAILNET_SECRET_LABELS, tailnetPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { RestoredNote, SaveBar, saveOnEnter, useDraft, type Draft } from "./settings-saving.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 
 const MODE_WORDS: Readonly<Record<TailnetMode, string>> = {
   off: "No: BB is reached without one",
@@ -99,7 +100,7 @@ function TagsRow({ draft, state }: { draft: Draft; state: ConfigState }) {
           data-draft-path={path}
           aria-describedby={describedBy(`${id}-help`, `${id}-effective`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
           aria-invalid={problem ? true : undefined}
-          className={cn("h-8 w-full text-xs", problem && "border-destructive")}
+          className={cn("h-8 w-full text-xs", problem && INVALID_BORDER)}
           autoComplete="off"
           spellCheck={false}
           placeholder={fallback}

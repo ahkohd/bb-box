@@ -1520,7 +1520,7 @@ test("the iOS image setting is a Tart VM name of its own, and needs a macOS imag
     const parsed = parse(values);
     return parsed.enabled && !parsed.ok ? parsed.problems : [];
   };
-  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name bb-box can use.']);
+  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name BB Box can use.']);
   assert.deepEqual(problems({ "tart-ios-image": "bb-box-ios", "tart-macos-image": "", "tart-macos-desktop-image": "", "tart-linux-image": "bb-box-linux" }), [
     "Tart: the iOS image is built on the macOS image, so give a macOS image too.",
   ]);

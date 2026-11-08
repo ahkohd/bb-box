@@ -1,4 +1,5 @@
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const NAMESPACE_KINDS = ["macos", "macos-desktop", "linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"] as const;
 export type NamespaceKind = (typeof NAMESPACE_KINDS)[number];
@@ -56,14 +57,14 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [NAMESPACE_KEYS.token]: {
     type: "string",
     label: "API token",
-    description: "The token bb-box calls Namespace's API with. Make a revocable token for the workspace with nsc token create, granted the instance actions the guide lists.",
+    description: `The token ${PRODUCT} calls Namespace's API with. Make a revocable token for the workspace with nsc token create, granted the instance actions the guide lists.`,
     group: "connection",
     secret: true,
   },
   [NAMESPACE_KEYS.region]: {
     type: "string",
     label: "API region",
-    description: "Where bb-box calls Namespace's API and its SSH gateway: us or eu. Where the machines run is the workspace's regional preference, which Namespace's support sets.",
+    description: `Where ${PRODUCT} calls Namespace's API and its SSH gateway: us or eu. Where the machines run is the workspace's regional preference, which Namespace's support sets.`,
     group: "connection",
     default: NAMESPACE_DEFAULTS.region,
   },
@@ -77,7 +78,7 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [NAMESPACE_KEYS.machines]: {
     type: "number",
     label: "Most machines",
-    description: "The most Namespace machines bb-box has at once. Each box is one machine, billed by the minute while it exists.",
+    description: `The most Namespace machines ${PRODUCT} has at once. Each box is one machine, billed by the minute while it exists.`,
     group: "boxes",
     default: NAMESPACE_DEFAULTS.machines,
   },
@@ -91,21 +92,21 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [NAMESPACE_KEYS.largestMachine]: {
     type: "string",
     label: "Largest machine",
-    description: "The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size.",
+    description: `The largest Mac ${PRODUCT} asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before ${PRODUCT} asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which ${PRODUCT} reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size.`,
     group: "boxes",
   },
   [NAMESPACE_KEYS.iosHostsOn]: {
     type: "boolean",
     label: "Shared iOS hosts",
     description:
-      "Lends iOS boxes as macOS users on a shared Namespace Mac. A host is made for an iOS box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macOS box starts on Namespace while it lives.",
+      `Lends iOS boxes as macOS users on a shared Namespace Mac. A host is made for an iOS box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once ${PRODUCT} has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macOS box starts on Namespace while it lives.`,
     group: "ios-hosts",
     default: NAMESPACE_IOS_HOSTS_DEFAULTS.on,
   },
   [NAMESPACE_KEYS.iosHostsMost]: {
     type: "number",
     label: "Slots per shared iOS host",
-    description: "The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.",
+    description: `The most slots each shared iOS host has at once, making, ready or held. Empty, ${PRODUCT} estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.`,
     group: "ios-hosts",
   },
   [NAMESPACE_KEYS.iosHostsAhead]: {

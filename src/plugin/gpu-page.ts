@@ -1,5 +1,6 @@
 import type { GpuPart } from "../backends/types.ts";
 import type { BoxState } from "../core/boxes.ts";
+import { PRODUCT } from "../brand.ts";
 import type { BoxView } from "./views.ts";
 
 export interface GpuMate {
@@ -242,7 +243,7 @@ export function wrongCardNotice(box: NoticeBox, seen: SeenCard = []): string | n
     if (!dockerGpuBox(box)) return null;
     return `${box.name}'s last start found it on the wrong card: ${said} A start checks again; its devices do not change.`;
   }
-  return `${box.name} is on the wrong card: ${said} Restart it to place it on its card again. bb-box does not stop it.`;
+  return `${box.name} is on the wrong card: ${said} Restart it to place it on its card again. ${PRODUCT} does not stop it.`;
 }
 
 export function otherCheckNotice(box: NoticeBox, seen: SeenCard = []): string | null {

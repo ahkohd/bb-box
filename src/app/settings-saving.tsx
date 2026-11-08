@@ -271,6 +271,11 @@ export function barOf(draft: Draft, savedShown: boolean, words: SaveWords = SAVE
   return null;
 }
 
+export function refusedInstant(outcome: InstantOutcome | null, note: InstantNote | null): string | null {
+  if (outcome?.kind === "saved" || outcome?.kind === "already") return null;
+  return note?.text ?? "Not removed. Nothing changed.";
+}
+
 export function SaveBar({ draft, primary, inline = false, unplaced = [], actions, words = SAVE_WORDS, ready = true, presentation, controls }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode; words?: SaveWords; ready?: boolean; presentation?: { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null; controls?: ReactNode }) {
   const registry = useRegistry();
   const outcome = draft.entry.outcome;
@@ -316,7 +321,7 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
           {unplaced.length ? <span className="mt-1 block text-destructive-text">{unplaced.join(" ")}</span> : null}
         </span>
         {showButtons ? (
-          <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <span className="flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1.5 sm:w-auto sm:basis-auto">
             {actions}
             {bar.show ? (
               <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>

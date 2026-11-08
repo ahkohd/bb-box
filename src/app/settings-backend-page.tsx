@@ -1,11 +1,13 @@
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { BoxDialog, DialogButton } from "./box-dialog.tsx";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { FieldProblem } from "./field-shell.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
 import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
@@ -24,7 +26,7 @@ import { BackendImages } from "./settings-images.tsx";
 import { GpusGroup } from "./settings-gpus.tsx";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, backendEnabledPath, backendLabelPath, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
-import { RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
+import { refusedInstant, RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
 import { backendHealth, backendLabel, hostChip, isMachineDocker, kindName, onBbMachine, plural, warningsIn, withWarnings, type BackendHealth } from "./settings-status.ts";
 
 const CHECK_LOOK: Record<DoctorCheck["status"], { icon: string; className: string; label: string }> = {
@@ -349,30 +351,30 @@ function RenameDialog({ open, label, id, driverLabel, onCancel, onSave }: { open
     >
       <label className="block space-y-1">
         <span className="sr-only">Name</span>
-        <Input ref={field} aria-label="Name" aria-invalid={problem ? true : undefined} className="h-8 text-sm" value={name} placeholder={driverLabel} onChange={(event) => setName(event.target.value)} />
-        {problem ? (
-          <p role="alert" className="text-xs text-destructive-text">
-            {problem}
-          </p>
-        ) : null}
+        <Input ref={field} aria-label="Name" aria-invalid={problem ? true : undefined} aria-describedby={problem ? "backend-rename-problem" : undefined} className={cn("h-8 text-sm", problem && INVALID_BORDER)} value={name} placeholder={driverLabel} onChange={(event) => setName(event.target.value)} />
+        {problem ? <FieldProblem id="backend-rename-problem">{problem}</FieldProblem> : null}
       </label>
     </BoxDialog>
   );
 }
 
-function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: { open: boolean; id: string; label: string; secrets: readonly string[]; onCancel: () => void; onConfirm: () => void }) {
+function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: { open: boolean; id: string; label: string; secrets: readonly string[]; onCancel: () => void; onConfirm: () => Promise<string | null> }) {
+  const action = useDialogAction(onCancel);
+  const close = () => action.close();
   return (
     <BoxDialog
       open={open}
       title={`Remove ${label}?`}
-      onClose={onCancel}
+      busy={action.busy}
+      refused={action.refused}
+      onClose={close}
       onCloseAutoFocus={focusMenuOf(id)}
       footer={
         <>
-          <DialogButton variant="outline" onClick={onCancel}>
+          <DialogButton variant="outline" onClick={close}>
             Cancel
           </DialogButton>
-          <DialogButton danger onClick={onConfirm}>
+          <DialogButton danger busyWords="Removing…" onClick={() => void action.run(onConfirm)}>
             Remove backend
           </DialogButton>
         </>
@@ -453,14 +455,15 @@ function BackendEditor({ config }: { config: BackendConfig }) {
     void checks.run(part, fingerprint, draft.changes > 0, () => rpc.call("config.check", { draft: candidate.document, test: config.id }), Date.now).then(() => refresh());
   };
   const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), instant.note(switchKey.removeBackend(config.id))];
-  const remove = () => {
-    setRemoving(false);
-    void instant.run(writes.removeBackend(draft.latest, config, label)).then((outcome) => {
-      if (outcome?.kind !== "saved" && outcome?.kind !== "already") return;
+  const remove = async (): Promise<string | null> => {
+    const outcome = await instant.run(writes.removeBackend(draft.latest, config, label));
+    if (outcome?.kind === "saved" || outcome?.kind === "already") {
       drafts().discard(part);
       checks.forget(part);
       nav.toOverview();
-    });
+      return null;
+    }
+    return refusedInstant(outcome, instant.note(switchKey.removeBackend(config.id)));
   };
   const copy = () => {
     void navigator.clipboard

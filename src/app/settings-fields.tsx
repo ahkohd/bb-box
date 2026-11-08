@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { Badge } from "./common.tsx";
+import { FieldShell as SharedField } from "./field-shell.tsx";
 import type { FieldValue } from "../backends/types.ts";
 import type { SecretState } from "../core/document.ts";
 import type { FieldView } from "../plugin/configuration.ts";
@@ -57,19 +58,9 @@ export function Chip({ children, tone = "muted" }: { children: ReactNode; tone?:
 
 export function FieldShell({ label, chips, description, problem, children, wide, htmlFor }: { label: string; chips?: ReactNode; description?: string; problem?: string | null; children: ReactNode; wide?: boolean; htmlFor?: string }) {
   return (
-    <div className={cn("flex min-w-0 flex-col gap-1", wide && "sm:col-span-2")}>
-      <label htmlFor={htmlFor} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-foreground">
-        <span>{label}</span>
-        {chips}
-      </label>
+    <SharedField label={label} htmlFor={htmlFor} chips={chips} description={description} problem={problem} wide={wide} className={cn("flex min-w-0 flex-col gap-1", wide && "sm:col-span-2")}>
       {children}
-      {description ? <span className="text-2xs leading-snug text-subtle-foreground/75">{description}</span> : null}
-      {problem ? (
-        <span role="alert" className="text-2xs leading-snug text-destructive-text">
-          {problem}
-        </span>
-      ) : null}
-    </div>
+    </SharedField>
   );
 }
 

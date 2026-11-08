@@ -1,6 +1,7 @@
 import { DOCKER_FIELDS, DOCKER_KEYS, parseDockerPart } from "../docker/config.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import type { HetznerConfig } from "./backend.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const HETZNER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu", "linux-arm64", "linux-arm64-desktop-cpu"] as const;
 
@@ -31,7 +32,7 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.token]: {
     type: "string",
     label: "API token",
-    description: "The API token of the Hetzner Cloud project bb-box makes its hosts in. Make a Read & Write token on the project's Security page. The project should hold nothing else.",
+    description: `The API token of the Hetzner Cloud project ${PRODUCT} makes its hosts in. Make a Read & Write token on the project's Security page. The project should hold nothing else.`,
     secret: true,
     group: "credentials",
   },
@@ -73,14 +74,14 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.monthlyLimit]: {
     type: "number",
     label: "Monthly limit (EUR)",
-    description: "The most bb-box may spend on Hetzner in a calendar month, in euros before VAT. It makes no host when this month's spend so far, and an hour more of every host with the new one, would pass it. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
+    description: `The most ${PRODUCT} may spend on Hetzner in a calendar month, in euros before VAT. It makes no host when this month's spend so far, and an hour more of every host with the new one, would pass it. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.`,
     group: "boxes",
     default: HETZNER_DEFAULTS.monthlyLimitEurosBeforeVat,
   },
   [HETZNER_KEYS.hostImage]: {
     type: "string",
     label: "Host image",
-    description: "What hosts start from: an image name or a snapshot's ID. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it. bb-box rebuilds it weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none.",
+    description: `What hosts start from: an image name or a snapshot's ID. An image name, such as ubuntu-26.04, is the base of the host image ${PRODUCT} builds as a snapshot, with Docker, Tailscale and the box images in it. ${PRODUCT} rebuilds it weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and ${PRODUCT} builds none.`,
     group: "advanced",
     default: HETZNER_DEFAULTS.hostImage,
   },

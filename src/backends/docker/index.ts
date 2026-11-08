@@ -1,6 +1,7 @@
 import type { BackendDriver } from "../types.ts";
 import { DockerBackend } from "./backend.ts";
 import { DOCKER_FIELDS, DOCKER_KINDS, parseDockerPart, type DockerConfig } from "./config.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const dockerDriver: BackendDriver<DockerConfig> = {
   type: "docker",
@@ -15,7 +16,7 @@ export const dockerDriver: BackendDriver<DockerConfig> = {
   setup: {
     guide: "setup/docker/README.md",
     scripts: ["setup/docker/build.sh"],
-    needs: "Docker Engine on Linux, or Docker Desktop, on BB's server or a host bb-box reaches over SSH.",
+    needs: `Docker Engine on Linux, or Docker Desktop, on BB's server or a host ${PRODUCT} reaches over SSH.`,
   },
   parse: parseDockerPart,
   // One per Docker host: a BB machine's (042), a socket or ssh://, or the CLI's default.

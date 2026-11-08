@@ -7,7 +7,7 @@ export const DIALOG_CONTENT = "flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)
 export const DIALOG_HEADER = "shrink-0 space-y-2 text-left";
 export const DIALOG_TITLE = "text-base font-normal";
 export const DIALOG_BODY = "min-h-0 flex-1 space-y-3 overflow-y-auto text-sm leading-relaxed text-muted-foreground";
-export const DIALOG_FOOTER = "shrink-0 flex-row justify-end gap-2 sm:flex-row sm:justify-end sm:space-x-0 [&>*]:mt-0";
+export const DIALOG_FOOTER = "shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:space-x-0 [&>*]:mt-0 [&>*]:h-auto [&>*]:w-full [&>*]:whitespace-normal sm:[&>*]:w-auto";
 
 const DialogBusy = createContext(false);
 
@@ -140,9 +140,14 @@ export function DialogButton({ danger, busyWords, children, disabled, variant, c
   );
 }
 
-export function useDialogAction(onClose: () => void): { readonly busy: boolean; readonly refused: string | null; readonly run: (act: () => Promise<string | null | void> | string | null | void) => Promise<void>; readonly clear: () => void } {
+export function useDialogAction(onClose: () => void): { readonly busy: boolean; readonly refused: string | null; readonly run: (act: () => Promise<string | null | void> | string | null | void) => Promise<void>; readonly clear: () => void; readonly close: () => void } {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const clear = () => setRefused(null);
+  const close = () => {
+    clear();
+    onClose();
+  };
   const run = async (act: () => Promise<string | null | void> | string | null | void) => {
     setBusy(true);
     setRefused(null);
@@ -156,5 +161,5 @@ export function useDialogAction(onClose: () => void): { readonly busy: boolean; 
       setBusy(false);
     }
   };
-  return { busy, refused, run, clear: () => setRefused(null) };
+  return { busy, refused, run, clear, close };
 }

@@ -257,7 +257,7 @@ export function repeatsLocally(at: number, zone?: string): boolean {
 }
 
 export function historyClock(at: number, zone?: string): string {
-  return formatOf(zone, { hour: "numeric", minute: "2-digit", ...(repeatsLocally(at, zone) ? { timeZoneName: "short" } : {}) }).format(at);
+  return formatOf(zone, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(repeatsLocally(at, zone) ? { timeZoneName: "short" } : {}) }, "en-GB").format(at);
 }
 
 export function historyTimeWords(range: HistoryRange, now: number, zone?: string): (at: number) => string {

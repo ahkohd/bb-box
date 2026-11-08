@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { useId, useState } from "react";
-import { BoxDialog, DialogButton } from "./box-dialog.tsx";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,11 +8,12 @@ import { cn } from "@/lib/utils";
 import { isSecretState } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, unplacedProblems } from "./settings-draft-fields.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 import { FILES_PART, operationId } from "./settings-drafts.ts";
 import { Section } from "./settings-fields.tsx";
 import { RowNote } from "./settings-parts.tsx";
 import { filePath, newFilePath, storedAt, type Path } from "./settings-paths.ts";
-import { ChangedChip, ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
+import { ChangedChip, ConflictNote, refusedInstant, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
 
 const CONTENT_PLACEHOLDER = "Paste the file's text. It is never shown again.";
 export const ADD_FILE = "files/add";
@@ -35,7 +36,7 @@ function ContentEditor({ draft, path, label, onEmptied, onClose }: { draft: Draf
         aria-label={label}
         aria-describedby={describedBy(problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
-        className={cn("min-h-24 font-mono text-xs", problem && "border-destructive")}
+        className={cn("min-h-24 font-mono text-xs", problem && INVALID_BORDER)}
         placeholder={CONTENT_PLACEHOLDER}
         autoComplete="off"
         spellCheck={false}
@@ -182,6 +183,7 @@ export function BoxFilesSection() {
   const [opened, setOpened] = useState<readonly string[]>([]);
   const [removing, setRemoving] = useState<string | null>(null);
   const [removed, setRemoved] = useState<string | null>(null);
+  const removal = useDialogAction(() => setRemoving(null));
   const files = draft.latest.document.general.files ?? [];
   const newFiles = [...draft.entry.edits].filter(([, edit]) => edit.value.kind === "new-file").map(([path]) => path);
   const editing = (path: string) => opened.includes(path) || draft.edit(filePath(path))?.kind === "secret";
@@ -266,28 +268,36 @@ export function BoxFilesSection() {
       <BoxDialog
         open={removing !== null}
         title={removing ? `Remove ~/${removing}?` : "Nothing to remove"}
-        onClose={() => setRemoving(null)}
+        busy={removal.busy}
+        refused={removal.refused}
+        onClose={removal.close}
         footer={
           removing ? (
             <>
-              <DialogButton variant="outline" onClick={() => setRemoving(null)}>
+              <DialogButton variant="outline" onClick={removal.close}>
                 Cancel
               </DialogButton>
               <DialogButton
                 danger
+                busyWords="Removing…"
                 onClick={() => {
                   const path = removing;
-                  setRemoving(null);
                   if (!path) return;
-                  setRemoved(path);
-                  void instant.run(writes.removeFile(state, path));
+                  void removal.run(async () => {
+                    const outcome = await instant.run(writes.removeFile(state, path));
+                    if (outcome?.kind === "saved" || outcome?.kind === "already") {
+                      setRemoved(path);
+                      return null;
+                    }
+                    return refusedInstant(outcome, instant.note(switchKey.removeFile(path)));
+                  });
                 }}
               >
                 Remove file
               </DialogButton>
             </>
           ) : (
-            <DialogButton variant="outline" onClick={() => setRemoving(null)}>
+            <DialogButton variant="outline" onClick={removal.close}>
               Close
             </DialogButton>
           )

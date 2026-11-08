@@ -38,7 +38,7 @@ export function ago(at: number, now: number): string {
 }
 
 export function clock(at: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at);
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at);
 }
 
 function sameDay(a: number, b: number): boolean {
@@ -46,9 +46,10 @@ function sameDay(a: number, b: number): boolean {
 }
 
 export function dayAndClock(at: number, now: number): string {
-  if (sameDay(at, now)) return `today at ${clock(at)}`;
-  if (sameDay(at, now - DAY)) return `yesterday at ${clock(at)}`;
-  return `${new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" }).format(at)} at ${clock(at)}`;
+  const time = clock(at);
+  if (sameDay(at, now)) return `Today ${time}`;
+  if (sameDay(at, now - DAY)) return `Yesterday ${time}`;
+  return `${new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(at)} ${time}`;
 }
 
 export function stepTime(ms: number): string {

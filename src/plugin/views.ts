@@ -1,6 +1,7 @@
 // What the panel, the tools and the CLI show about boxes: plain JSON views
 // for the panel, and short text for agents. Nothing here holds a credential.
 
+import { PRODUCT } from "../brand.ts";
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { currentKindId, kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
@@ -689,9 +690,9 @@ function installNoticeOf(box: BoxRecord): UserspaceNotice | null {
   const state = boxUserspaceState(box);
   switch (state.is) {
     case "updating":
-      return { words: `bb-box is installing NVIDIA's userspace ${state.update.to} in it, to add its GPU, at its ${state.update.step} step.`, action: null };
+      return { words: `${PRODUCT} is installing NVIDIA's userspace ${state.update.to} in it, to add its GPU, at its ${state.update.step} step.`, action: null };
     case "running":
-      return { words: "An earlier install of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other until then.", action: null };
+      return { words: `An earlier install of NVIDIA's userspace is still running in it: ${PRODUCT} reads its userspace once it ends, and starts no other until then.`, action: null };
     case "half":
       return { words: `It has ${readingWords(state.reading)}, and no GPU.`, action: "resize-again" };
     case "unfinished":
@@ -719,9 +720,9 @@ export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
         ? { words: `${updateLeftWords(box.name, state.update)} bb box doctor reads it, and says whether that update is still running and when to update it again.`, action: null }
         : { words: updateLeftWords(box.name, state.update), action: "update-again" };
     case "updating":
-      return { words: `bb-box is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
+      return { words: `${PRODUCT} is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
     case "running":
-      return { words: "An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.", action: null };
+      return { words: `An earlier update of NVIDIA's userspace is still running in it: ${PRODUCT} reads its userspace once it ends, and starts no other update until then.`, action: null };
     default:
       return null;
   }
@@ -1105,7 +1106,7 @@ export function resizeText(answer: ResizeAnswer, checked: boolean, audience: "pe
 }
 
 function installsWords(driver: string, desktop: boolean): string {
-  return `It has no NVIDIA userspace for the host's driver ${driver}, which a card needs, so bb-box installs it first, while it runs with no GPU, then restarts it with the card: about ${USERSPACE_INSTALL_SECONDS} s more${desktop ? ". Its desktop is set to draw on the GPU" : ""}. If the install fails, it goes on running with no GPU, as it was.`;
+  return `It has no NVIDIA userspace for the host's driver ${driver}, which a card needs, so ${PRODUCT} installs it first, while it runs with no GPU, then restarts it with the card: about ${USERSPACE_INSTALL_SECONDS} s more${desktop ? ". Its desktop is set to draw on the GPU" : ""}. If the install fails, it goes on running with no GPU, as it was.`;
 }
 
 function installedWords(box: BoxRecord, installed: UserspaceInstalled, desktop: boolean, audience: "person" | "agent"): string {

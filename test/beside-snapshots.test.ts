@@ -75,7 +75,7 @@ test("a kept snapshot beside a released box is renewed with Keep and forks as on
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   const gone = state.snapshots.findGone(box.name, "kept one");
   const again = await state.snapshots.checkKeepGone(gone, { days: 60 });
-  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until bb-box deletes it after 2026-12-29\.$/);
+  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until BB Box deletes it after 2026-12-29\.$/);
   const renewed = await state.snapshots.keepGone(gone, BY_COMMAND, { days: 60 });
   assert.equal(renewed.snapshot.keptUntil, keptUntilAfter(START, 60));
   const fork = await state.snapshots.checkForkGone(gone, {});

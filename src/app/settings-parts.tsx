@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { CloudIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { FieldProblem } from "./field-shell.tsx";
 import { cn } from "@/lib/utils";
 import type { BackendConfig } from "../core/document.ts";
 import type { ConfigState } from "../plugin/configuration.ts";
@@ -191,11 +192,7 @@ export function SettingRow({ label, description, problem, children, htmlFor, pat
       </div>
       <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
         <div className="flex items-center gap-2">{children}</div>
-        {problem ? (
-          <p role="alert" className="text-xs text-destructive-text">
-            {problem}
-          </p>
-        ) : null}
+        {problem ? <FieldProblem>{problem}</FieldProblem> : null}
       </div>
     </div>
   );

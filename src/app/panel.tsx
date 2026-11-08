@@ -65,10 +65,12 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const onDemand = useDesktopOnDemand(state?.desktopOnDemand, threadId, refresh);
   // A desktop box not made after its image was built shows as a refused acquire does, once, until dismissed.
   useDesktopProblemShownOnce(state?.desktopProblem, setProblem);
-  const act = async (method: BoxAction, box: BoxView, options: { readonly force?: boolean; readonly deleteKept?: boolean } = {}) => {
+  const act = async (method: BoxAction, box: BoxView, options: { readonly force?: boolean; readonly deleteKept?: boolean } = {}): Promise<string | null> => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && options.force ? { force: true } : {}), ...(method === "release" && options.deleteKept ? { deleteKept: true } : {}) };
-    setProblem(await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined));
+    const refused = await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined);
+    setProblem(refused);
+    return refused;
   };
 
   if (error) return <LoadFailed what="The boxes" error={error} onRetry={refresh} />;
@@ -129,7 +131,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
-      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
+      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
     </div>
   );
 }

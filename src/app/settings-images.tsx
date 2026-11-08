@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { BoxDialog, DialogButton } from "./box-dialog.tsx";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,7 @@ import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import { imageBakePath, standardImagePath, type PlainValue } from "./settings-paths.ts";
 import { backendLabel, hostChip, kindName, plural, type StatusItem } from "./settings-status.ts";
+import { refusedInstant } from "./settings-saving.tsx";
 
 export type StandardImage = ImagesStatus["images"][number];
 type ImagesProgress = Pick<ImagesStatus, "progress" | "running" | "failures">;
@@ -476,8 +477,9 @@ function inWords(names: readonly string[]): string {
   return names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: string | null; image: ImageConfig | null; view: ImageOptionView | null; onCancel: () => void; onConfirm: (name: string) => void }) {
+function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: string | null; image: ImageConfig | null; view: ImageOptionView | null; onCancel: () => void; onConfirm: (name: string) => Promise<string | null> }) {
   const { state } = useSettings();
+  const action = useDialogAction(onCancel);
   const [shown, setShown] = useState<{ name: string; image: ImageConfig; projects: readonly string[] } | null>(null);
   const projectNames = image ? image.projects.map((id) => view?.projects.find((project) => project.id === id)?.name ?? id) : [];
   if (name !== null && image && (shown?.name !== name || shown.projects.join("\n") !== projectNames.join("\n"))) setShown({ name, image, projects: projectNames });
@@ -487,7 +489,9 @@ function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: s
     <BoxDialog
       open={name !== null}
       title={shown ? `Remove the image ${shown.name}?` : "Nothing to remove"}
-      onClose={onCancel}
+      busy={action.busy}
+      refused={action.refused}
+      onClose={action.close}
       onCloseAutoFocus={(event) => {
         const row = shown ? document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(`image-${shown.name}`)}"]`) : null;
         if (!row) return;
@@ -497,15 +501,15 @@ function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: s
       footer={
         shown ? (
           <>
-            <DialogButton variant="outline" onClick={onCancel}>
+            <DialogButton variant="outline" onClick={action.close}>
               Cancel
             </DialogButton>
-            <DialogButton danger onClick={() => onConfirm(shown.name)}>
+            <DialogButton danger busyWords="Removing…" onClick={() => void action.run(() => onConfirm(shown.name))}>
               Remove image
             </DialogButton>
           </>
         ) : (
-          <DialogButton variant="outline" onClick={onCancel}>
+          <DialogButton variant="outline" onClick={action.close}>
             Close
           </DialogButton>
         )
@@ -534,15 +538,16 @@ function ProjectImages() {
   const images = state.document.images ?? {};
   const names = Object.keys(images).sort((a, b) => a.localeCompare(b));
   const toggle = (name: string) => setOpen((current) => (current.has(name) ? new Set([...current].filter((each) => each !== name)) : new Set([...current, name])));
-  const remove = (name: string) => {
-    setRemoving(null);
+  const remove = async (name: string): Promise<string | null> => {
     setRemovedNote(null);
     const before = names;
-    void instant.run(writes.removeImage(state, name)).then((outcome) => {
-      if (outcome?.kind !== "saved" && outcome?.kind !== "already") return;
+    const outcome = await instant.run(writes.removeImage(state, name));
+    if (outcome?.kind === "saved" || outcome?.kind === "already") {
       setRemovedNote(`Removed the image ${name}.`);
       focusAfterRemoval(before, name);
-    });
+      return null;
+    }
+    return refusedInstant(outcome, instant.note(switchKey.removeImage(name)));
   };
   const removedElsewhere = removing !== null && !images[removing];
   return (

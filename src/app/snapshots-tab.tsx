@@ -151,7 +151,7 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
   const current = check && check.until === until ? check : null;
   const count = current?.allowed.length ?? 0;
   const apply = async () => {
-    if (!current) return;
+    if (!current || !count) return;
     setSending(true);
     try {
       const done = await rpc.call("snapshots.bulk", { snapshots: current.allowed.map((each) => each.id), change, ...(change === "keep" && edited ? { until } : {}) });
@@ -195,6 +195,7 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
       title={title}
       onClose={onClose}
       busy={sending}
+      onSubmit={onlyClose ? undefined : () => void apply()}
       footer={
         onlyClose ? (
           <AlertDialogCancel autoFocus>Close</AlertDialogCancel>
@@ -210,7 +211,7 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
             <AlertDialogCancel autoFocus={change === "delete"} disabled={sending}>
               Cancel
             </AlertDialogCancel>
-            <Button type="button" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count} onClick={() => void apply()}>
+            <Button type="submit" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count}>
               {sending ? (change === "keep" ? "Keeping…" : "Deleting…") : change === "keep" ? (edited ? `Keep ${count} until ${dated ? keepDay(Date.parse(`${until}T12:00:00Z`)) : "…"}` : `Keep ${count}`) : `Delete ${count}`}
             </Button>
           </>

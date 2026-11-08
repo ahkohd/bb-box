@@ -17,6 +17,7 @@ import { backendPart, operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendFieldPath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
+import { FieldProblem } from "./field-shell.tsx";
 import { INVALID_BORDER } from "./size-field.ts";
 import { plural } from "./settings-status.ts";
 import { PRODUCT } from "./product.ts";
@@ -169,11 +170,7 @@ function FieldShell({ draft, path, ids, label, help, chips, problem, stacked, on
         </div>
         <div className={cn("flex min-w-0 flex-col gap-1", stacked ? "w-full" : "w-full sm:w-72 sm:shrink-0 sm:items-end")}>
           {children}
-          {problem ? (
-            <p id={ids.problem} role="alert" className="text-xs text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
+          {problem ? <FieldProblem id={ids.problem}>{problem}</FieldProblem> : null}
         </div>
       </div>
       {conflict ? (

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { PRODUCT } from "../../brand.ts";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -140,7 +141,7 @@ const LINUX_KIND: BoxKind = {
   id: "linux",
   label: "Linux",
   description:
-    "A Linux VM on boat.dev with its own kernel, systemd, Docker and KVM, forked from bb-box's template and ready in 10 to 25 seconds. It is billed by the second while it runs, and deleted when released.",
+    `A Linux VM on boat.dev with its own kernel, systemd, Docker and KVM, forked from ${PRODUCT}'s template and ready in 10 to 25 seconds. It is billed by the second while it runs, and deleted when released.`,
   requires: [],
   capabilities: {
     os: "linux",
@@ -442,7 +443,7 @@ export class BoatBackend implements Backend {
   }
 
   offerNote(kind: string): string | null {
-    return (this.#offered() as readonly string[]).includes(kind) ? "A VM on boat.dev, forked from bb-box's template, billed by the second while it runs." : null;
+    return (this.#offered() as readonly string[]).includes(kind) ? `A VM on boat.dev, forked from ${PRODUCT}'s template, billed by the second while it runs.` : null;
   }
 
   async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {

@@ -1,4 +1,6 @@
 import type { MachineSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
+import { SNAPSHOT_LIMITS } from "../core/document.ts";
+import { keptUntilAfter, utcDay } from "../core/snapshot.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
 import { PRODUCT } from "./product.ts";
 
@@ -37,6 +39,12 @@ export function keepWords(keptUntil: number, now: number): { readonly words: str
 
 export function utcDate(at: number): string {
   return new Date(at).toISOString().slice(0, 10);
+}
+
+export function keepOpeningDate(keptUntil: number | null, keepDays: number, now: number): string {
+  if (keptUntil === null || keptUntil <= now) return utcDay(keptUntilAfter(now, keepDays));
+  const renewed = Math.min(keptUntilAfter(keptUntil, keepDays), keptUntilAfter(now, SNAPSHOT_LIMITS.keepDays.most));
+  return utcDay(renewed < keptUntil ? keptUntil : renewed);
 }
 
 export function snapshotWhen(at: number, now: number): string {

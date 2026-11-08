@@ -186,7 +186,7 @@ test("071 unit 10: none to shared on a linux box with no NVIDIA userspace: the c
   assert.deepEqual(updateCalls(state.nvidia), ["check"], "the check runs bb-box's check in the box, and installs nothing");
   const said = resizeText(checked, true);
   assert.match(said, /^GPU: none → shared, card 0 · Restart\. \S+ restarts, gets NVIDIA's userspace 580\.142 and card 0\.$/m);
-  assert.match(said, /^It has no NVIDIA userspace for the host's driver 580\.142, which a card needs, so bb-box installs it first, while it runs with no GPU, then restarts it with the card: about 60 s more\. If the install fails, it goes on running with no GPU, as it was\.$/m);
+  assert.match(said, /^It has no NVIDIA userspace for the host's driver 580\.142, which a card needs, so BB Box installs it first, while it runs with no GPU, then restarts it with the card: about 60 s more\. If the install fails, it goes on running with no GPU, as it was\.$/m);
   const after = (await state.boxes.find(box.id))!;
   assert.equal(after.userspaceUpdate ?? null, null, "a check records no install");
   assert.equal(after.nvidiaUserspace, "none", "it records the box's userspace as it read it");

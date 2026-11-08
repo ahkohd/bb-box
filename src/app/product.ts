@@ -1,1 +1,1 @@
-export const PRODUCT = "BB Box";
+export { PRODUCT } from "../brand.ts";

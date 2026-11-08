@@ -34,6 +34,7 @@ import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
+import { keepOpeningDate } from "../src/app/snapshot-words.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -558,7 +559,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { cards?: Record<string, SettingsCards>; entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { cards?: Record<string, SettingsCards>; entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview | Promise<KeepPreview>; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -2066,7 +2067,7 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   await waitFor(() => expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Cores2 → 6Live", "Disk20 GiB → 40 GiBLive"]));
   expect(within(dialog).getByText("Changes at once. Everything running in calm-otter carries on.")).toBeTruthy();
   expect(within(dialog).getByText("Its host has room for it to grow.")).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
+  fireEvent.submit(dialog.querySelector("form")!);
   expect(await within(dialog).findByText("Resized calm-otter")).toBeTruthy();
   expect(within(dialog).getByText("It has 6 cores · 4 GiB · 40 GiB disk now, changed live.")).toBeTruthy();
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['resize box_1 {"size":{"cores":6,"diskGiB":40}}']);
@@ -2259,6 +2260,37 @@ test("a box a thread runs on is released or stopped only once the user says so",
   fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   expect(changes).toEqual(["release (forced) box_1"]);
+});
+
+test("Release anyway in a thread's Box panel stays open until the release finishes, and Cancel clears a refusal", async () => {
+  const { handlers } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app", running: true }] });
+  let finish: (result: BoxResult) => void = () => {};
+  const hanging: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    release: (input) => {
+      if (!input.force) return handlers.release!(input);
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  };
+  const slot = panel(hanging);
+  await slot.findByText("calm-otter");
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
+  expect(within(dialog).getByRole("button", { name: "Releasing…" })).toBeTruthy();
+  await act(async () => finish({ box: null, error: "The host did not answer." }));
+  expect(within(dialog).getByRole("alert").textContent).toBe("The host did not answer.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  const again = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(again).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  const next = await screen.findByRole("alertdialog", { name: "Release calm-otter anyway?" });
+  expect(within(next).queryByText("The host did not answer.")).toBeNull();
 });
 
 test("the panel stops and starts a box that can, and not one that cannot", async () => {
@@ -2966,6 +2998,30 @@ test("the backend's menu renames at once, copies nothing secret, and removes onl
   await waitFor(() => expect(window.location.hash).toBe(""));
 });
 
+test("removing a backend stays open while the write runs, and a refusal stays in the dialog", async () => {
+  const empty = configState({}).backends.map((backend) => ({ ...backend, boxes: 0 }));
+  const base = server([], { config: { backends: empty } });
+  let finish: (result: ApplyResult) => void = () => {};
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...base.handlers,
+    "config.apply": () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  };
+  const slot = settings(handlers, "#backend/fake");
+  const menu = await openMenu(await slot.findByRole("button", { name: "More for Fake host" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove backend…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove backend" }));
+  const dialog = screen.getByRole("alertdialog", { name: "Remove Fake host?" });
+  expect(within(dialog).getByRole("button", { name: "Removing…" })).toBeTruthy();
+  await act(async () =>
+    finish({ ok: false, reason: "problems", problems: [{ path: "backends.fake", message: "Backend fake has 1 box, so it cannot be removed." }] }),
+  );
+  expect(within(dialog).getByRole("alert").textContent).toContain("was not removed");
+  expect(screen.getByRole("alertdialog", { name: "Remove Fake host?" })).toBeTruthy();
+});
+
 test("the overview's backend row says Saving while a save is out and Unsaved changes after, and each row has its host from its fields", async () => {
   const { handlers } = server([]);
   let release = () => {};
@@ -3592,7 +3648,11 @@ test("removing a project's image asks first and says what follows; a refusal say
   expect(refusing.changes).toHaveLength(0);
   fireEvent.click(slot.getByRole("button", { name: "Remove rust-tools…" }));
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
-  expect(await slot.findByText("The image rust-tools was not removed: The configuration is locked for a test.")).toBeTruthy();
+  const refused = await screen.findByRole("alertdialog", { name: "Remove the image rust-tools?" });
+  expect(within(refused).getByRole("alert").textContent).toContain("The image rust-tools was not removed: The configuration is locked for a test.");
+  expect(document.querySelector('[data-row-key="image-rust-tools"]')).toBeTruthy();
+  fireEvent.click(within(refused).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(slot.getByRole("button", { name: "rust-tools" })).toBeTruthy();
   cleanup();
   withProjectImages();
@@ -3607,6 +3667,29 @@ test("removing a project's image asks first and says what follows; a refusal say
   expect(await page.findByText("Removed the image rust-tools.")).toBeTruthy();
   await waitFor(() => expect(page.queryByRole("button", { name: "rust-tools" })).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(page.getByRole("button", { name: "go-tools" })));
+});
+
+test("removing a project image stays open while the write runs, and a refusal stays in the dialog", async () => {
+  withProjectImages();
+  const base = server([], { images: PROJECT_VIEWS });
+  let finish: (result: ApplyResult) => void = () => {};
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...base.handlers,
+    "config.apply": () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  };
+  const page = settings(handlers, "#option/images");
+  await page.findByText("Its build for Linux desktop on Fake host failed");
+  fireEvent.click(page.getByRole("button", { name: "rust-tools" }));
+  fireEvent.click(page.getByRole("button", { name: "Remove rust-tools…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
+  const dialog = screen.getByRole("alertdialog", { name: "Remove the image rust-tools?" });
+  expect(within(dialog).getByRole("button", { name: "Removing…" })).toBeTruthy();
+  await act(async () => finish({ ok: false, reason: "problems", problems: [{ path: "images.rust-tools", message: "The image is in use." }] }));
+  expect(within(dialog).getByRole("alert").textContent).toContain("was not removed");
+  expect(screen.getByRole("alertdialog", { name: "Remove the image rust-tools?" })).toBeTruthy();
 });
 
 test("a failed rebuild and a project image's failed build are in the overview's Status, each with its fix and a way to the Images page", async () => {
@@ -3660,6 +3743,27 @@ test("files for every box show each path and whether it is set, never a content;
   await waitFor(() => expect(changes).toHaveLength(3));
   expect(sent(2)).toEqual([{ path: ".pi/agent/models.json" }]);
   expect(operations).toHaveLength(3);
+});
+
+test("removing a file stays open while the write runs, and a refusal stays in the dialog", async () => {
+  applied = { schema: 1, revision: 3, backends: [], kinds: {}, general: { files: [{ path: ".config/tool/config.toml", content: { set: true, version: 1 } }] } };
+  const base = server([]);
+  let finish: (result: ApplyResult) => void = () => {};
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...base.handlers,
+    "config.apply": () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  };
+  const slot = settings(handlers, "#option/boxes");
+  fireEvent.click(await slot.findByRole("button", { name: "Remove ~/.config/tool/config.toml" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Remove file" }));
+  const dialog = screen.getByRole("alertdialog", { name: "Remove ~/.config/tool/config.toml?" });
+  expect(within(dialog).getByRole("button", { name: "Removing…" })).toBeTruthy();
+  await act(async () => finish({ ok: false, reason: "problems", problems: [{ path: "general.files", message: "The file is in use." }] }));
+  expect(within(dialog).getByRole("alert").textContent).toContain("was not removed");
+  expect(screen.getByRole("alertdialog", { name: "Remove ~/.config/tool/config.toml?" })).toBeTruthy();
 });
 
 const MONITOR_DOCUMENT: ConfigDocument = { schema: 1, revision: 3, backends: [], kinds: {}, general: {} };
@@ -9677,7 +9781,7 @@ test("a box's page, at box/<boxId>: the trail, its name with focus, its state, I
   expect(slot.getByRole("button", { name: "Run the tests" })).toBeTruthy();
   expect(slot.getByText("Ready in 3.6 s")).toBeTruthy();
   expect(slot.getByRole("img", { name: /^The time each step took: Took a warm box 0\.3 s, Clone 1\.1 s/ })).toBeTruthy();
-  expect(slot.getByText(/^And 3 quicker steps\. It joined BB 2\.4 s later\. Made (today|yesterday) at /)).toBeTruthy();
+  expect(slot.getByText(/^And 3 quicker steps\. It joined BB 2\.4 s later\. Made (Today|Yesterday) \d{2}:\d{2}/)).toBeTruthy();
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread…", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
@@ -10217,7 +10321,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   fireEvent.click(within(dialog).getByRole("button", { name: "Forget" }));
   await waitFor(() => expect(changes).toEqual(["forget box_7"]));
   expect(await maple.findByText("maple-row was forgotten")).toBeTruthy();
-  expect(maple.getByText(/^BB Box removed its record\. Its box was not deleted and may still run on Fake host\. Forgotten just now, today at .+, by you\.$/)).toBeTruthy();
+  expect(maple.getByText(/^BB Box removed its record\. Its box was not deleted and may still run on Fake host\. Forgotten just now, Today \d{2}:\d{2}, by you\.$/)).toBeTruthy();
   cleanup();
 
   const reed = boxPageAt(handlers, "box/box_9");
@@ -10270,7 +10374,7 @@ test("a box whose release did not finish says so on its page and its row, with R
   fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
   await waitFor(() => expect(changes).toEqual(["release box_1"]));
   expect(await page.findByText("calm-otter was released")).toBeTruthy();
-  expect(page.getByText(/^Released just now, today at .+, by you\. BB Box remembers a released box for 24 hours\.$/)).toBeTruthy();
+  expect(page.getByText(/^Released just now, Today \d{2}:\d{2}, by you\. BB Box remembers a released box for 24 hours\.$/)).toBeTruthy();
   cleanup();
 
   const row = server([stuck]);
@@ -10791,6 +10895,11 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
   expect((within(dialog).getByRole("radio", { name: /^In / }) as HTMLInputElement).checked).toBe(true);
   expect((within(dialog).getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(true);
   expect(within(dialog).queryByRole("radio", { name: "Whole" })).toBeNull();
+  fireEvent.change(name, { target: { value: "Bad" } });
+  const why = within(dialog).getByRole("alert");
+  expect(why.textContent).toMatch(/lower-case letter/);
+  expect(name.getAttribute("aria-describedby")).toBe(why.id);
+  expect(name.className).toContain("border-destructive");
   fireEvent.click(within(dialog).getByRole("radio", { name: "As one of your machines" }));
   fireEvent.change(name, { target: { value: "calm-otter" } });
   fireEvent.click(await within(dialog).findByRole("radio", { name: "Shared" }));
@@ -10939,7 +11048,7 @@ test("070 unit 6: a guarded restore names every thread, the control and a termin
   const restore = within(card).getByRole("button", { name: "Restore calm-otter to before the migration" });
   restore.focus();
   fireEvent.click(restore);
-  const dialog = await slot.findByRole("alertdialog", { name: 'Restore calm-otter to "before the migration"?' });
+  const dialog = await slot.findByRole("alertdialog", { name: "Cannot restore calm-otter" });
   await within(dialog).findByText(/does not restore such a box yet/);
   const listed = within(dialog).getAllByRole("listitem").map((item) => item.textContent);
   expect(listed).toEqual([
@@ -11035,8 +11144,9 @@ test("070 unit 6: Rename, Note and Delete from a row's menu, each with focus on 
   const name = within(dialog).getByRole("textbox", { name: "Name" });
   await waitFor(() => expect(document.activeElement).toBe(name));
   fireEvent.change(name, { target: { value: "before the schema change" } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(changes).toContain("snapshot.rename snaaaaaaaaaaaa before the schema change"));
+  fireEvent.keyDown(name, { key: "Enter" });
+  fireEvent.submit(name.closest("form")!);
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("snapshot.rename"))).toEqual(["snapshot.rename snaaaaaaaaaaaa before the schema change"]));
   await waitFor(() => expect(document.activeElement).toBe(trigger));
 
   menu = await openMenu(trigger);
@@ -11429,7 +11539,7 @@ test("the list asks once at a time: a slow answer is applied, and a recheck that
 function keepPreviewOf(until: number, overrides: Partial<NonNullable<KeepPreview["check"]>> = {}): KeepPreview {
   return {
     refusal: null,
-    check: { keptUntil: until, current: null, renews: false, shortens: false, gone: false, cost: "If calm-otter is released, bb-box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.1 GB on pve-1's fast until 2026-11-29, at no charge.", warning: null, unflushed: null, defaultDays: 30, ...overrides },
+    check: { keptUntil: until, current: null, renews: false, shortens: false, gone: false, cost: "If calm-otter is released, BB Box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.1 GB on pve-1's fast until 2026-11-29, at no charge.", warning: null, unflushed: null, defaultDays: 30, ...overrides },
   };
 }
 
@@ -11462,6 +11572,63 @@ test("070 unit 8: Keep… opens on the date bb-box plans, says what keeping cost
   await waitFor(() => expect(slot.queryByRole("alertdialog")).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(asked[0]).toEqual({});
+});
+
+test("Enter in Keep waits for the check of the date in the field", async () => {
+  const until = Date.UTC(2026, 10, 29, 23, 59, 59, 999);
+  let release: (preview: KeepPreview) => void = () => {};
+  const { handlers, changes } = server([box()], {
+    snapshots: snapshotsView(),
+    keepPreview: (input) => {
+      if (input.until) {
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+      return keepPreviewOf(until);
+    },
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const menu = await openMenu(within(card).getByRole("button", { name: "before the migration actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Keep…" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Keep "before the migration"' });
+  const date = within(dialog).getByLabelText("Keep it until the end of") as HTMLInputElement;
+  await waitFor(() => expect(date.value).toBe("2026-11-29"));
+  fireEvent.change(date, { target: { value: "2026-12-24" } });
+  fireEvent.submit(date.closest("form")!);
+  expect(changes.some((change) => change.startsWith("snapshot.keep"))).toBe(false);
+  await act(async () => release(keepPreviewOf(Date.parse("2026-12-24T23:59:59.999Z"))));
+  await waitFor(() => expect((within(dialog).getByRole("button", { name: "Keep until Thu 24 Dec" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.submit(date.closest("form")!);
+  await waitFor(() => expect(changes).toContain('snapshot.keep {"box":"box_1","snapshot":"snaaaaaaaaaaaa","until":"2026-12-24"}'));
+});
+
+test("Keep on a snapshot already kept opens on its renewal date", async () => {
+  const keptUntil = Date.UTC(2027, 0, 15, 23, 59, 59, 999);
+  const { handlers } = server([box()], {
+    snapshots: snapshotsView({ records: [snapshotRow({ keptUntil })] }),
+    keepPreview: () => new Promise<KeepPreview>(() => {}),
+  });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  const menu = await openMenu(within(card).getByRole("button", { name: "before the migration actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Keep 30 more days…" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Keep "before the migration" longer' });
+  const date = within(dialog).getByLabelText("Keep it until the end of") as HTMLInputElement;
+  const renewal = keepOpeningDate(keptUntil, 30, Date.now());
+  expect(date.value).toBe(renewal);
+  expect(date.value).not.toBe(new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString().slice(0, 10));
+});
+
+test("a failed restore check says the box cannot be restored, and only offers Close", async () => {
+  const slot = boxPageAt(server([box()], { snapshots: snapshotsView() }).handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  fireEvent.click(within(card).getByRole("button", { name: "Restore calm-otter to before the migration" }));
+  const dialog = await slot.findByRole("alertdialog", { name: "Cannot restore calm-otter" });
+  expect(within(dialog).getByRole("alert").textContent).toBe("No preview.");
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeTruthy();
+  expect(within(dialog).queryByRole("button", { name: /Restore/ })).toBeNull();
 });
 
 test("070 unit 8: Keep… is off with why where no fork could use it after a release; a kept snapshot offers a renewal and Stop keeping, and says when it goes", async () => {
@@ -11536,7 +11703,7 @@ test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card 
   expect(await within(dialog).findByText(/is in use by the restore that began/)).toBeTruthy();
   expect(within(dialog).getByText("Skipped, and why:")).toBeTruthy();
   const keep = within(dialog).getByRole("button", { name: "Keep 1" });
-  fireEvent.click(keep);
+  fireEvent.submit(keep.closest("form")!);
   await waitFor(() => expect(changes.find((change) => change.startsWith("snapshots.bulk "))).toBe('snapshots.bulk {"snapshots":["snreleasedaaaa"],"change":"keep"}'), { timeout: 2000 });
   expect(bulkAsked[0]).toBe("keep snlivingaaaaaa snreleasedaaaa");
 });

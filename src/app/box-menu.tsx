@@ -290,7 +290,13 @@ export function BoxMenu({
         }}
         footer={
           <>
-            <DialogButton variant="outline" onClick={() => setConfirmingForget(false)}>
+            <DialogButton
+              variant="outline"
+              onClick={() => {
+                forgetting.clear();
+                setConfirmingForget(false);
+              }}
+            >
               Cancel
             </DialogButton>
             <DialogButton danger busyWords="Forgetting…" onClick={() => void forgetting.run(() => (machine ? machine.forget() : thread?.act("forget")))}>
@@ -312,7 +318,13 @@ export function BoxMenu({
           }}
           footer={
             <>
-              <DialogButton variant="outline" onClick={() => setConfirmingRelease(false)}>
+              <DialogButton
+                variant="outline"
+                onClick={() => {
+                  releasing.clear();
+                  setConfirmingRelease(false);
+                }}
+              >
                 Cancel
               </DialogButton>
               {box.releaseHeldForKept ? (

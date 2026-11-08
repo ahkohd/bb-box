@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { INVALID_BORDER } from "./size-field.ts";
+import { FieldProblem } from "./field-shell.tsx";
 import type { Actor } from "../core/box-log.ts";
 import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
@@ -30,6 +32,7 @@ import {
   headWords,
   holdsWords,
   keepDay,
+  keepOpeningDate,
   keepWords,
   otherLosses,
   requestId,
@@ -505,6 +508,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
   const [refused, setRefused] = useState<string | null>(null);
   const request = useRef(requestId());
   const describedBy = useId();
+  const nameErrorId = useId();
   const whereName = useId();
   const gpuName = useId();
   useEffect(() => {
@@ -562,8 +566,8 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
     >
       <label className="block space-y-1">
         <span className="text-xs text-foreground">Name of the new box</span>
-        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className="h-8" data-first-focus aria-invalid={!!nameWhy} aria-describedby={describedBy} />
-        {nameWhy ? <span className="block text-xs text-destructive-text">{nameWhy}</span> : null}
+        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className={cn("h-8", nameWhy && INVALID_BORDER)} data-first-focus aria-invalid={!!nameWhy} aria-describedby={nameWhy ? nameErrorId : describedBy} />
+        {nameWhy ? <FieldProblem id={nameErrorId}>{nameWhy}</FieldProblem> : null}
       </label>
       {check?.offersGpu ? (
         <fieldset className="space-y-1">
@@ -662,21 +666,15 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
   const check = preview.check;
   if (preview.refusal || !check) {
     return (
-      <Shell title={title} onClose={onClose} returnTo={returnTo} footer={<AlertDialogCancel autoFocus>Close</AlertDialogCancel>}>
-        <AlertDialogDescription asChild>
-          <div className="space-y-3">
-            <WarnPanel>
-              <p>{preview.refusal ?? `${PRODUCT} cannot restore it now.`}</p>
-              {threads.length || others.length ? (
-                <ul className="mt-2 list-disc space-y-0.5 pl-5">
-                  {[...threads, ...others].map((loss) => (
-                    <li key={loss.key}>{loss.words}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </WarnPanel>
-          </div>
-        </AlertDialogDescription>
+      <Shell title={`Cannot restore ${box.name}`} onClose={onClose} returnTo={returnTo} footer={<AlertDialogCancel autoFocus>Close</AlertDialogCancel>}>
+        <Refused words={preview.refusal ?? `${PRODUCT} cannot restore it now.`} />
+        {threads.length || others.length ? (
+          <ul className="list-disc space-y-0.5 pl-5">
+            {[...threads, ...others].map((loss) => (
+              <li key={loss.key}>{loss.words}</li>
+            ))}
+          </ul>
+        ) : null}
       </Shell>
     );
   }
@@ -771,7 +769,8 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
 function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box: RowBox; row: SnapshotRowView; keepDays: number; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const [until, setUntil] = useState<string | null>(null);
-  const [opened] = useState(() => utcDate(Date.now() + keepDays * 24 * 60 * 60_000));
+  const [openedAt] = useState(() => Date.now());
+  const opened = keepOpeningDate(row.keptUntil, keepDays, openedAt);
   const [preview, setPreview] = useState<(KeepPreview & { readonly until: string | null }) | null>(null);
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -795,8 +794,9 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
   }, [call, box.id, row.id, until]);
   const check = preview?.check ?? null;
   const renews = row.keptUntil !== null;
+  const current = preview && preview.until === until;
   const keep = async () => {
-    if (!check) return;
+    if (!check || !current) return;
     setSending(true);
     setRefused(null);
     const answer = await changed(call, "snapshot.keep", { box: box.id, snapshot: row.id, until: utcDate(check.keptUntil) });
@@ -805,7 +805,6 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
     if (answer.error) setRefused(answer.error);
     else onClose();
   };
-  const current = preview && preview.until === until;
   return (
     <Shell
       title={renews ? `Keep "${row.name}" longer` : `Keep "${row.name}"`}
@@ -816,7 +815,7 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={sending || !check || !current} onClick={() => void keep()}>
+          <Button type="submit" disabled={sending || !check || !current}>
             {sending ? "Keeping…" : check ? `Keep until ${keepDay(check.keptUntil)}` : "Keep"}
           </Button>
         </>
@@ -930,9 +929,6 @@ function TextDialog({ box, row, kind, onClose, onChanged, returnTo }: { box: Row
             value={text}
             maxLength={60}
             onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && text.trim() && !sending) void save();
-            }}
             className="h-8"
             data-first-focus
           />

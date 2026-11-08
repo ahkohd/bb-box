@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { plain, type Path, type PlainValue } from "./settings-paths.ts";
 import { INVALID_BORDER } from "./size-field.ts";
+import { FieldProblem } from "./field-shell.tsx";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
 
 export function unplacedProblems(draft: Draft, placed: readonly Path[]): string[] {
@@ -64,11 +65,7 @@ export function DraftRow({
             {children}
             {unit}
           </div>
-          {problem ? (
-            <p id={`${id}-problem`} role="alert" className="text-xs text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
+          {problem ? <FieldProblem id={`${id}-problem`}>{problem}</FieldProblem> : null}
         </div>
       </div>
       {conflict ? (

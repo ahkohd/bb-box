@@ -28,6 +28,7 @@
 // bb-box can read saved values once into the box-sizes setting.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import { PRODUCT } from "../../brand.ts";
 import {
   addressFor,
   checkConnection,
@@ -262,7 +263,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.tokenId]: {
     type: "string",
     label: "Proxmox LXC: API token ID",
-    description: "The Proxmox API token bb-box signs in with, such as bbbox@pve!plugin. The setup guide lists the privileges it needs.",
+    description: `The Proxmox API token ${PRODUCT} signs in with, such as bbbox@pve!plugin. The setup guide lists the privileges it needs.`,
     default: "",
   },
   [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", description: "The secret of the API token, from the setup guide's token file.", secret: true },
@@ -270,7 +271,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Proxmox LXC: TLS fingerprint",
     description:
-      "Pins the Proxmox API's certificate, so bb-box trusts that certificate alone. Paste its SHA-256 fingerprint from the setup guide's token file. Leave it empty to check the certificate against its CA instead.",
+      `Pins the Proxmox API's certificate, so ${PRODUCT} trusts that certificate alone. Paste its SHA-256 fingerprint from the setup guide's token file. Leave it empty to check the certificate against its CA instead.`,
     default: "",
   },
   [LXC_KEYS.caCertificate]: {
@@ -335,13 +336,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Proxmox LXC: SSH private key",
     description:
-      "The SSH key bb-box reaches boxes with. Paste the unencrypted OpenSSH private key the templates were built with, the setup guide's BBBOX_SSH_KEY. Leave it empty and bb-box makes one and shows its public key, which the templates must then accept.",
+      `The SSH key ${PRODUCT} reaches boxes with. Paste the unencrypted OpenSSH private key the templates were built with, the setup guide's BBBOX_SSH_KEY. Leave it empty and ${PRODUCT} makes one and shows its public key, which the templates must then accept.`,
     secret: true,
   },
   [LXC_KEYS.sshUser]: {
     type: "string",
     label: "Proxmox LXC: SSH user",
-    description: "The user in the templates that bb-box and BB work as.",
+    description: `The user in the templates that ${PRODUCT} and BB work as.`,
     default: LXC_DEFAULTS.sshUser,
   },
   [LXC_KEYS.reserveMemoryMiB]: {

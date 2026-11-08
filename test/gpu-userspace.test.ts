@@ -472,10 +472,10 @@ test("071 unit 12: while an earlier update still runs in the box, as one bb-box 
   const busy = await found(state, box);
   assert.equal(typeof busy.userspaceRunningSeenAt, "number", "the held lock is recorded on the box");
   assert.deepEqual(boxView(busy, true, { owner: "agent", holder: null }).userspaceNotice, {
-    words: "An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.",
+    words: "An earlier update of NVIDIA's userspace is still running in it: BB Box reads its userspace once it ends, and starts no other update until then.",
     action: null,
   });
-  assert.equal(userspaceFixLine(busy), "NVIDIA userspace: An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.", "status offers no Update again while it runs");
+  assert.equal(userspaceFixLine(busy), "NVIDIA userspace: An earlier update of NVIDIA's userspace is still running in it: BB Box reads its userspace once it ends, and starts no other update until then.", "status offers no Update again while it runs");
   assert.match(boxDetail(busy), new RegExp(`^GPU: .*An earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then\\. nvidia-smi and CUDA may fail in it until it ends\\. Ask the user\\.$`, "m"));
   for (const check of [true, false]) {
     const refused = await rejectionOf(state.boxes.updateUserspace(THREAD, box.id, { check }));

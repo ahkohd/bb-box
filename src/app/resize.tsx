@@ -392,11 +392,23 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
           ? resizedNow(words(step.answer.to ?? step.answer.from!, box.resizing ?? null), step.answer.plan?.gpu, step.answer.changed, !!step.answer.box?.lastResize?.restart)
           : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`;
 
+  const submit = () => {
+    if (step.at === "pick") {
+      if (blocked || unchanged || checking) return;
+      if (restart) setStep({ at: "confirm", down: plan?.downSeconds ?? null });
+      else void apply();
+      return;
+    }
+    if (step.at === "confirm") void apply({ restart: true });
+    else if (step.at === "threads") void apply({ restart: true, force: true });
+  };
+
   return (
     <BoxDialog
       title={title}
       description={description}
       busy={applying}
+      onSubmit={step.at === "done" ? undefined : submit}
       onClose={close}
       marks={{ "data-resize-at": at }}
       onOpenAutoFocus={(event) => {
@@ -417,7 +429,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
                 {checking ? "Checking…" : "Check again"}
               </DialogButton>
             ) : null}
-            <DialogButton disabled={blocked || unchanged} busyWords={restart ? "Resizing…" : "Resizing…"} onClick={() => (restart ? setStep({ at: "confirm", down: plan?.downSeconds ?? null }) : void apply())}>
+            <DialogButton type="submit" disabled={blocked || unchanged} busyWords="Resizing…">
               {restart ? "Resize…" : "Resize"}
             </DialogButton>
           </>
@@ -426,7 +438,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
             <DialogButton variant="outline" onClick={() => setStep({ at: "pick" })}>
               Back
             </DialogButton>
-            <DialogButton busyWords="Restarting…" onClick={() => void apply({ restart: true })}>
+            <DialogButton type="submit" busyWords="Restarting…">
               {moving ? "Move and restart" : gpuChange?.installs ? "Install and restart" : "Restart and resize"}
             </DialogButton>
           </>
@@ -435,7 +447,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
             <DialogButton variant="outline" onClick={() => setStep({ at: "pick" })}>
               Back
             </DialogButton>
-            <DialogButton danger busyWords="Restarting…" onClick={() => void apply({ restart: true, force: true })}>
+            <DialogButton type="submit" danger busyWords="Restarting…">
               Restart anyway
             </DialogButton>
           </>

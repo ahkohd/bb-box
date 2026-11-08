@@ -42,6 +42,10 @@ export interface InUse<M extends string> {
 export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }: { inUse: InUse<M> | null; words: Readonly<Record<M, string>>; onClose: () => void; onForce: (inUse: InUse<M>) => Promise<string | null | void> | void }) {
   const verb = inUse ? words[inUse.method] : "";
   const action = useDialogAction(onClose);
+  const close = () => {
+    action.clear();
+    onClose();
+  };
   return (
     <BoxDialog
       open={inUse !== null}
@@ -49,13 +53,10 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
       description={inUse ? `${workingOnWords(inUse.threads, inUse.box.name)}.` : null}
       busy={action.busy}
       refused={action.refused}
-      onClose={() => {
-        action.clear();
-        onClose();
-      }}
+      onClose={close}
       footer={
         <>
-          <DialogButton variant="outline" onClick={onClose}>
+          <DialogButton variant="outline" onClick={close}>
             Cancel
           </DialogButton>
           <DialogButton danger busyWords={verb === "Stop" ? "Stopping…" : verb.endsWith("e") ? `${verb.slice(0, -1)}ing…` : `${verb}…`} onClick={() => inUse && void action.run(() => onForce(inUse))}>
@@ -72,6 +73,10 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
 /** "Remove build-1?", with what removing does to the machine. */
 export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView | null; onClose: () => void; onRemove: (box: BoxView, deleteKept?: boolean) => Promise<string | null | void> | void }) {
   const action = useDialogAction(onClose);
+  const close = () => {
+    action.clear();
+    onClose();
+  };
   return (
     <BoxDialog
       open={box !== null}
@@ -79,13 +84,10 @@ export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView |
       description={box?.nature === "real" ? "Its machine leaves BB, and it is reset and returned to its pool. Anything in the box user's home will be deleted." : "Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first."}
       busy={action.busy}
       refused={action.refused}
-      onClose={() => {
-        action.clear();
-        onClose();
-      }}
+      onClose={close}
       footer={
         <>
-          <DialogButton variant="outline" onClick={onClose}>
+          <DialogButton variant="outline" onClick={close}>
             Cancel
           </DialogButton>
           {box?.releaseHeldForKept ? (

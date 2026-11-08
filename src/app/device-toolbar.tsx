@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { INVALID_BORDER } from "./size-field.ts";
 import {
   BATTERY_LEVELS,
   LOCATION_RANGE,
@@ -785,6 +786,7 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
           placeholder="https://example.com"
           value={typed}
           aria-invalid={problem ? true : undefined}
+          className={cn(problem && INVALID_BORDER)}
           onChange={(event) => {
             const next = event.target.value;
             setTyped(next);
@@ -835,6 +837,7 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
             placeholder="for example 51.5"
             value={latitude}
             aria-invalid={problem ? true : undefined}
+            className={cn(problem && INVALID_BORDER)}
             onChange={(event) => {
               const next = event.target.value;
               setLatitude(next);
@@ -851,6 +854,7 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
             placeholder="for example -0.1"
             value={longitude}
             aria-invalid={problem ? true : undefined}
+            className={cn(problem && INVALID_BORDER)}
             onChange={(event) => {
               const next = event.target.value;
               setLongitude(next);
@@ -913,9 +917,9 @@ function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; mod
           <Input
             autoFocus
             inputMode="numeric"
-            className="w-16"
             aria-label="Level, in per cent"
             aria-invalid={problem ? true : undefined}
+            className={cn("w-16", problem && INVALID_BORDER)}
             value={level}
             onChange={(event) => {
               const next = event.target.value;

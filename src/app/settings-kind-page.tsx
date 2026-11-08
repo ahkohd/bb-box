@@ -16,6 +16,7 @@ import { ChangedChip, ConflictNote, focusAfterRender, RestoredNote, SAVING_RULE,
 import { kindAvailability, kindName } from "./settings-status.ts";
 import { KindGpuCard } from "./settings-gpus.tsx";
 import { kindHasGpuDefault } from "./gpu-settings-words.ts";
+import { INVALID_BORDER } from "./size-field.ts";
 
 const PART_LABELS: Readonly<Record<SizePart, string>> = { cores: "Cores", memoryGiB: "Memory, GiB", diskGiB: "Disk, GiB" };
 const PART_NAMES: Readonly<Record<SizePart, string>> = { cores: "cores", memoryGiB: "memory, in GiB", diskGiB: "disk, in GiB" };
@@ -87,7 +88,7 @@ function SizeCell({ draft, id, size, part, describe, invalid }: { draft: Draft; 
         aria-label={`${name} size: ${PART_NAMES[part]}`}
         aria-describedby={describe}
         aria-invalid={invalid || undefined}
-        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", invalid && "border-destructive")}
+        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", invalid && INVALID_BORDER)}
         inputMode="decimal"
         autoComplete="off"
         placeholder={part === "diskGiB" && size !== "largest" ? "Image's own" : undefined}
@@ -194,7 +195,7 @@ function WarmField({ draft, row, kind, problem, describe }: { draft: Draft; row:
         aria-label={`Warm boxes on ${row.label}`}
         aria-describedby={describe}
         aria-invalid={problem ? true : undefined}
-        className={cn("h-8 w-16 text-right text-xs tabular-nums", problem && "border-destructive")}
+        className={cn("h-8 w-16 text-right text-xs tabular-nums", problem && INVALID_BORDER)}
         inputMode="numeric"
         autoComplete="off"
         placeholder="0"
