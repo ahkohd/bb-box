@@ -166,13 +166,15 @@ function FieldShell({ draft, path, ids, label, help, chips, problem, stacked, on
             <ChangedChip show={draft.changed(path) && !conflict} />
           </span>
           <Help id={ids.help} text={help} label={label} />
+        </div>
+        <div className={cn("flex min-w-0 flex-col gap-1", stacked ? "w-full" : "w-full sm:w-72 sm:shrink-0 sm:items-end")}>
+          {children}
           {problem ? (
-            <p id={ids.problem} role="alert" className="mt-0.5 text-xs text-destructive-text">
+            <p id={ids.problem} role="alert" className="text-xs text-destructive-text">
               {problem}
             </p>
           ) : null}
         </div>
-        <div className={cn("flex min-w-0 flex-col gap-1", stacked ? "w-full" : "w-full sm:w-72 sm:shrink-0 sm:items-end")}>{children}</div>
       </div>
       {conflict ? (
         <ConflictNote
