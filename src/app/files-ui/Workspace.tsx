@@ -6,9 +6,12 @@ import { cn } from "@/lib/utils";
 import type { Contract } from "../../plugin/contract.ts";
 import { parentPath, resolvePath } from "../../core/box-fs.ts";
 import type { GuestOs } from "../../transports/types.ts";
-import type { FlatEntry } from "./tree.ts";
+import { createdPath, renamedPath } from "./entry-name.ts";
+import { DEFAULT_EXPLORER_PX, showsOneSurface } from "./layout.ts";
+import type { EntryKind, FlatEntry } from "./tree.ts";
 import { isMarkdownPath } from "./markdown.ts";
 import { visibleNames } from "./group-hits.ts";
+import { absoluteFrom } from "./locate.ts";
 import { Explorer } from "./Explorer.tsx";
 import { EditorTabs } from "./EditorTabs.tsx";
 import { FileView, fileMetaLabel } from "./FileView.tsx";
@@ -18,7 +21,6 @@ import type { FilesScope } from "./files-scope.ts";
 
 const MIN_EXPLORER_PX = 180;
 const MAX_EXPLORER_PX = 560;
-const DEFAULT_EXPLORER_PX = 260;
 const WIDTH_STORAGE_KEY = "bb-box:files-explorer-width";
 const HIDDEN_STORAGE_KEY = "bb-box:files-include-hidden";
 
@@ -27,12 +29,15 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   const [home, setHome] = useState<string | null>(null);
   const [root, setRoot] = useState<string | null>(null);
   const [names, setNames] = useState<string[]>([]);
+  const [directories, setDirectories] = useState<string[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [treeError, setTreeError] = useState<string | null>(null);
   const [includeHidden, setIncludeHidden] = useState(readStoredHidden);
   const [explorerWidth, setExplorerWidth] = useState(readStoredWidth);
   const [isExplorerOpen, setIsExplorerOpen] = useState(true);
+  const [frameWidth, setFrameWidth] = useState(readFrame);
+  const [treeForward, setTreeForward] = useState(true);
   const [isQuickOpen, setIsQuickOpen] = useState(false);
   const [findRequest, setFindRequest] = useState(0);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
@@ -53,6 +58,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     setHome(null);
     setRoot(null);
     setNames([]);
+    setDirectories([]);
     setTreeStatus("loading");
     setTreeError(null);
     void rpc.call("files.home", { box: boxId }).then((result) => {
@@ -74,6 +80,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     (target: string | null) => {
       if (target === null) {
         setNames([]);
+        setDirectories([]);
         setTruncated(false);
         setTreeStatus("idle");
         setTreeError(null);
@@ -86,12 +93,14 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
         if (requestRef.current !== generation) return;
         if (result.error !== null) {
           setNames([]);
+          setDirectories([]);
           setTruncated(false);
           setTreeStatus("error");
           setTreeError(result.error);
           return;
         }
         setNames([...result.paths]);
+        setDirectories([...(result.directories ?? [])]);
         setTruncated(result.truncated);
         setTreeStatus("ready");
         setTreeError(null);
@@ -105,9 +114,28 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   }, [loadTree, root]);
 
   const entries = useMemo<FlatEntry[]>(
-    () => visibleNames(names, includeHidden).map((path) => ({ path, kind: "file" })),
-    [includeHidden, names],
+    () => [
+      ...visibleNames(directories, includeHidden).map((path) => ({ path, kind: "directory" as const })),
+      ...visibleNames(names, includeHidden).map((path) => ({ path, kind: "file" as const })),
+    ],
+    [directories, includeHidden, names],
   );
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (node === null) return;
+    const apply = () => {
+      if (node.clientWidth > 0) setFrameWidth(node.clientWidth);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const narrow = showsOneSurface(frameWidth);
+  const narrowRef = useRef(narrow);
+  narrowRef.current = narrow;
 
   const restoreFocus = useCallback(() => {
     const node = rootRef.current;
@@ -121,9 +149,62 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       setReveal(null);
       tabs.open(path);
       setFindRequest(0);
+      if (narrowRef.current) setTreeForward(false);
       requestAnimationFrame(restoreFocus);
     },
     [restoreFocus, tabs],
+  );
+
+  const placeOf = useCallback(
+    (relative: string) => {
+      if (root === null) return null;
+      return absoluteFrom(os, root, relative);
+    },
+    [os, root],
+  );
+
+  const createEntry = useCallback(
+    async (parent: string, kind: EntryKind, name: string) => {
+      const relative = createdPath(parent, name);
+      const abs = relative === null ? null : placeOf(relative);
+      if (scope === null || abs === null) return "Use a name without slashes.";
+      const result = await rpc.call("files.create", { box: boxId, path: abs, kind });
+      if (result.error !== null) return result.error;
+      loadTree(root);
+      if (kind === "file" && relative !== null) openFile(relative);
+      return null;
+    },
+    [boxId, loadTree, openFile, placeOf, root, rpc, scope],
+  );
+
+  const renameEntry = useCallback(
+    async (path: string, name: string) => {
+      const relative = renamedPath(path, name);
+      if (relative === null) return "Use a name without slashes.";
+      if (relative === path) return null;
+      const from = placeOf(path);
+      const to = placeOf(relative);
+      if (from === null || to === null) return "That name cannot be used.";
+      const result = await rpc.call("files.rename", { box: boxId, from, to });
+      if (result.error !== null) return result.error;
+      tabs.retarget(path, relative);
+      loadTree(root);
+      return null;
+    },
+    [boxId, loadTree, placeOf, root, rpc, tabs],
+  );
+
+  const deleteEntry = useCallback(
+    async (path: string) => {
+      const abs = placeOf(path);
+      if (abs === null || home === null) return "That path cannot be changed.";
+      const result = await rpc.call("files.delete", { box: boxId, path: abs, home });
+      if (result.error !== null) return result.error;
+      tabs.closeUnder(path);
+      loadTree(root);
+      return null;
+    },
+    [boxId, home, loadTree, placeOf, root, rpc, tabs],
   );
 
   const openMatch = useCallback(
@@ -269,6 +350,9 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     </div>
   );
 
+  const showTree = narrow ? treeForward || tabs.activePath === null : isExplorerOpen;
+  const showFile = narrow ? !showTree : true;
+
   return (
     <div
       ref={rootRef}
@@ -276,9 +360,9 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       tabIndex={-1}
       className="relative flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-background focus:outline-none"
     >
-      {isExplorerOpen ? (
+      {showTree ? (
         <>
-          <div style={{ width: explorerWidth }} className="flex min-h-0 shrink-0 flex-col overflow-hidden">
+          <div style={showFile ? { width: explorerWidth } : undefined} className={showFile ? "flex min-h-0 shrink-0 flex-col overflow-hidden" : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}>
             <Explorer
               entries={entries}
               activePath={tabs.activePath}
@@ -295,26 +379,31 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
               onOpenMatch={openMatch}
               onRefresh={() => loadTree(root)}
               onQuickOpen={() => setIsQuickOpen(true)}
+              onCreate={createEntry}
+              onRename={renameEntry}
+              onDelete={deleteEntry}
               scope={scope}
               searchFocusRequest={searchFocusRequest}
               header={header}
             />
           </div>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize the file explorer"
-            onPointerDown={startResize}
-            onDoubleClick={() => {
-              setExplorerWidth(DEFAULT_EXPLORER_PX);
-              storeWidth(DEFAULT_EXPLORER_PX);
-            }}
-            className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-ring"
-          />
+          {showFile ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the file explorer"
+              onPointerDown={startResize}
+              onDoubleClick={() => {
+                setExplorerWidth(DEFAULT_EXPLORER_PX);
+                storeWidth(DEFAULT_EXPLORER_PX);
+              }}
+              className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-ring"
+            />
+          ) : null}
         </>
       ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {showFile ? <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <EditorTabs
           tabs={tabs.tabs}
           activePath={tabs.activePath}
@@ -326,16 +415,16 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
           <button
             type="button"
-            onClick={() => setIsExplorerOpen((open) => !open)}
-            aria-label={isExplorerOpen ? "Hide the file explorer" : "Show the file explorer"}
+            onClick={() => (narrow ? setTreeForward(true) : setIsExplorerOpen((open) => !open))}
+            aria-label={narrow ? "Back to the files" : isExplorerOpen ? "Hide the file explorer" : "Show the file explorer"}
             className={cn(
               "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md",
               "text-muted-foreground hover:bg-state-hover hover:text-foreground",
               "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-              isExplorerOpen && "text-foreground",
+              !narrow && isExplorerOpen && "text-foreground",
             )}
           >
-            <Icon name="PanelLeft" aria-hidden className="size-3.5" />
+            <Icon name={narrow ? "ArrowLeft" : "PanelLeft"} aria-hidden className="size-3.5" />
           </button>
           <Breadcrumb root={root} path={activeTab?.path ?? null} />
           <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -385,7 +474,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
             }}
           />
         )}
-      </div>
+      </div> : null}
       {isQuickOpen ? <QuickOpen entries={entries} onOpenFile={openFile} onClose={() => setIsQuickOpen(false)} /> : null}
     </div>
   );
@@ -587,8 +676,11 @@ function readStoredWidth(): number {
   const stored = safeRead(WIDTH_STORAGE_KEY);
   const parsed = stored === null ? Number.NaN : Number.parseInt(stored, 10);
   if (Number.isFinite(parsed)) return clampWidth(parsed);
-  if (typeof window !== "undefined" && window.innerWidth < 700) return MIN_EXPLORER_PX;
   return DEFAULT_EXPLORER_PX;
+}
+
+function readFrame(): number {
+  return typeof window === "undefined" ? DEFAULT_EXPLORER_PX * 3 : window.innerWidth;
 }
 
 function storeWidth(value: number): void {

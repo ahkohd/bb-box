@@ -80,4 +80,5 @@ which records still stand as written. The current design as a whole is in
 | [072](072-voxl.md) | voxl streams Linux X11 desktops, beside today's streamers, as an option the owner picks | Withdrawn by the owner; unit V1 removed |
 | [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md) | Recordings draw the pointer, keys and zooms from the event log | Accepted; desktops built, device boxes not yet |
 | [074](074-a-box-has-a-files-view.md) | A box has a files view: the box user's own files, in the panel | Accepted; the view itself is superseded by 075 |
-| [075](075-the-files-view-is-the-editor-plugins-ui.md) | The files view is the editor plugin's own UI, reading the box | Accepted |
+| [075](075-the-files-view-is-the-editor-plugins-ui.md) | The files view is the editor plugin's own UI, reading the box | Accepted; creating, renaming and a narrow window are in 076 |
+| [076](076-the-files-view-can-create-rename-and-delete.md) | The files view can create, rename and delete, and a narrow window shows one surface | Accepted |

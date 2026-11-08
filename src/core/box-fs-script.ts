@@ -518,11 +518,12 @@ export function namesScript(os: GuestOs, root: string): string {
       `$bbFilesRoot = ${ps(root)}; ` +
       "if (-not (Test-Path -LiteralPath $bbFilesRoot -PathType Container)) { 'ERR`tunreadable'; exit 0 }; " +
       "$bbFilesN = 0; " +
-      "Get-ChildItem -LiteralPath $bbFilesRoot -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { " +
+      "Get-ChildItem -LiteralPath $bbFilesRoot -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { " +
       "$bbFilesRel = $_.FullName.Substring($bbFilesRoot.Length).TrimStart('\\'); " +
-      "if ($bbFilesRel -match '(\\.git|node_modules|vendor)\\\\') { return }; " +
+      "if ($bbFilesRel -eq '' -or $bbFilesRel -match '(\\.git|node_modules|vendor)(\\\\|$)') { return }; " +
       `$bbFilesN++; if ($bbFilesN -gt ${NAME_CAP}) { 'TRUNC'; return }; ` +
-      "'NAME`t' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bbFilesRel)) }"
+      "$bbFilesTag = if ($_.PSIsContainer) { 'DIR' } else { 'NAME' }; " +
+      "$bbFilesTag + \"`t\" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bbFilesRel)) }"
     );
   }
   return (
@@ -530,12 +531,11 @@ export function namesScript(os: GuestOs, root: string): string {
     `cd -- ${sh(root)} || { printf 'ERR\\tunreadable\\n'; exit 0; }\n` +
     posixB64() +
     "bb_files_n=0\n" +
-    "find . \\( -name .git -o -name node_modules -o -name vendor \\) -prune -o -type f -print | while IFS= read -r bb_files_path; do\n" +
+    "find . \\( -name .git -o -name node_modules -o -name vendor \\) -prune -o \\( -type d -o -type f \\) -print | while IFS= read -r bb_files_path; do\n" +
     "  case \"$bb_files_path\" in ./*) ;; *) continue ;; esac\n" +
-    "  [ -f \"$bb_files_path\" ] || continue\n" +
     "  bb_files_n=$((bb_files_n + 1))\n" +
     `  if [ \"$bb_files_n\" -gt ${NAME_CAP} ]; then printf 'TRUNC\\n'; break; fi\n` +
-    "  printf 'NAME\\t%s\\n' \"$(bb_files_b64 \"${bb_files_path#./}\")\"\n" +
+    "  if [ -d \"$bb_files_path\" ]; then printf 'DIR\\t%s\\n' \"$(bb_files_b64 \"${bb_files_path#./}\")\"; else printf 'NAME\\t%s\\n' \"$(bb_files_b64 \"${bb_files_path#./}\")\"; fi\n" +
     "done\n"
   );
 }

@@ -104,7 +104,9 @@ export type FilesRange = { readonly error: null; readonly content: string; reado
 export type FilesWrite = { readonly error: null; readonly outcome: "written"; readonly sha256: string; readonly sizeBytes: number } | { readonly error: null; readonly outcome: "conflict"; readonly currentSha256: string | null } | { readonly error: string };
 export type FilesOk = { readonly error: null } | { readonly error: string };
 export type FilesSearch = { readonly error: null; readonly engine: "rg" | "grep" | "memory"; readonly hits: readonly FsHit[]; readonly truncated: boolean } | { readonly error: string };
-export type FilesNames = { readonly error: null; readonly paths: readonly string[]; readonly truncated: boolean } | { readonly error: string };
+export type FilesNames =
+  | { readonly error: null; readonly paths: readonly string[]; readonly directories: readonly string[]; readonly truncated: boolean }
+  | { readonly error: string };
 
 export function words(code: string): string {
   return ERR_WORDS[code] ?? ERR_WORDS.failed!;
@@ -350,6 +352,7 @@ function grepHit(line: string): FsHit | null {
 
 export function parseNames(stdout: string): FilesNames {
   const paths: string[] = [];
+  const directories: string[] = [];
   let truncated = false;
   for (const line of stdout.split(/\r?\n/)) {
     if (!line) continue;
@@ -359,8 +362,9 @@ export function parseNames(stdout: string): FilesNames {
       continue;
     }
     if (line.startsWith("NAME\t")) paths.push(decode(line.slice(5)).replaceAll("\\", "/"));
+    if (line.startsWith("DIR\t")) directories.push(decode(line.slice(4)).replaceAll("\\", "/"));
   }
-  return { error: null, paths, truncated };
+  return { error: null, paths, directories, truncated };
 }
 
 export interface CorpusFile {
@@ -497,7 +501,9 @@ export class SearchCorpus {
   #at: number | null = null;
   #partial = false;
   #texts = false;
+  #named = false;
   #names: string[] = [];
+  #directories: string[] = [];
   #files = new Map<string, CorpusFile>();
   #bytes = 0;
   readonly #budget: number;
@@ -524,9 +530,9 @@ export class SearchCorpus {
     return this.#texts && this.#root === root && !this.#partial && this.#at !== null && this.#now() - this.#at < CORPUS_FRESH_MS;
   }
 
-  namesFor(root: string): readonly string[] | null {
-    if (this.#root !== root || this.#at === null || this.#now() - this.#at >= CORPUS_FRESH_MS) return null;
-    return this.#names;
+  namesFor(root: string): { paths: readonly string[]; directories: readonly string[] } | null {
+    if (!this.#named || this.#root !== root || this.#at === null || this.#now() - this.#at >= CORPUS_FRESH_MS) return null;
+    return { paths: this.#names, directories: this.#directories };
   }
 
   texts(hidden: boolean): { path: string; text: string }[] {
@@ -538,6 +544,8 @@ export class SearchCorpus {
     this.#bytes = 0;
     this.#root = root;
     this.#names = [...names];
+    this.#directories = [];
+    this.#named = false;
     this.#at = this.#now();
     let dropped = false;
     for (const file of files) {
@@ -547,7 +555,7 @@ export class SearchCorpus {
     this.#texts = !this.#partial;
   }
 
-  rememberNames(root: string, names: readonly string[], truncated: boolean): void {
+  rememberNames(root: string, names: readonly string[], directories: readonly string[], truncated: boolean): void {
     if (this.#root !== root) {
       this.#files.clear();
       this.#bytes = 0;
@@ -559,6 +567,8 @@ export class SearchCorpus {
     }
     this.#root = root;
     this.#names = [...names];
+    this.#directories = [...directories];
+    this.#named = true;
     this.#at = this.#now();
   }
 
@@ -566,6 +576,8 @@ export class SearchCorpus {
     this.#files.clear();
     this.#bytes = 0;
     this.#names = [];
+    this.#directories = [];
+    this.#named = false;
     this.#at = null;
     this.#partial = false;
     this.#texts = false;
@@ -756,10 +768,10 @@ export async function listNames(box: FsBox, path: string, run: FsRun, corpus: Se
   const abs = absolutePath(box.os, path);
   if (!abs) return { error: words("bad-path") };
   const cached = corpus.namesFor(abs);
-  if (cached && !corpus.partial) return { error: null, paths: cached, truncated: false };
+  if (cached && !corpus.partial) return { error: null, paths: cached.paths, directories: cached.directories, truncated: false };
   const result = await checked(run, namesScript(box.os, abs), { timeoutMs: 20_000, maxOutputBytes: SEARCH_OUT });
   if (!isResult(result)) return result;
   const parsed = parseNames(result.stdout);
-  if (parsed.error === null) corpus.rememberNames(abs, parsed.paths, parsed.truncated);
+  if (parsed.error === null) corpus.rememberNames(abs, parsed.paths, parsed.directories, parsed.truncated);
   return parsed;
 }

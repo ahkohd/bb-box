@@ -16,7 +16,7 @@ Ported as they are, with the plugin's comments removed:
 
 Changed:
 
-- The data source. The plugin's workspace calls are the box file calls from 074. The tree is `files.names` for the folder in the path bar. Opening is `files.read`. A file past the size limit can show its first 256 KB with `files.readRange`, and that slice cannot be saved. Saving is `files.write` with the hash guard. Search is `files.search`. Create, rename and delete stay on the RPC, and this view has no buttons for them, because the plugin's view has none.
+- The data source. The plugin's workspace calls are the box file calls from 074. The tree is `files.names` for the folder in the path bar. Opening is `files.read`. A file past the size limit can show its first 256 KB with `files.readRange`, and that slice cannot be saved. Saving is `files.write` with the hash guard. Search is `files.search`. [076](076-the-files-view-can-create-rename-and-delete.md) adds create, rename and delete to the view. This record had left them off the view, because the plugin has no such buttons.
 - The workspace picker is a path bar. It opens at the box user's home. There is no project picker and no worktree picker. The folder button returns home. The up arrow opens the folder above.
 - It still opens from the Files button on the box's row, on its page, and in the Files tab.
 - Glyph colours use BB's theme tokens: foreground, warning text, destructive text, success, subtle foreground and muted foreground. The plugin's palette classes are not used.
@@ -29,4 +29,4 @@ Changed:
 
 - 074 still decides the transport, the limits, the hash guard, the search corpus, device boxes, and what a failure may say. A listing of names does not count as that searchable copy: search keeps reading the box until the copy is warm.
 - The plugin's copyright and permission notice on the [Third-party software](../../THIRD-PARTY.md) page covers this port.
-- A person creates, renames or deletes a file from the terminal, or an agent does it with `box_run`.
+- A person creates, renames or deletes from the view, as [076](076-the-files-view-can-create-rename-and-delete.md) decides. An agent still does it with `box_run`.

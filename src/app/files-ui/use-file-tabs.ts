@@ -4,6 +4,7 @@ import type { FilesRead } from "../../core/box-fs.ts";
 import type { Contract } from "../../plugin/contract.ts";
 import type { GuestOs } from "../../transports/types.ts";
 import { allowedMode, isMarkdownPath, type FileViewMode } from "./markdown.ts";
+import { movedPath } from "./entry-name.ts";
 import { absoluteFrom } from "./locate.ts";
 import type { FilesScope } from "./files-scope.ts";
 
@@ -83,6 +84,8 @@ export interface FileTabsApi {
   save(): void;
   overwrite(): void;
   reload(path?: string): void;
+  retarget(from: string, to: string): void;
+  closeUnder(path: string): void;
   retry(): void;
   showSlice(): void;
   reset(): void;
@@ -341,6 +344,32 @@ export function useFileTabs(scope: FilesScope | null, os: GuestOs): FileTabsApi 
     overwrite: useCallback(() => {
       writeActive("force");
     }, [writeActive]),
+    retarget: useCallback((from: string, to: string) => {
+      const mapKey = (path: string) => movedPath(path, from, to) ?? path;
+      const moveMap = (flight: Map<string, number>) => {
+        for (const [path, generation] of [...flight]) {
+          const next = mapKey(path);
+          if (next === path) continue;
+          flight.delete(path);
+          flight.set(next, generation);
+        }
+      };
+      moveMap(inFlightRead.current);
+      moveMap(inFlightWrite.current);
+      setTabs((live) => live.map((tab) => (movedPath(tab.path, from, to) === null ? tab : { ...tab, path: mapKey(tab.path) })));
+      setActivePath((path) => (path === null ? null : mapKey(path)));
+    }, []),
+    closeUnder: useCallback((path: string) => {
+      const covers = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+      for (const tab of tabsRef.current) {
+        if (!covers(tab.path)) continue;
+        inFlightRead.current.delete(tab.path);
+        inFlightWrite.current.delete(tab.path);
+      }
+      const remaining = tabsRef.current.filter((tab) => !covers(tab.path));
+      setTabs(remaining);
+      setActivePath((current) => (current !== null && covers(current) ? (remaining[0]?.path ?? null) : current));
+    }, []),
     reload: useCallback(
       (path?: string) => {
         const target = path ?? activePathRef.current;

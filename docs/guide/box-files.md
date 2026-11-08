@@ -25,6 +25,10 @@ If the file changed after you opened it, the save does not write. The view says 
 
 The tree lists the files under the path bar, at most 20,000 names. It skips `.git`, `node_modules` and `vendor`. A name that contains a newline is left out. Files whose names start with a dot stay hidden until you select the eye.
 
+On a wide window the tree stays beside the file. Drag its edge to resize it. The width is remembered, and it starts at the same width as the editor plugin's tree. On a narrow window, such as a phone, the tree and the open file take turns. The tree is shown first. Opening a file replaces it, and the back arrow returns to the tree.
+
+New file and New folder sit with the tree's other icons. They create in the folder the path bar shows. Right-click a row, or select … on the row, for New file, New folder, Rename and Delete. Rename is a field on the row. Delete asks you to confirm. An empty folder stays in the tree.
+
 ## Search
 
 Search in files is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit inside the right edge of the field. It uses ripgrep when the box has it, and grep otherwise. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.

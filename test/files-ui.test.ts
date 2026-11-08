@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createdPath, movedPath, renamedPath } from "../src/app/files-ui/entry-name.ts";
 import { groupHits, visibleNames } from "../src/app/files-ui/group-hits.ts";
+import { DEFAULT_EXPLORER_PX, showsOneSurface } from "../src/app/files-ui/layout.ts";
 import { absoluteFrom, sourcePath } from "../src/app/files-ui/locate.ts";
 
 test("a file path joins under the folder in the path bar", () => {
@@ -34,6 +36,23 @@ test("search hits group by file and mark the query", () => {
   assert.equal(grouped.files[0]?.matchCount, 2);
   assert.deepEqual(grouped.files[0]?.matches[0]?.ranges, [[start, start + "lantern".length]]);
   assert.equal(grouped.totalMatches, 3);
+});
+
+test("a new name stays under its folder, and a rename keeps the parent", () => {
+  assert.equal(createdPath("", "notes.md"), "notes.md");
+  assert.equal(createdPath("src", "app.ts"), "src/app.ts");
+  assert.equal(createdPath("src", "../outside"), null);
+  assert.equal(createdPath("src", "a/b"), null);
+  assert.equal(renamedPath("src/app.ts", "main.ts"), "src/main.ts");
+  assert.equal(renamedPath("notes.md", "readme.md"), "readme.md");
+  assert.equal(movedPath("src/app.ts", "src", "lib"), "lib/app.ts");
+  assert.equal(movedPath("notes.md", "src", "lib"), null);
+});
+
+test("a wide window keeps the tree beside the file, and a narrow one shows one at a time", () => {
+  assert.equal(DEFAULT_EXPLORER_PX, 360);
+  assert.equal(showsOneSurface(1440), false);
+  assert.equal(showsOneSurface(390), true);
 });
 
 test("the source path keeps the file name, so syntax colours still see the extension", () => {

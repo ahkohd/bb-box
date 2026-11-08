@@ -270,6 +270,23 @@ test("listing names does not make an empty corpus answer a search", async () => 
   assert.ok(calls >= 2);
 });
 
+test("an empty folder stays listed after the searchable copy is warmed", async () => {
+  const dir = tempDir("fs-empty-folder");
+  mkdirSync(join(dir, "empty"));
+  writeFileSync(join(dir, "a.ts"), "a\n");
+  const corpus = new SearchCorpus(undefined, () => 5_000);
+  const first = await listNames(linux, dir, shRun(), corpus);
+  assert.equal(first.error, null);
+  if (first.error) return;
+  assert.deepEqual([...first.paths].sort(), ["a.ts"]);
+  assert.deepEqual([...first.directories].sort(), ["empty"]);
+  await warmDirectory(linux, dir, shRun(), corpus);
+  const again = await listNames(linux, dir, shRun(), corpus);
+  assert.equal(again.error, null);
+  if (again.error) return;
+  assert.deepEqual([...again.directories].sort(), ["empty"]);
+});
+
 test("a folder that does not fit is not searched from memory", async () => {
   const dir = tempDir("fs-partial");
   writeFileSync(join(dir, "small.txt"), "keep\n");

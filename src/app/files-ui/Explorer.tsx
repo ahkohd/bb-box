@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import {
   ancestorsOf,
+  basename,
   buildTree,
   visibleRows,
+  type EntryKind,
   type FlatEntry,
   type TreeRow,
 } from "./tree.ts";
@@ -27,6 +31,9 @@ export interface ExplorerProps {
   onOpenMatch: (path: string, line: number) => void;
   onRefresh: () => void;
   onQuickOpen: () => void;
+  onCreate: (parent: string, kind: EntryKind, name: string) => Promise<string | null>;
+  onRename: (path: string, name: string) => Promise<string | null>;
+  onDelete: (path: string) => Promise<string | null>;
 
   scope: FilesScope | null;
 
@@ -51,6 +58,9 @@ export function Explorer({
   onOpenMatch,
   onRefresh,
   onQuickOpen,
+  onCreate,
+  onRename,
+  onDelete,
   scope,
   searchFocusRequest,
   header,
@@ -63,6 +73,13 @@ export function Explorer({
   const [submitNonce, setSubmitNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [menu, setMenu] = useState<{ path: string; kind: EntryKind; x: number; y: number } | null>(null);
+  const [draft, setDraft] = useState<{ mode: "create"; parent: string; kind: EntryKind } | { mode: "rename"; path: string } | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<{ path: string; kind: EntryKind } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const committing = useRef(false);
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
 
   const isSearching = query !== "" && scope !== null;
@@ -110,6 +127,52 @@ export function Explorer({
     });
   };
 
+  const beginCreate = (parent: string, kind: EntryKind) => {
+    setQuery("");
+    if (parent !== "") {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.add(parent);
+        return next;
+      });
+    }
+    setMenu(null);
+    setDraft({ mode: "create", parent, kind });
+    setDraftError(null);
+  };
+
+  const beginRename = (path: string) => {
+    setQuery("");
+    setMenu(null);
+    setDraft({ mode: "rename", path });
+    setDraftError(null);
+  };
+
+  const commitDraft = async (name: string) => {
+    if (draft === null || committing.current) return;
+    committing.current = true;
+    setBusy(true);
+    const problem = draft.mode === "rename" ? await onRename(draft.path, name) : await onCreate(draft.parent, draft.kind, name);
+    committing.current = false;
+    setBusy(false);
+    if (problem !== null) {
+      setDraftError(problem);
+      return;
+    }
+    setDraft(null);
+    setDraftError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (removing === null || busy) return;
+    const target = removing;
+    setBusy(true);
+    const problem = await onDelete(target.path);
+    setBusy(false);
+    setRemoving(null);
+    if (problem !== null) setActionError(problem);
+  };
+
   const fileCount = useMemo(
     () => entries.reduce((total, entry) => total + (entry.kind === "file" ? 1 : 0), 0),
     [entries],
@@ -119,8 +182,8 @@ export function Explorer({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-recessed">
       {header}
 
-      <div className="flex shrink-0 items-center gap-1.5 px-2 pb-2">
-        <div className="relative min-w-0 flex-1">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-2 pb-2">
+        <div className="relative min-w-[11rem] flex-1">
           <Icon
             name="Search"
             aria-hidden
@@ -206,6 +269,8 @@ export function Explorer({
           isSpinning={isLoading}
           onClick={onRefresh}
         />
+        <ExplorerAction icon="FileAdd" label="New file" onClick={() => beginCreate("", "file")} />
+        <ExplorerAction icon="FolderAdd" label="New folder" onClick={() => beginCreate("", "directory")} />
       </div>
 
       {isSearching && scope !== null ? (
@@ -222,26 +287,42 @@ export function Explorer({
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-auto pb-2">
-          {error !== null ? (
-            <p className="px-3 py-2 text-xs text-destructive-text">{error}</p>
+          {error !== null || actionError !== null ? (
+            <p className="px-3 py-2 text-xs text-destructive-text">{error ?? actionError}</p>
           ) : isLoading && entries.length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">Reading this folder...</p>
-          ) : rows.length === 0 ? (
+          ) : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
               This folder has no files yet.
             </p>
           ) : (
             <ul role="tree" aria-label="Files" className="min-w-max">
+              {draft?.mode === "create" && draft.parent === "" ? (
+                <li role="none">
+                  <NameField depth={0} kind={draft.kind} label={draft.kind === "directory" ? "New folder name" : "New file name"} initial="" error={draftError} onCommit={(name) => void commitDraft(name)} onCancel={() => { setDraft(null); setDraftError(null); }} />
+                </li>
+              ) : null}
               {rows.map((row) => (
-                <ExplorerRow
-                  key={row.node.path}
-                  row={row}
-                  query=""
-                  isActive={row.node.path === activePath}
-                  activeRef={row.node.path === activePath ? activeRowRef : undefined}
-                  onToggle={toggle}
-                  onOpenFile={onOpenFile}
-                />
+                <Fragment key={row.node.path}>
+                  <ExplorerRow
+                    row={row}
+                    query=""
+                    isActive={row.node.path === activePath}
+                    isRenaming={draft?.mode === "rename" && draft.path === row.node.path}
+                    renameError={draft?.mode === "rename" && draft.path === row.node.path ? draftError : null}
+                    activeRef={row.node.path === activePath ? activeRowRef : undefined}
+                    onToggle={toggle}
+                    onOpenFile={onOpenFile}
+                    onMenu={(at) => setMenu({ path: row.node.path, kind: row.node.kind, x: at.x, y: at.y })}
+                    onCommitRename={(name) => void commitDraft(name)}
+                    onCancelRename={() => { setDraft(null); setDraftError(null); }}
+                  />
+                  {draft?.mode === "create" && draft.parent === row.node.path ? (
+                    <li role="none">
+                      <NameField depth={row.depth + 1} kind={draft.kind} label={draft.kind === "directory" ? "New folder name" : "New file name"} initial="" error={draftError} onCommit={(name) => void commitDraft(name)} onCancel={() => { setDraft(null); setDraftError(null); }} />
+                    </li>
+                  ) : null}
+                </Fragment>
               ))}
             </ul>
           )}
@@ -255,64 +336,257 @@ export function Explorer({
           : ""}
         {truncated ? " - listing truncated" : ""}
       </div>
+      {menu === null ? null : (
+        <RowMenu
+          path={menu.path}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onCreate={(kind) => beginCreate(menu.kind === "directory" ? menu.path : dirnameOf(menu.path), kind)}
+          onRename={() => beginRename(menu.path)}
+          onDelete={() => {
+            setMenu(null);
+            setRemoving({ path: menu.path, kind: menu.kind });
+          }}
+        />
+      )}
+      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {removing === null ? "this" : basename(removing.path)}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removing?.kind === "directory" ? "This deletes the folder and everything in it." : "This deletes the file."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => void confirmDelete()}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+function dirnameOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash);
 }
 
 function ExplorerRow({
   row,
   query,
   isActive,
+  isRenaming,
+  renameError,
   activeRef,
   onToggle,
   onOpenFile,
+  onMenu,
+  onCommitRename,
+  onCancelRename,
 }: {
   row: TreeRow;
   query: string;
   isActive: boolean;
+  isRenaming: boolean;
+  renameError: string | null;
   activeRef?: React.RefObject<HTMLButtonElement | null>;
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onMenu: (at: { x: number; y: number }) => void;
+  onCommitRename: (name: string) => void;
+  onCancelRename: () => void;
 }) {
   const { node, depth, isExpanded } = row;
   const isDirectory = node.kind === "directory";
 
   return (
-    <li role="none">
-      <button
-        ref={activeRef}
-        type="button"
-        role="treeitem"
-        aria-selected={isActive}
-        aria-expanded={isDirectory ? isExpanded : undefined}
-        title={node.path}
-        data-files-entry={node.path}
-        onClick={() =>
-          isDirectory ? onToggle(node.path) : onOpenFile(node.path)
-        }
-        style={{ paddingLeft: 8 + depth * INDENT_PER_LEVEL_PX }}
-        className={cn(
-          "flex h-6 w-full min-w-full cursor-pointer items-center gap-1.5 pr-3 text-left text-[13px]",
-          "text-foreground/90 hover:bg-state-hover",
-          "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:-outline-offset-1",
-          isActive && "bg-surface-selected text-foreground",
-        )}
-      >
-        {isDirectory ? (
-          <Icon
-            name={isExpanded ? "ChevronDown" : "ChevronRight"}
-            aria-hidden
-            className="size-3 shrink-0 text-muted-foreground"
-          />
-        ) : (
-          <span aria-hidden className="w-3 shrink-0" />
-        )}
-        <FileGlyph path={node.path} kind={node.kind} isExpanded={isExpanded} />
-        <span className="truncate">
-          <HighlightedText text={node.name} query={query} />
-        </span>
-      </button>
+    <li role="none" className="group relative" onContextMenu={(event) => { event.preventDefault(); onMenu({ x: event.clientX, y: event.clientY }); }}>
+      {isRenaming ? (
+        <NameField depth={depth} kind={node.kind} label="New name" initial={node.name} error={renameError} onCommit={onCommitRename} onCancel={onCancelRename} />
+      ) : (
+        <button
+          ref={activeRef}
+          type="button"
+          role="treeitem"
+          aria-selected={isActive}
+          aria-expanded={isDirectory ? isExpanded : undefined}
+          title={node.path}
+          data-files-entry={node.path}
+          onClick={() => (isDirectory ? onToggle(node.path) : onOpenFile(node.path))}
+          style={{ paddingLeft: 8 + depth * INDENT_PER_LEVEL_PX }}
+          className={cn(
+            "flex h-6 w-full min-w-full cursor-pointer items-center gap-1.5 pr-8 text-left text-[13px]",
+            "text-foreground/90 hover:bg-state-hover",
+            "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:-outline-offset-1",
+            isActive && "bg-surface-selected text-foreground",
+          )}
+        >
+          {isDirectory ? (
+            <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <span aria-hidden className="w-3 shrink-0" />
+          )}
+          <FileGlyph path={node.path} kind={node.kind} isExpanded={isExpanded} />
+          <span className="truncate">
+            <HighlightedText text={node.name} query={query} />
+          </span>
+        </button>
+      )}
+      {isRenaming ? null : (
+        <button
+          type="button"
+          aria-label={`Actions for ${node.name}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onMenu({ x: rect.left, y: rect.bottom });
+          }}
+          className={cn(
+            "absolute top-0 right-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-state-hover hover:text-foreground",
+            "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+          )}
+        >
+          <Icon name="MoreHorizontal" aria-hidden className="size-3.5" />
+        </button>
+      )}
     </li>
+  );
+}
+
+function NameField({
+  depth,
+  kind,
+  label,
+  initial,
+  error,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  kind: EntryKind;
+  label: string;
+  initial: string;
+  error: string | null;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  const settled = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  useEffect(() => {
+    if (error !== null) settled.current = false;
+  }, [error]);
+  const finish = (action: () => void) => {
+    if (settled.current) return;
+    settled.current = true;
+    action();
+  };
+  return (
+    <>
+      <form
+        className="flex items-center gap-1.5 pr-2"
+        style={{ paddingLeft: 8 + depth * INDENT_PER_LEVEL_PX }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          finish(() => onCommit(ref.current?.value ?? ""));
+        }}
+      >
+        <span aria-hidden className="w-3 shrink-0" />
+        <FileGlyph path={initial === "" ? (kind === "directory" ? "folder" : "file.txt") : initial} kind={kind} />
+        <input
+          ref={ref}
+          aria-label={label}
+          defaultValue={initial}
+          spellCheck={false}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              finish(onCancel);
+            }
+          }}
+          onBlur={() => {
+            const value = ref.current?.value ?? "";
+            if (value.trim() === "" || value === initial) finish(onCancel);
+            else finish(() => onCommit(value));
+          }}
+          className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-background px-1 text-[13px] text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+        />
+      </form>
+      {error === null ? null : <p className="px-3 py-1 text-xs text-destructive-text">{error}</p>}
+    </>
+  );
+}
+
+function RowMenu({
+  path,
+  x,
+  y,
+  onClose,
+  onCreate,
+  onRename,
+  onDelete,
+}: {
+  path: string;
+  x: number;
+  y: number;
+  onClose: () => void;
+  onCreate: (kind: EntryKind) => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-row-menu]") !== null) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [onClose]);
+
+  const left = Math.max(8, Math.min(x, window.innerWidth - 180));
+  const top = Math.max(8, Math.min(y, window.innerHeight - 168));
+  return createPortal(
+    <div data-row-menu role="menu" aria-label={`Actions for ${basename(path)}`} style={{ left, top }} className="fixed z-50 min-w-40 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground">
+      <MenuRow onSelect={() => onCreate("file")}>New file</MenuRow>
+      <MenuRow onSelect={() => onCreate("directory")}>New folder</MenuRow>
+      <MenuRow onSelect={onRename}>Rename</MenuRow>
+      <MenuRow onSelect={onDelete} tone="danger">Delete</MenuRow>
+    </div>,
+    document.body,
+  );
+}
+
+function MenuRow({ children, onSelect, tone }: { children: string; onSelect: () => void; tone?: "danger" }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onSelect}
+      className={cn(
+        "flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-left text-[13px]",
+        "hover:bg-state-hover focus-visible:bg-state-hover focus-visible:outline-none",
+        tone === "danger" ? "text-destructive-text" : "text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
