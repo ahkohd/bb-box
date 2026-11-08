@@ -248,6 +248,13 @@ function posixKeep(): string {
     "  if [ \"$bb_files_ok\" -eq 1 ]; then return 0; fi\n" +
     "  return 1\n" +
     "}\n" +
+    "bb_files_same() {\n" +
+    "  bb_files_a=$(bb_files_ino \"$1\")\n" +
+    "  bb_files_b=$(bb_files_ino \"$2\")\n" +
+    "  if [ \"$bb_files_a\" = \"$bb_files_b\" ] && [ \"$bb_files_a\" != 0 ]; then return 0; fi\n" +
+    "  if cmp -s \"$1\" \"$2\"; then return 0; fi\n" +
+    "  return 1\n" +
+    "}\n" +
     "bb_files_keep() {\n" +
     "  bb_files_n=0\n" +
     "  while [ \"$bb_files_n\" -lt 100 ]; do\n" +
@@ -261,21 +268,22 @@ function posixKeep(): string {
     "    if [ -f \"$1\" ]; then chmod \"$(bb_files_bits \"$1\")\" \"$bb_files_hold\" 2>/dev/null || true; fi\n" +
     "    if bb_files_link \"$bb_files_hold\" \"$bb_files_slot\"; then\n" +
     "      if [ -f \"$bb_files_slot\" ] && [ ! -L \"$bb_files_slot\" ]; then\n" +
-    "        bb_files_a=$(bb_files_ino \"$bb_files_hold\")\n" +
-    "        bb_files_b=$(bb_files_ino \"$bb_files_slot\")\n" +
-    "        if [ \"$bb_files_a\" = \"$bb_files_b\" ] && [ \"$bb_files_a\" != 0 ]; then rm -f \"$bb_files_hold\"; return 0; fi\n" +
+    "        if bb_files_same \"$bb_files_hold\" \"$bb_files_slot\"; then rm -f \"$bb_files_hold\"; return 0; fi\n" +
+    "        rm -f \"$bb_files_slot\" \"$bb_files_hold\"\n" +
+    "        return 1\n" +
     "      fi\n" +
     "      bb_files_inner=\"$bb_files_slot/$(basename \"$bb_files_hold\")\"\n" +
     "      if [ -f \"$bb_files_inner\" ] && [ ! -L \"$bb_files_inner\" ]; then\n" +
-    "        bb_files_a=$(bb_files_ino \"$bb_files_hold\")\n" +
-    "        bb_files_b=$(bb_files_ino \"$bb_files_inner\")\n" +
-    "        if [ \"$bb_files_a\" = \"$bb_files_b\" ] && [ \"$bb_files_a\" != 0 ]; then rm -f \"$bb_files_inner\"; fi\n" +
+    "        if bb_files_same \"$bb_files_hold\" \"$bb_files_inner\"; then rm -f \"$bb_files_inner\"; fi\n" +
     "      fi\n" +
     "    elif [ ! -e \"$bb_files_slot\" ] && [ ! -L \"$bb_files_slot\" ]; then\n" +
-    "      if (set -C; cat < \"$bb_files_hold\" > \"$bb_files_slot\"); then\n" +
-    "        chmod \"$(bb_files_bits \"$bb_files_hold\")\" \"$bb_files_slot\" 2>/dev/null || true\n" +
-    "        rm -f \"$bb_files_hold\"\n" +
-    "        return 0\n" +
+    "      if (set -C; : > \"$bb_files_slot\"); then\n" +
+    "        if cat < \"$bb_files_hold\" > \"$bb_files_slot\"; then\n" +
+    "          chmod \"$(bb_files_bits \"$bb_files_hold\")\" \"$bb_files_slot\" 2>/dev/null || true\n" +
+    "          if bb_files_same \"$bb_files_hold\" \"$bb_files_slot\"; then rm -f \"$bb_files_hold\"; return 0; fi\n" +
+    "        fi\n" +
+    "        rm -f \"$bb_files_slot\" \"$bb_files_hold\"\n" +
+    "        return 1\n" +
     "      fi\n" +
     "    fi\n" +
     "    rm -f \"$bb_files_hold\"\n" +
@@ -334,7 +342,7 @@ function posixWrite(path: string, expected: string, mode: WriteMode): string {
 
 function windowsWrite(path: string, expected: string, mode: WriteMode): string {
   return (
-    "$ErrorActionPreference = 'Stop'; " +
+    "$ErrorActionPreference = 'Stop'; $bbFilesTmp = $null; try { " +
     `$bbFilesPath = ${ps(path)}; $bbFilesMode = ${ps(mode)}; $bbFilesExpected = ${ps(expected)}; ` +
     "function BbFilesKeep($bbFilesLive, $bbFilesFrom) { " +
     "$bbFilesSlots = @($bbFilesLive + '.conflict'); " +
@@ -366,7 +374,7 @@ function windowsWrite(path: string, expected: string, mode: WriteMode): string {
     "$bbFilesHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $bbFilesTmp).Hash.ToLower(); " +
     "$bbFilesSize = (Get-Item -LiteralPath $bbFilesTmp).Length; " +
     "Remove-Item -LiteralPath $bbFilesTmp -Force; " +
-    "\"WRITTEN`t$bbFilesHash`t$bbFilesSize\""
+    "\"WRITTEN`t$bbFilesHash`t$bbFilesSize\" } finally { if ($null -ne $bbFilesTmp) { Remove-Item -LiteralPath $bbFilesTmp -Force -ErrorAction SilentlyContinue } }"
   );
 }
 
@@ -482,6 +490,8 @@ function posixSearch(root: string, query: string, flags: SearchFlags): string {
   const grepFixed = flags.regex ? "" : "-F";
   const grepWord = flags.wholeWord ? "-w" : "";
   const hidden = flags.hidden ? "" : "--exclude-dir='.[!.]*' --exclude-dir='..?*' --exclude='.[!.]*' --exclude='..?*'";
+  const findHidden = flags.hidden ? "" : "-name '.[!.]*' -prune -o -name '..?*' -prune -o ";
+  const grepFlags = `$bb_files_bin ${grepCase} ${grepFixed} ${grepWord} -m ${SEARCH_PER_FILE + 1}`;
   return (
     "set -f\n" +
     `cd -- ${sh(root)} || { printf 'ERR\\tunreadable\\n'; exit 0; }\n` +
@@ -494,11 +504,27 @@ function posixSearch(root: string, query: string, flags: SearchFlags): string {
     "  if [ \"$bb_files_status\" -gt 1 ]; then printf 'ERR\\tfailed\\n'; fi\n" +
     "else\n" +
     "  bb_files_bin=\n" +
-    "  bb_files_nul=\n" +
     "  grep --help 2>&1 | grep -q binary-files && bb_files_bin=--binary-files=without-match\n" +
-    "  grep --help 2>&1 | grep -q -- '-Z' && bb_files_nul=-Z\n" +
-    `  grep -RInH $bb_files_nul $bb_files_bin --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor ${hidden} ${grepCase} ${grepFixed} ${grepWord} -m ${SEARCH_PER_FILE + 1} -e ${sh(query)} . > \"$bb_files_tmp\" 2>/dev/null\n` +
-    "  bb_files_status=$?\n" +
+    "  if printf 'x\\n' | grep --null -h -e x >/dev/null 2>&1; then\n" +
+    `    grep -RInH --null ${grepFlags} --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor ${hidden} -e ${sh(query)} . > \"$bb_files_tmp\" 2>/dev/null\n` +
+    "    bb_files_status=$?\n" +
+    "  else\n" +
+    "    bb_files_status=0\n" +
+    "    bb_files_list=$(mktemp)\n" +
+    "    bb_files_hits=$(mktemp)\n" +
+    "    : > \"$bb_files_tmp\"\n" +
+    `    find . \\( -name .git -o -name node_modules -o -name vendor \\) -prune -o ${findHidden}-type f -print > \"$bb_files_list\"\n` +
+    "    while IFS= read -r bb_files_one; do\n" +
+    "      [ -f \"$bb_files_one\" ] || continue\n" +
+    `      grep -nh ${grepFlags} -e ${sh(query)} -- \"$bb_files_one\" > \"$bb_files_hits\" 2>/dev/null\n` +
+    "      bb_files_one_status=$?\n" +
+    "      if [ \"$bb_files_one_status\" -gt 1 ]; then bb_files_status=2; fi\n" +
+    "      while IFS= read -r bb_files_hit; do\n" +
+    "        printf '%s\\0%s\\n' \"$bb_files_one\" \"$bb_files_hit\"\n" +
+    "      done < \"$bb_files_hits\" >> \"$bb_files_tmp\"\n" +
+    "    done < \"$bb_files_list\"\n" +
+    "    rm -f \"$bb_files_list\" \"$bb_files_hits\"\n" +
+    "  fi\n" +
     "  printf 'ENGINE\\tgrep\\n'\n" +
     "  cat \"$bb_files_tmp\"\n" +
     "  if [ \"$bb_files_status\" -gt 1 ]; then printf 'ERR\\tfailed\\n'; fi\n" +

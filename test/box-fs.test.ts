@@ -165,6 +165,8 @@ test("a Windows write compares the hash and can refuse", () => {
   assert.doesNotMatch(script, /\$bbFilesAside/);
   assert.match(script, /Get-FileHash -Algorithm SHA256 -LiteralPath \$bbFilesTmp/);
   assert.match(script, /\$ErrorActionPreference = 'Stop'/);
+  assert.match(script, /\$bbFilesTmp = \$null; try \{/);
+  assert.match(script, /finally \{ if \(\$null -ne \$bbFilesTmp\) \{ Remove-Item -LiteralPath \$bbFilesTmp -Force -ErrorAction SilentlyContinue \} \}/);
   assert.equal((script.match(/try \{ \[IO\.File\]::Copy\(\$bbFilesTmp, \$bbFilesPath, \$true\) \} catch/g) ?? []).length, 2);
   assert.equal(singleQuoted(script).some((part) => part.includes("`t")), false);
   assert.doesNotMatch(script, /printenv|Get-ChildItem Env:/);
@@ -593,6 +595,78 @@ test("a conflict file is still written when the box cannot make a hard link", as
   assert.equal(readFileSync(path, "utf8"), "two\n");
   assert.equal(readFileSync(`${path}.conflict`, "utf8"), "three\n");
   assert.match(writeScript("linux", path, "abc", "guard"), /set -C/);
+  assert.match(writeScript("linux", path, "abc", "guard"), /cmp -s/);
+});
+
+function conflictNames(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((name) => name.includes("conflict") || name.startsWith(".bb-files"))
+    .sort();
+}
+
+test("a conflict file is kept when inode numbers change, and when stat is missing", async () => {
+  for (const mode of ["vary", "missing"] as const) {
+    const dir = tempDir(`fs-ino-${mode}`);
+    const path = join(dir, "note.txt");
+    writeFileSync(path, "two\n");
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(dir, "ino"), "0");
+    const realStat = spawnSync("/bin/sh", ["-c", "command -v stat"], { encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } }).stdout.trim();
+    writeFileSync(
+      join(bin, "stat"),
+      mode === "vary"
+        ? `#!/bin/sh
+case "\$*" in
+  *%i*)
+    n=\$(cat '${dir}/ino')
+    n=\$((n + 1))
+    printf '%s\\n' "\$n" > '${dir}/ino'
+    printf '%s\\n' "\$n"
+    ;;
+  *) exec ${realStat} "\$@" ;;
+esac
+`
+        : "#!/bin/sh\nexit 1\n",
+    );
+    chmodSync(join(bin, "stat"), 0o755);
+    const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
+    assert.equal(answer.error, null);
+    assert.equal(answer.outcome, "conflict");
+    assert.equal(readFileSync(path, "utf8"), "two\n");
+    assert.equal(readFileSync(`${path}.conflict`, "utf8"), "three\n");
+    assert.deepEqual(conflictNames(dir), ["note.txt.conflict"]);
+  }
+});
+
+test("a conflict slot that cannot be filled is removed, and the next name is not used", async () => {
+  const dir = tempDir("fs-partial");
+  const path = join(dir, "note.txt");
+  writeFileSync(path, "two\n");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ln"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "ln"), 0o755);
+  const readlink = spawnSync("/bin/sh", ["-c", "command -v readlink"], { encoding: "utf8", env: { ...process.env, PATH: `/usr/bin:/bin:${process.env.PATH ?? ""}` } }).stdout.trim() || "readlink";
+  writeFileSync(
+    join(bin, "cat"),
+    `#!/bin/sh
+exec 3>&1
+out=\$(${readlink} /proc/\$\$/fd/3)
+case "\$out" in
+  *.conflict|*.conflict-*)
+    /usr/bin/printf 'x' >&3
+    exit 1
+    ;;
+esac
+exec /bin/cat
+`,
+  );
+  chmodSync(join(bin, "cat"), 0o755);
+  const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
+  assert.match(answer.error ?? "", /could not/);
+  assert.equal(readFileSync(path, "utf8"), "two\n");
+  assert.deepEqual(conflictNames(dir), []);
 });
 
 test("a write that does not finish is a failure", async () => {
@@ -712,6 +786,39 @@ test("a file name with a colon stays intact in a search", async () => {
     assert.equal(parsed.hits[0]?.path, name);
     assert.equal(parsed.hits[0]?.line, 3);
   }
+});
+
+test("a file name with a colon stays intact when grep has no NUL flag", async () => {
+  const dir = tempDir("fs-colon-plain");
+  writeFileSync(join(dir, "notes:2026.txt"), "a\nb\nneedle\n");
+  writeFileSync(join(dir, "notes:2026"), "a\nb\nneedle\n");
+  writeFileSync(join(dir, ".secret"), "needle in a hidden file\n");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const real = spawnSync("/bin/sh", ["-c", "command -v grep"], { encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } }).stdout.trim();
+  writeFileSync(
+    join(bin, "grep"),
+    `#!/bin/sh
+for arg in "\$@"; do
+  if [ "\$arg" = --null ] || [ "\$arg" = -Z ]; then exit 2; fi
+done
+exec ${real} "\$@"
+`,
+  );
+  chmodSync(join(bin, "grep"), 0o755);
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  const script = searchScript("linux", dir, "needle", flags);
+  assert.match(script, /grep --null/);
+  assert.doesNotMatch(script, /-Z/);
+  const found = await searchDirectory(linux, dir, "needle", flags, shRun({ PATH: `${bin}:${pathWithoutRg()}` }), new SearchCorpus(), () => undefined);
+  assert.equal(found.error, null);
+  if (found.error) return;
+  assert.equal(found.engine, "grep");
+  const byPath = new Map(found.hits.map((hit) => [hit.path, hit.line]));
+  assert.equal(byPath.get("notes:2026.txt"), 3);
+  assert.equal(byPath.get("notes:2026"), 3);
+  assert.equal(byPath.has(".secret"), false);
+  assert.equal(byPath.has("notes"), false);
 });
 
 test("search finds a file that git would ignore", async () => {
