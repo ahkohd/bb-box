@@ -34,6 +34,7 @@ import { Phases, removeStaleApp, setAsideOtherMachines, type JoinAlarm } from ".
 import { joinProblem, nextTry, plainJoinFailure } from "../src/core/join-tries.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
+import { FILES_FROM_PANEL } from "../src/plugin/box-fs.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { heldWords } from "../src/plugin/turn-hold.ts";
 import { boxPath, ownProcessHint, workspacePath } from "../src/plugin/tools.ts";
@@ -7819,4 +7820,19 @@ test("showing the hidden agent cursor again waits for the driver to confirm it, 
   });
   await tool("computer_observe", { box: box.name, window: 100 });
   assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "shown as bb-box next connects");
+});
+
+test("files stay on the panel: an agent has no files tool, and another plugin cannot call the files RPC", async (t) => {
+  const { harness } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const names = ["files.home", "files.list", "files.read", "files.readRange", "files.write", "files.create", "files.rename", "files.delete", "files.search", "files.names", "box_files"];
+  for (const name of names) {
+    await assert.rejects(() => harness.behavior.callAgentTool(name, { box: "box" }, { threadId: THREAD, projectId: PROJECT }), /no agent tool/);
+  }
+  const selected = (await harness.behavior.resolveAgentConfiguration({ threadId: THREAD, projectId: PROJECT } as never)) as { tools: { name: string }[] };
+  assert.equal(selected.tools.some((each) => each.name.startsWith("files.") || each.name.includes("box_files")), false);
+  const refused = await harness.behavior.callRpc("files.home", { box: "bx_missing" }, { experimental_caller: { kind: "plugin", pluginId: "other" } });
+  assert.deepEqual(refused, { error: FILES_FROM_PANEL });
+  const gone = await harness.behavior.callRpc("files.home", { box: "bx_missing" });
+  assert.deepEqual(gone, { error: "That box is gone." });
 });

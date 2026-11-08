@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -17,7 +17,10 @@ import {
   listNames,
   parentPath,
   parseList,
+  parseNames,
   parseRead,
+  parseSearch,
+  parseWarm,
   rankPaths,
   readFileAt,
   readFileRange,
@@ -35,7 +38,25 @@ import {
   type FsRun,
   type FsRunResult,
 } from "../src/core/box-fs.ts";
-import { IMAGE_BYTES, LIST_CAP, OPEN_BYTES, writeScript } from "../src/core/box-fs-script.ts";
+import {
+  CORPUS_BYTES,
+  IMAGE_BYTES,
+  LIST_CAP,
+  NAME_CAP,
+  OPEN_BYTES,
+  WARM_OUT,
+  createScript,
+  deleteScript,
+  homeScript,
+  listScript,
+  namesScript,
+  rangeScript,
+  readScript,
+  renameScript,
+  searchScript,
+  warmScript,
+  writeScript,
+} from "../src/core/box-fs-script.ts";
 
 const made: string[] = [];
 process.once("exit", () => {
@@ -81,6 +102,7 @@ test("a guarded write leaves a file that changed, and an overwrite replaces it",
   assert.equal(conflict.outcome, "conflict");
   assert.equal(conflict.currentSha256, sha("two\n"));
   assert.equal(readFileSync(path, "utf8"), "two\n");
+  assert.equal(existsSync(`${path}.conflict`), false);
   const replaced = await writeFileAt(linux, path, "three\n", null, run);
   assert.equal(replaced.error, null);
   assert.equal(replaced.outcome, "written");
@@ -103,6 +125,7 @@ test("a guarded write does not create a file that is gone", async () => {
   const created = await writeFileAt(linux, path, "x\n", null, shRun());
   assert.equal(created.error, null);
   assert.equal(created.outcome, "written");
+  if (created.error === null && created.outcome === "written") assert.equal(created.sizeBytes, 2);
   assert.equal(readFileSync(path, "utf8"), "x\n");
 });
 
@@ -111,6 +134,11 @@ test("a Windows write compares the hash and can refuse", () => {
   assert.match(script, /Get-FileHash/);
   assert.match(script, /CONFLICT/);
   assert.match(script, /\$bbFilesNow -ne \$bbFilesExpected/);
+  assert.match(script, /\.conflict/);
+  const aside = script.indexOf("$bbFilesAside");
+  const onto = script.indexOf("[IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true)");
+  assert.ok(aside > 0 && onto > aside);
+  assert.equal(singleQuoted(script).some((part) => part.includes("`t")), false);
   assert.doesNotMatch(script, /printenv|Get-ChildItem Env:/);
 });
 
@@ -406,4 +434,175 @@ test("home is the box user's home", async () => {
   assert.equal(home.error, null);
   if (home.error) return;
   assert.equal(home.path, dir);
+});
+
+test("a save writes through the file, so the mode and a symlink stay", async () => {
+  const dir = tempDir("fs-mode");
+  const path = join(dir, "run.sh");
+  writeFileSync(path, "echo one\n");
+  chmodSync(path, 0o755);
+  const before = statSync(path);
+  const wrote = await writeFileAt(linux, path, "echo two\n", sha("echo one\n"), shRun());
+  assert.equal(wrote.error, null);
+  assert.equal(wrote.outcome, "written");
+  const after = statSync(path);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mode & 0o777, 0o755);
+  assert.equal(readFileSync(path, "utf8"), "echo two\n");
+  assert.equal(existsSync(`${path}.conflict`), false);
+  const target = join(dir, "target.txt");
+  const link = join(dir, "link.txt");
+  writeFileSync(target, "old\n");
+  chmodSync(target, 0o755);
+  const targetIno = statSync(target).ino;
+  symlinkSync(target, link);
+  const linked = await writeFileAt(linux, link, "new\n", sha("old\n"), shRun());
+  assert.equal(linked.error, null);
+  assert.equal(linked.outcome, "written");
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readFileSync(target, "utf8"), "new\n");
+  assert.equal(statSync(target).ino, targetIno);
+  assert.equal(statSync(target).mode & 0o777, 0o755);
+});
+
+test("a change that lands during a save is kept, and the new text is left beside the file", async () => {
+  const dir = tempDir("fs-race");
+  const path = join(dir, "note.txt");
+  writeFileSync(path, "one\n");
+  const before = statSync(path).ino;
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const marker = join(dir, "poisoned");
+  writeFileSync(
+    join(bin, "sha256sum"),
+    `#!/bin/sh
+data=$(cat; printf x)
+data=\${data%x}
+if [ ! -f '${marker}' ]; then
+  touch '${marker}'
+  printf 'agent\\n' > '${path}'
+fi
+printf '%s' "$data" | PATH=/usr/bin:/bin sha256sum | cut -d ' ' -f 1
+`,
+  );
+  chmodSync(join(bin, "sha256sum"), 0o755);
+  const wrote = await writeFileAt(linux, path, "person\n", sha("one\n"), shRun({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
+  assert.equal(wrote.error, null);
+  assert.equal(wrote.outcome, "conflict");
+  if (wrote.error === null && wrote.outcome === "conflict") assert.equal(wrote.currentSha256, sha("agent\n"));
+  assert.equal(readFileSync(path, "utf8"), "agent\n");
+  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "person\n");
+  assert.equal(statSync(path).ino, before);
+});
+
+test("a name with a backslash keeps its hash and its place in the tree", async () => {
+  const dir = tempDir("fs-backslash");
+  const path = join(dir, "has\\slash.txt");
+  writeFileSync(path, "one\n");
+  const read = await readFileAt(linux, path, shRun());
+  assert.equal(read.error, null);
+  if (read.error || read.kind !== "text") return assert.fail(JSON.stringify(read));
+  assert.equal(read.sha256, sha("one\n"));
+  assert.equal(read.sha256.length, 64);
+  const wrote = await writeFileAt(linux, path, "two\n", read.sha256, shRun());
+  assert.equal(wrote.error, null);
+  assert.equal(wrote.outcome, "written");
+  assert.equal(readFileSync(path, "utf8"), "two\n");
+  const encoded = Buffer.from("renamed back\\slash.txt").toString("base64");
+  const parsed = parseNames(`NAME\t${encoded}\n`, "linux");
+  assert.equal(parsed.error, null);
+  if (parsed.error) return;
+  assert.deepEqual(parsed.paths, ["renamed back\\slash.txt"]);
+  const windows = parseNames(`NAME\t${Buffer.from("dir\\file.txt").toString("base64")}\n`, "windows");
+  assert.equal(windows.error, null);
+  if (windows.error) return;
+  assert.deepEqual(windows.paths, ["dir/file.txt"]);
+  const grep = parseSearch("ENGINE\tgrep\nrenamed back\\slash.txt:3:hello\n", "linux");
+  assert.equal(grep.error, null);
+  if (!grep.error) assert.equal(grep.hits[0]?.path, "renamed back\\slash.txt");
+  const rgLine = JSON.stringify({ type: "match", data: { path: { text: "renamed back\\slash.txt" }, lines: { text: "hello\n" }, line_number: 3, submatches: [{ start: 0 }] } });
+  const rg = parseSearch(`ENGINE\trg\n${rgLine}\n`, "linux");
+  assert.equal(rg.error, null);
+  if (!rg.error) assert.equal(rg.hits[0]?.path, "renamed back\\slash.txt");
+  const warmed = parseWarm(`NAME\t${encoded}\nFILE\t${encoded}\t6\t1\n${Buffer.from("hello\n").toString("base64")}\nENDFILE\n`, "linux");
+  assert.equal(warmed.names[0], "renamed back\\slash.txt");
+  assert.equal(warmed.files[0]?.path, "renamed back\\slash.txt");
+  const winHit = parseSearch("ENGINE\tgrep\nsrc\\app.ts:2:hello\n", "windows");
+  assert.equal(winHit.error, null);
+  if (!winHit.error) assert.equal(winHit.hits[0]?.path, "src/app.ts");
+});
+
+test("a search that is cut short keeps the first hits", async () => {
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  const script = searchScript("linux", "/home/box", "the", flags);
+  assert.match(script, /--max-count/);
+  assert.match(script, /-m 40/);
+  const hit = JSON.stringify({ type: "match", data: { path: { text: "a.ts" }, lines: { text: "the\n" }, line_number: 1, submatches: [{ start: 0 }] } });
+  const run: FsRun = async () => ({
+    exitCode: 0,
+    stdout: `ENGINE\trg\n${hit}\nERR\tfailed\n`,
+    stderr: "",
+    timedOut: false,
+    truncated: true,
+  });
+  const found = await searchDirectory(linux, "/home/box", "the", flags, run, new SearchCorpus(), () => undefined);
+  assert.equal(found.error, null);
+  if (found.error) return;
+  assert.equal(found.truncated, true);
+  assert.equal(found.hits.length, 1);
+  assert.equal(found.hits[0]?.path, "a.ts");
+  const failed: FsRun = async () => ({ exitCode: 0, stdout: "ERR\tunreadable\n", stderr: "", timedOut: false, truncated: false });
+  const bad = await searchDirectory(linux, "/home/box", "the", flags, failed, new SearchCorpus(), () => undefined);
+  assert.match(bad.error ?? "", /cannot be read/);
+});
+
+test("the warm budget covers the encoded corpus, and the script stops before the cap", () => {
+  assert.ok(WARM_OUT >= Math.ceil(CORPUS_BYTES / 3) * 4 + NAME_CAP * 48);
+  assert.match(warmScript("linux", "/home/box"), /bb_files_out/);
+});
+
+function singleQuoted(script: string): string[] {
+  const parts: string[] = [];
+  for (let i = 0; i < script.length; i++) {
+    if (script[i] !== "'") continue;
+    let body = "";
+    i += 1;
+    while (i < script.length) {
+      if (script[i] === "'" && script[i + 1] === "'") {
+        body += "'";
+        i += 2;
+        continue;
+      }
+      if (script[i] === "'") break;
+      body += script[i];
+      i += 1;
+    }
+    parts.push(body);
+  }
+  return parts;
+}
+
+test("Windows scripts quote a tab, and a search without ripgrep can match a word or a pattern", () => {
+  const flags = { matchCase: false, wholeWord: true, regex: false, hidden: false };
+  const scripts = [
+    homeScript("windows"),
+    listScript("windows", "C:\\Users\\box"),
+    readScript("windows", "C:\\Users\\box\\note.txt"),
+    rangeScript("windows", "C:\\Users\\box\\note.txt", 0, 10),
+    writeScript("windows", "C:\\Users\\box\\note.txt", "abc", "guard"),
+    createScript("windows", "C:\\Users\\box\\note.txt", "file"),
+    renameScript("windows", "C:\\Users\\box\\a.txt", "C:\\Users\\box\\b.txt"),
+    deleteScript("windows", "C:\\Users\\box\\a.txt", "C:\\Users\\box"),
+    searchScript("windows", "C:\\Users\\box", "the", flags),
+    warmScript("windows", "C:\\Users\\box"),
+    namesScript("windows", "C:\\Users\\box"),
+  ];
+  for (const script of scripts) assert.equal(singleQuoted(script).some((part) => part.includes("`t")), false);
+  assert.match(homeScript("windows"), /"HOME`t"/);
+  const search = searchScript("windows", "C:\\Users\\box", "the", flags);
+  assert.match(search, /--max-count/);
+  assert.match(search, /-cmatch/);
+  assert.match(search, /-imatch/);
+  assert.match(search, /\[regex\]::Escape/);
+  assert.doesNotMatch(search, /\.Contains\(/);
 });

@@ -21,7 +21,7 @@ Select a file to open it. A text file opens up to 4 MB, and BB's source view col
 
 A Markdown file has **Preview**, **Read** and **Edit**. Other text has **Read** and **Edit**. Select the check mark to save, or press Ctrl or Command with S. The check mark stays disabled until the text has changed.
 
-If the file changed after you opened it, the save does not write. The view says so, and offers **Reload** or **Overwrite**.
+If the file changed after you opened it, the save leaves that version in place. The view says so, and offers **Reload** or **Overwrite**. The text you tried to save is kept next to the file, with .conflict on the end of its name.
 
 The tree lists the files under the path bar, at most 20,000 names. It skips `.git`, `node_modules` and `vendor`. A name that contains a newline is left out. Files whose names start with a dot stay hidden until you select the eye.
 

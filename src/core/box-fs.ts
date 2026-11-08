@@ -11,6 +11,7 @@ import {
   renameScript,
   searchScript,
   warmScript,
+  WARM_OUT,
   writeScript,
   type SearchFlags,
   type WriteMode,
@@ -57,8 +58,8 @@ const HASH = /^[0-9a-f]{64}$/;
 const LIST_OUT = 2_000_000;
 const READ_OUT = 8_000_000;
 const SEARCH_OUT = 3_000_000;
-const WARM_OUT = 12_000_000;
 const SMALL_OUT = 64_000;
+const OUTPUT_CUT = "[... output truncated ...]";
 
 export interface FsBox {
   readonly id: string;
@@ -292,15 +293,25 @@ function parseOk(stdout: string): FilesOk {
   return { error: words("failed") };
 }
 
-export function parseSearch(stdout: string): FilesSearch {
+function slashes(path: string, os: GuestOs): string {
+  return os === "windows" ? path.replaceAll("\\", "/") : path;
+}
+
+export function parseSearch(stdout: string, os: GuestOs, cut = false): FilesSearch {
   const lines = stdout.split(/\r?\n/);
   let engine: "rg" | "grep" = "grep";
   const hits: FsHit[] = [];
   const files = new Set<string>();
-  let truncated = false;
+  let truncated = cut;
   for (const line of lines) {
-    if (!line) continue;
-    if (line.startsWith("ERR\t")) return { error: words(line.slice(4).split("\t")[0]!.trim()) };
+    if (!line || line === OUTPUT_CUT) {
+      if (line === OUTPUT_CUT) truncated = true;
+      continue;
+    }
+    if (line.startsWith("ERR\t")) {
+      if (truncated) continue;
+      return { error: words(line.slice(4).split("\t")[0]!.trim()) };
+    }
     if (line.startsWith("ENGINE\t")) {
       engine = line.slice("ENGINE\t".length).trim() === "rg" ? "rg" : "grep";
       continue;
@@ -309,7 +320,7 @@ export function parseSearch(stdout: string): FilesSearch {
       truncated = true;
       continue;
     }
-    const hit = engine === "rg" ? rgHit(line) : grepHit(line);
+    const hit = engine === "rg" ? rgHit(line, os) : grepHit(line, os);
     if (!hit) continue;
     if (!files.has(hit.path) && files.size >= SEARCH_FILES) {
       truncated = true;
@@ -321,7 +332,7 @@ export function parseSearch(stdout: string): FilesSearch {
   return { error: null, engine, hits, truncated };
 }
 
-function rgHit(line: string): FsHit | null {
+function rgHit(line: string, os: GuestOs): FsHit | null {
   if (!line.startsWith("{")) return null;
   let message: { type?: string; data?: { path?: { text?: string }; lines?: { text?: string }; line_number?: number; submatches?: { start?: number }[] } };
   try {
@@ -332,25 +343,25 @@ function rgHit(line: string): FsHit | null {
   if (message.type !== "match" || !message.data) return null;
   const text = (message.data.lines?.text ?? "").replace(/\n$/, "");
   return {
-    path: (message.data.path?.text ?? "").replace(/^\.\//, "").replaceAll("\\", "/"),
+    path: slashes((message.data.path?.text ?? "").replace(/^\.\//, ""), os),
     line: message.data.line_number ?? 0,
     column: (message.data.submatches?.[0]?.start ?? 0) + 1,
     preview: text.slice(0, 240),
   };
 }
 
-function grepHit(line: string): FsHit | null {
+function grepHit(line: string, os: GuestOs): FsHit | null {
   const first = line.indexOf(":");
   const second = line.indexOf(":", first + 1);
   if (first < 1 || second < 0) return null;
   const lineNo = Number(line.slice(first + 1, second));
   if (!Number.isInteger(lineNo)) return null;
-  const path = line.slice(0, first).replace(/^\.\//, "").replaceAll("\\", "/");
+  const path = slashes(line.slice(0, first).replace(/^\.\//, ""), os);
   const preview = line.slice(second + 1).slice(0, 240);
   return { path, line: lineNo, column: 1, preview };
 }
 
-export function parseNames(stdout: string): FilesNames {
+export function parseNames(stdout: string, os: GuestOs): FilesNames {
   const paths: string[] = [];
   const directories: string[] = [];
   let truncated = false;
@@ -361,8 +372,8 @@ export function parseNames(stdout: string): FilesNames {
       truncated = true;
       continue;
     }
-    if (line.startsWith("NAME\t")) paths.push(decode(line.slice(5)).replaceAll("\\", "/"));
-    if (line.startsWith("DIR\t")) directories.push(decode(line.slice(4)).replaceAll("\\", "/"));
+    if (line.startsWith("NAME\t")) paths.push(slashes(decode(line.slice(5)), os));
+    if (line.startsWith("DIR\t")) directories.push(slashes(decode(line.slice(4)), os));
   }
   return { error: null, paths, directories, truncated };
 }
@@ -374,7 +385,7 @@ export interface CorpusFile {
   readonly mtime: number;
 }
 
-export function parseWarm(stdout: string): { names: string[]; files: CorpusFile[]; partial: boolean; error: string | null } {
+export function parseWarm(stdout: string, os: GuestOs): { names: string[]; files: CorpusFile[]; partial: boolean; error: string | null } {
   const lines = stdout.split(/\n/);
   const names: string[] = [];
   const files: CorpusFile[] = [];
@@ -388,14 +399,14 @@ export function parseWarm(stdout: string): { names: string[]; files: CorpusFile[
       continue;
     }
     if (line.startsWith("NAME\t")) {
-      names.push(decode(line.slice(5)).replaceAll("\\", "/"));
+      names.push(slashes(decode(line.slice(5)), os));
       continue;
     }
     if (line.startsWith("FILE\t")) {
       const [, path, size, mtime] = line.split("\t");
       const encoded = lines[++i] ?? "";
       if (lines[i + 1] === "ENDFILE") i++;
-      files.push({ path: decode(path ?? "").replaceAll("\\", "/"), size: Number(size) || 0, mtime: Number(mtime) || 0, text: Buffer.from(encoded, "base64").toString("utf8") });
+      files.push({ path: slashes(decode(path ?? ""), os), size: Number(size) || 0, mtime: Number(mtime) || 0, text: Buffer.from(encoded, "base64").toString("utf8") });
     }
   }
   return { names, files, partial, error: null };
@@ -745,10 +756,12 @@ export async function searchDirectory(box: FsBox, path: string, query: string, f
     const found = searchText(corpus.texts(flags.hidden), query, flags);
     return { error: null, engine: "memory", ...found };
   }
-  const result = await checked(run, searchScript(box.os, abs, query, flags), { timeoutMs: 15_000, maxOutputBytes: SEARCH_OUT });
-  if (!isResult(result)) return result;
+  const result = await run(searchScript(box.os, abs, query, flags), { timeoutMs: 15_000, maxOutputBytes: SEARCH_OUT });
+  if (result.timedOut) return { error: words("timeout") };
+  const parsed = parseSearch(result.stdout, box.os, result.truncated);
+  if (parsed.error) return parsed;
   if (!corpus.covers(abs)) warm(abs);
-  return parseSearch(result.stdout);
+  return parsed;
 }
 
 export async function warmDirectory(box: FsBox, path: string, run: FsRun, corpus: SearchCorpus): Promise<void> {
@@ -757,7 +770,7 @@ export async function warmDirectory(box: FsBox, path: string, run: FsRun, corpus
   if (!abs || corpus.covers(abs)) return;
   const result = await checked(run, warmScript(box.os, abs), { timeoutMs: 25_000, maxOutputBytes: WARM_OUT });
   if (!isResult(result)) return;
-  const warmed = parseWarm(result.stdout);
+  const warmed = parseWarm(result.stdout, box.os);
   if (warmed.error) return;
   corpus.load(abs, warmed.names, warmed.files, warmed.partial);
 }
@@ -771,7 +784,7 @@ export async function listNames(box: FsBox, path: string, run: FsRun, corpus: Se
   if (cached && !corpus.partial) return { error: null, paths: cached.paths, directories: cached.directories, truncated: false };
   const result = await checked(run, namesScript(box.os, abs), { timeoutMs: 20_000, maxOutputBytes: SEARCH_OUT });
   if (!isResult(result)) return result;
-  const parsed = parseNames(result.stdout);
+  const parsed = parseNames(result.stdout, box.os);
   if (parsed.error === null) corpus.rememberNames(abs, parsed.paths, parsed.directories, parsed.truncated);
   return parsed;
 }
