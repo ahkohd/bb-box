@@ -7,6 +7,7 @@ import { snapshotConfig, type BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
 import { message, relativeTime } from "./common.tsx";
+import { PRODUCT } from "./product.ts";
 import { effectiveKind, inheritSource, sourceName, withBackend } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { ImagesPage } from "./settings-images.tsx";
@@ -47,7 +48,7 @@ function SnapshotPicturesSwitch() {
   return (
     <AtOnceSwitch
       label="Keep a picture of the screen with each snapshot"
-      description="A small picture of a desktop's or a device's screen, taken as each snapshot is taken, so you can tell them apart by sight. It shows whatever was on the screen then. It is kept in bb-box's own records with its snapshot, never on the provider or in the box, and goes with it. Boxes without a screen have none."
+      description={`A small picture of a desktop's or a device's screen, taken as each snapshot is taken, so you can tell them apart by sight. It shows whatever was on the screen then. It is kept in ${PRODUCT}'s own records with its snapshot, never on the provider or in the box, and goes with it. Boxes without a screen have none.`}
       settingKey={switchKey.snapshots("pictures")}
       path={snapshotPath("pictures")}
       value={snapshotConfig(state.document).pictures}

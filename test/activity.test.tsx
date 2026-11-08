@@ -289,10 +289,10 @@ test("G1: a shared slot's tiles are its own against its share, then the Mac's fo
 test("the Monitor off: nothing read, and the way to turn it on in Monitor settings", async () => {
   open(handlers({ page: () => page(boxView(), { is: "off", machineId: null, why: "The Monitor is off." }), reading: () => snapshot() }));
   const card = await activity();
-  expect(card.textContent).toContain("The Monitor is off, so bb-box reads nothing now.");
+  expect(card.textContent).toContain("The Monitor is off, so BB Box reads nothing now.");
   expect(within(card).getByRole("link", { name: "Turn it on in Monitor settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box#option/monitor");
   const processes = screen.getByRole("region", { name: "Top processes" });
-  expect(processes.querySelector("[data-processes-quiet]")!.textContent).toBe("The Monitor is off, so bb-box lists no processes.");
+  expect(processes.querySelector("[data-processes-quiet]")!.textContent).toBe("The Monitor is off, so BB Box lists no processes.");
 });
 
 test("G16: Live keeps reading while the box stops; once the stop is confirmed the card says it is stopped and not read, and when", async () => {
@@ -303,7 +303,7 @@ test("G16: Live keeps reading while the box stops; once the stop is confirmed th
   const stoppedAt = Date.now() - 60_000;
   state.page = () => page(boxView({ state: "stopped", log: { lastStop: { at: stoppedAt, by: { is: "person" } } } } as Partial<BoxView>), { is: "not-running", machineId: null, why: "calm-otter is not running." });
   await slot.behavior.emitRealtime("changed", { threadId: THREAD });
-  await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so bb-box is not reading it\. It stopped 1 min ago, today at /));
+  await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so BB Box is not reading it\. It stopped 1 min ago, today at /));
 });
 
 test("a box bb-box cannot read says the Monitor's words in Activity's frame, which keeps its size with empty charts; one it read before keeps its history", async () => {
@@ -313,7 +313,7 @@ test("a box bb-box cannot read says the Monitor's words in Activity's frame, whi
   expect(card.querySelector("[data-activity-quiet]")!.textContent).toContain("its BB machine is not answering BB");
   const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
   await waitFor(() => expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^No readings over the last 24 hours/));
-  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("bb-box cannot list calm-otter's processes.");
+  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("BB Box cannot list calm-otter's processes.");
   cleanup();
   forgetLive();
   open(handlers({ page: () => page(boxView({ os: "windows" }), unreadable), reading: () => snapshot() }));
@@ -389,10 +389,10 @@ test("the Monitor's up label says whose clock it counts, so it does not contradi
   expect(upWords(snapshot({ slot: { host: "mac-1", encoder: null } }), true)).toBe("host up 1h 0m");
 });
 
-test("a thread with no title of its own is headed by the words BB's sidebar shows, its first prompt, else its ID", () => {
+test("a thread with no title of its own is headed by the words BB's sidebar shows, its first prompt, else this box's thread", () => {
   expect(sidebarTitle({ title: "Fix the sign-in flow", titleFallback: "fix it" }, "thr_1")).toBe("Fix the sign-in flow");
   expect(sidebarTitle({ title: null, titleFallback: "CALL box_list" }, "thr_1")).toBe("CALL box_list");
-  expect(sidebarTitle({ title: "  ", titleFallback: null }, "thr_1")).toBe("thr_1");
+  expect(sidebarTitle({ title: "  ", titleFallback: null }, "thr_1")).toBe("this box's thread");
 });
 
 test("a slot far over its share says so in its words: the tile, the summary and the read-out keep 787% and 125%, and only the drawn line stops at the top", async () => {
@@ -465,7 +465,7 @@ test("a stopped box opens on 24 h with its stops shown, and Live says why it can
   usage.focus();
   fireEvent.keyDown(usage, { key: "End" });
   expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/: Stopped$/);
-  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("bb-box lists calm-otter's processes while it runs.");
+  expect(screen.getByRole("region", { name: "Top processes" }).querySelector("[data-processes-quiet]")!.textContent).toBe("BB Box lists calm-otter's processes while it runs.");
 });
 
 test("over 24 h the light band is each step's busiest minute, said where it is 5 points or more above the mean, and a partly read step says so", async () => {
@@ -501,11 +501,11 @@ test("a refresh that fails keeps the charts, and says so and when they were read
   expect(stale.textContent).toMatch(/^Could not refresh: as read at /);
   expect(stale.getAttribute("title")).toContain("BB did not answer.");
   const announced = card.querySelector('[role="status"][data-history-announce]')!;
-  expect(announced.textContent).toMatch(/^bb-box could not read calm-otter's history again \(.*BB did not answer\.\), so this is as read at .*\.$/);
+  expect(announced.textContent).toMatch(/^BB Box could not read calm-otter's history again \(.*BB did not answer\.\), so this is as read at .*\.$/);
   const usage = within(card).getByRole("application", { name: /^CPU and memory, the last 24 hours/ });
-  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again .* Over the last 24 hours/);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^BB Box could not read calm-otter's history again .* Over the last 24 hours/);
   const network = within(card).getByRole("application", { name: /^Download and upload, the last 24 hours/ });
-  expect(document.getElementById(network.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again/);
+  expect(document.getElementById(network.getAttribute("aria-describedby")!)!.textContent).toMatch(/^BB Box could not read calm-otter's history again/);
 });
 
 test("7 d is by the hour, with each midnight marked; a missing hour says why in the read-out", async () => {
@@ -544,7 +544,7 @@ test("with box history off, 1 h, 24 h and 7 d keep what was read before under th
 test("with the Monitor off, Live cannot be chosen and what was read before stays on show", async () => {
   open(handlers({ page: () => page(boxView(), { is: "off", machineId: null, why: "The Monitor is off." }), reading: () => snapshot(), history: (range) => historyView(range, { monitor: false }) }));
   const card = await activity();
-  expect(card.textContent).toContain("The Monitor is off, so bb-box reads nothing now. What it read before stays.");
+  expect(card.textContent).toContain("The Monitor is off, so BB Box reads nothing now. What it read before stays.");
   expect(within(card).getByRole("radio", { name: "Live" }).getAttribute("aria-description")).toBe("The Monitor is off");
   expect(await within(card).findByRole("application", { name: /^CPU and memory, the last 24 hours/ })).toBeTruthy();
   expect(card.querySelector("[data-history-off]")).toBeNull();
@@ -665,7 +665,7 @@ test("a stopped box keeps the same frame while its history loads and after, with
   await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
   const before = layoutOf();
   expect(card.querySelector("[data-chart-words]")!.textContent).toBe("Reading its history…");
-  expect(card.querySelector("[data-activity-quiet]")!.textContent).toBe("calm-otter is stopped, so bb-box is not reading it.");
+  expect(card.querySelector("[data-activity-quiet]")!.textContent).toBe("calm-otter is stopped, so BB Box is not reading it.");
   release();
   await waitFor(() => expect(card.querySelector("[data-history-ready]")).toBeTruthy());
   expect(layoutOf()).toBe(before);

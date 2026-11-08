@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { useId, useState } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,7 +35,7 @@ function ContentEditor({ draft, path, label, onEmptied, onClose }: { draft: Draf
         aria-label={label}
         aria-describedby={describedBy(problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
-        className={cn("min-h-24 font-mono text-xs", value && "border-warning/60")}
+        className={cn("min-h-24 font-mono text-xs", problem && "border-destructive")}
         placeholder={CONTENT_PLACEHOLDER}
         autoComplete="off"
         spellCheck={false}
@@ -263,34 +263,41 @@ export function BoxFilesSection() {
         {removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
         <SaveBar draft={draft} inline primary="Save files" unplaced={unplacedProblems(draft, placed)} />
       </div>
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove ~/{removing}?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>Boxes made from now on no longer get it. Boxes already made keep their copy.</p>
-                <p>Its content is deleted from BB Box and cannot be shown or got back; to use it again, paste it again.</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                const path = removing;
-                setRemoving(null);
-                if (!path) return;
-                setRemoved(path);
-                void instant.run(writes.removeFile(state, path));
-              }}
-            >
-              Remove file
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BoxDialog
+        open={removing !== null}
+        title={removing ? `Remove ~/${removing}?` : "Nothing to remove"}
+        onClose={() => setRemoving(null)}
+        footer={
+          removing ? (
+            <>
+              <DialogButton variant="outline" onClick={() => setRemoving(null)}>
+                Cancel
+              </DialogButton>
+              <DialogButton
+                danger
+                onClick={() => {
+                  const path = removing;
+                  setRemoving(null);
+                  if (!path) return;
+                  setRemoved(path);
+                  void instant.run(writes.removeFile(state, path));
+                }}
+              >
+                Remove file
+              </DialogButton>
+            </>
+          ) : (
+            <DialogButton variant="outline" onClick={() => setRemoving(null)}>
+              Close
+            </DialogButton>
+          )
+        }
+      >
+        <div className="space-y-2">
+          <p>Boxes made from now on no longer get it. Boxes already made keep their copy.</p>
+          <p>Its content is deleted from BB Box and cannot be shown or got back. To use it again, paste it again.</p>
+        </div>
+      </BoxDialog>
     </Section>
   );
 }

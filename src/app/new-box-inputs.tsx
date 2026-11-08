@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Contract } from "../plugin/contract.ts";
 import type { ImageOptionView, KindView } from "../plugin/views.ts";
+import { PRODUCT } from "./product.ts";
+
+const NO_KIND = `${PRODUCT} offers no kind that a thread can run on. Set a backend up in ${PRODUCT}'s settings and turn it on.`;
 
 type Preset = KindView["defaultPreset"];
 
@@ -63,26 +66,27 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
   const image = covering.length ? (kept ?? (projectId ? (covering.find((candidate) => candidate.mine)?.name ?? "standard") : undefined)) : undefined;
   useEffect(() => {
     if (problem) onChange({ status: "blocked", reason: problem });
-    else if (!kinds) onChange({ status: "blocked", reason: "Loading BB Box's kinds…" });
-    else if (!kind) onChange({ status: "blocked", reason: "BB Box offers no kind that a thread can run on. Set a backend up in BB Box's settings and turn it on." });
+    else if (!kinds) onChange({ status: "blocked", reason: `Loading ${PRODUCT}'s kinds…` });
+    else if (!kind) onChange({ status: "blocked", reason: NO_KIND });
     else onChange({ status: "ready", value: { kind: kind.id, ...(size ? { size } : {}), ...(image ? { image } : {}) } });
   }, [onChange, problem, kinds, kind, size, image]);
 
   const choose = (next: Choice) => onChange({ status: "ready", value: { kind: next.kind, ...(next.size ? { size: next.size } : {}), ...(next.image ? { image: next.image } : {}) } });
   const preset = kind?.presets.find((candidate) => candidate.name === size);
   const imageWords = image ? (imageOptions.find((option) => option.value === image)?.label.replace(/ · .*$/, "") ?? image) : null;
+  const waiting = kind ? `${kind.label}${preset ? ` · ${preset.words}` : ""}${imageWords ? ` · ${imageWords}` : ""}` : problem ? `${PRODUCT} is unavailable.` : kinds && kinds.length === 0 ? NO_KIND : "Loading…";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="sm" aria-label="New box options" className="h-7 gap-1 px-2 text-xs text-muted-foreground" disabled={!kind}>
-          <span className="min-w-0 truncate">{kind ? `${kind.label}${preset ? ` · ${preset.words}` : ""}${imageWords ? ` · ${imageWords}` : ""}` : problem ? "bb-box is unavailable" : "Loading…"}</span>
+          <span className="min-w-0 truncate">{waiting}</span>
           <Icon name="ChevronDown" className="size-3.5 shrink-0" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-w-80">
         <DropdownMenuLabel>Kind</DropdownMenuLabel>
         {(kinds ?? []).map((candidate) => (
-          <DropdownMenuItem key={candidate.id} onSelect={() => choose({ kind: candidate.id })}>
+          <DropdownMenuItem key={candidate.id} role="menuitemradio" aria-checked={candidate.id === kind?.id} onSelect={() => choose({ kind: candidate.id })}>
             {candidate.id === kind?.id ? <Icon name="Check" aria-hidden /> : <span className="size-4" aria-hidden />}
             {candidate.label}
           </DropdownMenuItem>
@@ -92,7 +96,7 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Size</DropdownMenuLabel>
             {kind.presets.map((candidate) => (
-              <DropdownMenuItem key={candidate.name} onSelect={() => choose({ kind: kind.id, size: candidate.name, ...(image ? { image } : {}) })}>
+              <DropdownMenuItem key={candidate.name} role="menuitemradio" aria-checked={candidate.name === size} onSelect={() => choose({ kind: kind.id, size: candidate.name, ...(image ? { image } : {}) })}>
                 {candidate.name === size ? <Icon name="Check" aria-hidden /> : <span className="size-4" aria-hidden />}
                 {candidate.name[0]!.toUpperCase() + candidate.name.slice(1)} · {candidate.words}
               </DropdownMenuItem>
@@ -104,7 +108,7 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Image</DropdownMenuLabel>
             {imageOptions.map((option) => (
-              <DropdownMenuItem key={option.value} onSelect={() => choose({ kind: kind.id, ...(size ? { size } : {}), image: option.value })}>
+              <DropdownMenuItem key={option.value} role="menuitemradio" aria-checked={option.value === image} onSelect={() => choose({ kind: kind.id, ...(size ? { size } : {}), image: option.value })}>
                 {option.value === image ? <Icon name="Check" aria-hidden /> : <span className="size-4" aria-hidden />}
                 {option.label}
               </DropdownMenuItem>

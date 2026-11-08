@@ -98,7 +98,7 @@ export function BoxRow({
   box: BoxView;
   threadId: string;
   opening: RowOpening;
-  act: (method: BoxAction, box: BoxView, options?: { readonly deleteKept?: boolean }) => Promise<void>;
+  act: (method: BoxAction, box: BoxView, options?: { readonly deleteKept?: boolean }) => Promise<string | null | void> | void;
   now: number;
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
@@ -126,7 +126,7 @@ export function BoxRow({
   const run = async (method: BoxAction, options: { readonly deleteKept?: boolean } = {}) => {
     setBusy(method);
     try {
-      await act(method, box, options);
+      return await act(method, box, options);
     } finally {
       setBusy(null);
     }

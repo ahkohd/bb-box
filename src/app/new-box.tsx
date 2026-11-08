@@ -18,12 +18,14 @@ import type { SlotKind } from "../core/device-host.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import { LargestLine, type AskedParts } from "./largest-line.tsx";
+import { INVALID_BORDER, sizeHint, sizeInvalid } from "./size-field.ts";
 import { withoutRaiseLargest } from "../core/largest-words.ts";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
 import type { GpuPart, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
 import { gpuForSpare, gpuWhenNotAsked } from "../core/gpu.ts";
 import { GPU_LINE_CLASS, GPU_MENU_LABELS, cardReachLine, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, type GpuFormOffer } from "./gpu-choice.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuDesktopSetting, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { PRODUCT } from "./product.ts";
 
 export const ROOMS_CHECK_MS = 300;
 
@@ -101,7 +103,7 @@ function remember(key: string, value: Remembered): void {
 
 /** "2 cores · 4 GiB memory · base disk". */
 export function sizeLine(size: SizeView): string {
-  return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB memory`, size.diskGiB === null ? "base disk" : `${size.diskGiB} GiB disk`].join(" · ");
+  return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB memory`, size.diskGiB === null ? "the image's own disk" : `${size.diskGiB} GiB disk`].join(" · ");
 }
 
 const PRESET_LABELS: Readonly<Record<string, string>> = { small: "Small", medium: "Medium", large: "Large" };
@@ -517,20 +519,26 @@ export function NewBox({
   };
 
   const largest = kind?.largest ?? null;
-  const field = (name: "cores" | "memoryGiB" | "diskGiB", label: string, limit: number | null) => (
-    <label className="flex min-w-0 flex-col gap-1 text-xs leading-snug text-subtle-foreground">
-      <span>{label}</span>
-      <Input
-        inputMode="numeric"
-        className="h-7 px-2 text-xs"
-        value={fields[name]}
-        placeholder={name === "diskGiB" ? "base" : ""}
-        aria-invalid={whole(fields[name]) === undefined || undefined}
-        onChange={(event) => edit(name, event.target.value)}
-      />
-      {limit !== null ? <span>up to {limit}</span> : null}
-    </label>
-  );
+  const field = (name: "cores" | "memoryGiB" | "diskGiB", label: string, limit: number | null) => {
+    const bad = sizeInvalid(fields[name], limit, name === "diskGiB" || fields[name].trim() === "");
+    const hint = name === "diskGiB" && limit === null ? `${sizeHint(null)} Empty leaves the image's own disk.` : sizeHint(limit);
+    return (
+      <label className="flex min-w-0 flex-col gap-1 text-xs leading-snug text-subtle-foreground">
+        <span>{label}</span>
+        <Input
+          inputMode="numeric"
+          className={cn("h-7 px-2 text-xs", bad && INVALID_BORDER)}
+          value={fields[name]}
+          placeholder={name === "diskGiB" ? "Image's own" : ""}
+          aria-invalid={bad || undefined}
+          onChange={(event) => edit(name, event.target.value)}
+        />
+        <span role={bad ? "alert" : undefined} className={bad ? "text-destructive-text" : undefined}>
+          {hint}
+        </span>
+      </label>
+    );
+  };
   // The provider choice: "First with room" when there is one to make, then the rows the filters leave.
   const providerValues: (string | null)[] = [...(choiceless || !shown.length ? [] : [null]), ...takers.map((offer) => offer.backend)];
   const providerIndex = Math.max(0, providerValues.indexOf(onOffer?.backend ?? null));
@@ -839,7 +847,7 @@ export function NewBox({
                 id="new-machine-name"
                 aria-label="Name"
                 aria-describedby="new-machine-name-hint"
-                placeholder="Optional: bb-box picks a name like calm-tundra"
+                placeholder={`Optional: ${PRODUCT} picks a name like calm-tundra`}
                 className="h-7 px-2 text-xs"
                 value={name}
                 autoCapitalize="off"
@@ -852,7 +860,7 @@ export function NewBox({
                 }}
               />
               <span id="new-machine-name-hint" className="sr-only">
-                Optional. If left empty, bb-box picks a name.
+                Optional. If left empty, {PRODUCT} picks a name.
               </span>
               {nameWrong ? (
                 <p role="alert" className="text-2xs leading-snug text-destructive-text">

@@ -98,9 +98,9 @@ test("071 unit 13: the GPU line keeps one height, and each state says what the n
   const free = offer({ gpuRoom: room([card({ index: 0, boxes: 0, freeMiB: 24_576, totalMiB: 24_576, freeForWhole: true })]) });
   const whole = gpuFormLine([free], "whole", NOW);
   assert.equal(whole.state, "whole");
-  assert.equal(whole.words, "Card 0 on pve-1, to itself: bb-box places no other box on it.");
+  assert.equal(whole.words, "Card 0 on pve-1, to itself: BB Box places no other box on it.");
   const outside = offer({ gpuRoom: room([card({ index: 0, boxes: 0, freeMiB: 3_486, totalMiB: 24_576, freeForWhole: true })]) });
-  assert.equal(gpuFormLine([outside], "whole", NOW).words, "Card 0 on pve-1, to itself. 20.6 GiB of it is in use outside bb-box's boxes.");
+  assert.equal(gpuFormLine([outside], "whole", NOW).words, "Card 0 on pve-1, to itself. 20.6 GiB of it is in use outside BB Box's boxes.");
 
   const reading = gpuFormLine([offer({ gpuRoom: null, unread: true })], "shared", NOW);
   assert.equal(reading.state, "reading");
@@ -113,7 +113,7 @@ test("071 unit 13: the GPU line keeps one height, and each state says what the n
   assert.match(gpuFormLine([docker], "none", NOW).words, /^No GPU, and none can be added later on Docker on the host\. Boxes with Docker in them can still open every card\.$/);
   assert.match(gpuFormLine([offer({ reachesEveryCard: true })], "none", NOW).words, /You can add one later with Resize\. Boxes with Docker in them can still open every card\.$/);
   const reached = offer({ reachesEveryCard: true, gpuRoom: room([card({ index: 0, boxes: 0, freeMiB: 24_576, totalMiB: 24_576, freeForWhole: true })]) });
-  assert.match(gpuFormLine([reached], "whole", NOW).words, /to itself: bb-box places no other box on it\. Boxes with Docker in them can still open every card\.$/);
+  assert.match(gpuFormLine([reached], "whole", NOW).words, /to itself: BB Box places no other box on it\. Boxes with Docker in them can still open every card\.$/);
 
   const second = offer({ host: "other", label: "Other", gpuRoom: room([], { host: "other", withheld: "No card is free." }) });
   const both = gpuFormLine([held, second], "whole", NOW);

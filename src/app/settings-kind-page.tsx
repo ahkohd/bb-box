@@ -87,7 +87,7 @@ function SizeCell({ draft, id, size, part, describe, invalid }: { draft: Draft; 
         aria-label={`${name} size: ${PART_NAMES[part]}`}
         aria-describedby={describe}
         aria-invalid={invalid || undefined}
-        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", draft.changed(path) && "border-warning/60")}
+        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", invalid && "border-destructive")}
         inputMode="decimal"
         autoComplete="off"
         placeholder={part === "diskGiB" && size !== "largest" ? "Image's own" : undefined}
@@ -194,7 +194,7 @@ function WarmField({ draft, row, kind, problem, describe }: { draft: Draft; row:
         aria-label={`Warm boxes on ${row.label}`}
         aria-describedby={describe}
         aria-invalid={problem ? true : undefined}
-        className={cn("h-8 w-16 text-right text-xs tabular-nums", draft.changed(path) && "border-warning/60")}
+        className={cn("h-8 w-16 text-right text-xs tabular-nums", problem && "border-destructive")}
         inputMode="numeric"
         autoComplete="off"
         placeholder="0"

@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -307,78 +307,83 @@ function focusMenuOf(id: string) {
   };
 }
 
-function RenameDialog({ open, label, id, driverLabel, onCancel, onSave }: { open: boolean; label: string; id: string; driverLabel: string; onCancel: () => void; onSave: (name: string) => void }) {
+function RenameDialog({ open, label, id, driverLabel, onCancel, onSave }: { open: boolean; label: string; id: string; driverLabel: string; onCancel: () => void; onSave: (name: string) => Promise<string | null> }) {
   const [name, setName] = useState(label);
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
   const problem = name.trim().length > 64 ? "Give it a name of up to 64 characters." : null;
+  const save = async () => {
+    if (problem || busy) return;
+    setBusy(true);
+    setRefused(null);
+    const why = await onSave(name).catch((error: unknown) => (error instanceof Error ? error.message : "Not renamed. The name you wrote is still here."));
+    setBusy(false);
+    if (why) setRefused(why);
+  };
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          field.current?.focus();
-          field.current?.select();
-        }}
-        onCloseAutoFocus={focusMenuOf(id)}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Rename {label}</AlertDialogTitle>
-          <AlertDialogDescription>
-            The name BB Box shows for it. Its ID, {id}, stays as it is, so nothing that uses it changes. Empty uses {driverLabel}.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <Input
-          ref={field}
-          aria-label="Name"
-          aria-invalid={problem ? true : undefined}
-          className="h-8 text-sm"
-          value={name}
-          placeholder={driverLabel}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || problem) return;
-            event.preventDefault();
-            onSave(name);
-          }}
-        />
+    <BoxDialog
+      open={open}
+      title={`Rename ${label}`}
+      description={`The name BB Box shows for it. Its ID, ${id}, stays as it is, so nothing that uses it changes. Empty uses ${driverLabel}.`}
+      busy={busy}
+      refused={refused}
+      onClose={onCancel}
+      onSubmit={() => void save()}
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        field.current?.focus();
+        field.current?.select();
+      }}
+      onCloseAutoFocus={focusMenuOf(id)}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={onCancel}>
+            Cancel
+          </DialogButton>
+          <DialogButton type="submit" busyWords="Renaming…" disabled={problem !== null}>
+            Rename
+          </DialogButton>
+        </>
+      }
+    >
+      <label className="block space-y-1">
+        <span className="sr-only">Name</span>
+        <Input ref={field} aria-label="Name" aria-invalid={problem ? true : undefined} className="h-8 text-sm" value={name} placeholder={driverLabel} onChange={(event) => setName(event.target.value)} />
         {problem ? (
           <p role="alert" className="text-xs text-destructive-text">
             {problem}
           </p>
         ) : null}
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={problem !== null} onClick={() => onSave(name)}>
-            Save name
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      </label>
+    </BoxDialog>
   );
 }
 
 function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: { open: boolean; id: string; label: string; secrets: readonly string[]; onCancel: () => void; onConfirm: () => void }) {
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent onCloseAutoFocus={focusMenuOf(id)}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-2">
-              <p>Its settings are deleted{secrets.length ? `, with ${secrets.join(" and ")}, which BB Box cannot show or get back` : ""}. Its warm boxes are released.</p>
-              <p>Threads can no longer get boxes from it. To use it again you set it up again. There is no undo.</p>
-              <p>BB Box refuses to remove a backend while it has boxes.</p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={onConfirm}>
+    <BoxDialog
+      open={open}
+      title={`Remove ${label}?`}
+      onClose={onCancel}
+      onCloseAutoFocus={focusMenuOf(id)}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={onCancel}>
+            Cancel
+          </DialogButton>
+          <DialogButton danger onClick={onConfirm}>
             Remove backend
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+          </DialogButton>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <p>Its settings are deleted{secrets.length ? `, with ${secrets.join(" and ")}, which BB Box cannot show or get back` : ""}. Its warm boxes are released.</p>
+        <p>Threads can no longer get boxes from it. To use it again you set it up again. There is no undo.</p>
+        <p>BB Box refuses to remove a backend while it has boxes.</p>
+      </div>
+    </BoxDialog>
   );
 }
 
@@ -550,10 +555,23 @@ function BackendEditor({ config }: { config: BackendConfig }) {
           </Button>
         }
       />
-      {renaming ? <RenameDialog open label={config.label ?? ""} id={config.id} driverLabel={driver.label} onCancel={() => setRenaming(false)} onSave={(name) => {
-        setRenaming(false);
-        void instant.run(writes.backendLabel(draft.latest, config, name, `The name of ${label}`));
-      }} /> : null}
+      {renaming ? (
+        <RenameDialog
+          open
+          label={config.label ?? ""}
+          id={config.id}
+          driverLabel={driver.label}
+          onCancel={() => setRenaming(false)}
+          onSave={async (name) => {
+            const outcome = await instant.run(writes.backendLabel(draft.latest, config, name, `The name of ${label}`));
+            if (!outcome || outcome.kind === "saved" || outcome.kind === "already") {
+              setRenaming(false);
+              return null;
+            }
+            return instant.note(switchKey.backendLabel(config.id))?.text ?? "Not renamed. The name you wrote is still here.";
+          }}
+        />
+      ) : null}
       <RemoveBackendDialog open={removing} id={config.id} label={label} secrets={secretsSet(driver, config)} onCancel={() => setRemoving(false)} onConfirm={remove} />
       <RemoveHostDialog
         name={removingHost}

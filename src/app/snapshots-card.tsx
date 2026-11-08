@@ -1,6 +1,7 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialogCancel, AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { BoxDialog, Refused } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { isMachineName } from "../core/names.ts";
+import { PRODUCT } from "./product.ts";
 import {
   aboutWords,
   agoWords,
@@ -71,40 +73,15 @@ export function useSnapshotTitles(view: BoxSnapshotsView | null | undefined): Th
   return useThreadTitles(agentThreads([...(view?.records ?? []).map((row) => row.by), view?.restored?.by]));
 }
 
-export function Shell({ title, children, footer, onClose, returnTo }: { title: string; children: ReactNode; footer: ReactNode; onClose: () => void; returnTo?: RefObject<HTMLElement | null> }) {
-  const opener = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement && document.activeElement !== document.body && !document.activeElement.closest("[role=menu]") ? document.activeElement : null);
+export function Shell({ title, children, footer, onClose, returnTo, busy = false, onSubmit }: { title: string; children: ReactNode; footer: ReactNode; onClose: () => void; returnTo?: RefObject<HTMLElement | null>; busy?: boolean; onSubmit?: () => void }) {
   return (
-    <AlertDialog open onOpenChange={(open) => (open ? null : onClose())}>
-      <AlertDialogContent
-        onOpenAutoFocus={(event) => {
-          const first = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("[data-first-focus]");
-          if (!first) return;
-          event.preventDefault();
-          first.focus();
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          const target = returnTo?.current ?? (opener.current?.isConnected ? opener.current : null);
-          window.setTimeout(() => target?.focus(), 0);
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle className="font-normal">{title}</AlertDialogTitle>
-        </AlertDialogHeader>
-        <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">{children}</div>
-        <AlertDialogFooter>{footer}</AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BoxDialog title={title} onClose={onClose} returnTo={returnTo} busy={busy} footer={footer} onSubmit={onSubmit ? () => onSubmit() : undefined}>
+      {children}
+    </BoxDialog>
   );
 }
 
-export function Refused({ words }: { words: string | null }) {
-  return words ? (
-    <p role="alert" className="text-xs text-destructive-text">
-      {words}
-    </p>
-  ) : null;
-}
+export { Refused };
 
 function TakeFacts({ lines }: { lines: readonly { readonly label: string; readonly value: ReactNode }[] }) {
   return (
@@ -484,10 +461,12 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
       title={`Take a snapshot of ${box.name}`}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
+      onSubmit={() => void take()}
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={sending || !check} onClick={() => void take()}>
+          <Button type="submit" disabled={sending || !check}>
             {sending ? "Taking…" : "Take snapshot"}
           </Button>
         </>
@@ -555,7 +534,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
     }
     setSending(false);
     if (answer.error || !answer.box) {
-      setRefused(answer.error ?? "bb-box made no box for the fork.");
+      setRefused(answer.error ?? `${PRODUCT} made no box for the fork.`);
       request.current = requestId();
       return;
     }
@@ -570,10 +549,12 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
       title={`Fork "${row.name}" of ${box.name}`}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
+      onSubmit={() => void fork()}
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={sending || !check || !!nameWhy} onClick={() => void fork()}>
+          <Button type="submit" disabled={sending || !check || !!nameWhy}>
             {sending ? "Forking…" : `Fork ${box.name}`}
           </Button>
         </>
@@ -625,9 +606,9 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
                 keychains. It starts fresh: no apps are running.
               </p>
               <p>
-                {check.size}, as the snapshot holds. The copy takes up to about {aboutWords(check.aboutMs)}{space}, then it starts, and bb-box checks that it reset its identity before handing it over.
+                {check.size}, as the snapshot holds. The copy takes up to about {aboutWords(check.aboutMs)}{space}, then it starts, and {PRODUCT} checks that it reset its identity before handing it over.
               </p>
-              {check.unflushed ? <p className="text-warning-text">bb-box could not flush {box.name}'s writes to its disk before this snapshot, so it, and the fork, may miss what was written in the last seconds before it.</p> : null}
+              {check.unflushed ? <p className="text-warning-text">{PRODUCT} could not flush {box.name}'s writes to its disk before this snapshot, so it, and the fork, may miss what was written in the last seconds before it.</p> : null}
             </>
           ) : current ? null : (
             <p role="status">Reading what the fork would be…</p>
@@ -685,7 +666,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
         <AlertDialogDescription asChild>
           <div className="space-y-3">
             <WarnPanel>
-              <p>{preview.refusal ?? "bb-box cannot restore it now."}</p>
+              <p>{preview.refusal ?? `${PRODUCT} cannot restore it now.`}</p>
               {threads.length || others.length ? (
                 <ul className="mt-2 list-disc space-y-0.5 pl-5">
                   {[...threads, ...others].map((loss) => (
@@ -725,6 +706,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
       title={title}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
       footer={
         <>
           <AlertDialogCancel autoFocus disabled={sending}>
@@ -761,7 +743,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
           {sizeBack ? <p>{sizeBack}</p> : null}
           {check.gpuStay ? <p>{check.gpuStay}</p> : null}
           {check.userspaceNote ? <p>{check.userspaceNote}</p> : null}
-          {preview.undoUnflushed ? <p className="text-warning-text">This undo may miss what was written in the last seconds before its restore: bb-box could not flush the box's writes to its disk then ({preview.undoUnflushed.replace(/\.$/, "")}).</p> : null}
+          {preview.undoUnflushed ? <p className="text-warning-text">This undo may miss what was written in the last seconds before its restore: {PRODUCT} could not flush the box's writes to its disk then ({preview.undoUnflushed.replace(/\.$/, "")}).</p> : null}
           {check.fromSnapshot ? <p>{box.name} comes back on a new guest made from the snapshot, with the box's own identity, and its old guest is deleted. {check.costWords ?? ""}</p> : null}
           {check.swap && check.leavesOnEarlierGuest ? <p>{check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its earlier guest: fork only.</p> : null}
         </div>
@@ -789,6 +771,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
 function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box: RowBox; row: SnapshotRowView; keepDays: number; onClose: () => void; onChanged: () => void; returnTo?: RefObject<HTMLElement | null> }) {
   const call = useSnapshotCall();
   const [until, setUntil] = useState<string | null>(null);
+  const [opened] = useState(() => utcDate(Date.now() + keepDays * 24 * 60 * 60_000));
   const [preview, setPreview] = useState<(KeepPreview & { readonly until: string | null }) | null>(null);
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -828,6 +811,8 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
       title={renews ? `Keep "${row.name}" longer` : `Keep "${row.name}"`}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
+      onSubmit={() => void keep()}
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
@@ -839,20 +824,20 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
     >
       <label className="block space-y-1">
         <span className="text-xs text-foreground">Keep it until the end of</span>
-        <Input type="date" value={until ?? ""} onChange={(event) => setUntil(event.target.value)} className="h-8 w-44" data-first-focus aria-describedby={describedBy} />
+        <Input type="date" value={until ?? opened} onChange={(event) => setUntil(event.target.value)} className="h-8 w-44" data-first-focus aria-describedby={describedBy} />
       </label>
       <AlertDialogDescription id={describedBy} asChild>
         <div className="space-y-2 text-xs leading-snug text-muted-foreground">
           {check ? (
             <>
               <p>
-                {renews && check.current !== null ? `It is kept until ${keepDay(check.current)} now. ` : ""}It becomes yours: no agent can delete it, and it outlives {box.name}'s release. bb-box deletes it after {keepDay(check.keptUntil)}. Days are counted in UTC; {keepDays} by default, in
+                {renews && check.current !== null ? `It is kept until ${keepDay(check.current)} now. ` : ""}It becomes yours: no agent can delete it, and it outlives {box.name}'s release. {PRODUCT} deletes it after {keepDay(check.keptUntil)}. Days are counted in UTC; {keepDays} by default, in
                 Settings.
               </p>
               {check.shortens ? <p className="text-warning-text">This shortens its keep, from {keepDay(check.current!)} to {keepDay(check.keptUntil)}.</p> : null}
               <p>{check.cost}</p>
               {check.warning ? <p className="text-warning-text">{check.warning}</p> : null}
-              {check.unflushed ? <p className="text-warning-text">It may miss what {box.name} wrote in its last seconds before it: bb-box could not flush them first.</p> : null}
+              {check.unflushed ? <p className="text-warning-text">It may miss what {box.name} wrote in its last seconds before it: {PRODUCT} could not flush them first.</p> : null}
             </>
           ) : preview ? null : (
             <p role="status">Reading what keeping it would cost…</p>
@@ -884,6 +869,7 @@ function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { b
       title={`Delete "${row.name}"?`}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
       footer={
         <>
           <AlertDialogCancel autoFocus disabled={sending}>
@@ -926,10 +912,12 @@ function TextDialog({ box, row, kind, onClose, onChanged, returnTo }: { box: Row
       title={kind === "rename" ? `Rename "${row.name}"` : `A note on "${row.name}"`}
       onClose={onClose}
       returnTo={returnTo}
+      busy={sending}
+      onSubmit={kind === "rename" ? () => void save() : undefined}
       footer={
         <>
           <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={sending || (kind === "rename" && !text.trim())} onClick={() => void save()}>
+          <Button type={kind === "rename" ? "submit" : "button"} disabled={sending || (kind === "rename" && !text.trim())} onClick={kind === "rename" ? undefined : () => void save()}>
             {sending ? "Saving…" : "Save"}
           </Button>
         </>
@@ -1078,7 +1066,7 @@ export function SnapshotNotices({ box, view, now, titles, onChanged }: { box: Bo
         <section data-notice="warn" className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-warning/40 bg-warning/5 px-4 py-3">
           <div className="min-w-0 flex-1 text-sm">
             <h2 className="font-normal text-warning-text">
-              bb-box could not confirm the restore of {box.name} to "{view.unconfirmed.to}"
+              {PRODUCT} could not confirm the restore of {box.name} to "{view.unconfirmed.to}"
             </h2>
             <p className="mt-1 text-foreground">{view.unconfirmed.words}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">Its record of the restore is kept, with its undo. Check now reads the provider's task and the guest, then finishes the restore or says what it found.</p>
@@ -1112,7 +1100,7 @@ export function SnapshotNotices({ box, view, now, titles, onChanged }: { box: Bo
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">{restored.undo ? `Undo restores "${restored.undo.name}".` : "It was restored without an undo."}</p>
             {restored.unflushed ? (
-              <p className="mt-0.5 text-xs text-warning-text">Its undo may miss what was written in the last seconds before the restore: bb-box could not flush the box's writes to its disk before stopping it ({restored.unflushed.replace(/\.$/, "")}).</p>
+              <p className="mt-0.5 text-xs text-warning-text">Its undo may miss what was written in the last seconds before the restore: {PRODUCT} could not flush the box's writes to its disk before stopping it ({restored.unflushed.replace(/\.$/, "")}).</p>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">

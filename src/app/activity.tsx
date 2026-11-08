@@ -7,6 +7,7 @@ import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep,
 import type { GpuCard } from "../monitor/snapshot.ts";
 import { MOST_CARDS } from "../monitor/nvidia.ts";
 import type { BoxView } from "../plugin/views.ts";
+import { PRODUCT } from "./product.ts";
 import { countsAsThisBox } from "../plugin/gpu-page.ts";
 import { STALL_LIMITS } from "../monitor/health.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
@@ -751,9 +752,9 @@ function HistoryCharts({ box, range, expectedCards }: { box: BoxView; range: His
     const step = steps[index];
     return step?.partial ? partlyReadWords(range, step.covered) : null;
   };
-  const waiting = error ? `bb-box could not read ${box.name}'s history: ${error}` : "Reading its history…";
+  const waiting = error ? `${PRODUCT} could not read ${box.name}'s history: ${error}` : "Reading its history…";
   const failed = view && error ? error : null;
-  const staleWords = view && failed ? `bb-box could not read ${box.name}'s history again (${failed}), so this is as read at ${historyClock(view.now)}. ` : "";
+  const staleWords = view && failed ? `${PRODUCT} could not read ${box.name}'s history again (${failed}), so this is as read at ${historyClock(view.now)}. ` : "";
   const common = { times, window, longestStepMs: stepMs * 1.5, timeWords, gapWords, notes, bands };
   const usageSummaryWords = view ? `${staleWords}${historySummary(words, { cpu: cpuLine, memory: memoryLine, gpus: gpuUsage }, gaps, stepWords, clockOf, now)}${sharedCardsWords(steps)}` : waiting;
   const shortWorkNote = shared && range !== "1h" ? SLOT_SHORT_WORK_WORDS : null;
@@ -802,9 +803,9 @@ function SettingsWord({ children }: { children: ReactNode }) {
 export function notReadWords(box: BoxView, now: number): string {
   if (box.state === "stopped") {
     const stop = box.log?.lastStop;
-    return stop ? `${box.name} is stopped, so bb-box is not reading it. It stopped ${ago(stop.at, now)}, ${dayAndClock(stop.at, now)}.` : `${box.name} is stopped, so bb-box is not reading it.`;
+    return stop ? `${box.name} is stopped, so ${PRODUCT} is not reading it. It stopped ${ago(stop.at, now)}, ${dayAndClock(stop.at, now)}.` : `${box.name} is stopped, so ${PRODUCT} is not reading it.`;
   }
-  return `${box.name} is not running, so bb-box is not reading it.`;
+  return `${box.name} is not running, so ${PRODUCT} is not reading it.`;
 }
 
 function notReadWhy(page: BoxPageState, box: BoxView, now: number): ReactNode {
@@ -812,19 +813,19 @@ function notReadWhy(page: BoxPageState, box: BoxView, now: number): ReactNode {
   if (reach.is === "off") {
     return (
       <>
-        The Monitor is off, so bb-box reads nothing now. What it read before stays. <SettingsWord>Turn it on in Monitor settings</SettingsWord>
+        The Monitor is off, so {PRODUCT} reads nothing now. What it read before stays. <SettingsWord>Turn it on in Monitor settings</SettingsWord>
       </>
     );
   }
   if (reach.is === "not-running") return notReadWords(box, now);
-  return reach.why ?? `bb-box cannot read ${box.name}.`;
+  return reach.why ?? `${PRODUCT} cannot read ${box.name}.`;
 }
 
 function processesWhy(page: BoxPageState, box: BoxView): string {
   const reach = page.monitor;
-  if (reach.is === "off") return "The Monitor is off, so bb-box lists no processes.";
-  if (reach.is === "not-running") return `bb-box lists ${box.name}'s processes while it runs.`;
-  return `bb-box cannot list ${box.name}'s processes.`;
+  if (reach.is === "off") return `The Monitor is off, so ${PRODUCT} lists no processes.`;
+  if (reach.is === "not-running") return `${PRODUCT} lists ${box.name}'s processes while it runs.`;
+  return `${PRODUCT} cannot list ${box.name}'s processes.`;
 }
 
 function liveWhyNot(page: BoxPageState, box: BoxView): string | null {
@@ -832,7 +833,7 @@ function liveWhyNot(page: BoxPageState, box: BoxView): string | null {
   if (reach.is === "read" && reach.machineId) return null;
   if (reach.is === "off") return "The Monitor is off";
   if (reach.is === "not-running") return `${box.name} is not running`;
-  return reach.why ?? `bb-box cannot read ${box.name}`;
+  return reach.why ?? `${PRODUCT} cannot read ${box.name}`;
 }
 
 const chosenRanges = new Map<string, ActivityRange>();
@@ -897,7 +898,7 @@ function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { 
   const errorWords = error ? loadErrorCopy(error, box.name) : null;
   const share = snapshot?.slot?.share ?? null;
   const shared = box.shared || Boolean(snapshot?.slot);
-  const unanswered = errorWords && !snapshot ? `${errorWords} bb-box tries again while this page is open.` : null;
+  const unanswered = errorWords && !snapshot ? `${errorWords} ${PRODUCT} tries again while this page is open.` : null;
   return (
     <div ref={container} className="space-y-5" aria-busy={active && !snapshot && !error} data-activity-frame>
       <ActivityCard status={readStatus(snapshot, error, active)} group={group}>
@@ -909,7 +910,7 @@ function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { 
         {unanswered ? <TilesSayWhy shared={shared} expectedCards={cards}>{unanswered}</TilesSayWhy> : <TilesNow snapshot={snapshot} shared={shared} expectedCards={cards} box={box} />}
         {range !== "live" ? <HistoryCharts key={range} box={box} range={range} expectedCards={cards} /> : snapshot ? <Charts snapshot={snapshot} share={share} expectedCards={cards} lines={lines} /> : <LiveFrame shared={shared} expectedCards={cards} words={unanswered ? "Not read" : "Reading…"} lines={lines} />}
       </ActivityCard>
-      <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `bb-box cannot list ${box.name}'s processes now.` : null} gpu={cards > 0 || Boolean(snapshot?.gpus)} />
+      <Processes snapshot={snapshot} slot={shared} host={snapshot?.slot?.host ?? null} why={unanswered ? `${PRODUCT} cannot list ${box.name}'s processes now.` : null} gpu={cards > 0 || Boolean(snapshot?.gpus)} />
     </div>
   );
 }
@@ -960,7 +961,7 @@ function PlaceholderCells({ index, pulse, gpu }: { index: number; pulse: boolean
 export function Processes({ snapshot, slot, host, why = null, gpu = false }: { snapshot: MonitorSnapshot | null; slot: boolean; host: string | null; why?: string | null; gpu?: boolean }) {
   const processes = snapshot?.processes ?? null;
   const read = processes?.available ? processes.top.slice(0, PROCESS_ROWS) : [];
-  const said = why ?? (processes && !processes.available ? "bb-box could not list its processes." : null);
+  const said = why ?? (processes && !processes.available ? `${PRODUCT} could not list its processes.` : null);
   const pulse = !snapshot && !said;
   return (
     <section id="processes" aria-labelledby="processes-heading" data-processes className={cn("scroll-mt-4", CARD)} aria-busy={pulse || undefined}>
@@ -1014,7 +1015,7 @@ export function Processes({ snapshot, slot, host, why = null, gpu = false }: { s
           </p>
         ) : null}
       </div>
-      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%.{gpu ? " GPU is the card memory a process uses for compute or drawing; processes on the GPU are always listed." : ""} bb-box reads names and PIDs only, never arguments or environment.</p>
+      <p className="border-t border-border px-4 py-2 text-xs text-subtle-foreground">CPU is per core, so a process using four cores shows 400%.{gpu ? " GPU is the card memory a process uses for compute or drawing; processes on the GPU are always listed." : ""} {PRODUCT} reads names and PIDs only, never arguments or environment.</p>
     </section>
   );
 }

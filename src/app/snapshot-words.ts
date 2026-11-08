@@ -1,5 +1,6 @@
 import type { MachineSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
+import { PRODUCT } from "./product.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
 const MINUTE_MS = 60_000;
@@ -122,7 +123,7 @@ export function attentionWords(row: SnapshotRowView, boxName: string): string | 
     case "incomplete":
       return `Incomplete${row.error ? `: ${row.error.replace(/\.$/, "")}` : ""}. Delete it to finish the clean-up`;
     case "unavailable":
-      return `Unavailable: bb-box cannot reach ${row.host ?? "its host"}`;
+      return `Unavailable: ${PRODUCT} cannot reach ${row.host ?? "its host"}`;
     case "lost":
       return `Lost: ${row.host ?? "its host"} no longer has it`;
     default:
@@ -132,7 +133,7 @@ export function attentionWords(row: SnapshotRowView, boxName: string): string | 
 
 export function restoreWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName: string, boxState: string): string | null {
   if (view.restoring) return `${boxName} is being restored`;
-  if (view.unconfirmed) return "bb-box could not confirm its last restore";
+  if (view.unconfirmed) return `${PRODUCT} could not confirm its last restore`;
   if (view.offer?.restore === "none") return "its backend restores none";
   if (row.guest === "earlier") return "it is on the earlier guest: fork only";
   if (row.state === "taking") return "it is still being taken";
@@ -144,7 +145,7 @@ export function restoreWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxN
 
 export function forkWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName: string): string | null {
   if (view.restoring) return `${boxName} is being restored`;
-  if (view.unconfirmed) return "bb-box could not confirm its last restore";
+  if (view.unconfirmed) return `${PRODUCT} could not confirm its last restore`;
   return row.forkWhy;
 }
 
@@ -171,13 +172,13 @@ export interface Loss {
 }
 
 export function threadLosses(preview: RestorePreview, boxName: string): Loss[] {
-  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
+  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title ? `"${thread.title}"` : "this box's thread"} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
 }
 
 export function otherLosses(preview: RestorePreview): Loss[] {
   const losses: Loss[] = [];
   if (preview.control) losses.push({ key: "control", words: "A person has control of its desktop." });
-  if (preview.terminals === null) losses.push({ key: "terminals", words: "bb-box could not tell whether a BB terminal is open on it." });
+  if (preview.terminals === null) losses.push({ key: "terminals", words: `${PRODUCT} could not tell whether a BB terminal is open on it.` });
   else if (preview.terminals > 0) losses.push({ key: "terminals", words: preview.terminals === 1 ? "A terminal is open on it." : `${preview.terminals} terminals are open on it.` });
   return losses;
 }

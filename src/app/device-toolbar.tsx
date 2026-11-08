@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -722,32 +722,24 @@ const NETWORK_DETAIL: Readonly<Record<NetworkPreset, string>> = {
 
 function FormDialog({ open, title, description, submit, problem, onSubmit, onClose, children }: { open: boolean; title: string; description: string; submit: string; problem: string | null; onSubmit: () => void; onClose: () => void; children: ReactNode }) {
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <AlertDialogContent>
-        <form
-          className="contents"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>{title}</AlertDialogTitle>
-            <AlertDialogDescription>{description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex flex-col gap-3">{children}</div>
-          {problem ? (
-            <p role="alert" className="text-xs text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel type="button">Cancel</AlertDialogCancel>
-            <Button type="submit">{submit}</Button>
-          </AlertDialogFooter>
-        </form>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BoxDialog
+      open={open}
+      title={title}
+      description={description}
+      refused={problem}
+      onClose={onClose}
+      onSubmit={() => onSubmit()}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={onClose}>
+            Cancel
+          </DialogButton>
+          <DialogButton type="submit">{submit}</DialogButton>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">{children}</div>
+    </BoxDialog>
   );
 }
 
@@ -786,7 +778,21 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
       }}
     >
       <Field label="Link">
-        <Input autoFocus inputMode="url" spellCheck={false} placeholder="https://example.com" value={typed} onChange={(event) => setTyped(event.target.value)} />
+        <Input
+          autoFocus
+          inputMode="url"
+          spellCheck={false}
+          placeholder="https://example.com"
+          value={typed}
+          aria-invalid={problem ? true : undefined}
+          onChange={(event) => {
+            const next = event.target.value;
+            setTyped(next);
+            if (!problem) return;
+            const url = linkFrom(next);
+            setProblem(url ? urlProblem(url) : "Write a link to open.");
+          }}
+        />
       </Field>
     </FormDialog>
   );
@@ -823,10 +829,37 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
     >
       <div className="grid grid-cols-2 gap-3">
         <Field label={`Latitude, -${LOCATION_RANGE.latitude} to ${LOCATION_RANGE.latitude}`}>
-          <Input autoFocus inputMode="decimal" placeholder="51.5072" value={latitude} onChange={(event) => setLatitude(event.target.value)} />
+          <Input
+            autoFocus
+            inputMode="decimal"
+            placeholder="for example 51.5"
+            value={latitude}
+            aria-invalid={problem ? true : undefined}
+            onChange={(event) => {
+              const next = event.target.value;
+              setLatitude(next);
+              if (!problem) return;
+              const to = { latitude: Number(next.trim()), longitude: Number(longitude.trim()) };
+              const why = next.trim() === "" || longitude.trim() === "" ? "Write both a latitude and a longitude." : locationProblem(to);
+              setProblem(why ? why.replace(/^location takes/, "Write") : null);
+            }}
+          />
         </Field>
         <Field label={`Longitude, -${LOCATION_RANGE.longitude} to ${LOCATION_RANGE.longitude}`}>
-          <Input inputMode="decimal" placeholder="-0.1276" value={longitude} onChange={(event) => setLongitude(event.target.value)} />
+          <Input
+            inputMode="decimal"
+            placeholder="for example -0.1"
+            value={longitude}
+            aria-invalid={problem ? true : undefined}
+            onChange={(event) => {
+              const next = event.target.value;
+              setLongitude(next);
+              if (!problem) return;
+              const to = { latitude: Number(latitude.trim()), longitude: Number(next.trim()) };
+              const why = latitude.trim() === "" || next.trim() === "" ? "Write both a latitude and a longitude." : locationProblem(to);
+              setProblem(why ? why.replace(/^location takes/, "Write") : null);
+            }}
+          />
         </Field>
       </div>
     </FormDialog>
@@ -864,8 +897,35 @@ function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; mod
     >
       <Field label={`Level, ${BATTERY_LEVELS.least} to ${BATTERY_LEVELS.most}%`}>
         <div className="flex items-center gap-3">
-          <input type="range" min={BATTERY_LEVELS.least} max={BATTERY_LEVELS.most} step={1} value={Number(level) || 0} onChange={(event) => setLevel(event.target.value)} aria-label="Level" className="min-w-0 flex-1 accent-foreground" />
-          <Input autoFocus inputMode="numeric" className="w-16" aria-label="Level, in per cent" value={level} onChange={(event) => setLevel(event.target.value)} />
+          <input
+            type="range"
+            min={BATTERY_LEVELS.least}
+            max={BATTERY_LEVELS.most}
+            step={1}
+            value={Number(level) || 0}
+            onChange={(event) => {
+              setLevel(event.target.value);
+              setProblem(null);
+            }}
+            aria-label="Level"
+            className="min-w-0 flex-1 accent-foreground"
+          />
+          <Input
+            autoFocus
+            inputMode="numeric"
+            className="w-16"
+            aria-label="Level, in per cent"
+            aria-invalid={problem ? true : undefined}
+            value={level}
+            onChange={(event) => {
+              const next = event.target.value;
+              setLevel(next);
+              if (!problem) return;
+              const to = { level: Number(next.trim()), charging };
+              const why = next.trim() === "" ? "Write a level from 0 to 100." : batteryProblem(to);
+              setProblem(why ? why.replace(/^battery takes a level, a whole number/, "Write a whole number").replace(/, and whether it is charging\.$/, ".") : null);
+            }}
+          />
         </div>
       </Field>
       <label className="flex items-center gap-2 text-xs text-foreground">

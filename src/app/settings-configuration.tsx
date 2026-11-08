@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -498,38 +498,40 @@ function MovedCopyRow() {
           {removal.note.text}
         </p>
       ) : null}
-      <AlertDialog open={asking} onOpenChange={(open) => !open && setAsking(false)}>
-        <AlertDialogContent
-          onCloseAutoFocus={(event) => {
-            const button = document.querySelector<HTMLElement>(`[data-draft-path="${COPY_BUTTON}"]`);
-            if (!button) return;
-            event.preventDefault();
-            button.focus();
-          }}
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove the copy of BB's earlier settings?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>BB Box made it {copy ? relativeTime(copy.at, Date.now()) : ""}, when it moved BB's settings into this configuration. Everything in it is in the configuration now, and nothing reads it.</p>
-                <p>Once removed it cannot be got back. To keep a record first, run bb box config migrated --json.</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      <BoxDialog
+        open={asking}
+        title="Remove the copy of BB's earlier settings?"
+        onClose={() => setAsking(false)}
+        onCloseAutoFocus={(event) => {
+          const button = document.querySelector<HTMLElement>(`[data-draft-path="${COPY_BUTTON}"]`);
+          if (!button) return;
+          event.preventDefault();
+          button.focus();
+        }}
+        footer={
+          <>
+            <DialogButton variant="outline" onClick={() => setAsking(false)}>
+              Cancel
+            </DialogButton>
+            <DialogButton
+              danger
               onClick={() => {
                 setAsking(false);
                 void remove();
               }}
             >
               Remove copy
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogButton>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          <p>BB Box made it {copy ? relativeTime(copy.at, Date.now()) : ""}, when it moved BB's settings into this configuration. Everything in it is in the configuration now, and nothing reads it.</p>
+          <p>
+            Once removed it cannot be got back. To keep a record first, run <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-xs text-foreground">bb box config migrated --json</code>.
+          </p>
+        </div>
+      </BoxDialog>
     </>
   );
 }

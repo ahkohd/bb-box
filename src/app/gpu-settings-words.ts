@@ -4,6 +4,7 @@ import { backendWholeCards, KINDS_WITH_GPU_DEFAULT, wholeCardsAnywhere, type Bac
 import { gpuWhenNotAsked } from "../core/gpu.ts";
 import type { ConfigState } from "../plugin/configuration.ts";
 import type { SettingsCard } from "../plugin/gpu-settings.ts";
+import { PRODUCT } from "./product.ts";
 
 export function wholeCardsNow(document: Pick<ConfigDocument, "general">, config: Pick<BackendConfig, "fields">, pending: boolean | null): { readonly on: boolean; readonly fromInstall: boolean } {
   const saved = backendWholeCards(config, document.general);
@@ -77,7 +78,7 @@ export function kindGpuChoices(document: Pick<ConfigDocument, "backends" | "gene
 export function kindGpuWords(kind: string, gpu: GpuPart, wholeOn: boolean): string {
   const shipped = gpuWhenNotAsked(kind);
   const lead = "What a box of the kind gets when a request leaves gpu out, and the New box form's first choice until the person's own is remembered.";
-  const since = gpu === shipped ? ` ${GPU_CHOICE_LABELS[shipped]} is bb-box's own default for ${kind}.` : "";
+  const since = gpu === shipped ? ` ${GPU_CHOICE_LABELS[shipped]} is ${PRODUCT}'s own default for ${kind}.` : "";
   const spares = gpu === "whole" ? " Spare boxes of the kind are made shared: a whole box never takes a spare." : "";
   const off = gpu === "whole" && !wholeOn ? " Whole cards are off on every backend, so a box that leaves gpu out is refused: choose None or Shared, or turn Whole cards on in a backend's GPUs section." : "";
   return `${lead}${since}${spares}${off}`;

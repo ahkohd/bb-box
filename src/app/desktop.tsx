@@ -10,15 +10,7 @@ import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavi
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -108,6 +100,7 @@ import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./
 import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
+import { PRODUCT } from "./product.ts";
 
 export const DESKTOP_ACTION = "desktop";
 export const DEVICE_ACTION = "device";
@@ -710,7 +703,7 @@ export class DesktopSession implements Kept {
 
   /**
    * Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, or Ctrl+Shift+V when
-   * `shifted`, where the cursor is, and says so with onPaste or onPasteFailed.
+   * 'shifted`, where the cursor is, and says so with onPaste or onPasteFailed.
    */
   paste(text: string, shifted = false): void {
     if (this.connection.state !== "connected" || !this.#client) return;
@@ -1001,7 +994,7 @@ function TypeTextField({
   const commitAfter = useRef(false);
   const hint = long ? "Long text goes as a paste." : "Enter sends it. Shift+Enter starts a new line. Esc closes.";
   return (
-    <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+    <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground">
       <Textarea
         aria-label="Text to type"
         aria-describedby={hintId}
@@ -1682,7 +1675,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         async () => {
           try {
             downloadPicture(await picture, `${model} ${new Date().toISOString().slice(0, 19).replace(/:/g, ".")}.png`);
-            flashFor(`Downloaded the ${model}'s screen.`, "This browser did not let bb-box put a picture on this computer's clipboard, so it saved it instead.");
+            flashFor(`Downloaded the ${model}'s screen.`, `This browser did not let ${PRODUCT} put a picture on this computer's clipboard, so it saved it instead.`);
           } catch (caught) {
             flashFor(`Could not take the ${model}'s screenshot.`, message(caught));
           }
@@ -1959,7 +1952,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         ) : box.state === "failed" ? (
           <Notice detail={box.error ?? undefined}>{box.name} failed to start.</Notice>
         ) : box.state === "gone" ? (
-          <Notice>{box.name} was deleted outside bb-box.</Notice>
+          <Notice>{box.name} was deleted outside {PRODUCT}.</Notice>
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
         ) : quiet ? (
@@ -1989,38 +1982,17 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           </Notice>
         ) : null}
       </div>
-      <AlertDialog open={pasteField !== null} onOpenChange={(open) => !open && setPasteField(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deviceShown
-                ? DEVICE_PASTE_FIELD_WORDS
-                : stream === "selkies"
-                  ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
-                  : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <Textarea
-            aria-label="Text to paste"
-            value={pasteField ?? ""}
-            onChange={(event) => setPasteField(event.target.value)}
-            onPaste={(event) => {
-              // An image pasted here goes to the box at once, as the video client takes images (#609).
-              const video = session.current instanceof SelkiesSession ? session.current : null;
-              const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
-              if (!video || !image) return;
-              event.preventDefault();
-              setPasteField(null);
-              void video.pasteImage(image);
-            }}
-            rows={4}
-            autoFocus
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button
-              type="button"
+      <BoxDialog
+        open={pasteField !== null}
+        title={`Paste into ${box?.name ?? "the box"}`}
+        description={deviceShown ? DEVICE_PASTE_FIELD_WORDS : stream === "selkies" ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is." : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
+        onClose={() => setPasteField(null)}
+        footer={
+          <>
+            <DialogButton variant="outline" onClick={() => setPasteField(null)}>
+              Cancel
+            </DialogButton>
+            <DialogButton
               disabled={!pasteField}
               onClick={() => {
                 if (pasteField) pasteText(pasteField);
@@ -2028,28 +2000,39 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
               }}
             >
               {deviceShown ? "Paste into the device" : "Paste into the box"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={copyField !== null} onOpenChange={(open) => !open && setCopyField(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Copied in {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {copyField instanceof Blob ? (
-            <CopiedImage image={copyField} />
-          ) : (
-            <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Close</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogButton>
+          </>
+        }
+      >
+        <Textarea
+          aria-label="Text to paste"
+          value={pasteField ?? ""}
+          onChange={(event) => setPasteField(event.target.value)}
+          onPaste={(event) => {
+            const video = session.current instanceof SelkiesSession ? session.current : null;
+            const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
+            if (!video || !image) return;
+            event.preventDefault();
+            setPasteField(null);
+            void video.pasteImage(image);
+          }}
+          rows={4}
+          autoFocus
+        />
+      </BoxDialog>
+      <BoxDialog
+        open={copyField !== null}
+        title={`Copied in ${box?.name ?? "the box"}`}
+        description={copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
+        onClose={() => setCopyField(null)}
+        footer={
+          <DialogButton variant="outline" onClick={() => setCopyField(null)}>
+            Close
+          </DialogButton>
+        }
+      >
+        {copyField instanceof Blob ? <CopiedImage image={copyField} /> : <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />}
+      </BoxDialog>
     </div>
   );
 }
@@ -2283,9 +2266,9 @@ export function forgetThreadTitles(): void {
   knownTitles.clear();
 }
 
-/** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
-export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, threadId: string): string {
-  return thread.title?.trim() || thread.titleFallback?.trim() || threadId;
+/** The titles of the threads whose boxes the page lists, fetched once each. A thread with no title is called this box's thread. */
+export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, _threadId: string): string {
+  return thread.title?.trim() || thread.titleFallback?.trim() || "this box's thread";
 }
 
 export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
@@ -2304,7 +2287,7 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
           if (!cancelled) setTitles((current) => ({ ...current, [threadId]: title }));
         })
         .catch(() => {
-          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: threadId }));
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: "this box's thread" }));
         });
     }
     return () => {
@@ -2570,7 +2553,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                       onStop={() => void machineActions.act("stop", entry.box)}
                       onStart={() => void machineActions.act("start", entry.box)}
                       onRemove={() => machineActions.askRemove(entry.box)}
-                      onForget={() => void machineActions.act("forget", entry.box)}
+                      onForget={() => machineActions.act("forget", entry.box)}
                     />
                   ))}
                 </div>

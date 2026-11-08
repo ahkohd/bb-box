@@ -126,11 +126,16 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BulkDone | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const describedBy = useId();
   const dated = /^\d{4}-\d{2}-\d{2}$/.test(until);
   useEffect(() => {
-    if (change === "keep" && !dated) return;
+    if (change === "keep" && !dated) {
+      setProblem("Choose a date.");
+      return;
+    }
     let cancelled = false;
+    setProblem(null);
     void rpc
       .call("snapshots.bulkCheck", { snapshots: [...ids], change, ...(change === "keep" && edited ? { until } : {}) })
       .then((answer) => {
@@ -142,7 +147,7 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
     return () => {
       cancelled = true;
     };
-  }, [rpc, ids, change, until, dated, edited]);
+  }, [rpc, ids, change, until, dated, edited, attempt]);
   const current = check && check.until === until ? check : null;
   const count = current?.allowed.length ?? 0;
   const apply = async () => {
@@ -171,14 +176,35 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
       ))}
     </ul>
   );
-  const title = change === "keep" ? `Keep ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}` : `Delete ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}?`;
+  const stalled = !current && (problem !== null || (change === "keep" && !dated));
+  const nothing = current !== null && count === 0;
+  const title = result
+    ? `${result.refused.length === 1 ? "1 snapshot" : `${result.refused.length} snapshots`} not ${change === "delete" ? "deleted" : "kept"}`
+    : nothing
+      ? change === "delete"
+        ? "Nothing to delete"
+        : "Nothing to keep"
+      : stalled && problem && problem !== "Choose a date."
+        ? "Could not check these snapshots"
+        : change === "keep"
+          ? `Keep ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}`
+          : `Delete ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}?`;
+  const onlyClose = result !== null || nothing;
   return (
     <Shell
       title={title}
       onClose={onClose}
+      busy={sending}
       footer={
-        result ? (
+        onlyClose ? (
           <AlertDialogCancel autoFocus>Close</AlertDialogCancel>
+        ) : stalled && problem && problem !== "Choose a date." ? (
+          <>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+            <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
+              Try again
+            </Button>
+          </>
         ) : (
           <>
             <AlertDialogCancel autoFocus={change === "delete"} disabled={sending}>
@@ -231,6 +257,8 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
               ) : null}
               {change === "delete" && current.allowed.length ? <p>It cannot be undone.</p> : null}
             </>
+          ) : problem ? null : change === "keep" && !dated ? (
+            <p role="status">Choose a date.</p>
           ) : (
             <p role="status">Checking each snapshot…</p>
           )}

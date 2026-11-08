@@ -1,4 +1,5 @@
 import type { GpuCard, GpuProcess, GpuReading } from "../monitor/snapshot.ts";
+import { PRODUCT } from "./product.ts";
 
 export type BytesWords = (bytes: number) => string;
 
@@ -44,12 +45,12 @@ export const SHARED_PILL = "shared card";
 
 export function sharedCardWords(card: GpuCard, cards: number, bytes: BytesWords): string {
   const own = card.ownProcesses === null || card.ownMemoryBytes === null
-    ? "bb-box could not read which of its processes are this box's."
+    ? `${PRODUCT} could not read which of its processes are this box's.`
     : card.ownProcesses === 0
       ? "None of this box's processes use it now."
       : `This box's own ${card.ownProcesses === 1 ? "process uses" : `${card.ownProcesses} processes use`} ${bytes(card.ownMemoryBytes)} of its memory.`;
   const which = cards > 1 ? cardName(card, cards) : "its GPU";
-  return `This box shares ${which} with other boxes or the host. Its numbers are the whole card's, every user's together. ${own} bb-box cannot tell how much of the card's use is this box's, so a shared card never makes this box busy.`;
+  return `This box shares ${which} with other boxes or the host. Its numbers are the whole card's, every user's together. ${own} ${PRODUCT} cannot tell how much of the card's use is this box's, so a shared card never makes this box busy.`;
 }
 
 export function processesOnCard(reading: GpuReading | null | undefined, card: number): GpuProcess[] {

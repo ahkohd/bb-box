@@ -5,8 +5,10 @@
 
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
+import { CopyLine } from "./first-run.tsx";
+import { PRODUCT } from "./product.ts";
+import { INVALID_BORDER, sizeHint, sizeInvalid } from "./size-field.ts";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { GpuPart, ResizeWay, Resizing, SizePart } from "../backends/types.ts";
@@ -43,7 +45,7 @@ export function canResize(box: BoxView): boolean {
 
 /** "4 cores · 8 GiB · 24 GiB disk", or the base disk; no disk where the box has none of its own to change, as a Docker box. */
 function words(size: SizeView, ways: Resizing | null): string {
-  const disk = size.diskGiB !== null ? `${size.diskGiB} GiB disk` : ways?.disk === "no" ? null : "base disk";
+  const disk = size.diskGiB !== null ? `${size.diskGiB} GiB disk` : ways?.disk === "no" ? null : "the image's own disk";
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB`, disk].filter(Boolean).join(" · ");
 }
 
@@ -61,7 +63,7 @@ export function resizedNow(size: string, gpu: GpuChangeView | null | undefined, 
 
 /** A part's value as the dialog shows it: memory and disk in GiB, a base disk as "base". */
 function amount(part: SizePart, value: number | null): string {
-  if (value === null) return "base";
+  if (value === null) return "the image's own";
   return part === "cores" ? String(value) : `${value} GiB`;
 }
 
@@ -261,7 +263,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
     return () => clearTimeout(timer);
   }, [open, key]);
 
-  if (!box) return <AlertDialog open={false} />;
+  if (!box) return null;
   const presets = answer?.presets ?? [];
   const largest = answer?.largest ?? null;
   const ways = box.resizing ?? null;
@@ -325,29 +327,43 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
     const way = ways?.[part] ?? "no";
     const now = box.sizeNow;
     const floor = part === "disk" && now?.diskGiB != null ? now.diskGiB : null;
+    const hint = sizeHint(limit, floor);
+    const bad = way !== "no" && sizeInvalid(fields[name], limit, part === "disk" || fields[name].trim() === "", floor);
     return (
       <label className="flex min-w-0 flex-col gap-1 text-xs leading-snug text-subtle-foreground">
         <span>{label}</span>
         <Input
           inputMode="numeric"
           aria-label={label}
-          className="h-7 px-2 text-xs"
+          className={cn("h-7 px-2 text-xs", bad && INVALID_BORDER)}
           value={fields[name]}
           placeholder={part === "disk" ? "as now" : ""}
-          disabled={way === "no"}
-          aria-invalid={(fields[name].trim() !== "" || part !== "disk") && whole(fields[name]) === undefined ? true : undefined}
+          disabled={way === "no" || applying}
+          aria-invalid={bad || undefined}
           onChange={(event) => {
             setFields((current) => ({ ...current, [name]: event.target.value }));
             setRefusal(null);
           }}
         />
-        <span>{way === "no" ? "Cannot change" : floor !== null && limit !== null ? `${floor} to ${limit}` : limit !== null ? `up to ${limit}` : ""}</span>
+        <span role={bad ? "alert" : undefined} className={bad ? "text-destructive-text" : undefined}>
+          {way === "no" ? "Cannot change" : hint}
+        </span>
       </label>
     );
   };
 
   const close = () => {
     if (!applying) onClose();
+  };
+  const recheck = async () => {
+    if (!request) return;
+    const id = ++asked.current;
+    setChecking(true);
+    const checked = await call({ ...request, ...(gpuSent ? { gpu: gpuSent } : {}), check: true }).catch((error: unknown): ResizeResult => ({ box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: message(error) }));
+    if (asked.current !== id) return;
+    setAnswer((last) => ({ ...checked, presets: checked.presets.length ? checked.presets : (last?.presets ?? []), largest: checked.largest ?? last?.largest ?? null }));
+    setChecking(false);
+    setRefusal(checked.error);
   };
   const moving = !!gpuChange && gpuRestarts && gpuChange.from !== "none" && gpuChange.to !== "none" && gpuChange.fromIndex !== gpuChange.toIndex;
   const programs = gpuProgramsWords((monitor.snapshot?.gpus?.processes ?? []).filter((process) => gpuChange?.fromIndex === null || process.card === gpuChange?.fromIndex));
@@ -365,34 +381,70 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
           ? `Resized ${box.name}`
           : `Resize ${box.name}`;
 
+  const description =
+    step.at === "confirm"
+      ? gpuWords
+        ? gpuWords
+        : `Everything running in it stops, and ${back(step.down)}.`
+      : step.at === "threads"
+        ? `${workingOnWords(step.threads, box.name)}. ${step.threads.length === 1 ? "Its" : "Their"} work stops while it restarts.`
+        : step.at === "done"
+          ? resizedNow(words(step.answer.to ?? step.answer.from!, box.resizing ?? null), step.answer.plan?.gpu, step.answer.changed, !!step.answer.box?.lastResize?.restart)
+          : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`;
+
   return (
-    <AlertDialog open onOpenChange={(next) => !next && close()}>
-      <AlertDialogContent
-        className="max-h-[90vh] overflow-y-auto shadow-none"
-        data-resize-at={at}
-        onOpenAutoFocus={(event) => {
-          if (at !== "gpu") return;
-          const gpu = (event.currentTarget as HTMLElement).querySelector<HTMLElement>("[data-gpu-section]");
-          if (!gpu) return;
-          event.preventDefault();
-          gpu.focus();
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle className="font-normal">{title}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {step.at === "confirm"
-              ? gpuWords
-                ? gpuWords
-                : `Everything running in it stops, and ${back(step.down)}.`
-              : step.at === "threads"
-                ? `${workingOnWords(step.threads, box.name)}. ${step.threads.length === 1 ? "Its" : "Their"} work stops while it restarts.`
-                : step.at === "done"
-                  ? resizedNow(words(step.answer.to ?? step.answer.from!, box.resizing ?? null), step.answer.plan?.gpu, step.answer.changed, !!step.answer.box?.lastResize?.restart)
-                  : `Now ${box.sizeNow ? words(box.sizeNow, box.resizing ?? null) : "of unknown size"}.`}
-          </AlertDialogDescription>
-          {step.at === "threads" ? <ThreadChips threads={step.threads} /> : null}
-        </AlertDialogHeader>
+    <BoxDialog
+      title={title}
+      description={description}
+      busy={applying}
+      onClose={close}
+      marks={{ "data-resize-at": at }}
+      onOpenAutoFocus={(event) => {
+        if (at !== "gpu") return;
+        const gpu = (event.currentTarget as HTMLElement).querySelector<HTMLElement>("[data-gpu-section]");
+        if (!gpu) return;
+        event.preventDefault();
+        gpu.focus();
+      }}
+      footer={
+        step.at === "pick" ? (
+          <>
+            <DialogButton variant="outline" onClick={close}>
+              Cancel
+            </DialogButton>
+            {refusal !== null ? (
+              <DialogButton variant="outline" disabled={checking} onClick={() => void recheck()}>
+                {checking ? "Checking…" : "Check again"}
+              </DialogButton>
+            ) : null}
+            <DialogButton disabled={blocked || unchanged} busyWords={restart ? "Resizing…" : "Resizing…"} onClick={() => (restart ? setStep({ at: "confirm", down: plan?.downSeconds ?? null }) : void apply())}>
+              {restart ? "Resize…" : "Resize"}
+            </DialogButton>
+          </>
+        ) : step.at === "confirm" ? (
+          <>
+            <DialogButton variant="outline" onClick={() => setStep({ at: "pick" })}>
+              Back
+            </DialogButton>
+            <DialogButton busyWords="Restarting…" onClick={() => void apply({ restart: true })}>
+              {moving ? "Move and restart" : gpuChange?.installs ? "Install and restart" : "Restart and resize"}
+            </DialogButton>
+          </>
+        ) : step.at === "threads" ? (
+          <>
+            <DialogButton variant="outline" onClick={() => setStep({ at: "pick" })}>
+              Back
+            </DialogButton>
+            <DialogButton danger busyWords="Restarting…" onClick={() => void apply({ restart: true, force: true })}>
+              Restart anyway
+            </DialogButton>
+          </>
+        ) : (
+          <DialogButton onClick={onClose}>Done</DialogButton>
+        )
+      }
+    >
+      {step.at === "threads" ? <ThreadChips threads={step.threads} /> : null}
 
         {step.at === "pick" ? (
           <div className="space-y-5">
@@ -478,7 +530,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
               </div>
             ) : null}
             {refusal !== null ? (
-              // The answer to Resize: nothing changed, and why, in bb-box's words.
+              // The answer to Resize: nothing changed, and why.
               <div role="alert" className="space-y-0.5 text-xs leading-snug">
                 <p className="text-destructive-text">Not resized</p>
                 <p className="text-foreground">{withoutRaiseLargest(refusal)}</p>
@@ -491,48 +543,22 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
             ) : null}
           </div>
         ) : step.at === "done" && step.answer.machine ? (
-          <p className="text-xs leading-snug text-muted-foreground">{step.answer.machine}</p>
+          <DoneEffect words={step.answer.machine} />
         ) : null}
+    </BoxDialog>
+  );
+}
 
-        <AlertDialogFooter>
-          {step.at === "pick" ? (
-            <>
-              <AlertDialogCancel className="font-normal" disabled={applying}>Cancel</AlertDialogCancel>
-              <Button
-                type="button"
-                className="font-normal"
-                disabled={blocked || applying || unchanged}
-                onClick={() => (restart ? setStep({ at: "confirm", down: plan?.downSeconds ?? null }) : void apply())}
-              >
-                {applying ? "Resizing…" : restart ? "Resize…" : "Resize"}
-              </Button>
-            </>
-          ) : step.at === "confirm" ? (
-            <>
-              <Button type="button" variant="outline" className="font-normal" disabled={applying} onClick={() => setStep({ at: "pick" })}>
-                Back
-              </Button>
-              <Button type="button" className="font-normal" disabled={applying} onClick={() => void apply({ restart: true })}>
-                {applying ? "Restarting…" : moving ? "Move and restart" : gpuChange?.installs ? "Install and restart" : "Restart and resize"}
-              </Button>
-            </>
-          ) : step.at === "threads" ? (
-            <>
-              <Button type="button" variant="outline" disabled={applying} onClick={() => setStep({ at: "pick" })}>
-                Back
-              </Button>
-              <Button type="button" className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={applying} onClick={() => void apply({ restart: true, force: true })}>
-                {applying ? "Restarting…" : "Restart anyway"}
-              </Button>
-            </>
-          ) : (
-            <Button type="button" onClick={onClose}>
-              Done
-            </Button>
-          )}
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+function DoneEffect({ words }: { words: string }) {
+  const commands = words.match(/bb concurrency-limit host \S+ \S+/g) ?? [];
+  const sentence = (words.split("To raise the limit now:")[0] ?? words).trim().replaceAll("bb-box", PRODUCT);
+  return (
+    <div className="space-y-2 text-xs leading-snug">
+      <p>{sentence}</p>
+      {commands.map((command) => (
+        <CopyLine key={command} line={command} />
+      ))}
+    </div>
   );
 }
 

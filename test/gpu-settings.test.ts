@@ -161,7 +161,7 @@ test("071 unit 15: the kind's menu lists Whole card only where a backend has who
   assert.deepEqual(kindGpuChoices(off, "whole"), ["none", "shared", "whole"]);
   assert.match(kindGpuWords("linux", "whole", false), /Whole cards are off on every backend, so a box that leaves gpu out is refused/);
   assert.match(kindGpuWords("linux", "whole", true), /Spare boxes of the kind are made shared/);
-  assert.match(kindGpuWords("linux-desktop", "shared", true), /Shared is bb-box's own default for linux-desktop\./);
+  assert.match(kindGpuWords("linux-desktop", "shared", true), /Shared is BB Box's own default for linux-desktop\./);
 });
 
 const IN_USE: CardsInUse = {

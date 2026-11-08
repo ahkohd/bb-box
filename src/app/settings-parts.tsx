@@ -188,13 +188,15 @@ export function SettingRow({ label, description, problem, children, htmlFor, pat
           {label}
         </label>
         {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</p> : null}
+      </div>
+      <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
+        <div className="flex items-center gap-2">{children}</div>
         {problem ? (
-          <p role="alert" className="mt-0.5 text-xs text-destructive-text">
+          <p role="alert" className="text-xs text-destructive-text">
             {problem}
           </p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
   );
 }

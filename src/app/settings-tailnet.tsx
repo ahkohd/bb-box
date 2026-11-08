@@ -99,7 +99,7 @@ function TagsRow({ draft, state }: { draft: Draft; state: ConfigState }) {
           data-draft-path={path}
           aria-describedby={describedBy(`${id}-help`, `${id}-effective`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
           aria-invalid={problem ? true : undefined}
-          className={cn("h-8 w-full text-xs", draft.changed(path) && "border-warning/60")}
+          className={cn("h-8 w-full text-xs", problem && "border-destructive")}
           autoComplete="off"
           spellCheck={false}
           placeholder={fallback}

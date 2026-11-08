@@ -1,34 +1,32 @@
-import { useState } from "react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { GpuCard as MonitorGpu, GpuProcess, GpuReading } from "../monitor/snapshot.ts";
-import type { BoxPageState, MonitorReach } from "../plugin/contract.ts";
+import type { MonitorReach } from "../plugin/contract.ts";
 import {
   cardHeading,
   cardIdentity,
   everyCardLine,
   gpuFooter,
-  gpuProgramsWords,
   holdsItsCard,
   monitorCard,
   otherCheckNotice,
   partOf,
-  USERSPACE_UPDATE_REFUSAL,
   userspaceGap,
   userspaceNotice,
+  userspaceUpdateCommand,
   wrongCardNotice,
   type GpuMate,
 } from "../plugin/gpu-page.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { bytesWords } from "./activity-words.ts";
-import { hostOf, type ThreadTitles } from "./box-words.ts";
+import { hostOf } from "./box-words.ts";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
 import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { PageNotice } from "./page-notice.tsx";
+import { PRODUCT } from "./product.ts";
 
-export function GpuNotices({ box, monitor, onUpdate }: { box: BoxView; monitor: MonitorReach; onUpdate: () => void }) {
+export function GpuNotices({ box, monitor, threadId = null }: { box: BoxView; monitor: MonitorReach; threadId?: string | null }) {
   const machineId = monitor.is === "read" ? monitor.machineId : null;
   const reading = useMonitorSnapshot(machineId ?? "gpu-unread");
   const seen = reading.snapshot?.gpus?.cards ?? [];
@@ -50,62 +48,17 @@ export function GpuNotices({ box, monitor, onUpdate }: { box: BoxView; monitor: 
         </PageNotice>
       ) : null}
       {userspace ? (
-        <PageNotice
-          tone="warn"
-          title="NVIDIA's userspace does not match the host's driver"
-          actions={
-            gap?.running ? (
-              <Button type="button" variant="outline" size="sm" className="h-7 font-normal" onClick={onUpdate}>
-                Update NVIDIA's userspace…
-              </Button>
-            ) : null
-          }
-        >
+        <PageNotice tone="warn" title="NVIDIA's userspace does not match the host's driver">
           {userspace}
+          {gap?.running ? (
+            <>
+              {" "}
+              The update is not available from this page. Run <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-xs text-foreground">{userspaceUpdateCommand(box.name, threadId)}</code>.
+            </>
+          ) : null}
         </PageNotice>
       ) : null}
     </div>
-  );
-}
-
-function workingWords(box: BoxView, titles: ThreadTitles, threads: BoxPageState["threads"]): string {
-  const names = threads.map((thread) => titles[thread.id] ?? thread.title ?? thread.id).filter(Boolean);
-  if (!names.length) return "";
-  const listed = names.length === 1 ? `"${names[0]}"` : names.map((name) => `"${name}"`).join(", ");
-  return ` ${listed} ${names.length === 1 ? "works" : "work"} on it: ${names.length === 1 ? "its" : "their"} work stops while it restarts.`;
-}
-
-export function UpdateUserspaceDialog({ box, titles, threads, monitor, onClose }: { box: BoxView; titles: ThreadTitles; threads: BoxPageState["threads"]; monitor: MonitorReach; onClose: () => void }) {
-  const gap = userspaceGap(box);
-  const machineId = monitor.is === "read" ? monitor.machineId : null;
-  const reading = useMonitorSnapshot(machineId ?? "gpu-unread");
-  const [refused, setRefused] = useState<string | null>(null);
-  if (!gap) return null;
-  const card = monitorCard(reading.snapshot?.gpus?.cards ?? [], cardIdentity(box));
-  const processes = card ? (reading.snapshot?.gpus?.processes ?? []).filter((process) => process.card === card.index) : [];
-  return (
-    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
-      <AlertDialogContent className="shadow-none" data-userspace-update>
-        <AlertDialogHeader>
-          <AlertDialogTitle className="text-base font-normal">Update NVIDIA's userspace in {box.name}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            bb-box installs NVIDIA's userspace {gap.host} over {gap.boxVersion}, for the host's driver, then restarts {box.name}. Everything running in it stops{gpuProgramsWords(processes)}.{workingWords(box, titles, threads)}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <p className="text-xs leading-snug text-muted-foreground">It never runs by itself. If {box.name} has NVIDIA's packages from apt, bb-box says so and changes nothing.</p>
-        {refused ? (
-          <p role="alert" className="text-xs text-destructive-text">
-            {refused}
-          </p>
-        ) : null}
-        <AlertDialogFooter>
-          <AlertDialogCancel className="font-normal">Cancel</AlertDialogCancel>
-          <Button type="button" className="font-normal" onClick={() => setRefused(USERSPACE_UPDATE_REFUSAL)}>
-            Update and restart
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }
 
@@ -179,7 +132,7 @@ function Processes({ processes, waiting }: { processes: readonly GpuProcess[] | 
     <div className="min-h-8 space-y-1" data-gpu-processes>
       <p className="text-xs text-muted-foreground">Its processes on the card</p>
       {waiting ? <p className="text-xs text-subtle-foreground">{waiting}</p> : null}
-      {!waiting && processes === null ? <p className="text-xs text-subtle-foreground">bb-box could not read which processes use the card.</p> : null}
+      {!waiting && processes === null ? <p className="text-xs text-subtle-foreground">{PRODUCT} could not read which processes use the card.</p> : null}
       {!waiting && processes !== null && !processes.length ? <p className="text-xs text-subtle-foreground">None now.</p> : null}
       {!waiting && processes?.length ? (
         <div className="space-y-0.5 text-xs">

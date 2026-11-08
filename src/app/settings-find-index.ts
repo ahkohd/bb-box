@@ -9,6 +9,7 @@ import { runsOn } from "./settings-kinds.tsx";
 import { backendEnabledPath, backendFieldPath, backendLabelPath, ceilingPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, snapshotPath, standardImagePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
 import type { SettingsView } from "./settings-route.ts";
 import { paidBackends } from "./settings-snapshots.tsx";
+import { PRODUCT } from "./product.ts";
 import { backendLabel, hostChip, isMachineDocker, kindName, plural } from "./settings-status.ts";
 
 export const FIND_SHOWN = 40;
@@ -104,7 +105,7 @@ function hostFieldValue(state: ConfigState, config: BackendConfig, driver: Drive
   const own = driver.fields.some((each) => each.key === field.key) ? config.fields[field.key] : undefined;
   if (!isBlank(own)) return `Empty: ${withUnit(String(own), field)}, ${driver.label}'s setting`;
   const estimate = state.backends.find((each) => each.id === config.id)?.hostEstimates?.[host]?.[field.key];
-  if (estimate !== undefined) return `Empty: ${withUnit(estimate, field)}, bb-box's estimate`;
+  if (estimate !== undefined) return `Empty: ${withUnit(estimate, field)}, ${PRODUCT}'s estimate`;
   return null;
 }
 

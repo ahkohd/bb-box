@@ -18,7 +18,7 @@ import { MachineOffersGroup, useMachineHosts } from "./settings-docker-hosts.tsx
 import { operationId, setupPart } from "./settings-drafts.ts";
 import { Card, Chevron, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, Rows } from "./settings-parts.tsx";
 import { backendAt, backendFieldPath, backendPath, candidateOf, freeBackendId, isNewBackendId, newBackendPath, type EditValue, type Path, type PathEdit } from "./settings-paths.ts";
-import { barOf, RestoredNote, useDraft, useRegistry, type Draft } from "./settings-saving.tsx";
+import { barOf, RestoredNote, SaveBar, useDraft, useRegistry, type Draft } from "./settings-saving.tsx";
 import { isMachineDocker, kindName, plural } from "./settings-status.ts";
 
 interface AddGroup {
@@ -270,44 +270,37 @@ function setupBarWords(draft: Draft, on: boolean | null): { readonly words: stri
   return { words: "Nothing is saved until you choose. Your form is kept if you leave this page.", tone: "quiet", retry: false, show: false };
 }
 
-function SetupBar({ draft, label, onSave, onDiscard, unplaced, on }: { draft: Draft; label: string; onSave: (on: boolean) => void; onDiscard: () => void; unplaced: readonly string[]; on: boolean | null }) {
+function SetupBar({ draft, onSave, onDiscard, unplaced, on }: { draft: Draft; label: string; onSave: (on: boolean) => void; onDiscard: () => void; unplaced: readonly string[]; on: boolean | null }) {
   const bar = setupBarWords(draft, on);
   const busy = bar.tone === "busy";
   const blocked = busy || draft.conflicts.length > 0;
   return (
-    <div className="pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center">
-      <div role="region" aria-label={`Save ${label}`} className="pointer-events-auto flex w-full max-w-2xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-popover px-3 py-2 shadow-[0_2px_10px_rgb(0_0_0/0.25)]">
-        <span role="status" aria-live="polite" className={cn("min-w-0 flex-1 basis-56 text-xs leading-snug", bar.tone === "bad" ? "text-destructive-text" : bar.tone === "warn" ? "text-warning-text" : "text-muted-foreground")}>
-          {busy ? <Icon name="Loading" className="mr-1 inline size-3.5 animate-spin align-[-2px]" aria-hidden /> : null}
-          {bar.words}
-          {unplaced.length ? <span className="mt-1 block text-destructive-text">{unplaced.join(" ")}</span> : null}
-        </span>
-        <span className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          {bar.show ? (
-            <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>
-              Show
-            </Button>
-          ) : null}
-          <Button type="button" variant="ghost" size="sm" className="h-7" aria-disabled={busy || undefined} onClick={() => !busy && onDiscard()}>
+    <SaveBar
+      draft={draft}
+      unplaced={unplaced}
+      presentation={bar}
+      controls={
+        <>
+          <Button type="button" variant="ghost" size="sm" className="h-7" disabled={busy} onClick={onDiscard}>
             Discard and go back
           </Button>
           {bar.retry && draft.entry.operation ? (
-            <Button type="button" size="sm" className="h-7" aria-disabled={busy || undefined} onClick={() => !busy && draft.save()}>
+            <Button type="button" size="sm" className="h-7" disabled={busy} onClick={() => draft.save()}>
               Save again
             </Button>
           ) : (
             <>
-              <Button type="button" variant="outline" size="sm" className="h-7" aria-disabled={blocked || undefined} onClick={() => !blocked && onSave(false)}>
+              <Button type="button" variant="outline" size="sm" className="h-7" disabled={blocked} onClick={() => onSave(false)}>
                 Save, keep it off
               </Button>
-              <Button type="button" size="sm" className="h-7" aria-disabled={blocked || undefined} onClick={() => !blocked && onSave(true)}>
+              <Button type="button" size="sm" className="h-7" disabled={blocked} onClick={() => onSave(true)}>
                 Save and turn on
               </Button>
             </>
           )}
-        </span>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 
@@ -407,7 +400,6 @@ function SetupEditor({ driver, only, onOpen }: { driver: DriverView; only: Backe
         description={
           <>
             <p>{driver.description}</p>
-            <p className="mt-1">Fields, checkboxes and radio choices wait for you to save. Nothing is saved until you choose Save and turn on, or Save, keep it off.</p>
           </>
         }
       />

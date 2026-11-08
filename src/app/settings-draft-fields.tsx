@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { plain, type Path, type PlainValue } from "./settings-paths.ts";
+import { INVALID_BORDER } from "./size-field.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
 
 export function unplacedProblems(draft: Draft, placed: readonly Path[]): string[] {
@@ -57,15 +58,17 @@ export function DraftRow({
           <p id={`${id}-help`} className="mt-0.5 text-xs leading-snug text-subtle-foreground">
             {description}
           </p>
+        </div>
+        <div className={cn("flex flex-col gap-1 text-xs text-muted-foreground", wide ? "w-full sm:w-72 sm:shrink-0" : "shrink-0")}>
+          <div className={cn("flex items-center gap-1.5", wide && "sm:justify-end")}>
+            {children}
+            {unit}
+          </div>
           {problem ? (
-            <p id={`${id}-problem`} role="alert" className="mt-0.5 text-xs text-destructive-text">
+            <p id={`${id}-problem`} role="alert" className="text-xs text-destructive-text">
               {problem}
             </p>
           ) : null}
-        </div>
-        <div className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", wide ? "w-full sm:w-72 sm:shrink-0 sm:justify-end" : "shrink-0")}>
-          {children}
-          {unit}
         </div>
       </div>
       {conflict ? (
@@ -92,7 +95,6 @@ export function DraftNumberRow({ draft, path, label, description, unit, unitWord
   const id = useId();
   const problem = draft.problem(path);
   const conflict = draft.conflict(path);
-  const changed = draft.changed(path);
   return (
     <DraftRow draft={draft} path={path} id={id} label={label} description={description} unit={unit}>
       <Input
@@ -101,7 +103,7 @@ export function DraftNumberRow({ draft, path, label, description, unit, unitWord
         aria-label={unitWord ? `${label}, in ${unitWord}` : undefined}
         aria-describedby={describedBy(`${id}-help`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
-        className={cn("h-8 w-20 text-right text-xs tabular-nums", changed && "border-warning/60")}
+        className={cn("h-8 w-20 text-right text-xs tabular-nums", problem && INVALID_BORDER)}
         inputMode={decimal ? "decimal" : "numeric"}
         autoComplete="off"
         disabled={disabled}
@@ -169,7 +171,7 @@ export function SecretControl({
           aria-label={set ? `New ${label}` : label}
           aria-describedby={describe}
           aria-invalid={invalid ? true : undefined}
-          className={cn("h-8 w-full text-xs", edit && "border-warning/60")}
+          className={cn("h-8 w-full text-xs", invalid && INVALID_BORDER)}
           autoComplete="new-password"
           placeholder={set ? "Paste the new value" : "Paste the value"}
           value={text}

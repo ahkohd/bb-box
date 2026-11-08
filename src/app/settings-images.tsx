@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -484,34 +484,42 @@ function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: s
   const kinds = shown ? inWords(shown.image.kinds.map((kind) => kindWords(state, kind) ?? kind)) : "";
   const projects = shown ? inWords(shown.projects) : "";
   return (
-    <AlertDialog open={name !== null} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent
-        onCloseAutoFocus={(event) => {
-          const row = shown ? document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(`image-${shown.name}`)}"]`) : null;
-          if (!row) return;
-          event.preventDefault();
-          row.focus();
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove the image {shown?.name}?</AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-2">
-              <p>
-                New {kinds} boxes in {projects} start from the standard images again, without its script. Its builds are deleted.
-              </p>
-              <p>Boxes already made keep what they have. An agent can set it again from the project's files with bb box image set.</p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => shown && onConfirm(shown.name)}>
-            Remove image
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BoxDialog
+      open={name !== null}
+      title={shown ? `Remove the image ${shown.name}?` : "Nothing to remove"}
+      onClose={onCancel}
+      onCloseAutoFocus={(event) => {
+        const row = shown ? document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(`image-${shown.name}`)}"]`) : null;
+        if (!row) return;
+        event.preventDefault();
+        row.focus();
+      }}
+      footer={
+        shown ? (
+          <>
+            <DialogButton variant="outline" onClick={onCancel}>
+              Cancel
+            </DialogButton>
+            <DialogButton danger onClick={() => onConfirm(shown.name)}>
+              Remove image
+            </DialogButton>
+          </>
+        ) : (
+          <DialogButton variant="outline" onClick={onCancel}>
+            Close
+          </DialogButton>
+        )
+      }
+    >
+      <div className="space-y-2">
+        <p>
+          New {kinds} boxes in {projects} start from the standard images again, without its script. Its builds are deleted.
+        </p>
+        <p>
+          Boxes already made keep what they have. An agent can set it again from the project's files with <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-xs text-foreground">bb box image set</code>.
+        </p>
+      </div>
+    </BoxDialog>
   );
 }
 

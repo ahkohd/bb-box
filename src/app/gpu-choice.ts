@@ -1,4 +1,5 @@
 import type { GpuPart, GpuResizing, GpuRoom, CardRoom } from "../backends/types.ts";
+import { PRODUCT } from "./product.ts";
 
 export const GPU_LINE_CLASS = "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]";
 
@@ -65,7 +66,7 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
     const reach = gpu === "whole" && offer.reachesEveryCard ? ` ${DOCKER_REACH}` : "";
     if (gpu === "whole") {
       const outside = outsideMiB(card);
-      const words = outside ? `${cardTitle(card)} on ${host}, to itself. ${gibWords(outside)} of it is in use outside bb-box's boxes.${reach}` : `${cardTitle(card)} on ${host}, to itself: bb-box places no other box on it.${reach}`;
+      const words = outside ? `${cardTitle(card)} on ${host}, to itself. ${gibWords(outside)} of it is in use outside ${PRODUCT}'s boxes.${reach}` : `${cardTitle(card)} on ${host}, to itself: ${PRODUCT} places no other box on it.${reach}`;
       return { words, blocked: false, state: "whole" };
     }
     const company = card.boxes === 0 ? "no other box" : card.boxes === 1 ? "1 box" : `${card.boxes} boxes`;

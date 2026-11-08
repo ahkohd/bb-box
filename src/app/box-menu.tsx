@@ -1,16 +1,7 @@
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useRef, useState, type ReactNode, type RefObject } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -25,6 +16,7 @@ import { canResize, ResizeDialog } from "./resize.tsx";
 import { screensOf } from "./screens.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { canOpenFiles } from "./files-open.ts";
+import { PRODUCT } from "./product.ts";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh" | "forget" | "enrol";
 
@@ -33,7 +25,7 @@ export interface ThreadsBox {
   readonly threadId: string;
   readonly held: boolean;
   readonly offersThread: boolean;
-  readonly act: (method: BoxAction, options?: { readonly deleteKept?: boolean }) => void;
+  readonly act: (method: BoxAction, options?: { readonly deleteKept?: boolean }) => Promise<string | null | void> | void;
 }
 
 export interface YourMachine {
@@ -42,7 +34,7 @@ export interface YourMachine {
   readonly stop: () => void;
   readonly start: () => void;
   readonly remove: () => void;
-  readonly forget: () => void;
+  readonly forget: () => Promise<string | null | void> | void;
   readonly check?: () => void;
 }
 
@@ -81,7 +73,7 @@ function GatedItem({ why, icon, words, onSelect }: { why: string | null; icon: R
 
 function forgetWords(box: Pick<BoxView, "name" | "backendLabel">): string {
   const host = hostOf(box.backendLabel);
-  return `bb-box removes its record of ${box.name}, and nothing else. Its box is not deleted: if it still runs${host ? ` on ${host}` : ""}, it keeps running there. If its backend comes back, bb-box takes the box back into its records, because a running box left untracked costs money and cannot be released.`;
+  return `${PRODUCT} removes its record of ${box.name}, and nothing else. Its box is not deleted: if it still runs${host ? ` on ${host}` : ""}, it keeps running there. If its backend comes back, ${PRODUCT} takes the box back into its records, because a running box left untracked costs money and cannot be released.`;
 }
 
 export function BoxMenu({
@@ -130,6 +122,8 @@ export function BoxMenu({
     setDraft(next ?? NO_DRAFT);
     setAsk(next ? "thread" : null);
   };
+  const forgetting = useDialogAction(() => setConfirmingForget(false));
+  const releasing = useDialogAction(() => setConfirmingRelease(false));
   const thread = of.owner === "thread" ? of : null;
   const machine = of.owner === "yours" ? of : null;
   const onPage = place === "page";
@@ -262,72 +256,78 @@ export function BoxMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       {thread ? (
-        <AlertDialog open={newThread !== null} onOpenChange={(open) => !open && setNewThread(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>New thread on {box.name}</AlertDialogTitle>
-              <AlertDialogDescription>
-                A child of this thread, working in a worktree of the project on the box. It is archived with this thread.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <Textarea
-              aria-label="Prompt"
-              placeholder="What should it do on the box?"
-              value={newThread?.prompt ?? ""}
-              onChange={(event) => setNewThread((current) => ({ ...current, prompt: event.target.value }))}
-              rows={4}
-              autoFocus
-            />
-            {newThread?.error ? <p className="text-sm text-destructive">{newThread.error}</p> : null}
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={newThread?.starting}>Cancel</AlertDialogCancel>
-              <Button type="button" disabled={!newThread?.prompt.trim() || newThread.starting} onClick={() => void startThread()}>
-                {newThread?.starting ? "Starting…" : "Start thread"}
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <BoxDialog
+          open={newThread !== null}
+          title={`New thread on ${box.name}`}
+          description="A child of this thread, working in a worktree of the project on the box. It is archived with this thread."
+          busy={!!newThread?.starting}
+          refused={newThread?.error ?? null}
+          onClose={() => setNewThread(null)}
+          footer={
+            <>
+              <DialogButton variant="outline" onClick={() => setNewThread(null)}>
+                Cancel
+              </DialogButton>
+              <DialogButton busyWords="Starting…" disabled={!newThread?.prompt.trim()} onClick={() => void startThread()}>
+                Start thread
+              </DialogButton>
+            </>
+          }
+        >
+          <Textarea aria-label="Prompt" placeholder="What should it do on the box?" value={newThread?.prompt ?? ""} onChange={(event) => setNewThread((current) => ({ ...current, prompt: event.target.value }))} rows={4} autoFocus />
+        </BoxDialog>
       ) : null}
       <ResizeDialog box={resizing ? box : null} threadId={thread?.threadId} at={resizeAt} monitorId={monitorId} onClose={() => onResizing(false)} />
-      <AlertDialog open={confirmingForget} onOpenChange={setConfirmingForget}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Forget {box.name}?</AlertDialogTitle>
-            <AlertDialogDescription>{forgetWords(box)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => (machine ? machine.forget() : thread?.act("forget"))}>
+      <BoxDialog
+        open={confirmingForget}
+        title={`Forget ${box.name}?`}
+        description={forgetWords(box)}
+        busy={forgetting.busy}
+        refused={forgetting.refused}
+        onClose={() => {
+          forgetting.clear();
+          setConfirmingForget(false);
+        }}
+        footer={
+          <>
+            <DialogButton variant="outline" onClick={() => setConfirmingForget(false)}>
+              Cancel
+            </DialogButton>
+            <DialogButton danger busyWords="Forgetting…" onClick={() => void forgetting.run(() => (machine ? machine.forget() : thread?.act("forget")))}>
               Forget
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogButton>
+          </>
+        }
+      />
       {thread ? (
-        <AlertDialog open={confirmingRelease} onOpenChange={setConfirmingRelease}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{againWhenAsked.current ? `Release ${box.name} again?` : `Release ${box.name}?`}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {box.nature === "real"
-                  ? "The machine will be reset and returned to its pool. Anything in the box user's home will be deleted."
-                  : "Its disk and everything on it will be deleted. Copy out anything you want to keep first."}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            {box.releaseHeldForKept ? <p className="text-sm text-muted-foreground">Its last release stopped before deleting anything: bb-box could not copy a snapshot you kept. Release again tries the copy again; Release and delete what you kept deletes those snapshots with it.</p> : null}
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <BoxDialog
+          open={confirmingRelease}
+          title={againWhenAsked.current ? `Release ${box.name} again?` : `Release ${box.name}?`}
+          description={box.nature === "real" ? "The machine will be reset and returned to its pool. Anything in the box user's home will be deleted." : "Its disk and everything on it will be deleted. Copy out anything you want to keep first."}
+          busy={releasing.busy}
+          refused={releasing.refused}
+          onClose={() => {
+            releasing.clear();
+            setConfirmingRelease(false);
+          }}
+          footer={
+            <>
+              <DialogButton variant="outline" onClick={() => setConfirmingRelease(false)}>
+                Cancel
+              </DialogButton>
               {box.releaseHeldForKept ? (
-                <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => thread.act("release", { deleteKept: true })}>
+                <DialogButton variant="outline" onClick={() => void releasing.run(() => thread.act("release", { deleteKept: true }))}>
                   Release and delete what you kept
-                </AlertDialogAction>
+                </DialogButton>
               ) : null}
-              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => thread.act("release")}>
+              <DialogButton danger busyWords="Releasing…" onClick={() => void releasing.run(() => thread.act("release"))}>
                 {box.releaseHeldForKept ? "Release again" : "Release"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+              </DialogButton>
+            </>
+          }
+        >
+          {box.releaseHeldForKept ? <p>Its last release stopped before deleting anything: BB Box could not copy a snapshot you kept. Release again tries the copy again. Release and delete what you kept deletes those snapshots with it.</p> : null}
+        </BoxDialog>
       ) : null}
     </>
   );

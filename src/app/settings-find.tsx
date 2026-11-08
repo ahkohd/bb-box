@@ -154,7 +154,7 @@ export function FindSettings({ wide = false }: { wide?: boolean }) {
         {typed ? countWords(results.length) : ""}
       </span>
       {listed ? (
-        <div className={cn("absolute top-full z-30 mt-1 overflow-hidden rounded-lg border border-border bg-popover shadow-[0_6px_24px_rgb(0_0_0/0.25)]", wide ? "inset-x-0" : "right-0 w-[min(28rem,calc(100vw-2rem))]")}>
+        <div className={cn("absolute top-full z-30 mt-1 overflow-hidden rounded-lg border border-border bg-popover", wide ? "inset-x-0" : "right-0 w-[min(28rem,calc(100vw-2rem))]")}>
           <p className={cn("px-3 py-1.5 text-2xs text-subtle-foreground", shown.length && "border-b border-border")} aria-hidden>
             {hint(results.length, query)}
           </p>
