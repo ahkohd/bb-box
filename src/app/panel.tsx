@@ -50,8 +50,8 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     let refused: string | null;
     try {
       const answer = await result;
-      refused = answer.error;
       if (answer.threads?.length) onThreads?.(answer.threads);
+      refused = answer.threads?.length ? null : answer.error;
     } catch (caught) {
       refused = message(caught);
     }

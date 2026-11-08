@@ -143,8 +143,10 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
       let refused: string | null;
       try {
         const answer = await call(method, box, force, deleteKept);
-        refused = answer.error;
-        if ((method === "remove" || method === "stop") && answer.threads?.length) setInUse({ method, box, threads: answer.threads, deleteKept });
+        if ((method === "remove" || method === "stop") && answer.threads?.length) {
+          setInUse({ method, box, threads: answer.threads, deleteKept });
+          refused = null;
+        } else refused = answer.error;
       } catch (caught) {
         refused = message(caught);
       }
@@ -185,8 +187,10 @@ export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxA
     setBusy(`${method}:${box.id}`);
     try {
       const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}), ...(method === "release" && deleteKept ? { deleteKept: true } : {}) });
-      refused = answer.error;
-      if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId, deleteKept });
+      if (guarded && answer.threads?.length) {
+        setInUse({ method, box, threads: answer.threads, threadId, deleteKept });
+        refused = null;
+      } else refused = answer.error;
     } catch (caught) {
       refused = message(caught);
     } finally {
