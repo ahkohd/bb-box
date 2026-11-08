@@ -703,7 +703,7 @@ export class DesktopSession implements Kept {
 
   /**
    * Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, or Ctrl+Shift+V when
-   * 'shifted`, where the cursor is, and says so with onPaste or onPasteFailed.
+   * `shifted`, where the cursor is, and says so with onPaste or onPasteFailed.
    */
   paste(text: string, shifted = false): void {
     if (this.connection.state !== "connected" || !this.#client) return;
