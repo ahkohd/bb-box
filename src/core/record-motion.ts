@@ -1,6 +1,6 @@
 import type { PointerShape } from "./record-cursors.ts";
-import type { InputArea, MouseButton } from "./record-input.ts";
-import { TYPING_GAP_S } from "./record-keys.ts";
+import type { InputArea, InputSource, MouseButton } from "./record-input.ts";
+import { TYPING_AFTER_S, TYPING_GAP_S, TYPING_LEAST_S } from "./record-keys.ts";
 
 export const CLIP_FPS = 30;
 export const GLIDE_S = 0.5;
@@ -64,6 +64,8 @@ export interface PlacedTyping {
   readonly secret: boolean;
   readonly role?: string | null;
   readonly window?: InputArea | null;
+  readonly by?: InputSource;
+  readonly call?: number;
 }
 
 export interface ChangedRegion extends InputArea {
@@ -312,15 +314,23 @@ function overlap(a: InputArea, b: InputArea): number {
   return width > 0 && height > 0 ? width * height : 0;
 }
 
+function foreignTyping(typing: PlacedTyping, each: PlacedTyping): boolean {
+  if (typing.call !== undefined && each.call !== undefined && typing.call !== each.call) return true;
+  if (typing.by && each.by && typing.by !== each.by) return true;
+  return false;
+}
+
 export function typingSpan(typing: PlacedTyping, all: readonly PlacedTyping[]): { readonly from: number; readonly to: number } {
+  if (!typing.characters) return { from: typing.at, to: typing.at };
   const later = all.filter((each) => each.at > typing.at + 1e-6).sort((a, b) => a.at - b.at);
   let to = typing.at;
   for (const each of later) {
-    if (each.characters > 1 && each.at - to > TYPING_GAP_S) break;
+    if (foreignTyping(typing, each)) break;
+    if (each.characters === 0) return { from: typing.at, to: each.at };
+    if (each.at - to > TYPING_GAP_S) break;
     to = each.at;
-    if (each.characters === 0) break;
   }
-  return { from: typing.at, to };
+  return { from: typing.at, to: typing.at };
 }
 
 export function typingFocus(scene: Scene, typing: PlacedTyping, pointer: PointerPlan): InputArea | null {
@@ -360,7 +370,15 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
     const at = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
     const start = at(drag.from);
     const end = at(drag.to);
-    return start && end ? [{ at: drag.from, area: pointArea(start.x, start.y), contain: false }, { at: drag.to, area: pointArea(end.x, end.y), contain: false }] : [];
+    if (!start || !end) return [];
+    const click = scene.clicks
+      .filter((each) => each.window && Math.abs(each.at - drag.from) <= 0.5 && coversPoint(each.window, start.x, start.y, EDGE_PX))
+      .sort((a, b) => Math.abs(a.at - drag.from) - Math.abs(b.at - drag.from))[0];
+    if (click?.window) {
+      const moved = { x: click.window.x + end.x - start.x, y: click.window.y + end.y - start.y, width: click.window.width, height: click.window.height };
+      return [{ at: drag.to, area: moved, contain: true }];
+    }
+    return [{ at: drag.from, area: pointArea(start.x, start.y), contain: false }, { at: drag.to, area: pointArea(end.x, end.y), contain: false }];
   });
   const focuses: Focus[] = [
     ...pointer.rings.map((ring) => {
@@ -368,7 +386,7 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
       return { at: ring.at, area: small(click?.area ?? null) ? click!.area! : pointArea(ring.x, ring.y), contain: false };
     }),
     ...scene.scrolls.map((scroll) => ({ at: scroll.at, area: pointArea(scroll.x, scroll.y), contain: false })),
-    ...drags.map((drag) => ({ ...drag, contain: false })),
+    ...drags,
     ...scene.typing.flatMap((typing) => {
       if (!typing.characters) return [];
       const area = typingFocus(scene, typing, pointer);
@@ -467,6 +485,8 @@ interface Action {
   readonly from: number;
   readonly to: number;
   readonly places: readonly InputArea[];
+  readonly window: InputArea | null;
+  readonly click: boolean;
 }
 
 function placesOf(...places: (InputArea | null | undefined)[]): InputArea[] {
@@ -475,14 +495,15 @@ function placesOf(...places: (InputArea | null | undefined)[]): InputArea[] {
 
 function actionsOf(scene: Scene, pointer: PointerPlan): Action[] {
   const frameAt = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
+  const plain = (from: number, to: number, places: InputArea[]): Action => ({ from, to, places, window: null, click: false });
   return [
-    ...scene.clicks.map((click) => ({ from: click.at, to: click.at, places: placesOf(click.window, click.area, pointArea(click.x, click.y)) })),
-    ...scene.scrolls.map((scroll) => ({ from: scroll.at, to: scroll.at, places: placesOf(scroll.window, pointArea(scroll.x, scroll.y)) })),
-    ...scene.typing.map((typing) => ({ from: typing.at, to: typing.at, places: placesOf(typing.window, typing.area) })),
+    ...scene.clicks.map((click) => ({ from: click.at, to: click.at, places: placesOf(click.window, click.area, pointArea(click.x, click.y)), window: click.window ?? null, click: true })),
+    ...scene.scrolls.map((scroll) => plain(scroll.at, scroll.at, placesOf(scroll.window, pointArea(scroll.x, scroll.y)))),
+    ...scene.typing.map((typing) => plain(typing.at, typing.at, placesOf(typing.window, typing.area))),
     ...pointer.drags.map((drag) => {
       const start = frameAt(drag.from);
       const end = frameAt(drag.to);
-      return { from: drag.from, to: drag.to, places: placesOf(start && pointArea(start.x, start.y), end && pointArea(end.x, end.y)) };
+      return plain(drag.from, drag.to, placesOf(start && pointArea(start.x, start.y), end && pointArea(end.x, end.y)));
     }),
   ];
 }
@@ -492,8 +513,17 @@ function touches(change: InputArea, place: InputArea): boolean {
   return place.x >= change.x && place.x <= change.x + change.width && place.y >= change.y && place.y <= change.y + change.height;
 }
 
+function removesMost(change: InputArea, window: InputArea): boolean {
+  const whole = areaOf(window);
+  return whole > 0 && overlap(change, window) > whole / 2;
+}
+
 function actionsOwn(actions: readonly Action[], change: ChangedRegion): boolean {
-  return actions.some((action) => change.at >= action.from - OWN_RESULT_S && change.at <= action.to + OWN_RESULT_S && action.places.some((place) => touches(change, place)));
+  return actions.some((action) => {
+    if (change.at < action.from - OWN_RESULT_S || change.at > action.to + OWN_RESULT_S) return false;
+    if (action.click && action.window && removesMost(change, action.window)) return false;
+    return action.places.some((place) => touches(change, place));
+  });
 }
 
 function showsOutside(scene: Scene, view: View, change: ChangedRegion): boolean {
@@ -704,19 +734,23 @@ export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
 }
 
 export function pointerShapes(scene: Scene): ShapeSpan[] {
+  const pointer = planPointer(scene);
   const drags = pressesOf(scene.samples).filter((press) => press.drag);
   const requests: ShapeRequest[] = [];
+  const glideAway = (at: number) => pointer.glides.find((glide) => glide.from > at + 1e-3)?.from ?? scene.length;
   for (const drag of drags) requests.push({ from: drag.from, to: Math.max(drag.to, drag.from + SHAPE_HOLD_S), shape: dragCursor(scene, drag), rank: 3 });
   for (const click of scene.clicks) {
     if (drags.some((drag) => Math.abs(drag.from - click.at) <= 0.3 && distance(drag, click) <= SAME_MOVE_PX)) continue;
     const shape = clickShape(click.role);
     if (shape === "arrow") continue;
-    requests.push({ from: click.at, to: click.at + SHAPE_HOLD_S, shape, rank: 2 });
+    const held = shape === "ibeam" ? Math.max(click.at + SHAPE_HOLD_S, glideAway(click.at)) : click.at + SHAPE_HOLD_S;
+    requests.push({ from: click.at, to: held, shape, rank: 2 });
   }
   for (const typing of scene.typing) {
     if (typing.secret || typing.characters === 0 || !textField(typing.role)) continue;
     const span = typingSpan(typing, scene.typing);
-    requests.push({ from: span.from, to: Math.max(span.to, span.from + SHAPE_HOLD_S), shape: "ibeam", rank: 1 });
+    const tail = span.to + Math.max(TYPING_AFTER_S, TYPING_LEAST_S);
+    requests.push({ from: span.from, to: Math.max(tail, span.from + SHAPE_HOLD_S), shape: "ibeam", rank: 1 });
   }
   const marks = [...new Set([0, scene.length, ...requests.flatMap((request) => [request.from, request.to])].filter((time) => time >= 0 && time <= scene.length).map((time) => round3(time)))].sort((a, b) => a - b);
   const pieces: ShapeSpan[] = [];

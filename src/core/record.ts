@@ -12,6 +12,8 @@
 
 import type { GuestOs } from "../transports/types.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
+import { fontName, textRuns, type FontWeight } from "./record-font.ts";
+import { markArt, markRgb, type MarkKind } from "./record-icons.ts";
 import type { InputEvent } from "./record-input.ts";
 import { CLIP_FPS, keptMotion, type ChangedRegion, type PointerSample } from "./record-motion.ts";
 import { GRID_COLUMNS, GRID_ROWS, areaOnClip, bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type BrightnessGrid, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
@@ -226,7 +228,7 @@ export function analysisGraph(stills: "cut" | "keep"): string {
 
 export interface RecordEvent {
   readonly at: number;
-  readonly kind: StepKind;
+  readonly kind: StepKind | "note";
   readonly text: string;
 }
 
@@ -286,7 +288,7 @@ export function parsePrepared(stdout: string): Prepared | null {
     const rest = lines.slice(head + 1);
     const events = rest.flatMap((line): RecordEvent[] => {
       const [at, kind, encoded] = line.split("\t");
-      if (!at || !encoded || (kind !== "step" && kind !== "pass" && kind !== "fail")) return [];
+      if (!at || !encoded || (kind !== "step" && kind !== "pass" && kind !== "fail" && kind !== "note")) return [];
       return [{ at: Number(at), kind, text: Buffer.from(encoded, "base64").toString("utf8") }];
     });
     const sceneLines = parseSceneLines(rest);
@@ -491,14 +493,18 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   return { speed, cuts, holds, captions, overlays, position, length, width, height, fontSize, edge: edge + inset, fps: moves ? CLIP_FPS : RECORD_FPS, scene };
 }
 
-const PILLS: Readonly<Record<PillLook, { readonly icon: string; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
-  step: { icon: "▶", color: "4f8df5", fill: "5f6368", alpha: 0.82 },
-  pass: { icon: "✓", color: "34c759", fill: "2a2a2a", alpha: 0.94 },
-  fail: { icon: "✗", color: "ff453a", fill: "2a2a2a", alpha: 0.94 },
-  mark: { icon: "▶▶", color: "ffffff", fill: "1f1f1f", alpha: 0.88 },
-  note: { icon: "⚠", color: "ff9f0a", fill: "2a2a2a", alpha: 0.94 },
-  key: { icon: "⌨", color: "d0d0d4", fill: "1f1f1f", alpha: 0.9 },
+const PILLS: Readonly<Record<PillLook, { readonly mark: MarkKind; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
+  step: { mark: "play", color: "4f8df5", fill: "5f6368", alpha: 0.82 },
+  pass: { mark: "check", color: "34c759", fill: "2a2a2a", alpha: 0.94 },
+  fail: { mark: "failed", color: "ff453a", fill: "2a2a2a", alpha: 0.94 },
+  mark: { mark: "cut", color: "ffffff", fill: "1f1f1f", alpha: 0.88 },
+  note: { mark: "warn", color: "ff9f0a", fill: "2a2a2a", alpha: 0.94 },
+  key: { mark: "keyboard", color: "d0d0d4", fill: "1f1f1f", alpha: 0.9 },
 };
+
+function pillWeight(os: GuestOs): FontWeight {
+  return os === "linux" ? "regular" : "medium";
+}
 
 export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
   const select = plan.cuts.length ? `select='not(${plan.cuts.map(([from, to]) => `between(t,${from.toFixed(3)},${to.toFixed(3)})`).join("+")})',` : "";
@@ -538,26 +544,46 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
 }
 
 const MAC_PILL = String.raw`ObjC.import("AppKit");
+ObjC.import("CoreText");
 function run(argv) {
-  const [file, icon, iconHex, fillHex, alpha, size, out] = argv;
-  const text = $.NSString.stringWithContentsOfFileEncodingError(file, $.NSUTF8StringEncoding, null);
+  const [runsFile, iconPath, iconWidth, fillHex, alpha, size, out] = argv;
   const fs = Number(size);
   const color = (hex, a) => $.NSColor.colorWithSRGBRedGreenBlueAlpha(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255, a);
-  const font = $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
-  const iconFont = $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightBold);
-  const attrs = (f, c) => $.NSDictionary.dictionaryWithObjectsForKeys($([f, c]), $([$.NSFontAttributeName, $.NSForegroundColorAttributeName]));
-  const mark = $(icon);
-  const labelAttrs = attrs(font, color("ffffff", 1)), markAttrs = attrs(iconFont, color(iconHex, 1));
-  const tw = Math.ceil(text.sizeWithAttributes(labelAttrs).width), iw = Math.ceil(mark.sizeWithAttributes(markAttrs).width);
-  const h = Math.round(fs * 2.1), pad = fs, gap = Math.round(fs * 0.6), w = pad + iw + gap + tw + pad;
+  const seen = {};
+  const face = (path) => {
+    if (!path) return $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+    if (!seen[path]) {
+      $.CTFontManagerRegisterFontsForURL($.NSURL.fileURLWithPath(path), 1, null);
+      seen[path] = true;
+    }
+    const name = path.indexOf("Medium") >= 0 ? "Inter-Medium" : "Inter-Regular";
+    return $.NSFont.fontWithNameSize(name, fs) || $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+  };
+  const lines = String($.NSString.stringWithContentsOfFileEncodingError(runsFile, $.NSUTF8StringEncoding, null)).split("\n").filter((line) => line);
+  const runs = lines.map((line) => {
+    const tab = line.indexOf("\t");
+    const text = $.NSString.stringWithContentsOfFileEncodingError(line.slice(tab + 1), $.NSUTF8StringEncoding, null);
+    const font = face(line.slice(0, tab));
+    const attrs = $.NSDictionary.dictionaryWithObjectsForKeys($([font, color("ffffff", 1)]), $([$.NSFontAttributeName, $.NSForegroundColorAttributeName]));
+    return { text, font, attrs, width: Math.ceil(Number(text.sizeWithAttributes(attrs).width)) };
+  });
+  const asked = Number(iconWidth);
+  const image = $.NSImage.alloc.initWithContentsOfFile(iconPath);
+  const iw = image && asked > 0 ? asked : 0;
+  const gap = iw ? Math.round(fs * 0.6) : 0;
+  const tw = runs.reduce((sum, run) => sum + run.width, 0);
+  const h = Math.round(fs * 2.1), pad = fs, w = pad + iw + gap + tw + pad;
   const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, w, h, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
   $.NSGraphicsContext.saveGraphicsState;
   $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
   color(fillHex, Number(alpha)).setFill;
   $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius($.NSMakeRect(0, 0, w, h), h / 2, h / 2).fill;
-  const baseline = (h - font.capHeight) / 2;
-  mark.drawAtPointWithAttributes($.NSMakePoint(pad, baseline + iconFont.descender), markAttrs);
-  text.drawAtPointWithAttributes($.NSMakePoint(pad + iw + gap, baseline + font.descender), labelAttrs);
+  if (iw) image.drawInRectFromRectOperationFraction($.NSMakeRect(pad, (h - iw) / 2, iw, iw), $.NSZeroRect, $.NSCompositingOperationSourceOver, 1);
+  let x = pad + iw + gap;
+  for (const run of runs) {
+    run.text.drawAtPointWithAttributes($.NSMakePoint(x, (h - run.font.capHeight) / 2 + run.font.descender), run.attrs);
+    x += run.width;
+  }
   $.NSGraphicsContext.restoreGraphicsState;
   rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $()).writeToFileAtomically(out, true);
   return w + "x" + h;
@@ -575,43 +601,102 @@ export function pillFiles(plan: ClipPlan): number[] {
   });
 }
 
-function pillCalls(plan: ClipPlan, name: string): string[] {
+function pillArt(plan: ClipPlan): { readonly overlay: Overlay; readonly index: number; readonly art: ReturnType<typeof markArt>; readonly fill: string; readonly alpha: number }[] {
   const files = pillFiles(plan);
   return plan.overlays.flatMap((overlay, index) => {
     if (files[index] !== index) return [];
     const look = PILLS[overlay.look];
-    const encoded = Buffer.from(overlay.text).toString("base64");
-    return [`${name} ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' '${look.color}' '${look.fill}' ${look.alpha} ${overlay.size}`];
+    return [{ overlay, index, art: markArt(look.mark, overlay.size, markRgb(look.color)), fill: look.fill, alpha: look.alpha }];
   });
+}
+
+function pillCalls(plan: ClipPlan, name: string, os: GuestOs): string[] {
+  return pillArt(plan).map(({ overlay, index, art, fill, alpha }) => {
+    const runs = textRuns(overlay.text, pillWeight(os)).flatMap((run) => [`'${run.font}'`, `'${Buffer.from(run.text).toString("base64")}'`]);
+    return `${name} ${index} ${art.name} ${art.display} '${fill}' ${alpha} ${overlay.size} ${runs.join(" ")}`;
+  });
+}
+
+function markInstalls(plan: ClipPlan): string {
+  const seen = new Set<string>();
+  return pillArt(plan)
+    .flatMap(({ art }) => {
+      if (seen.has(art.name)) return [];
+      seen.add(art.name);
+      return [`printf '%s' '${art.png.toString("base64")}' | perl -MMIME::Base64 -e 'local $/; print decode_base64(<STDIN>)' > "$d/${art.name}"`];
+    })
+    .join("\n");
 }
 
 export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux"): string {
   if (os === "windows") return windowsMake(plan);
-  const pills = pillCalls(plan, "pill");
+  const pills = pillCalls(plan, "pill", "linux");
   const files = pillFiles(plan);
   const inputs = files.map((file) => `-i "$d/pill-${file}.png"`).join(" ");
+  const marks = markInstalls(plan);
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 decode() { perl -MMIME::Base64 -e 'print decode_base64($ARGV[0])' "$1"; }
+font_regular="$d/${fontName("regular")}"
+font_medium="$d/${fontName("medium")}"
+fallback=
+if [ "$(uname)" != Darwin ]; then fallback=$(fc-match -f '%{file}' 'DejaVu Sans' 2>/dev/null || true); fi
+choose() {
+  case $1 in
+    regular) if [ -s "$font_regular" ]; then printf '%s' "$font_regular"; else printf '%s' "$fallback"; fi ;;
+    medium) if [ -s "$font_medium" ]; then printf '%s' "$font_medium"; else printf '%s' "$fallback"; fi ;;
+    *) printf '%s' "$fallback" ;;
+  esac
+}
+${marks}
 if [ "$(uname)" = Darwin ]; then
   cat >"$d/pill.js" <<'PILL'
 ${MAC_PILL}PILL
   pill() {
-    decode "$2" >"$d/pill-$1.txt"
-    osascript -l JavaScript "$d/pill.js" "$d/pill-$1.txt" "$(decode "$3")" "$4" "$5" "$6" "$7" "$d/pill-$1.png" >/dev/null
+    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6
+    shift 6
+    : > "$d/pill-$index.runs"
+    n=0
+    while [ $# -ge 2 ]; do
+      decode "$2" > "$d/pill-$index-$n.txt"
+      printf '%s\t%s\n' "$(choose "$1")" "$d/pill-$index-$n.txt" >> "$d/pill-$index.runs"
+      n=$((n + 1)); shift 2
+    done
+    iconfile="$d/$icon"; [ -s "$iconfile" ] || { iconfile=/dev/null; idew=0; }
+    osascript -l JavaScript "$d/pill.js" "$d/pill-$index.runs" "$iconfile" "$idew" "$fill" "$alpha" "$fs" "$d/pill-$index.png" >/dev/null
   }
 else
-  font=$(fc-match -f '%{file}' 'DejaVu Sans' 2>/dev/null)
-  bold=$(fc-match -f '%{file}' 'DejaVu Sans:bold' 2>/dev/null)
   measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$3:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^(\[Eval @ [^]]*\] )?[0-9.]+$/ { print int($NF + 0.5); exit }'; }
   pill() {
-    fs=$7
-    decode "$2" >"$d/pill-$1.txt"; decode "$3" >"$d/pill-$1.icon"
-    tw=$(measure "$font" "$d/pill-$1.txt" "$fs"); iw=$(measure "$bold" "$d/pill-$1.icon" "$fs")
-    [ -n "$tw" ] && [ -n "$iw" ] || return 1
-    h=$((fs * 21 / 10)); pad=$fs; gap=$((fs * 6 / 10)); w=$((pad + iw + gap + tw + pad)); r=$((h / 2)); cap=$((fs * 73 / 100))
-    rgb=$((0x$5))
-    ffmpeg -nostdin -v error -y -f lavfi -i "color=c=black@0:s=$${"{"}w}x$${"{"}h},format=rgba" -vf "geq=r=$((rgb >> 16 & 255)):g=$((rgb >> 8 & 255)):b=$((rgb & 255)):a='255*$6*clip($r+0.5-hypot(max(0\,max($r-X\,X-($w-1-$r)))\,Y-($h-1)/2)\,0\,1)',drawtext=fontfile=$bold:textfile=$d/pill-$1.icon:expansion=none:fontsize=$fs:fontcolor=0x$4:x=$pad:y=($h+$cap)/2-ascent,drawtext=fontfile=$font:textfile=$d/pill-$1.txt:expansion=none:fontsize=$fs:fontcolor=white:x=$((pad + iw + gap)):y=($h+$cap)/2-ascent" -frames:v 1 "$d/pill-$1.png"
+    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6
+    shift 6
+    : > "$d/pill-$index.runs"
+    n=0; tw=0
+    while [ $# -ge 2 ]; do
+      decode "$2" > "$d/pill-$index-$n.txt"
+      file=$(choose "$1")
+      width=$(measure "$file" "$d/pill-$index-$n.txt" "$fs")
+      [ -n "$width" ] || return 1
+      printf '%s %s %s\n' "$file" "$n" "$width" >> "$d/pill-$index.runs"
+      tw=$((tw + width)); n=$((n + 1)); shift 2
+    done
+    [ -s "$d/$icon" ] || idew=0
+    h=$((fs * 21 / 10)); pad=$fs; gap=$((fs * 6 / 10))
+    [ "$idew" -gt 0 ] || gap=0
+    w=$((pad + idew + gap + tw + pad)); r=$((h / 2)); cap=$((fs * 73 / 100))
+    rgb=$((0x$fill))
+    base="geq=r=$((rgb >> 16 & 255)):g=$((rgb >> 8 & 255)):b=$((rgb & 255)):a='255*$alpha*clip($r+0.5-hypot(max(0\\,max($r-X\\,X-($w-1-$r)))\\,Y-($h-1)/2)\\,0\\,1)'"
+    textx=$((pad + idew + gap))
+    texts=
+    while read file run width; do
+      texts="$texts,drawtext=fontfile=$file:textfile=$d/pill-$index-$run.txt:expansion=none:fontsize=$fs:fontcolor=white:x=$textx:y=($h+$cap)/2-ascent"
+      textx=$((textx + width))
+    done < "$d/pill-$index.runs"
+    if [ "$idew" -gt 0 ]; then
+      ffmpeg -nostdin -v error -y -f lavfi -i "color=c=black@0:s=$${"{"}w}x$${"{"}h},format=rgba" -i "$d/$icon" -filter_complex "[0:v]$base[bg];[1:v]scale=$${"{"}idew}:$${"{"}idew}[ic];[bg][ic]overlay=x=$pad:y=(H-h)/2:format=auto[marked];[marked]$${"{"}texts#,}[out]" -map "[out]" -frames:v 1 "$d/pill-$index.png"
+    else
+      ffmpeg -nostdin -v error -y -f lavfi -i "color=c=black@0:s=$${"{"}w}x$${"{"}h},format=rgba" -vf "$base$texts" -frames:v 1 "$d/pill-$index.png"
+    fi
   }
 fi
 now() { perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
@@ -792,31 +877,67 @@ exit ${RECORD_STOP_EXITS.made}
 
 const WINDOWS_PILL = String.raw`function Decode($text) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($text)) }
 function Color($hex, $alpha) { [Drawing.Color]::FromArgb([int](255 * $alpha), [Convert]::ToInt32($hex.Substring(0, 2), 16), [Convert]::ToInt32($hex.Substring(2, 2), 16), [Convert]::ToInt32($hex.Substring(4, 2), 16)) }
-function Pill($index, $text, $icon, $iconHex, $fillHex, $alpha, $size) {
+function Face($kind, $fs) {
+  $path = switch ($kind) { 'medium' { Join-Path $d '${fontName("medium")}' } 'regular' { Join-Path $d '${fontName("regular")}' } default { '' } }
+  if ($path -and (Test-Path $path)) {
+    $bag = [Drawing.Text.PrivateFontCollection]::new()
+    $bag.AddFontFile($path)
+    return [Drawing.Font]::new($bag.Families[0], $fs, [Drawing.GraphicsUnit]::Pixel)
+  }
+  if ($kind -eq 'fallback') { return [Drawing.Font]::new('Segoe UI', $fs, [Drawing.GraphicsUnit]::Pixel) }
+  return [Drawing.Font]::new('Segoe UI Semibold', $fs, [Drawing.GraphicsUnit]::Pixel)
+}
+function Pill($index, $icon, $display, $fillHex, $alpha, $size) {
   $ErrorActionPreference = 'Stop'
   Add-Type -AssemblyName System.Drawing
-  $label = Decode $text; $mark = Decode $icon; $fs = [int]$size
-  $font = [Drawing.Font]::new('Segoe UI Semibold', $fs, [Drawing.GraphicsUnit]::Pixel)
-  $iconFont = [Drawing.Font]::new('Segoe UI Symbol', $fs, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
+  $fs = [int]$size
   $format = [Drawing.StringFormat]::GenericTypographic
   $measure = [Drawing.Graphics]::FromImage([Drawing.Bitmap]::new(1, 1))
   $measure.TextRenderingHint = 'AntiAlias'
-  $tw = [int][Math]::Ceiling($measure.MeasureString($label, $font, [Drawing.PointF]::Empty, $format).Width)
-  $iw = [int][Math]::Ceiling($measure.MeasureString($mark, $iconFont, [Drawing.PointF]::Empty, $format).Width)
-  $h = [int][Math]::Round($fs * 2.1); $pad = $fs; $gap = [int][Math]::Round($fs * 0.6); $w = $pad + $iw + $gap + $tw + $pad
+  $runs = @()
+  for ($i = 0; $i -lt $args.Count; $i += 2) {
+    $font = Face $args[$i] $fs
+    $label = Decode $args[$i + 1]
+    $width = [int][Math]::Ceiling($measure.MeasureString($label, $font, [Drawing.PointF]::Empty, $format).Width)
+    $runs += ,@($font, $label, $width)
+  }
+  $tw = 0; foreach ($run in $runs) { $tw += $run[2] }
+  $iconPath = Join-Path $d $icon
+  $iw = 0
+  if ((Test-Path $iconPath) -and [int]$display -gt 0) { $iw = [int]$display }
+  $h = [int][Math]::Round($fs * 2.1); $pad = $fs; $gap = $(if ($iw -gt 0) { [int][Math]::Round($fs * 0.6) } else { 0 }); $w = $pad + $iw + $gap + $tw + $pad
   $bitmap = [Drawing.Bitmap]::new($w, $h, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [Drawing.Graphics]::FromImage($bitmap)
   $g.SmoothingMode = 'AntiAlias'; $g.PixelOffsetMode = 'HighQuality'; $g.TextRenderingHint = 'AntiAlias'
   $capsule = [Drawing.Drawing2D.GraphicsPath]::new()
   $capsule.AddArc(0, 0, $h, $h, 90, 180); $capsule.AddArc($w - $h, 0, $h, $h, 270, 180); $capsule.CloseFigure()
   $g.FillPath([Drawing.SolidBrush]::new((Color $fillHex ([double]$alpha))), $capsule)
+  if ($iw -gt 0) {
+    $picture = [Drawing.Image]::FromFile($iconPath)
+    $g.DrawImage($picture, [Drawing.Rectangle]::new($pad, [int](($h - $iw) / 2), $iw, $iw))
+    $picture.Dispose()
+  }
   $capHeight = $fs * 0.7
-  function Top($f) { ($h + $capHeight) / 2 - $fs * $f.FontFamily.GetCellAscent('Regular') / $f.FontFamily.GetEmHeight('Regular') }
-  $g.DrawString($mark, $iconFont, [Drawing.SolidBrush]::new((Color $iconHex 1)), [float]$pad, [float](Top $iconFont), $format)
-  $g.DrawString($label, $font, [Drawing.Brushes]::White, [float]($pad + $iw + $gap), [float](Top $font), $format)
+  $x = $pad + $iw + $gap
+  foreach ($run in $runs) {
+    $top = ($h + $capHeight) / 2 - $fs * $run[0].FontFamily.GetCellAscent('Regular') / $run[0].FontFamily.GetEmHeight('Regular')
+    $g.DrawString($run[1], $run[0], [Drawing.Brushes]::White, [float]$x, [float]$top, $format)
+    $x += $run[2]
+  }
   $bitmap.Save("$d\pill-$index.png", [Drawing.Imaging.ImageFormat]::Png)
   $g.Dispose(); $bitmap.Dispose()
 }`;
+
+function windowsMarkInstalls(plan: ClipPlan): string {
+  const seen = new Set<string>();
+  return pillArt(plan)
+    .flatMap(({ art }) => {
+      if (seen.has(art.name)) return [];
+      seen.add(art.name);
+      return [`[IO.File]::WriteAllBytes((Join-Path $d '${art.name}'), [Convert]::FromBase64String('${art.png.toString("base64")}'))`];
+    })
+    .join("\n");
+}
 
 function windowsMake(plan: ClipPlan): string {
   const inputs = pillFiles(plan).map((file) => `-i "$d\\pill-${file}.png"`).join(" ");
@@ -829,7 +950,8 @@ $began = [DateTime]::UtcNow
 $captions = '${plan.overlays.length ? "1" : "none"}'
 if ($captions -eq '1') {
   try {
-${pillCalls(plan, "    Pill").join("\n")}
+${windowsMarkInstalls(plan)}
+${pillCalls(plan, "    Pill", "windows").join("\n")}
   } catch {
     Add-Content "$d\log" "$_"
     $captions = '0'

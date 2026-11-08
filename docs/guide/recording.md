@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![An agent writes a note in Mousepad on a Linux box: the clip zooms in on the typed line, draws an arrow, an I-beam, a pointing hand and an open hand, zooms out as the Save dialog opens, and shows Typing, Ctrl+A and Ctrl+S in pills](../media/recording.webp)
+![Mousepad on a Linux desktop: the clip zooms in, draws an arrow, an I-beam and a pointing hand, and shows a Typing pill, a step with a play mark, a passed result with a tick, a failed result with a cross, and a warning](../media/recording.webp)
 
 ## What a clip shows
 
@@ -10,14 +10,14 @@ A clip shows the box's whole screen, up to 1280 pixels wide and 30 frames a seco
 
 ### The pointer, clicks and keys
 
-bb-box draws its own pointer over the clip, larger than the screen's. The arrow is the usual shape. A link or a button shows a pointing hand, a text field an I-beam, and a drag an open hand for the whole drag. A drag that starts on a window's edge or corner shows a resize cursor instead. The pointer is black with a white outline and a soft shadow over light parts of the screen, and white with a black outline over dark ones. It changes only when what is under it stays lighter or darker for half a second, and a shape holds for at least a third of a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
+bb-box draws its own pointer over the clip, larger than the screen's. The arrow is the usual shape. A link or a button shows a pointing hand, a text field an I-beam, and a drag an open hand for the whole drag. A drag that starts on a window's edge or corner shows a resize cursor instead. The I-beam stays from the click in the field until the pointer glides on to the next place, and it stays through the Typing pill. The pointer is black with a white outline and a soft shadow over light parts of the screen, and white with a black outline over dark ones. It changes only when what is under it stays lighter or darker for half a second, and a hand or a resize cursor holds for at least a third of a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
 
 - Each click shows a ring where it lands, drawn in the pointer's fill: blue for a right click, and two quick rings for a double click.
 - While a button is held, a soft disc stays under the pointer, so a drag shows as one movement.
 - Each shortcut or special key shows in a small pill, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
 - Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
-- When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. The pill never shows what was typed.
+- When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. A later secret call does not lengthen that pill or hide it. The pill never shows what was typed.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
 - Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
 
@@ -25,13 +25,13 @@ A pill sits below the region it would cover, or above it when below does not fit
 
 On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
-![The typed line kept whole in a zoomed Mousepad window, with the Typing pill below the line](../media/recording-zoom.png)
+![A zoomed Mousepad window with an I-beam and a Typing pill under the text area, and a step caption with a play mark](../media/recording-zoom.png)
 
 ### Zooms
 
-The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. A typing zoom frames the region the typing changed, or the field, and zooms out as far as it needs to, down to no zoom, so that region is never cut off. It holds still while you read, and zooms back out between bursts of work.
+The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. A typing zoom frames the region the typing changed, or the field, and zooms out as far as it needs to, down to no zoom, so that region is never cut off. A call that never says it has finished is framed at the moment it started. A drag that starts in a named window frames that window where the drag ends. The clip holds still while you read, and zooms back out between bursts of work.
 
-When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
+When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. A click that closes its own window zooms out too. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 
 It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field bb-box cannot tell.
 
@@ -39,16 +39,18 @@ The zooms follow what was actually done, not guesses: the agent's clicks and key
 
 ### Still stretches and captions
 
-Still stretches, where nothing on the screen moves, are cut to half a second, so a long session makes a short clip. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "▶▶ 14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time.
+Still stretches, where nothing on the screen moves, are cut to half a second, so a long session makes a short clip. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
 
 When an agent tests something, it captions each check:
 
-- the step, at the top of the video, with a blue ▶, such as "It opens the notes file in TextEdit"
+- the step, at the top of the video, with a blue play mark, such as "It opens the notes file in TextEdit"
 - the result, under the step, with a green tick if it passed or a red cross if it failed, such as "TextEdit shows notes.txt, empty"
+
+A key pill starts with a keyboard mark, and a warning uses an amber one. The marks are the same height as the letters beside them.
 
 The next step replaces both. Each caption stays up long enough to read, even where still stretches are cut or the clip plays faster.
 
-![A step captioned at the top of a Linux desktop on a dark background with rounded corners, and an Esc pill above the taskbar](../media/recording-step.png)
+![A step caption with a play mark and a failed result with a red cross, over a zoomed Mousepad window, with a pointing hand on an open menu](../media/recording-step.png)
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 

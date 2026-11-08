@@ -3,6 +3,11 @@
 Status: accepted, 7 November 2026, for the launch polish. Amended
 8 November 2026: a typing zoom keeps the changed region in frame, one
 typing call is one pill, and the pointer is the owner's cursor set.
+Amended again the same day: a secret call does not lengthen a public
+Typing pill, an I-beam holds through that pill and until the pointer
+moves on, a drag frames its window at the end, a click that removes
+its window zooms out, and the words and marks are Inter and the
+owner's icons.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
@@ -90,7 +95,9 @@ while recording loses it, and the clip is made from the sampler alone.
   pane divider uses the column cursor, or the up and down cursor when the
   divider is wider than it is tall. When the edge cannot be told, the
   drag keeps the open hand. A shape changes when the event happens and
-  then holds for at least 0.3 s, so it does not flicker. The arrow reads
+  then holds for at least 0.3 s, so it does not flicker. The I-beam holds
+  from the click in the field until the pointer next glides away, and
+  through the Typing pill. A later click or drag still takes over. The arrow reads
   as about 26 pixels on a 1280-wide clip. It is drawn at twice that and
   scaled down, so a 2x zoom stays sharp. It follows the latest source
   that moved it. A jump, as the agent's clicks are, glides over 0.5 s to
@@ -116,7 +123,13 @@ while recording loses it, and the clip is made from the sampler alone.
   the moment the text is in the field, for at least 1 s and until 0.6 s
   after the call's last key. A slow call is still one pill. Keys the
   driver echoes during the call do not add a pill, and do not hide it.
-  Backspace within the call is part of it.
+  A later secret call, or a call from the other input, does not lengthen
+  a public pill or hide it. Backspace within the call is part of it.
+  The words are Inter Regular on Linux and Inter Medium on macOS and
+  Windows, copied into the box with the clip. A glyph Inter lacks uses
+  the box font for that glyph. The keyboard, play, tick, cross, warning
+  and cut marks are the owner's icons, drawn at the letters' size and
+  tinted with the colour the glyph had.
 - **Where pills go.** Below the region the action changed, or above it
   when below does not fit, or at the screen edge that covers less of it.
   The pill stays clear of the captions and of a dock or taskbar. With no
@@ -188,10 +201,13 @@ On by default; `zoom: false` at the stop turns it off.
 
 - **Focus** comes from real events only: clicks, drags, scrolls and typing
   that is not secret. Typing's focus is the region that changed while the
-  call went on, or else the element's frame, or else the pointer. The view
-  contains that region. If it does not fit at 1.3x, the zoom goes lower,
-  down to no zoom, so the region is never cropped. Chords keep a zoom but
-  do not move it.
+  call went on, or else the element's frame, or else the pointer. A call
+  that never closes is framed at the moment it started, so later typing
+  does not widen it. The view contains that region. If it does not fit
+  at 1.3x, the zoom goes lower, down to no zoom, so the region is never
+  cropped. A drag whose click names a window is framed on that window
+  where the pointer is at the end of the drag, contained the same way.
+  Chords keep a zoom but do not move it.
 - **Groups.** Events less than 3 s apart form a group. A group's view is
   its events' bounds, a quarter larger on each side, at most 2x and at
   least 1.3x, else no zoom: a single click zooms 1.8x. A typing group that
@@ -213,9 +229,11 @@ On by default; `zoom: false` at the stop turns it off.
   merges with it into one region, or a window moving as it is dragged.
   The log carries the window of each of the agent's clicks, scrolls and
   typing; without one, the element's frame or the click's place stands in,
-  and a drag's start and end. A change elsewhere, or later, still ends the
-  zoom. One that opens over the same window within the half second, as a
-  dialog can, keeps it.
+  and a drag's start and end. A change that removes most of a click's
+  window is outside, so closing that window zooms out. A change elsewhere,
+  or later, still ends the zoom. One that opens over the same window
+  within the half second, as a dialog can, keeps it. Typing is not held
+  to that test: text that fills its field keeps the zoom.
 - **Still while reading.** A caption's hold, a still frame, holds the view
   too.
 - **Cuts keep the motion.** A cut still stretch is trimmed so it never

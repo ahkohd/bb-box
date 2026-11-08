@@ -16,7 +16,9 @@ import {
   pointerShapes,
   shapeAt,
   SHAPE_HOLD_S,
+  MOVE_S,
   typingFocus,
+  typingSpan,
   viewCovers,
   type Scene,
 } from "../src/core/record-motion.ts";
@@ -273,6 +275,57 @@ test("one typing call is one pill, from when the text is in, including a Mac's s
   assert.deepEqual(echoed.map((pill) => [pill.text, pill.from]), [[TYPING_WORDS, 13.2]]);
 });
 
+test("a secret call does not lengthen or hide a public Typing pill, and the same call's echoes stay one pill (073)", () => {
+  const after = planKeyPills(
+    [],
+    [
+      { at: 2, secret: false, characters: 12, by: "agent", call: 1 },
+      { at: 2.1, secret: false, characters: 0, by: "agent", call: 1 },
+      { at: 3, secret: true, characters: 1, by: "agent", call: 2 },
+    ],
+    "pc",
+    20,
+  );
+  assert.deepEqual(after.map((pill) => [pill.text, pill.from, pill.to]), [[TYPING_WORDS, 2.1, 3.1]]);
+  const person = planKeyPills(
+    [],
+    [
+      { at: 2, secret: false, characters: 12, by: "agent", call: 1 },
+      { at: 2.1, secret: false, characters: 0, by: "agent", call: 1 },
+      { at: 3, secret: true, characters: 1, by: "person" },
+    ],
+    "pc",
+    20,
+  );
+  assert.deepEqual(person.map((pill) => [pill.text, pill.from, pill.to]), [[TYPING_WORDS, 2.1, 3.1]]);
+  const other = planKeyPills(
+    [],
+    [
+      { at: 2, secret: false, characters: 12, by: "agent", call: 1 },
+      { at: 2.1, secret: false, characters: 0, by: "agent", call: 1 },
+      { at: 3, secret: false, characters: 1, by: "agent", call: 2 },
+    ],
+    "pc",
+    20,
+  );
+  assert.equal(other[0]?.to, 3, "a different call does not stretch the first pill");
+  assert.equal(other.length, 2);
+  const echoed = planKeyPills(
+    [],
+    [
+      { at: 10.5, secret: false, characters: 57, by: "agent", call: 1 },
+      { at: 11, secret: true, characters: 1, by: "agent", call: 1 },
+      { at: 12.4, secret: true, characters: 1 },
+      { at: 13.2, secret: false, characters: 0, by: "agent", call: 1 },
+    ],
+    "mac",
+    30,
+  );
+  assert.deepEqual(echoed.map((pill) => [pill.text, pill.from, pill.to]), [[TYPING_WORDS, 13.2, 14.2]]);
+  const edited = planKeyPills([{ at: 3, chord: normalChord("Backspace", []) }], [{ at: 2, secret: false, characters: 12, by: "agent", call: 1 }, { at: 2.1, secret: false, characters: 0, by: "agent", call: 1 }], "pc", 20);
+  assert.deepEqual(edited.map((pill) => [pill.text, pill.from, pill.to]), [[TYPING_WORDS, 2.1, 3.6]]);
+});
+
 test("only Shift is typing, and so is Option on a Mac; a person's printable keys are logged as typing, never as the character (073)", () => {
   const inputs = new RecordingInputs(() => 5_000);
   inputs.begin("mac", 0, "macos");
@@ -398,6 +451,59 @@ test("the stop's facts carry the sampler's pointer, the changed regions and the 
   assert.deepEqual(personInput("kd,65293"), { type: "key", keysym: 65293, down: true });
   assert.equal(personInput("m2,4,-3,0,0"), null, "relative motion is not a place");
   assert.equal(personInput("co,aGVsbG8="), null, "the clipboard is not input");
+});
+
+test("a typing call that never closes stays at its start, and a slow close still reaches the text (073)", () => {
+  const set = { at: 10, characters: 8, area: { x: 100, y: 200, width: 900, height: 28 }, secret: false, by: "agent" as const, call: 1 };
+  const keys = [
+    { at: 25, characters: 1, area: null, secret: true, by: "person" as const },
+    { at: 31, characters: 1, area: null, secret: true, by: "person" as const },
+  ];
+  assert.deepEqual(typingSpan(set, [set, ...keys]), { from: 10, to: 10 });
+  const line = { at: 10.1, x: 100, y: 200, width: 900, height: 28 };
+  const wide = { at: 25, x: 10, y: 10, width: 1190, height: 580 };
+  assert.deepEqual(typingFocus(scene({ typing: [set, ...keys], changes: [line, wide] }), set, planPointer(scene({}))), { x: line.x, y: line.y, width: line.width, height: line.height });
+  const slow = { at: 10.5, characters: 57, area: { x: 40, y: 360, width: 900, height: 28 }, secret: false };
+  const close = { at: 13.2, characters: 0, area: null, secret: false };
+  assert.deepEqual(typingSpan(slow, [slow, close]), { from: 10.5, to: 13.2 });
+  const during = { at: 12.8, x: 40, y: 360, width: 900, height: 28 };
+  assert.deepEqual(typingFocus(scene({ typing: [slow, close], changes: [during] }), slow, planPointer(scene({}))), { x: during.x, y: during.y, width: during.width, height: during.height });
+  const foreign = { at: 12, characters: 0, area: null, secret: false, by: "agent" as const, call: 2 };
+  assert.deepEqual(typingSpan(set, [set, foreign]), { from: 10, to: 10 });
+});
+
+test("an I-beam stays from the click in a field until the pointer glides away, and through the Typing pill (073)", () => {
+  const field = { at: 2, x: 400, y: 300, button: "left" as const, count: 1 as const, area: null, role: "textbox" };
+  const button = { at: 6, x: 900, y: 700, button: "left" as const, count: 1 as const, area: null, role: "push button" };
+  const typing = [
+    { at: 2.5, characters: 12, area: null, secret: false, role: "textbox" },
+    { at: 3.2, characters: 0, area: null, secret: false },
+  ];
+  const shapes = pointerShapes(scene({ clicks: [field, button], typing }));
+  assert.equal(shapeAt(shapes, 2.3), "ibeam");
+  assert.equal(shapeAt(shapes, 3.7), "ibeam");
+  assert.equal(shapeAt(shapes, 5.4), "ibeam");
+  assert.equal(shapeAt(shapes, 5.6), "arrow");
+  assert.equal(shapeAt(shapes, 6.05), "hand");
+});
+
+test("a drag whose press names a window frames that window where the drag ends (073)", () => {
+  const window = { x: 400, y: 200, width: 700, height: 480 };
+  const samples = [
+    { at: 1, x: 500, y: 240, buttons: 0 },
+    { at: 1.2, x: 500, y: 240, buttons: 1 },
+    { at: 2, x: 900, y: 500, buttons: 1 },
+    { at: 2.2, x: 900, y: 500, buttons: 0 },
+  ];
+  const planned = scene({ samples, clicks: [{ at: 1.2, x: 500, y: 240, button: "left" as const, count: 1 as const, area: null, window }] });
+  const pointer = planPointer(planned);
+  const view = cameraAt(planCamera(planned, pointer), 2.2);
+  const frameAt = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))]!;
+  const start = frameAt(1.2);
+  const end = frameAt(2);
+  const moved = { x: window.x + end.x - start.x, y: window.y + end.y - start.y, width: window.width, height: window.height };
+  assert.ok(viewCovers(SCREEN, view, moved), `the window at the end stays in frame at zoom ${view.zoom}`);
+  assert.ok(view.zoom < ZOOM_POINT);
 });
 
 test("typing into a large text area zooms on where the text appears, or on the pointer, not on the whole area (073)", () => {
@@ -801,6 +907,17 @@ test("a change that touches the window just acted in, within half a second, is t
   const dragged = camera({ samples, changes: [movedWindow] });
   assert.ok(cameraAt(dragged, 5.9).zoom > 1.5, "the dragged window's own move keeps the view on the drag");
   assert.ok(cameraAt(dragged, 6.3).zoom > 1.5, "through its end");
+  const wideWindow = { x: 200, y: 100, width: 1400, height: 800 };
+  const lowField = { x: 400, y: 720, width: 80, height: 28 };
+  const typedLow = [
+    { at: 3.5, characters: 20, area: lowField, secret: false, window: wideWindow },
+    { at: 3.6, characters: 0, area: null, secret: false, window: wideWindow },
+  ];
+  const coversWindow = { at: 3.3, x: 200, y: 100, width: 1400, height: 500 };
+  assert.ok(cameraAt(camera({ typing: typedLow, changes: [coversWindow] }), 4).zoom > 1.5, "typing that shares its window with a large change keeps the zoom");
+  const dialog = { x: 200, y: 100, width: 1400, height: 800 };
+  const closed = camera({ clicks: [{ at: 2, x: 900, y: 500, button: "left", count: 1, area: null, window: dialog }], changes: [{ at: 2.2, ...dialog }] });
+  assert.equal(cameraAt(closed, 2.2 + MOVE_S + 0.3).zoom, 1, "a click that removes most of its window zooms out");
 });
 
 test("keys inside a composition, as GTK's Ctrl+Shift+U and a code point, the Compose key or a dead key, are counted as typing, never as shortcuts, until it is committed or let go (073)", () => {

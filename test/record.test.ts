@@ -6,6 +6,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { pngPixels } from "../src/core/png.ts";
+import { textRuns } from "../src/core/record-font.ts";
+import { markArt, markRgb } from "../src/core/record-icons.ts";
 import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
@@ -76,7 +79,7 @@ test("box_record's steps and results are saved with the box's time while it reco
   assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
   assert.equal(parseRecordResult(made!.stdout)?.captions, true);
   const args = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n");
-  assert.equal(args.filter((line) => line.includes("print(tw)")).length, 6, "each pill's text and icon measured: two captions and a cut's mark");
+  assert.equal(args.filter((line) => line.includes("print(tw)")).length, 3, "each pill's words are measured once; the mark is an image");
   assert.match(args.at(-1)!, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -i \S+\/pill-2\.png -filter_complex /);
   assert.match(args.at(-1)!, /\[v0\]\[1:v\]overlay=x=\(W-w\)\/2:y=25:enable='between\(t,/);
   assert.equal(plan!.captions.length, 2);
@@ -189,7 +192,10 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   const plan = planClip(prepared!, 2);
   const make = recordMakeScript(plan, "windows");
   assert.match(make, /\[Drawing\.Font\]::new\('Segoe UI Semibold', \$fs, \[Drawing\.GraphicsUnit\]::Pixel\)/);
-  assert.match(make, /Pill 0 '[^']+' '4pa2' '4f8df5' '5f6368' 0\.82 21\n {4}Pill 1 '[^']+' '4pyT' '34c759' '2a2a2a' 0\.94 21/);
+  assert.match(make, /Inter-Medium\.ttf/);
+  assert.match(make, /Pill 0 mark-play-\d+\.png \d+ '5f6368' 0\.82 21 'medium'/);
+  assert.match(make, /Pill 1 mark-check-\d+\.png \d+ '2a2a2a' 0\.94 21 'medium'/);
+  assert.doesNotMatch(make, /'4pa2'/);
   assert.ok(make.includes(`-i $capture -i "$d\\pill-0.png" -i "$d\\pill-1.png" -i "$d\\pill-2.png" -i "$d\\pill-3.png" -filter_complex "${clipGraph(plan, true)}" -map '[out]'`), make);
   assert.ok(make.includes(`-i $capture -filter_complex "${clipGraph(plan, false)}" -map '[out]'`), make);
   assert.match(make, /\$drawn = switch \(\$captions\) \{ '1' \{ 'true' \} 'none' \{ 'null' \} default \{ 'false' \} \}/);
@@ -234,4 +240,60 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-light-0.png"), encoded);
   assert.match(encoded, /-i cursor-arrow-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
   for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "cursor-arrow-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
+});
+
+function hole(png: Buffer): boolean {
+  const { width, height, rgba } = pngPixels(png);
+  const alpha = (x: number, y: number) => rgba[(y * width + x) * 4 + 3] ?? 0;
+  const seen = new Uint8Array(width * height);
+  const stack: [number, number][] = [[0, 0]];
+  seen[0] = 1;
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as const) {
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const at = ny * width + nx;
+      if (seen[at] || alpha(nx, ny) > 32) continue;
+      seen[at] = 1;
+      stack.push([nx, ny]);
+    }
+  }
+  for (let at = 0; at < width * height; at++) if ((rgba[at * 4 + 3] ?? 0) <= 32 && !seen[at]) return true;
+  return false;
+}
+
+test("a clip's marks are the owner's icons, tinted, and its words are Inter, with a fallback per glyph (073)", () => {
+  const play = markArt("play", 19, markRgb("4f8df5"));
+  assert.equal(play.width, Math.round(19 * 1.1) * 2);
+  assert.equal(play.height, play.width);
+  const painted = pngPixels(play.png);
+  let blue = false;
+  for (let i = 0; i < painted.rgba.length; i += 4) {
+    if ((painted.rgba[i + 3] ?? 0) > 200 && painted.rgba[i] === 0x4f && painted.rgba[i + 1] === 0x8d && painted.rgba[i + 2] === 0xf5) blue = true;
+  }
+  assert.equal(blue, true, "the play mark takes the caption's blue");
+  assert.equal(hole(markArt("keyboard", 80, markRgb("d0d0d4")).png), true, "the keys are cut out of the filled keyboard");
+  assert.equal(hole(markArt("warn", 80, markRgb("ff9f0a")).png), true, "the exclamation is cut out of the filled warning");
+  const failed = markArt("failed", 36, markRgb("ff453a"));
+  const scale = failed.width / 18;
+  const along = Math.hypot(-10, 10);
+  const px = Math.round(14 * scale - (-10 / along) * 0.95 * scale);
+  const py = Math.round(4 * scale - (10 / along) * 0.95 * scale);
+  const ink = pngPixels(failed.png);
+  const at = (py * ink.width + px) * 4;
+  assert.ok((ink.rgba[at + 3] ?? 0) > 100, "the cross's 2.25 stroke reaches past a thinner stroke");
+  assert.deepEqual(textRuns("⌘A", "regular"), [{ font: "regular", text: "⌘A" }]);
+  assert.equal(textRuns("⌨", "regular")[0]?.font, "fallback");
+  assert.ok(textRuns("⌘⌥⇧⌃←→↑↓⌫⌦×↵⇥", "medium").every((run) => run.font === "medium"));
+  const noted: Prepared = { ...PREPARED, cuts: [], events: [{ at: 1001, kind: "note", text: "The window stayed open" }] };
+  const plan = planClip(noted, 1);
+  assert.ok(plan.overlays.some((overlay) => overlay.look === "note" && overlay.text === "The window stayed open"));
+  const linux = recordMakeScript(plan);
+  assert.match(linux, /Inter-Regular\.ttf/);
+  assert.match(linux, /fc-match -f '%\{file\}' 'DejaVu Sans'/);
+  assert.match(linux, /mark-warn-/);
+  assert.doesNotMatch(linux, /pill-\$1\.icon/);
+  const windows = recordMakeScript(plan, "windows");
+  assert.match(windows, /Inter-Medium\.ttf/);
+  assert.match(windows, /mark-warn-/);
 });

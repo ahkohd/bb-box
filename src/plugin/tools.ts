@@ -18,6 +18,7 @@ import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
+import { fontFiles } from "../core/record-font.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -1057,6 +1058,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
               const drawing = sceneBundle(plan);
               timings.planning = (Date.now() - planBegan) / 1000;
               if (drawing) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${SCENE_BUNDLE}`, drawing, { signal });
+              for (const file of fontFiles()) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${file.name}`, file.bytes, { signal }).catch(() => undefined);
               const makeBegan = Date.now();
               const { result } = await runLong(recordMakeScript(plan, os));
               const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;

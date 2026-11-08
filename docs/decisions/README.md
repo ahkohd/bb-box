@@ -78,7 +78,7 @@ which records still stand as written. The current design as a whole is in
 | [070](070-snapshots.md) | A box's snapshots are bb-box's own records, taken by each backend's own mechanism, and kept with the box unless the person keeps them | Proposed; not built yet |
 | [071](071-gpu-boxes.md) | A GPU is part of a box's size, on any Linux box: none, shared or a whole card, chosen when it is made and changed by Resize | Accepted, with the owner's answers; not built yet |
 | [072](072-voxl.md) | voxl streams Linux X11 desktops, beside today's streamers, as an option the owner picks | Withdrawn by the owner; unit V1 removed |
-| [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md) | Recordings draw the pointer, keys and zooms from the event log | Accepted; amended 8 November 2026; device boxes not yet |
+| [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md) | Recordings draw the pointer, keys and zooms from the event log | Accepted; amended 8 November 2026, including Inter and the owner's icons; device boxes not yet |
 | [074](074-a-box-has-a-files-view.md) | A box has a files view: the box user's own files, in the panel | Accepted; the view itself is superseded by 075 |
 | [075](075-the-files-view-is-the-editor-plugins-ui.md) | The files view is the editor plugin's own UI, reading the box | Accepted; creating, renaming and a narrow window are in 076; initial loading and placement are superseded by 077 |
 | [076](076-the-files-view-can-create-rename-and-delete.md) | The files view can create, rename and delete, and a narrow window shows one surface | Accepted |

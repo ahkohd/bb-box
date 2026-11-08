@@ -1,4 +1,4 @@
-import type { InputArea, KeyChord, Modifier } from "./record-input.ts";
+import type { InputArea, InputSource, KeyChord, Modifier } from "./record-input.ts";
 
 export const KEY_SHOWN_S = 1.2;
 export const SAME_KEY_S = 0.8;
@@ -18,6 +18,8 @@ export interface PlacedKeyTyping {
   readonly at: number;
   readonly secret: boolean;
   readonly characters: number;
+  readonly by?: InputSource;
+  readonly call?: number;
 }
 
 export interface KeyPill {
@@ -68,6 +70,22 @@ interface TypingCall {
   readonly shown: number;
   readonly to: number;
   readonly secret: boolean;
+  readonly by?: InputSource;
+  readonly call?: number;
+}
+
+interface OpenTyping {
+  from: number;
+  last: number;
+  secret: boolean;
+  by?: InputSource;
+  call?: number;
+}
+
+function sameTyping(left: { readonly by?: InputSource; readonly call?: number }, right: { readonly by?: InputSource; readonly call?: number }): boolean {
+  if (left.call !== undefined && right.call !== undefined && left.call !== right.call) return false;
+  if (left.by && right.by && left.by !== right.by) return false;
+  return true;
 }
 
 export function planKeyPills(keys: readonly PlacedKeys[], typing: readonly PlacedKeyTyping[], style: KeyStyle, length: number): KeyPill[] {
@@ -75,42 +93,43 @@ export function planKeyPills(keys: readonly PlacedKeys[], typing: readonly Place
   const nearTyping = (at: number) => typed.some((each) => Math.abs(each.at - at) <= TYPING_GAP_S);
   const edits = keys.filter((each) => editsTyping(each.chord) && nearTyping(each.at)).map((each): PlacedKeyTyping => ({ at: each.at, secret: false, characters: 1 }));
   const calls: TypingCall[] = [];
-  let open: { from: number; last: number; secret: boolean } | null = null;
-  const close = (shown: number) => {
-    if (!open) return;
-    calls.push({ from: open.from, shown, to: open.last, secret: open.secret });
+  let open: OpenTyping | null = null;
+  const finish = (shown: number) => {
+    const current = open;
+    if (!current) return;
+    calls.push({ from: current.from, shown, to: current.last, secret: current.secret, by: current.by, call: current.call });
     open = null;
   };
   for (const each of [...typed, ...edits].sort((a, b) => a.at - b.at || b.characters - a.characters)) {
     if (each.characters === 0) {
-      if (open) {
+      if (open && sameTyping(open, each)) {
         open.last = each.at;
-        close(each.at);
+        finish(each.at);
       }
       continue;
     }
     if (!open) {
       const previous = calls.at(-1);
-      if (previous && each.characters === 1 && each.at - previous.to <= TYPING_GAP_S) {
+      if (previous && !previous.secret && !each.secret && each.characters === 1 && sameTyping(previous, each) && each.at - previous.to <= TYPING_GAP_S) {
         calls[calls.length - 1] = { ...previous, to: each.at };
         continue;
       }
-      open = { from: each.at, last: each.at, secret: each.secret };
+      open = { from: each.at, last: each.at, secret: each.secret, by: each.by, call: each.call };
       continue;
     }
-    if (each.at - open.last > TYPING_GAP_S) {
-      close(open.from);
-      open = { from: each.at, last: each.at, secret: each.secret };
+    if (!sameTyping(open, each) || each.at - open.last > TYPING_GAP_S) {
+      finish(open.from);
+      open = { from: each.at, last: each.at, secret: each.secret, by: each.by, call: each.call };
       continue;
     }
     open.last = each.at;
     if (each.characters > 1) open.secret ||= each.secret;
   }
-  if (open) close(open.from);
+  if (open) finish(open.from);
   const bursts: TypingCall[] = [];
   for (const call of calls) {
     const last = bursts.at(-1);
-    if (last && call.from - last.to <= TYPING_GAP_S) bursts[bursts.length - 1] = { from: last.from, shown: last.shown, to: Math.max(last.to, call.to), secret: last.secret || call.secret };
+    if (last && !last.secret && !call.secret && sameTyping(last, call) && call.from - last.to <= TYPING_GAP_S) bursts[bursts.length - 1] = { from: last.from, shown: last.shown, to: Math.max(last.to, call.to), secret: false, by: last.by, call: last.call };
     else bursts.push(call);
   }
   const typingPills = bursts.filter((burst) => !burst.secret).map((burst): KeyPill => ({ from: burst.shown, to: Math.max(burst.to + TYPING_AFTER_S, burst.shown + TYPING_LEAST_S), text: TYPING_WORDS, typing: true }));

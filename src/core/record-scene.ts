@@ -132,13 +132,13 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   });
   const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space), window: scaled(input.window ?? null, spaceScale(input.space)) }] : []));
   const typing: PlacedTyping[] = inputs.flatMap((input) =>
-    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, role: input.role ?? null, window: scaled(input.window ?? null, spaceScale(input.space)) }] : [],
+    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, role: input.role ?? null, window: scaled(input.window ?? null, spaceScale(input.space)), by: input.by, ...(input.call !== undefined ? { call: input.call } : {}) }] : [],
   );
   const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
   return {
     scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },
     keys,
-    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret, characters: each.characters })),
+    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret, characters: each.characters, by: each.by, ...(each.call !== undefined ? { call: each.call } : {}) })),
   };
 }
 

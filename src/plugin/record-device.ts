@@ -3,6 +3,7 @@ import { isTestOffer, type DeviceAnswer } from "../core/device.ts";
 import type { DeviceRequestBody } from "../core/device-link.ts";
 import { RECORD_LIMIT_S, parseRecordingLog, type CaptionPosition, type RecordingEnd, type StepKind } from "../core/device-recording.ts";
 import { DEVICE_COMPOSE_EXITS, deviceComposeScript, devicePrepared, deviceReadLogScript, parseComposed, planDeviceClip } from "../core/record-device.ts";
+import { fontInstallScript } from "../core/record-font.ts";
 import { RECORD_STOP_EXITS, parseRecordResult, planClip, recordMakeScript, type ClipPlan, type RecordResult, type RecordSpeed } from "../core/record.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -65,6 +66,7 @@ export async function stopDeviceRecording(deps: DeviceRecordDeps, box: BoxRecord
   const cuts = composed.exitCode === 0 ? parseComposed(composed.stdout) : null;
   if (!cuts) return { ok: false, text: `Framing box ${box.name}'s recording failed: ${composed.stderr.trim() || `exit code ${composed.exitCode}`}` };
   const plan = planClip(devicePrepared(composition, cuts.cuts), speed);
+  await deps.run(fontInstallScript(), READ_TIMEOUT_MS).catch(() => undefined);
   const made = await deps.run(recordMakeScript(plan, os), COMPOSE_TIMEOUT_MS);
   const said = made.exitCode === 0 ? parseRecordResult(made.stdout) : null;
   if (!said) return { ok: false, text: `Making the clip in box ${box.name} failed: ${made.stderr.trim() || `exit code ${made.exitCode}`}` };
