@@ -25,7 +25,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import type { SettingsCards } from "../src/plugin/gpu-settings.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta, useLive } from "../src/app/common.tsx";
-import { BoxLine, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey } from "../src/app/desktop.tsx";
+import { BoxLine, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, forgetThreadTitles, streamChoiceKey, threadGroupHeading } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { BAR_NUMBERS_SHOWN_KEY } from "../src/app/view-bar.tsx";
 import { forgetMoves } from "../src/app/box-route.ts";
@@ -36,6 +36,11 @@ import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LAND
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
 import { keepOpeningDate } from "../src/app/snapshot-words.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
+import { FieldShell, SideLabelField } from "../src/app/field-shell.tsx";
+import { SettingRow } from "../src/app/settings-parts.tsx";
+import { BoxDialog, DialogButton, DialogCancel } from "../src/app/box-dialog.tsx";
+import { DeviceToolbar } from "../src/app/device-toolbar.tsx";
+import { deviceModel, type DeviceState } from "../src/core/device.ts";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
@@ -48,7 +53,6 @@ import { choices, firstSort, NO_FILTERS, shown, splitGroups, stateGroup, tagCoun
 import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
 import { terminalTitle } from "../src/app/terminal.tsx";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
-import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
 import { forgetConfigurationPage } from "../src/app/settings-configuration.tsx";
@@ -62,7 +66,6 @@ import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import { SavedTick } from "../src/app/settings-parts.tsx";
 import { CheckRow } from "../src/app/settings-backend-page.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
-import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
 
 /** noVNC's RFB, recording each client the viewer makes. */
@@ -1305,6 +1308,8 @@ test("New box offers to ask an agent to make the project a box image when it has
   // One dim link in the footer, no sentence (the operator's note of 3 October 2026).
   expect(screen.queryByText(/standard tools/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Make a box image for this project" }));
+  expect(IMAGE_REQUEST).toContain("with BB Box:");
+  expect(IMAGE_REQUEST).not.toMatch(/with bb-box:/);
   await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toCompose", options: { initialPrompt: IMAGE_REQUEST, focusPrompt: true } }));
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
 
@@ -2641,7 +2646,7 @@ test("a switch saves at once and says Saved; a refusal, three refusals in a row 
 
   const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.token", message: "Set the API token." }] } }).handlers);
   fireEvent.click(await refused.findByRole("switch", { name: "Fake host: takes new boxes" }));
-  expect(await refused.findByText("Fake host was not changed: Set the API token.")).toBeTruthy();
+  expect(await refused.findByText("Fake host was not changed: set the API token.")).toBeTruthy();
   expect(refused.getByRole("switch", { name: "Fake host: takes new boxes" }).getAttribute("aria-checked")).toBe("true");
   expect(refused.queryByText("Saved")).toBeNull();
   cleanup();
@@ -2984,7 +2989,7 @@ test("the backend's menu renames at once, copies nothing secret, and removes onl
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove backend…" }));
   expect(await screen.findByText(/with the SSH key, which BB Box cannot show or get back/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove backend" }));
-  expect(await refused.findByText("Fake host was not removed: Backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first.")).toBeTruthy();
+  expect(await refused.findByText("Fake host was not removed: backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first.")).toBeTruthy();
   expect(window.location.hash).toBe("#backend/fake");
   cleanup();
 
@@ -3649,8 +3654,8 @@ test("removing a project's image asks first and says what follows; a refusal say
   fireEvent.click(slot.getByRole("button", { name: "Remove rust-tools…" }));
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
   const refused = await screen.findByRole("alertdialog", { name: "Remove the image rust-tools?" });
-  expect(within(refused).getByRole("alert").textContent).toContain("The image rust-tools was not removed: The configuration is locked for a test.");
-  expect(document.querySelector('[data-row-key="image-rust-tools"]')).toBeTruthy();
+  expect(within(refused).getByRole("alert").textContent).toContain("The image rust-tools was not removed: the configuration is locked for a test.");
+  expect(document.querySelector('[data-row-key="image-rust-tools"]')!.textContent).not.toContain("was not removed");
   fireEvent.click(within(refused).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(slot.getByRole("button", { name: "rust-tools" })).toBeTruthy();
@@ -3688,7 +3693,8 @@ test("removing a project image stays open while the write runs, and a refusal st
   const dialog = screen.getByRole("alertdialog", { name: "Remove the image rust-tools?" });
   expect(within(dialog).getByRole("button", { name: "Removing…" })).toBeTruthy();
   await act(async () => finish({ ok: false, reason: "problems", problems: [{ path: "images.rust-tools", message: "The image is in use." }] }));
-  expect(within(dialog).getByRole("alert").textContent).toContain("was not removed");
+  expect(within(dialog).getByRole("alert").textContent).toContain("was not removed: the image is in use.");
+  expect(document.querySelector('[data-row-key="image-rust-tools"]')!.textContent).not.toContain("was not removed");
   expect(screen.getByRole("alertdialog", { name: "Remove the image rust-tools?" })).toBeTruthy();
 });
 
@@ -8286,16 +8292,6 @@ test("a field that takes a value from another backend names that backend when th
   const two = document(lxc("proxmox-lxc"), lxc("proxmox-lxc:lab", "Lab"));
   expect(sourceName(two, lxc("proxmox-lxc"), "Proxmox LXC")).toBe("proxmox-lxc");
   expect(sourceName(two, lxc("proxmox-lxc:lab", "Lab"), "Proxmox LXC")).toBe("Lab");
-
-  const inherits = { from: "proxmox-lxc", label: "Proxmox LXC", set: ["url", "token-secret"] };
-  const url: FieldView = { key: "url", type: "string", label: "API URL", group: "connection", inherits } as unknown as FieldView;
-  const secret: FieldView = { key: "token-secret", type: "string", secret: true, label: "Token secret", group: "credentials", inherits } as unknown as FieldView;
-  render(<FieldControl field={url} value="" onChange={() => {}} problem={null} inherited="https://lab.example.com:8006/" from="Lab" />);
-  render(<FieldControl field={secret} value="" onChange={() => {}} problem={null} inherited={{ set: true }} from="Lab" />);
-  expect(screen.getAllByText("from Lab")).toHaveLength(2);
-  cleanup();
-  render(<FieldControl field={url} value="" onChange={() => {}} problem={null} inherited="https://pve.example.com:8006/" />);
-  expect(screen.getByText("from Proxmox LXC")).toBeTruthy();
 });
 
 const DOCKER_DRIVER: ConfigState["drivers"][number] = {
@@ -9781,7 +9777,7 @@ test("a box's page, at box/<boxId>: the trail, its name with focus, its state, I
   expect(slot.getByRole("button", { name: "Run the tests" })).toBeTruthy();
   expect(slot.getByText("Ready in 3.6 s")).toBeTruthy();
   expect(slot.getByRole("img", { name: /^The time each step took: Took a warm box 0\.3 s, Clone 1\.1 s/ })).toBeTruthy();
-  expect(slot.getByText(/^And 3 quicker steps\. It joined BB 2\.4 s later\. Made (Today|Yesterday) \d{2}:\d{2}/)).toBeTruthy();
+  expect(slot.getByText(/^And 3 quicker steps\. It joined BB 2\.4 s later\. Made (today at|yesterday at) \d{2}:\d{2}/)).toBeTruthy();
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread…", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
@@ -10321,7 +10317,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   fireEvent.click(within(dialog).getByRole("button", { name: "Forget" }));
   await waitFor(() => expect(changes).toEqual(["forget box_7"]));
   expect(await maple.findByText("maple-row was forgotten")).toBeTruthy();
-  expect(maple.getByText(/^BB Box removed its record\. Its box was not deleted and may still run on Fake host\. Forgotten just now, Today \d{2}:\d{2}, by you\.$/)).toBeTruthy();
+  expect(maple.getByText(/^BB Box removed its record\. Its box was not deleted and may still run on Fake host\. Forgotten just now, today at \d{2}:\d{2}, by you\.$/)).toBeTruthy();
   cleanup();
 
   const reed = boxPageAt(handlers, "box/box_9");
@@ -10361,7 +10357,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
 
 test("a box whose release did not finish says so on its page and its row, with Release again, never a spinner without end", async () => {
   const failed = { operation: "release" as const, at: Date.now() - 60_000, words: "Proxmox refused: the container is locked by a backup.", observed: { state: "running" as const, at: Date.now() - 60_000, from: "Proxmox LXC on pve-1" }, parts: [] };
-  const stuck = box({ state: "releasing", backendLabel: "Proxmox LXC on pve-1", error: "Proxmox refused: the container is locked by a backup. bb-box tries again in a few minutes.", log: { lastStart: null, lastStop: null, lastFailed: failed } });
+  const stuck = box({ state: "releasing", backendLabel: "Proxmox LXC on pve-1", error: "Proxmox refused: the container is locked by a backup. BB Box tries again in a few minutes.", log: { lastStart: null, lastStop: null, lastFailed: failed } });
   const { handlers, changes } = server([stuck]);
   const page = boxPageAt(handlers, "box/box_1");
   expect(await page.findByText("Release did not finish")).toBeTruthy();
@@ -10374,7 +10370,7 @@ test("a box whose release did not finish says so on its page and its row, with R
   fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
   await waitFor(() => expect(changes).toEqual(["release box_1"]));
   expect(await page.findByText("calm-otter was released")).toBeTruthy();
-  expect(page.getByText(/^Released just now, Today \d{2}:\d{2}, by you\. BB Box remembers a released box for 24 hours\.$/)).toBeTruthy();
+  expect(page.getByText(/^Released just now, today at \d{2}:\d{2}, by you\. BB Box remembers a released box for 24 hours\.$/)).toBeTruthy();
   cleanup();
 
   const row = server([stuck]);
@@ -10600,12 +10596,12 @@ test("when BB cannot say whether the box's thread works, Stop asks and says so (
 });
 
 test("a release whose failure the log lost still says it did not finish, with Release again, not Releasing for ever (review 7)", async () => {
-  const stuck = box({ state: "releasing", backendLabel: "Proxmox LXC on pve-1", error: "Releasing the box failed: the host refused. bb-box tries again in a few minutes." });
+  const stuck = box({ state: "releasing", backendLabel: "Proxmox LXC on pve-1", error: "Releasing the box failed: the host refused. BB Box tries again in a few minutes." });
   const { handlers, changes } = server([stuck]);
   const page = boxPageAt(handlers, "box/box_1");
   expect(await page.findByText("Release did not finish", { selector: "span" })).toBeTruthy();
   const notice = page.getByRole("region", { name: "Release did not finish" });
-  expect(within(notice).getByText("Releasing the box failed: the host refused. bb-box tries again in a few minutes. The box may still run on pve-1; BB Box keeps its record until a release is confirmed.")).toBeTruthy();
+  expect(within(notice).getByText("Releasing the box failed: the host refused. BB Box tries again in a few minutes. The box may still run on pve-1; BB Box keeps its record until a release is confirmed.")).toBeTruthy();
   expect(page.queryByText("Releasing…")).toBeNull();
   const menu = await openMenu(page.getByRole("button", { name: "calm-otter actions" }));
   expect(items(menu).at(-1)).toBe("Release again…");
@@ -10749,7 +10745,7 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
     userspaceNote: null,
   };
   const words = restoreFormWords(payload, Date.now());
-  expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken .*, 2 hours ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
+  expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken today at \d{2}:\d{2}, 2 h ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
   expect(words.button).toBe("Restore dev-desk anyway");
   const submitted: unknown[] = [];
   let cancelled = 0;
@@ -10767,7 +10763,12 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
   expect(screen.getByText(/BB Box always takes an undo first: a snapshot of dev-desk once stopped, named "before the restore at 11:02"/)).toBeTruthy();
   expect(screen.getByText("BB Box records an answer here as a yes given in this thread: it cannot tell who gives it.")).toBeTruthy();
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
-  fireEvent.click(screen.getByRole("button", { name: "Restore dev-desk anyway" }));
+  const anyway = screen.getByRole("button", { name: "Restore dev-desk anyway" });
+  expect(anyway.className).not.toMatch(/bg-destructive/);
+  expect(anyway.parentElement?.className).toContain("flex-col");
+  expect(anyway.parentElement?.className).not.toContain("flex-col-reverse");
+  expect(anyway.parentElement?.lastElementChild).toBe(anyway);
+  fireEvent.click(anyway);
   await waitFor(() => expect(submitted).toEqual([{ restore: true, plan: "abc123" }]));
   expect(cancelled).toBe(0);
 });
@@ -11036,7 +11037,7 @@ test("070 unit 6: a box whose plan refuses a take says why in the card with Take
 
 test("070 unit 6: a guarded restore names every thread, the control and a terminal; a box threads run on is not restored, saying why", async () => {
   const preview = restorePreviewOf({
-    refusal: "Box calm-otter is a box threads run on: \"Fix the sign-in flow\" (working) and \"Write the API guide\" (idle) run on it. A restore would take their worktrees, uncommitted files and sessions there with it, and bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores. Move those threads off it, or archive them, first. bb-box changed nothing.",
+    refusal: "Box calm-otter is a box threads run on: \"Fix the sign-in flow\" (working) and \"Write the API guide\" (idle) run on it. A restore would take their worktrees, uncommitted files and sessions there with it, and BB Box does not restore such a box yet: that stays off until BB Box can hold every turn on it while it restores. Move those threads off it, or archive them, first. BB Box changed nothing.",
     threads: [{ id: "thr_a", title: "Fix the sign-in flow", running: true }, { id: "thr_b", title: "Write the API guide", running: false }],
     control: true,
     terminals: 1,
@@ -11049,7 +11050,7 @@ test("070 unit 6: a guarded restore names every thread, the control and a termin
   restore.focus();
   fireEvent.click(restore);
   const dialog = await slot.findByRole("alertdialog", { name: "Cannot restore calm-otter" });
-  await within(dialog).findByText(/does not restore such a box yet/);
+  await within(dialog).findByText(/BB Box does not restore such a box yet/);
   const listed = within(dialog).getAllByRole("listitem").map((item) => item.textContent);
   expect(listed).toEqual([
     "\"Fix the sign-in flow\" is working on calm-otter: its worktree, uncommitted files and session there would go.",
@@ -11181,7 +11182,7 @@ test("070 unit 6: the pictures switch saves at once, and Find finds it", async (
 test("070 unit 6 review: the restore is bound to what the dialog showed; when it changed the dialog reads it again, and a failed flush is asked about before anything stops", async () => {
   const shown = restorePreviewOf({ control: true, check: { ...restorePreviewOf().check!, anyway: ["a person holds control of its desktop"] } });
   const fresh = restorePreviewOf({ control: true, terminals: 2, token: "tokentwo", check: { ...restorePreviewOf().check!, anyway: ["a person holds control of its desktop", "2 BB terminals are open on it"] } });
-  const flushWords = "bb-box could not flush box calm-otter's writes to its disk before stopping it (sync: Input/output error), so its undo could miss what was written in the last seconds before the restore. bb-box changed nothing.";
+  const flushWords = "BB Box could not flush box calm-otter's writes to its disk before stopping it (sync: Input/output error), so its undo could miss what was written in the last seconds before the restore. BB Box changed nothing.";
   const { handlers, changes } = server([box()], {
     snapshots: snapshotsView(),
     restorePreview: shown,
@@ -11709,7 +11710,7 @@ test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card 
 });
 
 test("070 unit 8: a release that stopped for a snapshot you kept offers Release again, and Release and delete what you kept", async () => {
-  const stopped = box({ state: "releasing", error: 'Release did not finish: bb-box could not copy "kept one", which you kept: pve-1\'s storage fast has 6 GB free. bb-box tries again in a few minutes.', releaseHeldForKept: true });
+  const stopped = box({ state: "releasing", error: 'Release did not finish: bb-box could not copy "kept one", which you kept: pve-1\'s storage fast has 6 GB free. BB Box tries again in a few minutes.', releaseHeldForKept: true });
   const { handlers } = server([stopped]);
   const slot = boxPageAt(handlers, "box/box_1");
   const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
@@ -12333,4 +12334,228 @@ test("polish P1: the Images page shows skeleton rows under Standard images while
   fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
   expect(await flaky.findByText("1 of 1 image due.", { exact: false })).toBeTruthy();
   expect(flaky.queryByRole("alert")).toBeNull();
+});
+
+test("a side-label field and a stacked field put the error directly under the control", () => {
+  render(
+    <SideLabelField label="Host" htmlFor="host" problem="Write a host." problemId="host-problem" help="The host BB Box reaches.">
+      <input id="host" aria-describedby="host-problem" />
+    </SideLabelField>,
+  );
+  const host = screen.getByLabelText("Host");
+  const hostAlert = screen.getByRole("alert");
+  expect(host.getAttribute("aria-describedby")).toBe("host-problem");
+  expect(host.nextElementSibling).toBe(hostAlert);
+  cleanup();
+  render(
+    <FieldShell label="Name" htmlFor="name" description="The name boxes show." problem="Write a name." problemId="name-problem">
+      <input id="name" aria-describedby="name-problem" />
+    </FieldShell>,
+  );
+  const name = screen.getByLabelText("Name");
+  const nameAlert = screen.getByRole("alert");
+  expect(name.nextElementSibling).toBe(nameAlert);
+  expect(nameAlert.nextElementSibling?.textContent).toBe("The name boxes show.");
+  cleanup();
+  render(
+    <SettingRow label="Port" htmlFor="port" problem="Write a port." problemId="port-problem">
+      <input id="port" aria-describedby="port-problem" />
+    </SettingRow>,
+  );
+  const port = screen.getByLabelText("Port");
+  const portAlert = screen.getByRole("alert");
+  expect(port.getAttribute("aria-describedby")).toBe("port-problem");
+  expect(port.parentElement?.nextElementSibling).toBe(portAlert);
+});
+
+test("dialog buttons keep BB's own weight, and a closed dialog clears its refusal", async () => {
+  function Probe() {
+    const [open, setOpen] = useState(true);
+    const [refused, setRefused] = useState<string | null>("No.");
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open again
+        </button>
+        <BoxDialog
+          open={open}
+          title="Release calm-otter?"
+          refused={refused}
+          clearRefused={() => setRefused(null)}
+          onClose={() => setOpen(false)}
+          footer={
+            <>
+              <DialogCancel className="ml-auto">Cancel</DialogCancel>
+              <DialogButton onClick={() => setOpen(false)}>Release</DialogButton>
+            </>
+          }
+        >
+          <p>It stops.</p>
+        </BoxDialog>
+      </>
+    );
+  }
+  render(<Probe />);
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  const release = screen.getByRole("button", { name: "Release" });
+  expect(cancel.className).toContain("font-medium");
+  expect(cancel.className).not.toContain("font-normal");
+  expect(cancel.className).toContain("ml-auto");
+  expect(release.className).toContain("font-medium");
+  expect(release.className).not.toContain("font-normal");
+  expect(release.parentElement?.className).not.toContain("flex-col-reverse");
+  expect(release.parentElement?.lastElementChild).toBe(release);
+  expect(screen.getByRole("alert").textContent).toBe("No.");
+  fireEvent.click(release);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Open again" }));
+  expect(screen.getByRole("alertdialog", { name: "Release calm-otter?" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("Stop anyway says Stopping while it runs", async () => {
+  const { handlers } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app", running: true }] });
+  let finish: (result: BoxResult) => void = () => {};
+  const hanging: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    stop: (input) => {
+      if (!input.force) return handlers.stop!(input);
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  };
+  const slot = panel(hanging);
+  await slot.findByText("calm-otter");
+  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Stop calm-otter anyway?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop anyway" }));
+  expect(within(dialog).getByRole("button", { name: "Stopping…" })).toBeTruthy();
+  await act(async () => finish({ box: box(), error: null }));
+});
+
+test("Enter in Resize does nothing while the size is unchanged", async () => {
+  const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" } });
+  const { handlers, changes } = server([box({ sizeNow: size(2, 4, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { resize });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+  const dialog = await openResize(slot);
+  fireEvent.submit(dialog.querySelector("form")!);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(changes.filter((change) => !change.includes('"check":true'))).toEqual([]);
+});
+
+test("Enter in bulk Keep does nothing when the check failed, and Try again asks again", async () => {
+  let checks = 0;
+  const { handlers, changes } = server([box()], {
+    tab: tabView,
+    bulkCheck: () => {
+      checks += 1;
+      throw new Error("The host did not answer.");
+    },
+  });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  await list.findByRole("tab", { name: "Snapshots 2" });
+  fireEvent.click(list.getByRole("button", { name: "Select" }));
+  fireEvent.click(list.getByRole("checkbox", { name: "Select before the migration of calm-otter" }));
+  fireEvent.click(list.getByRole("button", { name: "Keep…" }));
+  const dialog = await list.findByRole("alertdialog", { name: "Could not check these snapshots" });
+  expect(within(dialog).getByRole("button", { name: "Try again" })).toBeTruthy();
+  fireEvent.submit(dialog.querySelector("form")!);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(changes.filter((change) => change.startsWith("snapshots.bulk"))).toEqual([]);
+  const asked = checks;
+  fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(checks).toBe(asked + 1));
+});
+
+test("Fork leaves an untitled thread unquoted", async () => {
+  forgetThreadTitles();
+  const preview = (): ForkPreview => ({
+    refusal: null,
+    check: { snapshot: "before the migration", takenAt: Date.now() - 2 * 60 * 60_000, threadId: THREAD, asMachine: false, canBeMachine: true, size: "2 cores, 4 GiB memory, 16 GiB disk", aboutMs: 38_000, bytes: 17e9, host: "pve-1", storage: "local-lvm", unflushed: null, gpu: "none", offersGpu: false },
+  });
+  const { handlers } = server([box()], { snapshots: snapshotsView({ offer: { holds: ["disk"], scope: "box", whileRunning: "live", restore: "in-place", fork: "copy", keeps: true, excludes: null, price: null } }), forkPreview: preview });
+  const [page] = app.navPanels;
+  const slot = renderSlot(page!, { subPath: "box/box_1" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: null, titleFallback: null }) } } });
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+  fireEvent.click(within(card).getByRole("button", { name: "Fork before the migration into a new box" }));
+  const dialog = await slot.findByRole("alertdialog", { name: 'Fork "before the migration" of calm-otter' });
+  expect(await within(dialog).findByRole("radio", { name: "In this box's thread" })).toBeTruthy();
+  expect(within(dialog).queryByRole("radio", { name: 'In "this box\'s thread"' })).toBeNull();
+});
+
+test("a thread with no title is headed Untitled thread", async () => {
+  forgetThreadTitles();
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: server([box()]).handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: null, titleFallback: null }) } } });
+  expect(await list.findByRole("button", { name: "Untitled thread" })).toBeTruthy();
+  expect(threadGroupHeading(undefined)).toBe("Thread");
+  expect(threadGroupHeading("this box's thread")).toBe("Untitled thread");
+  expect(threadGroupHeading("UI thread")).toBe("UI thread");
+});
+
+test("an open link error sits under the field", async () => {
+  const model = deviceModel("iPhone 18 Pro");
+  const state: DeviceState = {
+    platform: "ios",
+    model: "iPhone 18 Pro",
+    power: { is: "booted", awake: true },
+    geometry: null,
+    at: 1,
+    settings: {
+      appearance: { known: true, value: "light", at: 1, by: "bb-box" },
+      textSize: { known: false, why: "not read" },
+      location: { set: null, at: null },
+      statusBar: { set: null, at: null },
+    },
+  };
+  render(
+    <DeviceToolbar
+      model={model}
+      state={state}
+      layout={{ arrangement: "below", device: { x: 0, y: 0, width: 200, height: 400 }, under: 0, area: { width: 390, height: 800 } }}
+      coarse={false}
+      compact={false}
+      connected
+      mine
+      takesFrom={null}
+      busy={null}
+      view={{ frame: true, pixelForPixel: false }}
+      hint={false}
+      onAsk={() => {}}
+      onScreenshot={() => {}}
+      onView={() => {}}
+    />,
+  );
+  const menu = await openMenu(screen.getByRole("button", { name: "More device controls" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open link…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: `Open a link on the ${model.name}` });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Open" }));
+  const input = within(dialog).getByPlaceholderText("https://example.com");
+  const alert = within(dialog).getByRole("alert");
+  expect(input.closest("label")?.textContent?.startsWith("Link")).toBe(true);
+  expect(alert.textContent).toBe("Write a link to open.");
+  expect(input.getAttribute("aria-describedby")).toBe(alert.id);
+  expect(input.nextElementSibling).toBe(alert);
+  expect(within(dialog).getAllByRole("alert")).toHaveLength(1);
+});
+
+test("removing the old settings copy stays open when it fails", async () => {
+  const fake = server([]);
+  const get = fake.handlers["config.get"]!;
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...fake.handlers,
+    "config.get": (input: null) => ({ ...(get(input) as ConfigState), migrated: { at: 1_790_000_000_000, version: "0.2.0" } }),
+    "config.migrated.remove": () => {
+      throw new Error("The configuration is locked.");
+    },
+  };
+  const slot = settings(handlers, "#option/configuration");
+  fireEvent.click(await slot.findByRole("button", { name: "Remove copy…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove copy" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" });
+  expect((await within(dialog).findByRole("alert")).textContent).toContain("The copy was not removed: the configuration is locked.");
+  expect(screen.getByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" })).toBeTruthy();
 });

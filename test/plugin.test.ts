@@ -7437,7 +7437,7 @@ test("box_restore restores the agent's own box at once with an undo; with agents
   assert.equal(payload.runsOnIt, false);
   assert.equal(payload.changed, false);
   harness.behavior.cancelInteraction(form.id);
-  assert.match(text(await cancelled), new RegExp(`^bb-box did not restore box ${box.name}: the form was cancelled in the thread\\. Nothing changed\\.`));
+  assert.match(text(await cancelled), new RegExp(`^BB Box did not restore box ${box.name}: the form was cancelled in the thread\\. Nothing changed\\.`));
 
   const wrong = tool("box_restore", { box: box.name, snapshot: "one", replace: true });
   const second = await untilForm(harness, 2);
@@ -7477,7 +7477,7 @@ test("a box threads run on: box_restore is refused until machine restores are on
   assert.match(text(await tool("box_snapshot", { box: "dev-desk", name: "before the upgrade" })), /^Took snapshot "before the upgrade"/);
   assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "off"])).stdout ?? "", /^Restores of boxes threads run on are off, for live checks/);
   const off = text(await tool("box_restore", { box: "dev-desk", snapshot: "before the upgrade", replace: true }));
-  assert.match(off, /bb-box does not restore such a box yet: that stays off until bb-box can hold every turn on it while it restores/);
+  assert.match(off, /BB Box does not restore such a box yet: that stays off until BB Box can hold every turn on it while it restores/);
   assert.equal(harness.inspection.pendingInteractions.length, 0);
 
   assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "on"])).stdout ?? "", /^Restores of boxes threads run on are on until bb-box restarts/);

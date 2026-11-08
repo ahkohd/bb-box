@@ -182,7 +182,7 @@ test("071 unit 6, Astra 2: a restore whose box's card has no room for it now is 
   cards.events.length = 0;
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), snapshot));
   assert.equal(refused.code, "no_capacity");
-  assert.match(refused.message, new RegExp(`^bb-box did not restore box ${box.name}: Card card-b, which the box holds, cannot take it now: .* bb-box does not move it to another one\\. bb-box changed nothing\\.$`));
+  assert.match(refused.message, new RegExp(`^BB Box did not restore box ${box.name}: Card card-b, which the box holds, cannot take it now: .* bb-box does not move it to another one\\. BB Box changed nothing\\.$`));
   assert.deepEqual(cards.events, [`hold ${box.guest!.ref}`]);
   assert.equal(cards.claims.get(box.guest!.ref)?.card, CARD_B);
   const operation = state.store.operations({ box: box.id, kind: "restore" })[0]!;
@@ -201,8 +201,8 @@ test("071 unit 8, round 4: a restore the backend refuses before the stop, as the
   };
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), snapshot));
   assert.equal(refused.code, "no_capacity");
-  assert.equal(refused.message, `bb-box did not restore box ${box.name}: ${person} bb-box changed nothing.`);
-  assert.equal(refused.agentMessage, `bb-box did not restore box ${box.name}: ${agent} bb-box changed nothing.`);
+  assert.equal(refused.message, `BB Box did not restore box ${box.name}: ${person} BB Box changed nothing.`);
+  assert.equal(refused.agentMessage, `BB Box did not restore box ${box.name}: ${agent} BB Box changed nothing.`);
   assert.deepEqual(cards.events, [`hold ${box.guest!.ref}`], "nothing was stopped, cleared or kept");
   assert.equal(cards.claims.get(box.guest!.ref)?.card, CARD_B);
   assert.equal((await current(state, box)).state, "ready");

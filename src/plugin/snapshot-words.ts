@@ -6,6 +6,10 @@ import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type Ke
 import type { BackendSnapshotsView } from "./configuration.ts";
 import { PRODUCT } from "../brand.ts";
 
+function panelDay(at: number): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" }).format(at);
+}
+
 function seconds(ms: number): string {
   return ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`;
 }
@@ -62,7 +66,7 @@ export function forkMayMissWords(snapshot: Pick<SnapshotRecord, "unflushed">): s
 
 export function keepCostWords(check: KeepCheck): string {
   const on = `${check.host ? `${check.host}'s ` : ""}${check.storage ?? "its storage"}`;
-  const until = utcDay(check.keptUntil);
+  const until = panelDay(check.keptUntil);
   if (check.gone && check.way === "as-is") return `Its box was released, and it stays where it is${check.host ? ` on ${check.host}` : ""} until ${PRODUCT} deletes it after ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}.`;
   if (check.gone) return `Its box was released, so it lives on as a held copy, guest ${check.snapshot.livesOn.ref}, a template that cannot start${check.host ? ` on ${check.host}` : ""}, which ${PRODUCT} deletes after ${until}.`;
   if (check.way === "as-is") {

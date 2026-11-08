@@ -53,7 +53,7 @@ test("snapshots beside the guest: a release deletes the unkept ones, keeps a kep
   const plain = (await state.snapshots.take(COMMAND, box, standing(box), { name: "plain" })).snapshot!;
   const check = await state.snapshots.checkKeep(COMMAND, standing(box), kept.id);
   assert.equal(check.way, "as-is");
-  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until 2026-11-29; nothing is copied then, and from then on it takes its whole size, up to 17 GB on fake's fast, as its box no longer shares its blocks\.$/);
+  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then, and from then on it takes its whole size, up to 17 GB on fake's fast, as its box no longer shares its blocks\.$/);
   await state.snapshots.keep(COMMAND, standing(box), kept.id, { days: 30 });
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   assert.equal(await state.backend.power(box.guest!), null, "the guest went: its kept snapshot lives beside it");
@@ -75,7 +75,7 @@ test("a kept snapshot beside a released box is renewed with Keep and forks as on
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   const gone = state.snapshots.findGone(box.name, "kept one");
   const again = await state.snapshots.checkKeepGone(gone, { days: 60 });
-  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until BB Box deletes it after 2026-12-29\.$/);
+  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until BB Box deletes it after Tue 29 Dec\.$/);
   const renewed = await state.snapshots.keepGone(gone, BY_COMMAND, { days: 60 });
   assert.equal(renewed.snapshot.keptUntil, keptUntilAfter(START, 60));
   const fork = await state.snapshots.checkForkGone(gone, {});

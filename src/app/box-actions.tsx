@@ -4,7 +4,7 @@
 // Boxes page manages machines exactly as settings does (the operator's note of 5 October 2026).
 
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { PRODUCT } from "./product.ts";
@@ -39,13 +39,9 @@ export interface InUse<M extends string> {
 }
 
 /** "Release calm-otter anyway?": who is working on the box, and the verb's "anyway" to go on. */
-export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }: { inUse: InUse<M> | null; words: Readonly<Record<M, string>>; onClose: () => void; onForce: (inUse: InUse<M>) => Promise<string | null | void> | void }) {
+export function InUseDialog<M extends string>({ inUse, words, busyWords, onClose, onForce }: { inUse: InUse<M> | null; words: Readonly<Record<M, string>>; busyWords: Readonly<Record<M, string>>; onClose: () => void; onForce: (inUse: InUse<M>) => Promise<string | null | void> | void }) {
   const verb = inUse ? words[inUse.method] : "";
   const action = useDialogAction(onClose);
-  const close = () => {
-    action.clear();
-    onClose();
-  };
   return (
     <BoxDialog
       open={inUse !== null}
@@ -53,13 +49,14 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
       description={inUse ? `${workingOnWords(inUse.threads, inUse.box.name)}.` : null}
       busy={action.busy}
       refused={action.refused}
-      onClose={close}
+      clearRefused={action.clear}
+      onClose={onClose}
       footer={
         <>
-          <DialogButton variant="outline" onClick={close}>
+          <DialogButton variant="outline" onClick={onClose}>
             Cancel
           </DialogButton>
-          <DialogButton danger busyWords={verb === "Stop" ? "Stopping…" : verb.endsWith("e") ? `${verb.slice(0, -1)}ing…` : `${verb}…`} onClick={() => inUse && void action.run(() => onForce(inUse))}>
+          <DialogButton danger busyWords={inUse ? busyWords[inUse.method] : undefined} onClick={() => inUse && void action.run(() => onForce(inUse))}>
             {verb} anyway
           </DialogButton>
         </>
@@ -73,35 +70,35 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
 /** "Remove build-1?", with what removing does to the machine. */
 export function RemoveMachineDialog({ box, onClose, onRemove }: { box: BoxView | null; onClose: () => void; onRemove: (box: BoxView, deleteKept?: boolean) => Promise<string | null | void> | void }) {
   const action = useDialogAction(onClose);
-  const close = () => {
-    action.clear();
-    onClose();
-  };
+  const remembered = useRef<BoxView | null>(null);
+  if (box) remembered.current = box;
+  const shown = box ?? remembered.current;
   return (
     <BoxDialog
       open={box !== null}
-      title={`Remove ${box?.name ?? "this machine"}?`}
-      description={box?.nature === "real" ? "Its machine leaves BB, and it is reset and returned to its pool. Anything in the box user's home will be deleted." : "Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first."}
+      title={`Remove ${shown?.name ?? "this machine"}?`}
+      description={shown?.nature === "real" ? "Its machine leaves BB, and it is reset and returned to its pool. Anything in the box user's home will be deleted." : "Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first."}
       busy={action.busy}
       refused={action.refused}
-      onClose={close}
+      clearRefused={action.clear}
+      onClose={onClose}
       footer={
         <>
-          <DialogButton variant="outline" onClick={close}>
+          <DialogButton variant="outline" onClick={onClose}>
             Cancel
           </DialogButton>
-          {box?.releaseHeldForKept ? (
-            <DialogButton variant="outline" onClick={() => void action.run(() => onRemove(box, true))}>
+          {shown?.releaseHeldForKept ? (
+            <DialogButton variant="outline" onClick={() => shown && void action.run(() => onRemove(shown, true))}>
               Remove and delete what you kept
             </DialogButton>
           ) : null}
-          <DialogButton danger busyWords="Removing…" onClick={() => box && void action.run(() => onRemove(box))}>
-            {box?.releaseHeldForKept ? "Remove again" : "Remove"}
+          <DialogButton danger busyWords="Removing…" onClick={() => shown && void action.run(() => onRemove(shown))}>
+            {shown?.releaseHeldForKept ? "Remove again" : "Remove"}
           </DialogButton>
         </>
       }
     >
-      {box?.releaseHeldForKept ? <p>Its last removal stopped before deleting anything: {PRODUCT} could not copy a snapshot you kept. Remove again tries the copy again. Remove and delete what you kept deletes those snapshots with it.</p> : null}
+      {shown?.releaseHeldForKept ? <p>Its last removal stopped before deleting anything: {PRODUCT} could not copy a snapshot you kept. Remove again tries the copy again. Remove and delete what you kept deletes those snapshots with it.</p> : null}
     </BoxDialog>
   );
 }
@@ -153,7 +150,9 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
         refused = message(caught);
       }
       await refresh();
-      setProblem(refused);
+      const shownInDialog = force || method === "remove" || method === "forget";
+      if (!refused) setProblem(null);
+      else if (!shownInDialog) setProblem(refused);
       return refused;
     } finally {
       setBusy(null);
@@ -162,7 +161,7 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   const dialogs = (
     <>
       <RemoveMachineDialog box={removing} onClose={() => setRemoving(null)} onRemove={(box, deleteKept) => act("remove", box, false, deleteKept === true)} />
-      <InUseDialog inUse={inUse} words={{ remove: "Remove", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, true, found.deleteKept === true)} />
+      <InUseDialog inUse={inUse} words={{ remove: "Remove", stop: "Stop" }} busyWords={{ remove: "Removing…", stop: "Stopping…" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, true, found.deleteKept === true)} />
     </>
   );
   return { act, busy, problem, setProblem, askRemove: setRemoving, dialogs };
@@ -199,9 +198,11 @@ export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxA
       setBusy(null);
     }
     await refresh();
-    setProblem(refused);
+    const shownInDialog = force || method === "release" || method === "forget";
+    if (!refused) setProblem(null);
+    else if (!shownInDialog) setProblem(refused);
     return refused;
   };
-  const dialogs = <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => act(inUse?.threadId ?? "", found.method, found.box, true, found.deleteKept === true)} />;
+  const dialogs = <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} busyWords={{ release: "Releasing…", stop: "Stopping…" }} onClose={() => setInUse(null)} onForce={(found) => act(inUse?.threadId ?? "", found.method, found.box, true, found.deleteKept === true)} />;
   return { act, busy, problem, setProblem, dialogs };
 }

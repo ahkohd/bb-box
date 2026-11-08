@@ -175,7 +175,7 @@ test("G5: the guard refuses a box threads run on for everyone, and while a perso
   assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /could not tell which threads run on box/);
   state.guard = { threads: [], threadsUnread: null, control: true, terminals: 2 };
   const person = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.match(person.message, /would end what is on it now: a person holds control of its desktop; 2 BB terminals are open on it\. Restore anyway with --force\. bb-box changed nothing\.$/);
+  assert.match(person.message, /would end what is on it now: a person holds control of its desktop; 2 BB terminals are open on it\. Restore anyway with --force\. BB Box changed nothing\.$/);
   const agent = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
   assert.match(agent.message, /Ask the person to end it first, or to restore the box themselves\./);
   assert.equal((await rejection(state.snapshots.restore(AGENT, box, standing(box), "one", { force: true }))).code, "not_owner");
@@ -207,7 +207,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   write(state, box, "work.txt", "now");
   state.provider.take = "failed";
   const undo = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.match(undo.message, /^bb-box did not restore box \S+ to "one": bb-box could not take the undo "before the restore at 10:42": snapshot feature is not available\. Nothing on its disk changed, and bb-box started box \S+ again as it was\.$/);
+  assert.match(undo.message, /^BB Box did not restore box \S+ to "one": bb-box could not take the undo "before the restore at 10:42": snapshot feature is not available\. Nothing on its disk changed, and bb-box started box \S+ again as it was\.$/);
   assert.equal(read(state, box, "work.txt"), "now");
   assert.equal((await current(state, box)).state, "ready");
   assert.equal(state.store.records({ box: box.id }).find((record) => record.undoOf)?.state, "failed");
@@ -237,13 +237,13 @@ test("G7: a locked guest refuses a restore with the host's command, and ZFS rest
   state.provider.locked = { lock: "rollback", fix: "Run `pct unlock 214` on pve-1." };
   const locked = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
   assert.equal(locked.code, "locked");
-  assert.equal(locked.message, `Fake host left box ${box.name} locked (rollback), so bb-box restores nothing. Run \`pct unlock 214\` on pve-1.`);
+  assert.equal(locked.message, `Fake host left box ${box.name} locked (rollback), so BB Box restores nothing. Run \`pct unlock 214\` on pve-1.`);
   assert.deepEqual(await state.snapshots.restoreChecks(), [
     { id: `snapshots.locked.${box.name}`, name: `${box.name} locked`, status: "fail", detail: `Fake host left box ${box.name} locked (rollback), so bb-box takes, deletes and restores none of its snapshots.`, fix: "Run `pct unlock 214` on pve-1." },
   ]);
   state.provider.locked = null;
   state.provider.restoreWay = "rollback-newest-only";
-  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /storage fast is ZFS, which restores only the newest snapshot, and bb-box's restores on ZFS stay off until they are checked there\./);
+  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /storage fast is ZFS, which restores only the newest snapshot, and BB Box's restores on ZFS stay off until they are checked there\./);
   state.provider.restoreWay = "rollback";
   const snapshot = state.store.records({ box: box.id })[0]!;
   state.provider.sizes.set(snapshot.id, { cores: 2, memoryMiB: 4096, diskGiB: 8 });
@@ -384,7 +384,7 @@ test("G4 in ZFS's order (the live-check switch): the newest only, after a held c
   write(state, box, "work.txt", "before the restore");
   state.provider.newer = 1;
   const older = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.match(older.message, /as on ZFS, bb-box restores only the newest snapshot there, and "one" has 1 newer one\. Delete it yourself first\. bb-box never deletes newer snapshots/);
+  assert.match(older.message, /as on ZFS, BB Box restores only the newest snapshot there, and "one" has 1 newer one\. Delete it yourself first\. BB Box never deletes newer snapshots/);
   state.provider.newer = 0;
   state.provider.order.length = 0;
   const restored = await state.snapshots.restore(COMMAND, box, standing(box), "two");
@@ -519,7 +519,7 @@ test("a failed flush stops the restore before the stop unless the person accepts
   state.provider.order.length = 0;
   const stopped = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
   assert.equal(stopped.code, "unflushed");
-  assert.match(stopped.message, /could not flush box \S+'s writes to its disk before stopping it \(sync: Input\/output error\), so its undo could miss what was written in the last seconds before the restore\. bb-box changed nothing\.$/);
+  assert.match(stopped.message, /could not flush box \S+'s writes to its disk before stopping it \(sync: Input\/output error\), so its undo could miss what was written in the last seconds before the restore\. BB Box changed nothing\.$/);
   assert.deepEqual(state.provider.order, ["flush"], "nothing stopped");
   assert.equal((await current(state, box)).state, "ready");
   assert.equal(state.store.records({ box: box.id }).length, 1, "no undo was left");

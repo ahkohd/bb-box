@@ -1,14 +1,14 @@
 import type { PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { RestoreFormAnswer, RestoreFormPayload } from "../plugin/restore-form.ts";
-import { dayAndClock } from "./box-words.ts";
-import { message, relativeTime } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { message } from "./common.tsx";
 import { PRODUCT } from "./product.ts";
-import { Refused } from "./box-dialog.tsx";
+import { DIALOG_FOOTER, DialogButton, Refused } from "./box-dialog.tsx";
+import { whenInSentence } from "./snapshot-words.ts";
 
 function takenWords(at: number, now: number): string {
-  return `${dayAndClock(at, now)}, ${relativeTime(at, now)}`;
+  return `${whenInSentence(at, now)}, ${ago(at, now)}`;
 }
 
 export function restoreFormWords(payload: RestoreFormPayload, now: number): { readonly lead: string; readonly goes: string; readonly undo: string; readonly session: string | null; readonly answer: string; readonly button: string } {
@@ -60,13 +60,13 @@ export function RestoreForm({ interaction, submit, cancel }: PluginPendingIntera
       <p>{words.undo}</p>
       <p className="text-xs text-muted-foreground">{words.answer}</p>
       <Refused words={problem} />
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button variant="outline" size="sm" autoFocus disabled={busy !== null} onClick={() => void act("cancel", cancel)}>
+      <div className={`flex ${DIALOG_FOOTER}`}>
+        <DialogButton variant="outline" autoFocus disabled={busy !== null} onClick={() => void act("cancel", cancel)}>
           {busy === "cancel" ? "Cancelling…" : "Cancel"}
-        </Button>
-        <Button size="sm" variant={payload.losses.length ? "destructive" : "default"} disabled={busy !== null} onClick={() => void act("submit", () => submit(answer as never))}>
+        </DialogButton>
+        <DialogButton disabled={busy !== null} onClick={() => void act("submit", () => submit(answer as never))}>
           {busy === "submit" ? "Submitting approval…" : words.button}
-        </Button>
+        </DialogButton>
       </div>
     </div>
   );

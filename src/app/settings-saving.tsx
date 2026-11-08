@@ -321,7 +321,7 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
           {unplaced.length ? <span className="mt-1 block text-destructive-text">{unplaced.join(" ")}</span> : null}
         </span>
         {showButtons ? (
-          <span className="flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1.5 sm:w-auto sm:basis-auto">
+          <span className="ml-auto flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1.5 sm:w-auto sm:basis-auto">
             {actions}
             {bar.show ? (
               <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>

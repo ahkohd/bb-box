@@ -1,5 +1,6 @@
 import type { BbPluginApi, PluginAgentToolResult, PluginInteractionCancelReason } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { PRODUCT } from "../brand.ts";
 import { BoxError, describeError, describeErrorForAgent, errorForAgent, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, snapshotLine, type Caller, type Standing } from "../core/snapshot.ts";
 import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
@@ -77,7 +78,7 @@ function cancelledText(reason: PluginInteractionCancelReason, box: string): Plug
     "plugin-disposed": "bb-box stopped, as for an update",
     "request-aborted": "the request was cancelled",
   };
-  const text = `bb-box did not restore box ${box}: ${why[reason]}. Nothing changed.${next("Carry on with the box as it is, or ask again with box_restore if the person wants it.")}`;
+  const text = `${PRODUCT} did not restore box ${box}: ${why[reason]}. Nothing changed.${next("Carry on with the box as it is, or ask again with box_restore if the person wants it.")}`;
   return reason === "user" || reason === "timeout" ? text : { content: [{ type: "text", text }], isError: true };
 }
 
@@ -275,7 +276,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
             if (result.outcome === "cancelled") return cancelledText(result.reason, box.name);
             if (!isRestoreYes(result.value, payload.plan)) {
               return {
-                content: [{ type: "text", text: `bb-box did not restore box ${box.name}: the form's answer was not a yes to this restore. Nothing changed.${next("Ask again with box_restore if the person wants it.")}` }],
+                content: [{ type: "text", text: `${PRODUCT} did not restore box ${box.name}: the form's answer was not a yes to this restore. Nothing changed.${next("Ask again with box_restore if the person wants it.")}` }],
                 isError: true,
               };
             }

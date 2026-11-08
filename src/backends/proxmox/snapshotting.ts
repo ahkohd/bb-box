@@ -1,3 +1,4 @@
+import { PRODUCT } from "../../brand.ts";
 import {
   RestoreChanged,
   SnapshotFailed,
@@ -360,10 +361,10 @@ export class ProxmoxSnapshotting {
     const copyBytes = diskGiB !== null ? diskGiB * GiB : null;
     const none = (why: string): SnapshotPlan["restore"] => ({ way: "none", why, undo: "none", undoAboutMs: 0, undoBytes: null, sizeBack: null, leavesOnEarlierGuest: 0, newer: 0, copyAboutMs });
     const weakest = seen.restores.find((each) => each.restore === "none" || each.restore === "unknown");
-    if (!seen.restores.length) return none(seen.takeWhy ?? `bb-box could not read the storage guest ${vmid}'s disk is on.`);
+    if (!seen.restores.length) return none(seen.takeWhy ?? `${PRODUCT} could not read the storage guest ${vmid}'s disk is on.`);
     if (weakest) return none(weakest.words);
     if (seen.privileges && !seen.privileges.has(SNAPSHOT_PRIVILEGES[1])) {
-      return none(`The Proxmox token lacks VM.Snapshot.Rollback on /pool/${this.#guests.pool}, so bb-box cannot restore snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
+      return none(`The Proxmox token lacks VM.Snapshot.Rollback on /pool/${this.#guests.pool}, so ${PRODUCT} cannot restore snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }
     if (seen.lock === "suspended") return none("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
     if (seen.lockWhy) return none(seen.lockWhy);
@@ -374,7 +375,7 @@ export class ProxmoxSnapshotting {
     const listed = await api.snapshots(vmid, signal);
     const found = listed.find((snapshot) => snapshot.name === name);
     if (!found) return none(`Guest ${vmid} has no snapshot ${name}.`);
-    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so bb-box does not restore it.`);
+    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so ${PRODUCT} does not restore it.`);
     const newer = found.snaptime === null ? 0 : listed.filter((snapshot) => snapshot.name !== name && snapshot.snaptime !== null && snapshot.snaptime > found.snaptime!).length;
     const sizeBack = await api
       .snapshotConfig(vmid, name, signal)
@@ -442,7 +443,7 @@ export class ProxmoxSnapshotting {
     if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}, so bb-box cannot write its keep date there.`);
     const label = parseSnapshotLabel(listed.description);
     if (!label || label.install !== this.#guests.installId || label.snapshot !== ref.id) {
-      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
+      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not ${PRODUCT}'s snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". ${PRODUCT} changed nothing.`);
     }
     try {
       await api.describeSnapshot(vmid, name, snapshotLabel({ ...label, kept }), signal);
@@ -541,9 +542,9 @@ export class ProxmoxSnapshotting {
       const listed = await this.#listed(api, vmid, name, signal);
       if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}.`);
       const box = typeof guest.data?.box === "string" ? guest.data.box : null;
-      if (!this.#ours(listed, ref.id, box)) throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
-      if (listed.snapstate) throw new SnapshotFailed(`${snapstateWords(listed.snapstate)}, so bb-box does not restore it.`);
-      if ((await api.status(vmid, signal))?.status === "running") throw new SnapshotFailed(`Guest ${vmid} is running, and bb-box restores a guest only once it has stopped.`);
+      if (!this.#ours(listed, ref.id, box)) throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not ${PRODUCT}'s snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". ${PRODUCT} changed nothing.`);
+      if (listed.snapstate) throw new SnapshotFailed(`${snapstateWords(listed.snapstate)}, so ${PRODUCT} does not restore it.`);
+      if ((await api.status(vmid, signal))?.status === "running") throw new SnapshotFailed(`Guest ${vmid} is running, and ${PRODUCT} restores a guest only once it has stopped.`);
       const config = await this.#guests.ownConfig(api, guest, signal);
       const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
       if (lock) {

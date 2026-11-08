@@ -5,6 +5,7 @@
 // install ID change. Switches and warm counts reach it live, so a warm pool
 // or an open connection survives them and changes to other backends.
 
+import { PRODUCT } from "../brand.ts";
 import { dockerDriver } from "./docker/index.ts";
 import { hetznerDriver } from "./hetzner/index.ts";
 import { microsandboxDriver } from "./microsandbox/index.ts";
@@ -29,6 +30,10 @@ import { testDeviceOffer, testDevicePlatformFor } from "../core/device.ts";
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver, hetznerDriver, namespaceDriver, boatDriver];
 
 /** What a backend's boxes are, from its ID, which starts with its driver's type (029). Null for a driver bb-box no longer has. */
+export function missingBackendWords(type: string): string {
+  return `This ${PRODUCT} has no ${type} backend.`;
+}
+
 export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): BoxForm | null {
   const type = backendId.split(":")[0];
   return drivers.find((driver) => driver.type === type)?.form ?? null;
@@ -385,7 +390,7 @@ export class Backends {
       const current = this.#entries.get(config.id);
       if (!driver) {
         if (current) await this.#dispose(current);
-        const problem = { path: `backends.${config.id}`, message: `This bb-box has no ${config.type} backend.` };
+        const problem = { path: `backends.${config.id}`, message: missingBackendWords(config.type) };
         statuses.push({ ...base, state: "misconfigured", problems: [problem.message], fieldProblems: [problem], kinds: [] });
         continue;
       }

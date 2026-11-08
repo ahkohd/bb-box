@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
-import { BoxDialog, DialogButton } from "./box-dialog.tsx";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -459,15 +459,16 @@ function MovedCopyRow() {
   const rpc = useRpc<Contract>();
   const removal = useStore(copyRemoval);
   const [asking, setAsking] = useState(false);
+  const action = useDialogAction(() => setAsking(false));
   const copy = state.migrated;
-  const remove = async () => {
+  const remove = async (): Promise<string | null> => {
     copyRemoval.set({ removing: true, note: null });
     let note: CopyRemoval["note"];
     try {
       const result = await rpc.call("config.migrated.remove", null);
       note = { text: result.removed ? "Removed the copy of BB's earlier settings." : "There was no copy left to remove: it was removed elsewhere.", tone: "info" };
     } catch (caught) {
-      const reason = message(caught).replace(/\.+$/, "");
+      const reason = message(caught).replace(/\.+$/, "").replace(/^([A-Z])(?=[a-z])/, (letter) => letter.toLowerCase());
       try {
         const after = await rpc.call("config.get", null);
         note = after.migrated ? { text: `The copy was not removed: ${reason}. It is still kept; try again.`, tone: "bad" } : { text: "Removed the copy of BB's earlier settings. BB Box did not reply, and the configuration shows it gone.", tone: "info" };
@@ -476,8 +477,10 @@ function MovedCopyRow() {
       }
     }
     await refresh().catch(() => {});
-    copyRemoval.set({ removing: false, note });
+    copyRemoval.set({ removing: false, note: note.tone === "bad" ? null : note });
+    if (note.tone === "bad") return note.text;
     focusAfterRender(COPY_NOTE, COPY_BUTTON);
+    return null;
   };
   return (
     <>
@@ -501,7 +504,9 @@ function MovedCopyRow() {
       <BoxDialog
         open={asking}
         title="Remove the copy of BB's earlier settings?"
-        onClose={() => setAsking(false)}
+        busy={action.busy}
+        refused={action.refused}
+        onClose={action.close}
         onCloseAutoFocus={(event) => {
           const button = document.querySelector<HTMLElement>(`[data-draft-path="${COPY_BUTTON}"]`);
           if (!button) return;
@@ -510,16 +515,10 @@ function MovedCopyRow() {
         }}
         footer={
           <>
-            <DialogButton variant="outline" onClick={() => setAsking(false)}>
+            <DialogButton variant="outline" onClick={action.close}>
               Cancel
             </DialogButton>
-            <DialogButton
-              danger
-              onClick={() => {
-                setAsking(false);
-                void remove();
-              }}
-            >
+            <DialogButton danger busyWords="Removing…" onClick={() => void action.run(remove)}>
               Remove copy
             </DialogButton>
           </>

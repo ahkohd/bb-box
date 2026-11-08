@@ -17,7 +17,7 @@ import { backendPart, operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendFieldPath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
-import { FieldProblem } from "./field-shell.tsx";
+import { SideLabelField } from "./field-shell.tsx";
 import { INVALID_BORDER } from "./size-field.ts";
 import { plural } from "./settings-status.ts";
 import { PRODUCT } from "./product.ts";
@@ -156,39 +156,37 @@ interface RowIds {
 function FieldShell({ draft, path, ids, label, help, chips, problem, stacked, onTheirs, children }: { draft: Draft; path: Path; ids: RowIds; label: string; help: string; chips?: ReactNode; problem: string | null; stacked?: boolean; onTheirs?: () => void; children: ReactNode }) {
   const conflict = draft.conflict(path);
   return (
-    <div className="px-4 py-3" data-setting-row={path}>
-      <div className={cn("flex flex-col gap-2", !stacked && "sm:flex-row sm:items-start sm:justify-between sm:gap-5")}>
-        <div className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <label htmlFor={ids.control} className="text-sm text-foreground">
-              {label}
-            </label>
-            {chips}
-            <ChangedChip show={draft.changed(path) && !conflict} />
-          </span>
-          <Help id={ids.help} text={help} label={label} />
-        </div>
-        <div className={cn("flex min-w-0 flex-col gap-1", stacked ? "w-full" : "w-full sm:w-72 sm:shrink-0 sm:items-end")}>
-          {children}
-          {problem ? <FieldProblem id={ids.problem}>{problem}</FieldProblem> : null}
-        </div>
-      </div>
-      {conflict ? (
-        <ConflictNote
-          id={ids.conflict}
-          conflict={conflict}
-          onTheirs={() => {
-            draft.forget(path);
-            onTheirs?.();
-            focusAfterRender(path);
-          }}
-          onMine={() => {
-            draft.keepMine(path);
-            focusAfterRender(path);
-          }}
-        />
-      ) : null}
-    </div>
+    <SideLabelField
+      path={path}
+      htmlFor={ids.control}
+      label={label}
+      chips={chips}
+      changed={<ChangedChip show={draft.changed(path) && !conflict} />}
+      help={<Help id={ids.help} text={help} label={label} />}
+      problem={problem}
+      problemId={problem ? ids.problem : undefined}
+      stacked={stacked}
+      controlClassName={stacked ? "w-full" : "w-full sm:w-72 sm:items-end"}
+      conflict={
+        conflict ? (
+          <ConflictNote
+            id={ids.conflict}
+            conflict={conflict}
+            onTheirs={() => {
+              draft.forget(path);
+              onTheirs?.();
+              focusAfterRender(path);
+            }}
+            onMine={() => {
+              draft.keepMine(path);
+              focusAfterRender(path);
+            }}
+          />
+        ) : null
+      }
+    >
+      {children}
+    </SideLabelField>
   );
 }
 

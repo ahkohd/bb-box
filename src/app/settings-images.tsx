@@ -358,7 +358,7 @@ function rowId(name: string): string {
 
 const READING_BUILDS = "Reading its builds…";
 
-function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }: { name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; open: boolean; onToggle: () => void; onRemove: () => void }) {
+function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove, quietRemoval = false }: { name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; open: boolean; onToggle: () => void; onRemove: () => void; quietRemoval?: boolean }) {
   const { state, instant, writes } = useSettings();
   const now = Date.now();
   const id = rowId(name);
@@ -405,7 +405,7 @@ function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }
           <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-4 text-subtle-foreground" aria-hidden />
         </span>
       </div>
-      <RowNote note={instant.note(bakeKey) ?? instant.note(switchKey.removeImage(name))} className="px-4 pb-2" />
+      <RowNote note={instant.note(bakeKey) ?? (quietRemoval ? null : instant.note(switchKey.removeImage(name)))} className="px-4 pb-2" />
       {open ? <ProjectImageDetails id={`${id}-details`} name={name} image={image} view={view} loaded={loaded} now={now} onRemove={onRemove} /> : null}
     </div>
   );
@@ -562,7 +562,7 @@ function ProjectImages() {
         <Card>
           <Rows>
             {names.map((name) => (
-              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} loaded={loaded} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} />
+              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} loaded={loaded} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} quietRemoval={removing === name} />
             ))}
           </Rows>
         </Card>

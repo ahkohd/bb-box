@@ -284,19 +284,11 @@ export function BoxMenu({
         description={forgetWords(box)}
         busy={forgetting.busy}
         refused={forgetting.refused}
-        onClose={() => {
-          forgetting.clear();
-          setConfirmingForget(false);
-        }}
+        clearRefused={forgetting.clear}
+        onClose={() => setConfirmingForget(false)}
         footer={
           <>
-            <DialogButton
-              variant="outline"
-              onClick={() => {
-                forgetting.clear();
-                setConfirmingForget(false);
-              }}
-            >
+            <DialogButton variant="outline" onClick={() => setConfirmingForget(false)}>
               Cancel
             </DialogButton>
             <DialogButton danger busyWords="Forgetting…" onClick={() => void forgetting.run(() => (machine ? machine.forget() : thread?.act("forget")))}>
@@ -312,19 +304,11 @@ export function BoxMenu({
           description={box.nature === "real" ? "The machine will be reset and returned to its pool. Anything in the box user's home will be deleted." : "Its disk and everything on it will be deleted. Copy out anything you want to keep first."}
           busy={releasing.busy}
           refused={releasing.refused}
-          onClose={() => {
-            releasing.clear();
-            setConfirmingRelease(false);
-          }}
+          clearRefused={releasing.clear}
+          onClose={() => setConfirmingRelease(false)}
           footer={
             <>
-              <DialogButton
-                variant="outline"
-                onClick={() => {
-                  releasing.clear();
-                  setConfirmingRelease(false);
-                }}
-              >
+              <DialogButton variant="outline" onClick={() => setConfirmingRelease(false)}>
                 Cancel
               </DialogButton>
               {box.releaseHeldForKept ? (

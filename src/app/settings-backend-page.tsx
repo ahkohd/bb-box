@@ -454,7 +454,7 @@ function BackendEditor({ config }: { config: BackendConfig }) {
     if (hostId) void machines.recheck([hostId]);
     void checks.run(part, fingerprint, draft.changes > 0, () => rpc.call("config.check", { draft: candidate.document, test: config.id }), Date.now).then(() => refresh());
   };
-  const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), instant.note(switchKey.removeBackend(config.id))];
+  const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), removing ? null : instant.note(switchKey.removeBackend(config.id))];
   const remove = async (): Promise<string | null> => {
     const outcome = await instant.run(writes.removeBackend(draft.latest, config, label));
     if (outcome?.kind === "saved" || outcome?.kind === "already") {

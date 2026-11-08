@@ -3,6 +3,7 @@ import type { BoxView } from "../plugin/views.ts";
 import type { Busy } from "../monitor/busy.ts";
 import type { Tone } from "./common.tsx";
 import { PRODUCT } from "./product.ts";
+import { whenInSentence } from "./snapshot-words.ts";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -314,7 +315,7 @@ export function settingsNotice(box: BoxView): string | null {
 
 export function endedWords(ended: EndedBox, now: number, titles: ThreadTitles): { readonly title: string; readonly words: string } {
   const by = actorWords(ended.by, titles);
-  const when = `${ended.how === "released" ? "Released" : "Forgotten"} ${ago(ended.at, now)}, ${dayAndClock(ended.at, now)}${by ? `, ${by}` : ""}.`;
+  const when = `${ended.how === "released" ? "Released" : "Forgotten"} ${ago(ended.at, now)}, ${whenInSentence(ended.at, now)}${by ? `, ${by}` : ""}.`;
   if (ended.how === "released") return { title: `${ended.name} was released`, words: `${when} ${PRODUCT} remembers a released box for 24 hours.` };
   const host = ended.backend ? hostOf(ended.backend) ?? ended.backend : null;
   return { title: `${ended.name} was forgotten`, words: `${PRODUCT} removed its record. Its box was not deleted and may still run${host ? ` on ${host}` : ""}. ${when}` };

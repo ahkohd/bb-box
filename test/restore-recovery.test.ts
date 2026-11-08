@@ -307,7 +307,7 @@ test("Opus 6: a held copy is restored by a swap only while the live-check switch
   const { box, undo } = await swapReady(state);
   state.undoByCopy = false;
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo, { undo: false }));
-  assert.match(refused.message, /bb-box does that only in live checks until such restores are checked on ZFS/);
+  assert.match(refused.message, /BB Box does that only in live checks until such restores are checked on ZFS/);
 });
 
 test("Opus 8: restarts mid-task: an undo's task still running stays unknown, then finishes; a failed one puts the box back", async () => {

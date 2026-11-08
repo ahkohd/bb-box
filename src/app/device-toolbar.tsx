@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { FieldProblem } from "./field-shell.tsx";
 import { INVALID_BORDER } from "./size-field.ts";
 import {
   BATTERY_LEVELS,
@@ -721,13 +722,12 @@ const NETWORK_DETAIL: Readonly<Record<NetworkPreset, string>> = {
   slow: `${SLOW_NETWORK.kbitPerSecond} kbit/s each way, ${SLOW_NETWORK.delayMs} ms later out`,
 };
 
-function FormDialog({ open, title, description, submit, problem, onSubmit, onClose, children }: { open: boolean; title: string; description: string; submit: string; problem: string | null; onSubmit: () => void; onClose: () => void; children: ReactNode }) {
+function FormDialog({ open, title, description, submit, onSubmit, onClose, children }: { open: boolean; title: string; description: string; submit: string; onSubmit: () => void; onClose: () => void; children: ReactNode }) {
   return (
     <BoxDialog
       open={open}
       title={title}
       description={description}
-      refused={problem}
       onClose={onClose}
       onSubmit={() => onSubmit()}
       footer={
@@ -744,16 +744,18 @@ function FormDialog({ open, title, description, submit, problem, onSubmit, onClo
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, problem, problemId, children }: { label: string; problem?: string | null; problemId?: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-foreground">
       {label}
       {children}
+      {problem ? <FieldProblem id={problemId}>{problem}</FieldProblem> : null}
     </label>
   );
 }
 
 function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: DeviceModel; onOpen: (url: string) => void; onClose: () => void }) {
+  const problemId = useId();
   const [typed, setTyped] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
@@ -765,7 +767,6 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
       title={`Open a link on the ${model.name}`}
       description="A web address opens in the device's browser. An app's own link, such as myapp://settings, opens in that app."
       submit="Open"
-      problem={problem}
       onClose={onClose}
       onSubmit={() => {
         const url = linkFrom(typed);
@@ -778,7 +779,7 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
         onClose();
       }}
     >
-      <Field label="Link">
+      <Field label="Link" problem={problem} problemId={problemId}>
         <Input
           autoFocus
           inputMode="url"
@@ -786,6 +787,7 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
           placeholder="https://example.com"
           value={typed}
           aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? problemId : undefined}
           className={cn(problem && INVALID_BORDER)}
           onChange={(event) => {
             const next = event.target.value;
@@ -801,6 +803,7 @@ function LinkDialog({ open, model, onOpen, onClose }: { open: boolean; model: De
 }
 
 function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model: DeviceModel; at: LatLon | null; onSet: (to: LatLon) => void; onClose: () => void }) {
+  const problemId = useId();
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -816,7 +819,6 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
       title={`Set the ${model.name}'s location`}
       description="Apps on the device see this place as where it is, in decimal degrees."
       submit="Set location"
-      problem={problem}
       onClose={onClose}
       onSubmit={() => {
         const to = { latitude: Number(latitude.trim()), longitude: Number(longitude.trim()) };
@@ -837,6 +839,7 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
             placeholder="for example 51.5"
             value={latitude}
             aria-invalid={problem ? true : undefined}
+            aria-describedby={problem ? problemId : undefined}
             className={cn(problem && INVALID_BORDER)}
             onChange={(event) => {
               const next = event.target.value;
@@ -854,6 +857,7 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
             placeholder="for example -0.1"
             value={longitude}
             aria-invalid={problem ? true : undefined}
+            aria-describedby={problem ? problemId : undefined}
             className={cn(problem && INVALID_BORDER)}
             onChange={(event) => {
               const next = event.target.value;
@@ -866,11 +870,13 @@ function PlaceDialog({ open, model, at, onSet, onClose }: { open: boolean; model
           />
         </Field>
       </div>
+      {problem ? <FieldProblem id={problemId}>{problem}</FieldProblem> : null}
     </FormDialog>
   );
 }
 
 function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; model: DeviceModel; at: { readonly level: number; readonly charging: boolean } | null; onSet: (to: { level: number; charging: boolean } | null) => void; onClose: () => void }) {
+  const problemId = useId();
   const [level, setLevel] = useState("100");
   const [charging, setCharging] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -886,7 +892,6 @@ function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; mod
       title={`The ${model.name}'s battery`}
       description={model.platform === "ios" ? "On iOS only the status bar's picture changes: apps still read the Mac's battery." : "Apps on the device read this level, and whether it charges."}
       submit="Set battery"
-      problem={problem}
       onClose={onClose}
       onSubmit={() => {
         const to = { level: Number(level.trim()), charging };
@@ -899,7 +904,7 @@ function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; mod
         onClose();
       }}
     >
-      <Field label={`Level, ${BATTERY_LEVELS.least} to ${BATTERY_LEVELS.most}%`}>
+      <Field label={`Level, ${BATTERY_LEVELS.least} to ${BATTERY_LEVELS.most}%`} problem={problem} problemId={problemId}>
         <div className="flex items-center gap-3">
           <input
             type="range"
@@ -919,6 +924,7 @@ function BatteryDialog({ open, model, at, onSet, onClose }: { open: boolean; mod
             inputMode="numeric"
             aria-label="Level, in per cent"
             aria-invalid={problem ? true : undefined}
+            aria-describedby={problem ? problemId : undefined}
             className={cn("w-16", problem && INVALID_BORDER)}
             value={level}
             onChange={(event) => {

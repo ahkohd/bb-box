@@ -35,7 +35,7 @@ export const ROOMS_CHECK_MS = 300;
  */
 
 export const IMAGE_REQUEST =
-  "Make a box image for this project with bb-box: draft .bb/box-setup.sh and .bb/box-check.sh with box_image_draft from the project's files, " +
+  `Make a box image for this project with ${PRODUCT}: draft .bb/box-setup.sh and .bb/box-check.sh with box_image_draft from the project's files, ` +
   "try them with box_image_try until every check passes, commit them, then register them with box_image_set.";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */

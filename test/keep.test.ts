@@ -161,7 +161,7 @@ test("G15: with too little room for the copy, the release stops and deletes noth
   state.provider.percentFull = 90;
   const left = await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
   assert.equal(left?.state, "releasing");
-  assert.match(left?.error ?? "", /^Release did not finish: bb-box could not copy "kept one", which you kept: .*storage fast has \d+ GB free, and with the held copy, about 2\.1 GB, it would be 92% full, past your settings' 85%\. bb-box tries again in a few minutes\. Release it again, or release it and delete what you kept\.$/);
+  assert.match(left?.error ?? "", /^Release did not finish: bb-box could not copy "kept one", which you kept: .*storage fast has \d+ GB free, and with the held copy, about 2\.1 GB, it would be 92% full, past your settings' 85%\. BB Box tries again in a few minutes\. Release it again, or release it and delete what you kept\.$/);
   assert.notEqual(await state.backend.power(box.guest!), null, "the guest stays");
   assert.equal(state.store.record(taken.id)?.guest, "current");
   assert.equal(state.provider.held.has(taken.id), true);
@@ -281,7 +281,7 @@ test("with snapshots.db unreadable, a release that its provider's labels say hol
   const problem = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(state.store), "problem")!;
   Object.defineProperty(state.store, "problem", { get: () => "bb-box cannot write snapshots.db: disk I/O error." });
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(left?.error ?? "", /cannot read its snapshots' records, so it cannot copy what box .* holds that you kept, and deleted nothing: its labels on .* say one is kept\. bb-box tries again in a few minutes\.$/);
+  assert.match(left?.error ?? "", /cannot read its snapshots' records, so it cannot copy what box .* holds that you kept, and deleted nothing: its labels on .* say one is kept\. BB Box tries again in a few minutes\.$/);
   assert.notEqual(await state.backend.power(box.guest!), null);
   assert.equal(state.provider.held.has(taken.id), true);
   void problem;
@@ -411,7 +411,7 @@ test("review 2: a release refuses while a kept snapshot's held copy is not a tem
   const untrusted = { ref: "copy9", host: null, address: null, size: null, data: { box: box.id } };
   state.store.updateRecord(taken.id, { guest: "held-copy", livesOn: untrusted, ref: "copy9", state: "incomplete", error: "Its copy is not a template yet, so bb-box does not trust it." });
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.equal(left?.error, `Release did not finish: The held copy of "kept one", which you kept, guest copy9, is not a template, so bb-box does not trust it, and deleted nothing. Delete that snapshot, then release the box again. bb-box tries again in a few minutes.`);
+  assert.equal(left?.error, `Release did not finish: The held copy of "kept one", which you kept, guest copy9, is not a template, so bb-box does not trust it, and deleted nothing. Delete that snapshot, then release the box again. BB Box tries again in a few minutes.`);
   assert.doesNotMatch(left?.error ?? "", /delete what you kept/, "Release and delete what you kept does not clear a held copy, so it is not offered");
   assert.notEqual(await state.backend.power(box.guest!), null);
 });
@@ -581,7 +581,7 @@ test("a release whose copy outlasts its wait while the provider still makes it l
     throw new Error("Proxmox TASK vzclone failed (504): task did not finish in time.");
   };
   const left = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(left?.error ?? "", /task did not finish in time\. .* may still be making its copy, guest (copy\d+): bb-box waits for that task, and makes the copy a template once it ends well\. bb-box tries again in a few minutes\.$/);
+  assert.match(left?.error ?? "", /task did not finish in time\. .* may still be making its copy, guest (copy\d+): bb-box waits for that task, and makes the copy a template once it ends well\. BB Box tries again in a few minutes\.$/);
   const made = /guest (copy\d+):/.exec(left!.error!)![1]!;
   const cut = state.store.operations({ box: box.id, kind: "hold-copy" })[0]!;
   assert.equal(cut.state, "unknown");
@@ -614,13 +614,13 @@ test("re-review B1: after records loss, every release reads its guest's own labe
   assert.equal(state.store.record(taken.id), null);
   assert.ok(state.provider.held.get(taken.id)!.keptUntil! > state.now);
   const unread = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(unread?.error ?? "", /^Release did not finish: bb-box could not read the labels of box \S+'s snapshots on .*, so it cannot tell whether one is kept, and deleted nothing: one guest snapshot listing is unreadable\. bb-box tries again in a few minutes\.$/i);
+  assert.match(unread?.error ?? "", /^Release did not finish: bb-box could not read the labels of box \S+'s snapshots on .*, so it cannot tell whether one is kept, and deleted nothing: one guest snapshot listing is unreadable\. BB Box tries again in a few minutes\.$/i);
   assert.notEqual(await state.backend.power(box.guest!), null);
   assert.ok(state.provider.held.has(taken.id), "the kept snapshot is still there");
   assert.equal(state.provider.copies.size, 0);
   state.provider.listing = null;
   const unrecorded = await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
-  assert.match(unrecorded?.error ?? "", new RegExp(`label on .* says snapshot ${taken.id} is kept until \\d{4}-\\d{2}-\\d{2}, and bb-box's records do not say so yet, so it deleted nothing\\. bb-box checks its records against the labels at its next sweep\\. bb-box tries again in a few minutes\\.$`));
+  assert.match(unrecorded?.error ?? "", new RegExp(`label on .* says snapshot ${taken.id} is kept until \\d{4}-\\d{2}-\\d{2}, and bb-box's records do not say so yet, so it deleted nothing\\. bb-box checks its records against the labels at its next sweep\\. BB Box tries again in a few minutes\\.$`));
   assert.notEqual(await state.backend.power(box.guest!), null);
   await state.snapshots.sweep();
   assert.notEqual(state.store.record(taken.id)?.keptUntil ?? null, null, "the sweep records the label's keep");

@@ -1540,7 +1540,7 @@ test("a failed release keeps the box releasing with the reason, and the sweep fi
   world.backend.faults.release = new Error("the provider is busy");
   const kept = await world.boxes.release(THREAD, box.name, "the test asked");
   assert.equal(kept?.state, "releasing");
-  assert.match(kept!.error!, /the provider is busy. bb-box tries again/);
+  assert.match(kept!.error!, /the provider is busy. BB Box tries again/);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /being released/);
   const report = await world.boxes.sweep();
   assert.equal(report.resumed, 1);

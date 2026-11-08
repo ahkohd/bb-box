@@ -303,7 +303,7 @@ test("G16: Live keeps reading while the box stops; once the stop is confirmed th
   const stoppedAt = Date.now() - 60_000;
   state.page = () => page(boxView({ state: "stopped", log: { lastStop: { at: stoppedAt, by: { is: "person" } } } } as Partial<BoxView>), { is: "not-running", machineId: null, why: "calm-otter is not running." });
   await slot.behavior.emitRealtime("changed", { threadId: THREAD });
-  await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so BB Box is not reading it\. It stopped 1 min ago, Today /));
+  await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so BB Box is not reading it\. It stopped 1 min ago, today at /));
 });
 
 test("a box bb-box cannot read says the Monitor's words in Activity's frame, which keeps its size with empty charts; one it read before keeps its history", async () => {
@@ -459,7 +459,7 @@ test("a stopped box opens on 24 h with its stops shown, and Live says why it can
   fireEvent.click(live);
   expect(live.getAttribute("aria-checked")).toBe("false");
   const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
-  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Over the last 24 hours, by 10 minutes: CPU averaged 30%, busiest minute 33% between (Today|Yesterday) \d{2}:\d{2} and \d{2}:\d{2}; memory last 50%\. Stopped from (Today|Yesterday) \d{2}:\d{2}\./);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Over the last 24 hours, by 10 minutes: CPU averaged 30%, busiest minute 33% between (today at|yesterday at) \d{2}:\d{2} and \d{2}:\d{2}; memory last 50%\. Stopped from (today at|yesterday at) \d{2}:\d{2}\./);
   expect(usage.querySelector('[data-band="Stopped"]')).toBeTruthy();
   expect(usage.textContent).toContain("Stopped");
   usage.focus();
@@ -481,7 +481,7 @@ test("over 24 h the light band is each step's busiest minute, said where it is 5
   expect(said.textContent).toMatch(/: CPU 30%, busiest minute 78%, Memory 50%$/);
   fireEvent.keyDown(usage, { key: "ArrowLeft" });
   expect(said.textContent).toMatch(/: CPU 30%, Memory 50%; partly read, 2 min of 10 minutes$/);
-  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/busiest minute 78% between (Today|Yesterday) \d{2}:\d{2} and /);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/busiest minute 78% between (today at|yesterday at) \d{2}:\d{2} and /);
 });
 
 test("a refresh that fails keeps the charts, and says so and when they were read, in the words line, the charts' descriptions and aloud, also on a page opened again", async () => {

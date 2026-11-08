@@ -1,4 +1,5 @@
 import { quote } from "../../transports/process.ts";
+import { PRODUCT } from "../../brand.ts";
 import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, MachineSize, SnapshotPlan, SnapshotStorage, Snapshotting, TaskOutcome } from "../types.ts";
 import { named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
 
@@ -555,13 +556,13 @@ export function suspendAboutMs(memoryMiB: number): number {
 export function savedUnder(label: SnapshotLabel | null, saved: boolean, now: { readonly macosBuild: string; readonly tart: string }): string | null {
   if (!label || !saved) return null;
   if (!label.macosBuild || label.macosBuild === "unknown" || !label.tart || label.tart === "unknown") {
-    return "bb-box does not know which macOS build and Tart saved its memory, as the VM was suspended before bb-box noted them, so it does not restore it. Fork it instead, which starts from its disk";
+    return `${PRODUCT} does not know which macOS build and Tart saved its memory, as the VM was suspended before ${PRODUCT} noted them, so it does not restore it. Fork it instead, which starts from its disk`;
   }
   if (now.macosBuild && label.macosBuild !== now.macosBuild) {
-    return `its memory was saved while the Mac ran macOS build ${label.macosBuild}, and the Mac runs ${now.macosBuild} now, so bb-box does not restore it: Virtualization restores a saved state only under the build that saved it. Fork it instead, which starts from its disk`;
+    return `its memory was saved while the Mac ran macOS build ${label.macosBuild}, and the Mac runs ${now.macosBuild} now, so ${PRODUCT} does not restore it: Virtualization restores a saved state only under the build that saved it. Fork it instead, which starts from its disk`;
   }
   if (now.tart && label.tart !== now.tart) {
-    return `its memory was saved by Tart ${label.tart}, and the Mac has Tart ${now.tart} now, so bb-box does not restore it. Fork it instead, which starts from its disk`;
+    return `its memory was saved by Tart ${label.tart}, and the Mac has Tart ${now.tart} now, so ${PRODUCT} does not restore it. Fork it instead, which starts from its disk`;
   }
   return null;
 }

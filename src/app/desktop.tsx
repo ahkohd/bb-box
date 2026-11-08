@@ -2270,6 +2270,12 @@ export function sidebarTitle(thread: { readonly title?: string | null; readonly 
   return thread.title?.trim() || thread.titleFallback?.trim() || "this box's thread";
 }
 
+export function threadGroupHeading(title: string | undefined): string {
+  if (title === undefined) return "Thread";
+  if (!title || title === "this box's thread") return "Untitled thread";
+  return title;
+}
+
 export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   const sdk = useSdk();
   const [titles, setTitles] = useState<Record<string, string>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
@@ -2560,7 +2566,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             ) : null}
             {tab === "threads"
               ? [...groups].map(([threadId, rows]) => {
-                  const heading = titleOf(threadId) ?? "Thread";
+                  const heading = threadGroupHeading(titleOf(threadId));
                   return (
                     <section key={threadId} aria-label={heading} className="overflow-hidden rounded-lg border border-border bg-card">
                       <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">

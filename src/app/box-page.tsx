@@ -26,7 +26,7 @@ import { GpuCard, GpuNotices } from "./gpu-card.tsx";
 import { PageNotice } from "./page-notice.tsx";
 import { gpuFactLines } from "../plugin/gpu-page.ts";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
-import { snapshotWhen } from "./snapshot-words.ts";
+import { snapshotWhen, whenInSentence } from "./snapshot-words.ts";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
 import { PRODUCT } from "./product.ts";
 import {
@@ -680,7 +680,7 @@ function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles:
   const restartSteps = startSteps(box.timings).filter(([step]) => step !== "start.total");
   const by = restart ? actorWords(restart.by, titles) : null;
   const quicker = steps.length - longest.size;
-  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, afterwards !== null ? `Once it was ready, ${PRODUCT} named it for its thread in ${stepTime(afterwards)}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${dayAndClock(box.createdAt, now)}.`].filter(Boolean).join(" ");
+  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, afterwards !== null ? `Once it was ready, ${PRODUCT} named it for its thread in ${stepTime(afterwards)}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${whenInSentence(box.createdAt, now)}.`].filter(Boolean).join(" ");
   return (
     <section aria-labelledby="started-heading" className="rounded-lg border border-border bg-card px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
@@ -711,7 +711,7 @@ function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles:
       <p className="mt-2 text-xs text-subtle-foreground">{summary}</p>
       {restart && restart.readyAt !== null ? (
         <p className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
-          Last started {dayAndClock(restart.askedAt, now)}
+          Last started {whenInSentence(restart.askedAt, now)}
           {by ? `, ${by}` : ""}: ready in {stepTime(restart.readyAt - restart.askedAt)}
           {restartSteps.length ? ` (${restartSteps.map(([step, ms]) => `${stepName(step).toLowerCase()} ${stepTime(ms)}`).join(", ")})` : ""}.
         </p>

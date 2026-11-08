@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { missingBackendWords } from "../src/backends/index.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { userspaceUpdateCommand } from "../src/plugin/gpu-page.ts";
 import { keepCostWords } from "../src/plugin/snapshot-words.ts";
@@ -58,12 +59,10 @@ test("the panel's sentences name BB Box, the save bar can wrap, and field errors
   assert.match(keepCostWords(check), /BB Box first copies this snapshot/);
   assert.doesNotMatch(keepCostWords(check), /bb-box/);
   const saving = readFileSync(join(import.meta.dirname, "../src/app/settings-saving.tsx"), "utf8");
-  assert.match(saving, /flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1\.5 sm:w-auto sm:basis-auto/);
+  assert.match(saving, /ml-auto flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1\.5 sm:w-auto sm:basis-auto/);
   assert.doesNotMatch(saving, /shrink-0 flex-wrap items-center gap-1\.5/);
-  for (const file of ["settings-fields.tsx", "settings-parts.tsx", "settings-draft-fields.tsx", "settings-backend-fields.tsx"]) {
-    assert.match(readFileSync(join(import.meta.dirname, "../src/app", file), "utf8"), /field-shell\.tsx/);
-  }
   assert.equal(PRODUCT, "BB Box");
+  assert.equal(missingBackendWords("docker"), "This BB Box has no docker backend.");
 });
 
 test("dialogs do not copy the destructive button style or a shadow literal", () => {

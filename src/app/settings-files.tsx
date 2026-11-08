@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -182,6 +182,9 @@ export function BoxFilesSection() {
   const draft = useDraft(FILES_PART, "files for every box");
   const [opened, setOpened] = useState<readonly string[]>([]);
   const [removing, setRemoving] = useState<string | null>(null);
+  const remembered = useRef<string | null>(null);
+  if (removing) remembered.current = removing;
+  const pathShown = removing ?? remembered.current;
   const [removed, setRemoved] = useState<string | null>(null);
   const removal = useDialogAction(() => setRemoving(null));
   const files = draft.latest.document.general.files ?? [];
@@ -262,17 +265,17 @@ export function BoxFilesSection() {
             ))}
           </div>
         ) : null}
-        {removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
+        {removing === null && removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
         <SaveBar draft={draft} inline primary="Save files" unplaced={unplacedProblems(draft, placed)} />
       </div>
       <BoxDialog
         open={removing !== null}
-        title={removing ? `Remove ~/${removing}?` : "Nothing to remove"}
+        title={pathShown ? `Remove ~/${pathShown}?` : "Nothing to remove"}
         busy={removal.busy}
         refused={removal.refused}
         onClose={removal.close}
         footer={
-          removing ? (
+          pathShown ? (
             <>
               <DialogButton variant="outline" onClick={removal.close}>
                 Cancel
@@ -281,7 +284,7 @@ export function BoxFilesSection() {
                 danger
                 busyWords="Removing…"
                 onClick={() => {
-                  const path = removing;
+                  const path = pathShown;
                   if (!path) return;
                   void removal.run(async () => {
                     const outcome = await instant.run(writes.removeFile(state, path));

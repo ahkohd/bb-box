@@ -444,7 +444,7 @@ test("070 unit 7: a fork starts with up to 180 s for its first boot, and a fork 
   assert.equal(taken.forkSafe, 9);
   assert.equal(taken.unflushed, "sync: Input/output error");
   const check = await state.snapshots.checkFork(COMMAND, box, standing(box), "unflushed");
-  assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: bb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
+  assert.match(forkCheckText(check), /\nThe snapshot may miss what the box wrote in its last seconds before it: BB Box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so the fork may lack them too\.\n/);
   state.provider.order.length = 0;
   const answer = await state.snapshots.fork(COMMAND, box, standing(box), "unflushed");
   const fork = await forked(state, answer.box);

@@ -16,6 +16,7 @@
 // Storage keys: box/<threadId>/<boxId> holds a BoxRecord, and index/<boxId>
 // holds the thread ID, so a box can be found by its ID alone.
 
+import { PRODUCT } from "../brand.ts";
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { waitingToJoin, type JoinTries } from "./join-tries.ts";
 import { createHash, randomBytes } from "node:crypto";
@@ -2898,7 +2899,7 @@ export class Boxes {
       } catch (error) {
         const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
         failed(words, null);
-        const next = error instanceof ReleaseWaits ? "bb-box tries again in a few minutes." : `bb-box tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
+        const next = error instanceof ReleaseWaits ? `${PRODUCT} tries again in a few minutes.` : `${PRODUCT} tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
         return this.update(box, () => ({ error: `${words} ${next}` }));
       }
     }
@@ -2942,7 +2943,7 @@ export class Boxes {
         const power = await backend.power(box.guest).catch(() => undefined);
         failed(describeError(error, "Releasing the box"), { state: observedState(power), at: this.#now(), from: box.backendLabel });
         return this.update(box, (current) => ({
-          error: `${sentence(describeError(error, "Releasing the box"))} bb-box tries again in a few minutes.`,
+          error: `${sentence(describeError(error, "Releasing the box"))} ${PRODUCT} tries again in a few minutes.`,
           timings: { ...current.timings, ...timings },
         }));
       }

@@ -69,7 +69,9 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && options.force ? { force: true } : {}), ...(method === "release" && options.deleteKept ? { deleteKept: true } : {}) };
     const refused = await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined);
-    setProblem(refused);
+    const shownInDialog = options.force === true || method === "release" || method === "forget";
+    if (!refused) setProblem(null);
+    else if (!shownInDialog) setProblem(refused);
     return refused;
   };
 
@@ -131,7 +133,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
-      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
+      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} busyWords={{ release: "Releasing…", stop: "Stopping…" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
     </div>
   );
 }

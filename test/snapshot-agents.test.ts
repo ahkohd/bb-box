@@ -64,7 +64,7 @@ test("a take or a restore refused only for now says try_again: a host's storage 
   assert.equal(take.message, `bb-box cannot take a snapshot of box ${box.name} now: Proxmox is running a backup on guest 214, which holds its lock (backup). Try again when it ends.`);
   const restore = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
   assert.equal(restore.code, "try_again");
-  assert.match(restore.message, /^bb-box cannot restore box \S+ now: Proxmox is running a backup/);
+  assert.match(restore.message, /^BB Box cannot restore box \S+ now: Proxmox is running a backup/);
   assert.deepEqual(state.provider.order.filter((step) => step === "power-off"), [], "nothing stopped");
 });
 
@@ -77,7 +77,7 @@ test("a box threads run on stays unrestored for everyone until machine restores 
   for (const caller of [COMMAND, AGENT]) {
     const off = await rejection(state.snapshots.restore(caller, box, standing(box), "one", caller.is === "agent" ? {} : { force: true }));
     assert.equal(off.code, "in_use");
-    assert.match(off.message, /stays off until bb-box can hold every turn on it while it restores/);
+    assert.match(off.message, /stays off until BB Box can hold every turn on it while it restores/);
   }
   state.machineRestores = true;
   const unforced = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
@@ -99,8 +99,8 @@ test("G17 in the engine: a turn running on a box threads run on refuses the rest
   state.guard = { threads: [IDLE, WORKING], threadsUnread: null, control: false, terminals: 0 };
   state.provider.order.length = 0;
   const working = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one", { force: true }));
-  assert.match(working.message, /a turn runs on it now: "Fix the sign-in flow" \(working\) is working there, and bb-box changes a box threads run on only while no turn runs on it\./);
-  assert.match(working.message, /bb-box changed nothing\.$/);
+  assert.match(working.message, /a turn runs on it now: "Fix the sign-in flow" \(working\) is working there, and BB Box changes a box threads run on only while no turn runs on it\./);
+  assert.match(working.message, /BB Box changed nothing\.$/);
   assert.deepEqual(state.provider.order, [], "refused before the stop");
   Object.defineProperty(state, "guard", {
     configurable: true,

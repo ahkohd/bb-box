@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type ComponentProps, type FormEvent, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type FormEvent, type ReactNode, type RefObject } from "react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ export function BoxDialog({
   children,
   footer,
   onClose,
+  clearRefused,
   returnTo,
   busy = false,
   refused = null,
@@ -46,6 +47,7 @@ export function BoxDialog({
   children?: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
+  clearRefused?: () => void;
   returnTo?: RefObject<HTMLElement | null>;
   busy?: boolean;
   refused?: string | null;
@@ -56,8 +58,15 @@ export function BoxDialog({
 }) {
   const opener = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
+  const seenOpen = useRef(open);
+  const clearOnClose = useRef(clearRefused);
+  clearOnClose.current = clearRefused;
   if (open && !wasOpen.current) opener.current = rememberOpener();
   wasOpen.current = open;
+  useEffect(() => {
+    if (seenOpen.current && !open) clearOnClose.current?.();
+    seenOpen.current = open;
+  }, [open]);
   const body = (
     <>
       <div className={DIALOG_BODY} {...(busy ? { inert: true } : {})}>
@@ -122,10 +131,10 @@ export function Refused({ words }: { words: string | null }) {
   ) : null;
 }
 
-export function DialogCancel({ children = "Cancel", disabled, ...props }: ComponentProps<typeof AlertDialogCancel>) {
+export function DialogCancel({ children = "Cancel", disabled, className, ...props }: ComponentProps<typeof AlertDialogCancel>) {
   const busy = useDialogBusy();
   return (
-    <AlertDialogCancel className="mt-0 font-normal" disabled={disabled || busy} {...props}>
+    <AlertDialogCancel className={cn("mt-0", className)} disabled={disabled || busy} {...props}>
       {children}
     </AlertDialogCancel>
   );
@@ -134,7 +143,7 @@ export function DialogCancel({ children = "Cancel", disabled, ...props }: Compon
 export function DialogButton({ danger, busyWords, children, disabled, variant, className, type = "button", ...props }: ButtonProps & { danger?: boolean; busyWords?: string }) {
   const busy = useDialogBusy();
   return (
-    <Button type={type} variant={danger ? "destructive" : variant} className={cn("font-normal", className)} disabled={disabled || busy} {...props}>
+    <Button type={type} variant={danger ? "destructive" : variant} className={className} disabled={disabled || busy} {...props}>
       {busy && busyWords ? busyWords : children}
     </Button>
   );

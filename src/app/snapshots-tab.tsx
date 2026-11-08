@@ -1,6 +1,7 @@
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertDialogCancel, AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { DialogButton, DialogCancel } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -198,22 +199,22 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
       onSubmit={onlyClose ? undefined : () => void apply()}
       footer={
         onlyClose ? (
-          <AlertDialogCancel autoFocus>Close</AlertDialogCancel>
+          <DialogCancel autoFocus>Close</DialogCancel>
         ) : stalled && problem && problem !== "Choose a date." ? (
           <>
-            <AlertDialogCancel>Close</AlertDialogCancel>
-            <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
+            <DialogCancel>Close</DialogCancel>
+            <DialogButton type="button" onClick={() => setAttempt((value) => value + 1)}>
               Try again
-            </Button>
+            </DialogButton>
           </>
         ) : (
           <>
-            <AlertDialogCancel autoFocus={change === "delete"} disabled={sending}>
+            <DialogCancel autoFocus={change === "delete"} disabled={sending}>
               Cancel
-            </AlertDialogCancel>
-            <Button type="submit" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count}>
+            </DialogCancel>
+            <DialogButton type="submit" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count}>
               {sending ? (change === "keep" ? "Keeping…" : "Deleting…") : change === "keep" ? (edited ? `Keep ${count} until ${dated ? keepDay(Date.parse(`${until}T12:00:00Z`)) : "…"}` : `Keep ${count}`) : `Delete ${count}`}
-            </Button>
+            </DialogButton>
           </>
         )
       }

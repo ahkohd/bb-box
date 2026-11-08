@@ -20,7 +20,8 @@ import { gpuCardCount, hasGpuReadings, rememberGpuCards, rememberedGpuCards } fr
 import { SHARED_PILL, cardFoot, cardLabel, cardName, cardSlots, gpuMemoryOf, sharedCardWords } from "./gpu-words.ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SettingsLink } from "./settings-link.tsx";
-import { ago, dayAndClock } from "./box-words.ts";
+import { ago } from "./box-words.ts";
+import { whenInSentence } from "./snapshot-words.ts";
 import { AXIS_WIDTH, HistoryChart, SeriesSample, type Band, type ChartSeries } from "./history-chart.tsx";
 import {
   GAP_WORDS,
@@ -803,7 +804,7 @@ function SettingsWord({ children }: { children: ReactNode }) {
 export function notReadWords(box: BoxView, now: number): string {
   if (box.state === "stopped") {
     const stop = box.log?.lastStop;
-    return stop ? `${box.name} is stopped, so ${PRODUCT} is not reading it. It stopped ${ago(stop.at, now)}, ${dayAndClock(stop.at, now)}.` : `${box.name} is stopped, so ${PRODUCT} is not reading it.`;
+    return stop ? `${box.name} is stopped, so ${PRODUCT} is not reading it. It stopped ${ago(stop.at, now)}, ${whenInSentence(stop.at, now)}.` : `${box.name} is stopped, so ${PRODUCT} is not reading it.`;
   }
   return `${box.name} is not running, so ${PRODUCT} is not reading it.`;
 }

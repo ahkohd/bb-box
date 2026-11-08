@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
 import { snapshotGpuWordsFor, type SnapshotGpu } from "./gpu.ts";
 import type { Actor } from "./box-log.ts";
@@ -523,7 +524,7 @@ export function stateWords(snapshot: Pick<SnapshotRecord, "state" | "error" | "h
 }
 
 export function unflushedWords(why: string): string {
-  return `bb-box could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
+  return `${PRODUCT} could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
 }
 
 const FORKING_SYSTEMS: readonly string[] = ["linux", "macos"];

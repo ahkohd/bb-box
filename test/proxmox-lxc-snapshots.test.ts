@@ -290,7 +290,7 @@ test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes b
   made.push(fresh);
   const noRight = await fresh.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
   assert.equal(noRight.restore.way, "none");
-  assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so bb-box cannot restore snapshots there\./);
+  assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so BB Box cannot restore snapshots there\./);
 });
 
 test("a rollback refuses a running guest, records its task before it waits, puts the snapshot's config back, and says when its task failed part way", async () => {
@@ -302,7 +302,7 @@ test("a rollback refuses a running guest, records its task before it waits, puts
   const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
   const running = await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught);
   assert.ok(running instanceof SnapshotFailed);
-  assert.equal((running as Error).message, `Guest ${vmid} is running, and bb-box restores a guest only once it has stopped.`);
+  assert.equal((running as Error).message, `Guest ${vmid} is running, and BB Box restores a guest only once it has stopped.`);
   await state.backend.powerOff(guest);
   assert.equal(state.proxmox.guests.get(vmid)!.status, "stopped");
   state.proxmox.guests.get(vmid)!.config.lock = "backup";

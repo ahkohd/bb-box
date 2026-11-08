@@ -1,7 +1,7 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { AlertDialogCancel, AlertDialogDescription } from "@/components/ui/alert-dialog";
-import { BoxDialog, Refused } from "./box-dialog.tsx";
+import { AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton, DialogCancel, Refused } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import { FieldProblem } from "./field-shell.tsx";
 import type { Actor } from "../core/box-log.ts";
 import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { actorWords, type ThreadTitles } from "./box-words.ts";
+import { actorWords, ago, type ThreadTitles } from "./box-words.ts";
 import { Badge, IconButton, message, StatusDot } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
@@ -22,7 +22,6 @@ import { isMachineName } from "../core/names.ts";
 import { PRODUCT } from "./product.ts";
 import {
   aboutWords,
-  agoWords,
   attentionWords,
   footerWords,
   forkWhyNot,
@@ -468,10 +467,10 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
       onSubmit={() => void take()}
       footer={
         <>
-          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="submit" disabled={sending || !check}>
+          <DialogCancel disabled={sending}>Cancel</DialogCancel>
+          <DialogButton type="submit" disabled={sending || !check}>
             {sending ? "Taking…" : "Take snapshot"}
-          </Button>
+          </DialogButton>
         </>
       }
     >
@@ -545,7 +544,8 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
     onClose();
     nav.go({ page: "box", boxId: answer.box.id, origins: ["from-box"] });
   };
-  const thread = check && !check.asMachine ? (threadTitles[check.threadId] ?? "this box's thread") : null;
+  const named = check && !check.asMachine ? threadTitles[check.threadId] : undefined;
+  const thread = named && named !== "this box's thread" ? named : null;
   const nameWhy = name.trim() && !isMachineName(name.trim()) ? 'A lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".' : null;
   const space = check?.bytes != null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
   return (
@@ -557,10 +557,10 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
       onSubmit={() => void fork()}
       footer={
         <>
-          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="submit" disabled={sending || !check || !!nameWhy}>
+          <DialogCancel disabled={sending}>Cancel</DialogCancel>
+          <DialogButton type="submit" disabled={sending || !check || !!nameWhy}>
             {sending ? "Forking…" : `Fork ${box.name}`}
-          </Button>
+          </DialogButton>
         </>
       }
     >
@@ -656,7 +656,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
   const title = `Restore ${box.name}${row ? ` to "${row.name}"` : ""}?`;
   if (!preview) {
     return (
-      <Shell title={title} onClose={onClose} returnTo={returnTo} footer={<AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>}>
+      <Shell title={title} onClose={onClose} returnTo={returnTo} footer={<DialogCancel autoFocus>Cancel</DialogCancel>}>
         <AlertDialogDescription role="status">Reading what the restore would do and end…</AlertDialogDescription>
       </Shell>
     );
@@ -666,7 +666,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
   const check = preview.check;
   if (preview.refusal || !check) {
     return (
-      <Shell title={`Cannot restore ${box.name}`} onClose={onClose} returnTo={returnTo} footer={<AlertDialogCancel autoFocus>Close</AlertDialogCancel>}>
+      <Shell title={`Cannot restore ${box.name}`} onClose={onClose} returnTo={returnTo} footer={<DialogCancel autoFocus>Close</DialogCancel>}>
         <Refused words={preview.refusal ?? `${PRODUCT} cannot restore it now.`} />
         {threads.length || others.length ? (
           <ul className="list-disc space-y-0.5 pl-5">
@@ -707,12 +707,12 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
       busy={sending}
       footer={
         <>
-          <AlertDialogCancel autoFocus disabled={sending}>
+          <DialogCancel autoFocus disabled={sending}>
             Cancel
-          </AlertDialogCancel>
-          <Button type="button" variant={undo ? "default" : "destructive"} disabled={sending} onClick={() => void restore()}>
+          </DialogCancel>
+          <DialogButton type="button" variant={undo ? "default" : "destructive"} disabled={sending} onClick={() => void restore()}>
             {sending ? "Restoring…" : button}
-          </Button>
+          </DialogButton>
         </>
       }
     >
@@ -720,11 +720,11 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
         <div className="space-y-3">
           {row && device ? (
             <p>
-              Its device goes back to {whenInSentence(row.takenAt, now)}, {agoWords(now - row.takenAt)} ago, with the apps that were open then. Only the device: the rest of {box.name}'s disk stays as it is.
+              Its device goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}, with the apps that were open then. Only the device: the rest of {box.name}'s disk stays as it is.
             </p>
           ) : row ? (
             <p>
-              It goes back to {whenInSentence(row.takenAt, now)}, {agoWords(now - row.takenAt)} ago. Everything on its disk since then goes: files, installed apps and settings.{" "}
+              It goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}. Everything on its disk since then goes: files, installed apps and settings.{" "}
               {memory ? `${box.name} comes back running, as it was then, with the credentials its apps held then.` : `${box.name} restarts, so every process in it ends.`} What it did to the world since stays done.
             </p>
           ) : null}
@@ -814,10 +814,10 @@ function KeepDialog({ box, row, keepDays, onClose, onChanged, returnTo }: { box:
       onSubmit={() => void keep()}
       footer={
         <>
-          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type="submit" disabled={sending || !check || !current}>
+          <DialogCancel disabled={sending}>Cancel</DialogCancel>
+          <DialogButton type="submit" disabled={sending || !check || !current}>
             {sending ? "Keeping…" : check ? `Keep until ${keepDay(check.keptUntil)}` : "Keep"}
-          </Button>
+          </DialogButton>
         </>
       }
     >
@@ -871,12 +871,12 @@ function DeleteDialog({ box, row, onClose, onChanged, onDeleted, returnTo }: { b
       busy={sending}
       footer={
         <>
-          <AlertDialogCancel autoFocus disabled={sending}>
+          <DialogCancel autoFocus disabled={sending}>
             Cancel
-          </AlertDialogCancel>
-          <Button type="button" variant="destructive" disabled={sending} onClick={() => void remove()}>
+          </DialogCancel>
+          <DialogButton type="button" danger disabled={sending} onClick={() => void remove()}>
             {sending ? "Deleting…" : "Delete"}
-          </Button>
+          </DialogButton>
         </>
       }
     >
@@ -915,10 +915,10 @@ function TextDialog({ box, row, kind, onClose, onChanged, returnTo }: { box: Row
       onSubmit={kind === "rename" ? () => void save() : undefined}
       footer={
         <>
-          <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
-          <Button type={kind === "rename" ? "submit" : "button"} disabled={sending || (kind === "rename" && !text.trim())} onClick={kind === "rename" ? undefined : () => void save()}>
+          <DialogCancel disabled={sending}>Cancel</DialogCancel>
+          <DialogButton type={kind === "rename" ? "submit" : "button"} disabled={sending || (kind === "rename" && !text.trim())} onClick={kind === "rename" ? undefined : () => void save()}>
             {sending ? "Saving…" : "Save"}
-          </Button>
+          </DialogButton>
         </>
       }
     >

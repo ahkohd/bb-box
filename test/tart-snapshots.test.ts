@@ -344,7 +344,7 @@ test("a snapshot whose memory was saved under another macOS build or Tart is not
   writeFileSync(join(mac, ".fake-macos-build"), "27B5");
   const plan = await backend.planSnapshots(guest, "macos-desktop", { id: SNAP, ref: SNAP, guest }, signal());
   assert.equal(plan.restore.way, "none");
-  assert.match(plan.restore.why ?? "", /saved while the Mac ran macOS build 27A1, and the Mac runs 27B5 now, so bb-box does not restore it.*Fork it instead/);
+  assert.match(plan.restore.why ?? "", /saved while the Mac ran macOS build 27A1, and the Mac runs 27B5 now, so BB Box does not restore it.*Fork it instead/);
   assert.equal(plan.fork.ok, true, "a fork starts from the disk");
   await backend.stop(guest);
   await assert.rejects(backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /27B5/.test(error.message));
