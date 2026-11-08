@@ -801,7 +801,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       setResizing(true);
     },
   };
-  const opens: BoxOpens = { screen: (_box, screen) => nav.go(viewFromPage(route, screen)), terminal: () => undefined };
+  const opens: BoxOpens = { screen: (_box, screen) => nav.go(viewFromPage(route, screen)), terminal: () => undefined, files: () => undefined };
   const snapshots = page.snapshots ?? null;
   const restoring = !!snapshots?.restoring;
   const snapshotsShown = !!snapshots && box.state !== "acquiring" && (box.state !== "starting" || restoring) && box.state !== "failed" && box.state !== "releasing";

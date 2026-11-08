@@ -21,7 +21,8 @@
         "plug": "./assets/plug.svg",
         "proxmox": "./assets/proxmox.svg",
         "server": "./assets/server.svg",
-        "terminal": "./assets/terminal.svg"
+        "terminal": "./assets/terminal.svg",
+        "folder": "./assets/folder.svg"
       }
     },
     "server": "./server.ts",

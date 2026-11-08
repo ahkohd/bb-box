@@ -14,6 +14,7 @@ import ts from "typescript";
 import { DRIVERS } from "../src/backends/index.ts";
 import { KIND_INFO, kindAliases } from "../src/backends/kinds.ts";
 import type { FieldDescriptor } from "../src/backends/types.ts";
+import { PANEL_FILES_RPC } from "../src/core/box-fs.ts";
 import { CHECKS, type CheckInfo } from "../src/core/checks.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { platformWord, screensOf, type DeviceModel, type Screen } from "../src/core/device.ts";
@@ -308,6 +309,16 @@ function checksPage(): string {
   return `${HEADER}${lines.join("\n")}\n`;
 }
 
+function filesPage(): string {
+  return `${HEADER}${[
+    "# Files",
+    "",
+    "The panel's calls for a box's own files. Each one runs as the box user, through the same command path as the terminal. A device box has none.",
+    "",
+    table(["Call", "What it does"], PANEL_FILES_RPC.map((call) => [`\`${call.name}\``, call.does])),
+  ].join("\n")}\n`;
+}
+
 function indexPage(): string {
   return `${HEADER}${[
     "# Reference",
@@ -319,6 +330,7 @@ function indexPage(): string {
     "- [Configuration](configuration.md): the configuration document, and each backend's fields.",
     "- [Kinds and sizes](kinds.md): the kinds, the backends that offer them, and their sizes.",
     "- [Health checks](checks.md): every check `bb box doctor` can report.",
+    "- [Files](files.md): the panel's calls for a box's own files.",
   ].join("\n")}\n`;
 }
 
@@ -332,6 +344,7 @@ export async function referencePages(): Promise<Record<string, string>> {
     "configuration.md": configurationPage(),
     "kinds.md": kindsPage(),
     "checks.md": checksPage(),
+    "files.md": filesPage(),
   };
 }
 

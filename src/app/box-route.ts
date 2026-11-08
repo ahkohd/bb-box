@@ -4,7 +4,7 @@ export const ORIGINS = ["from-list", "from-box", "from-settings"] as const;
 
 export type Origin = (typeof ORIGINS)[number];
 
-export const VIEWS = ["desktop", "device", "terminal"] as const;
+export const VIEWS = ["desktop", "device", "terminal", "files"] as const;
 
 export type BoxViewName = (typeof VIEWS)[number];
 
@@ -51,7 +51,7 @@ function legacyRoute(threadId: string, boxId: string, rest: readonly string[]): 
   const parts = fromSettings ? rest.slice(0, -1) : rest;
   const origins: Origin[] = fromSettings ? ["from-settings"] : [];
   if (!parts.length) return { page: "view", boxId, view: "desktop", origins, threadId };
-  if (parts.length === 1 && (parts[0] === "device" || parts[0] === "terminal")) return { page: "view", boxId, view: parts[0], origins, threadId };
+  if (parts.length === 1 && (parts[0] === "device" || parts[0] === "terminal" || parts[0] === "files")) return { page: "view", boxId, view: parts[0], origins, threadId };
   return LIST;
 }
 

@@ -45,6 +45,7 @@ import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
+import { BoxFiles } from "./files.tsx";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 import { SetupProgress } from "./first-run.tsx";
@@ -102,7 +103,7 @@ import {
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
-import { ActivityGlyph, BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { ActivityGlyph, BoxGlyph, FolderGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./screens.ts";
 import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
@@ -1090,6 +1091,7 @@ type DesktopViewerProps = {
   page?: PageLink;
   otherViews?: (shown: Screen) => ReactNode;
   openTerminal?: () => void;
+  openFiles?: () => void;
   numbers?: ReactNode;
 };
 
@@ -1098,7 +1100,7 @@ export function DesktopViewer(props: DesktopViewerProps) {
   return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
 }
 
-function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, otherViews, openTerminal, numbers, viewer }: DesktopViewerProps & { viewer: string }) {
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, otherViews, openTerminal, openFiles, numbers, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -1796,6 +1798,12 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
                     Open terminal
                   </DropdownMenuItem>
                 ) : null}
+                {openFiles ? (
+                  <DropdownMenuItem onSelect={openFiles}>
+                    <FolderGlyph />
+                    Open files
+                  </DropdownMenuItem>
+                ) : null}
                 {showing ? (
                   <DropdownMenuItem onSelect={reconnect}>
                     <Icon name="ArrowReloadHorizontal" aria-hidden />
@@ -2249,8 +2257,10 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const machineId = box && reach?.is === "read" ? reach.machineId : null;
   const numbers = (everyWidth: boolean) => (box && machineId ? <BarNumbers key={machineId} machineId={machineId} name={box.name} page={pageLink} everyWidth={everyWidth} /> : null);
   if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} numbers={numbers(false)} />;
+  if (route.view === "files") return <BoxFiles threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} />;
   const legacyDesktop = route.threadId !== null && route.view === "desktop";
   const terminalOpens = box !== null && otherViewsNow(box, route.view).some((choice) => choice.view === "terminal");
+  const filesOpens = box !== null && otherViewsNow(box, route.view).some((choice) => choice.view === "files");
   return (
     <DesktopViewer
       threadId={threadId}
@@ -2261,6 +2271,7 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
       page={pageLink}
       otherViews={otherScreens}
       openTerminal={terminalOpens ? () => switchTo("terminal") : undefined}
+      openFiles={filesOpens ? () => switchTo("files") : undefined}
       numbers={numbers(true)}
     />
   );
@@ -2338,6 +2349,10 @@ function rowWays(nav: BoxesNav, opens: BoxOpens, leave: (boxId: string) => void)
       terminal: (box) => {
         leave(box.id);
         opens.terminal(box);
+      },
+      files: (box) => {
+        leave(box.id);
+        opens.files(box);
       },
     },
     leave,

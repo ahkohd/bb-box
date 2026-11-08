@@ -85,6 +85,15 @@ export function HighResolutionGlyph(props: Props) {
   );
 }
 
+/** A folder. */
+export function FolderGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </Stroked>
+  );
+}
+
 /** A terminal. */
 export function TerminalGlyph(props: Props) {
   return (

@@ -10,6 +10,8 @@ import { BoxesPanel } from "./src/app/panel.tsx";
 import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
 import { TERMINAL_ACTION, TerminalPanel } from "./src/app/terminal.tsx";
+import { FILES_ACTION } from "./src/app/files-open.ts";
+import { FilesPanel } from "./src/app/files.tsx";
 import { registerMonitor } from "./src/app/monitor/status.tsx";
 import { RestoreForm } from "./src/app/restore-form.tsx";
 import { RESTORE_FORM } from "./src/plugin/restore-form.ts";
@@ -39,6 +41,13 @@ export default definePluginApp((app) => {
     title: "Terminal",
     icon: "bb-box/terminal",
     component: TerminalPanel,
+    layout: "flush",
+  });
+  app.slots.threadPanelAction({
+    id: FILES_ACTION,
+    title: "Files",
+    icon: "bb-box/folder",
+    component: FilesPanel,
     layout: "flush",
   });
   app.slots.navPanel({

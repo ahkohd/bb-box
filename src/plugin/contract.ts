@@ -4,6 +4,7 @@ import type { Busy } from "../monitor/busy.ts";
 import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
+import type { FilesHome, FilesList, FilesNames, FilesOk, FilesRange, FilesRead, FilesSearch, FilesWrite } from "../core/box-fs.ts";
 import { z } from "zod";
 import { isMachineName } from "../core/names.ts";
 import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
@@ -399,6 +400,19 @@ export const contract = defineRpcContract({
   "monitor.machines": { input: z.null(), output: z.object({ machines: z.array(machineSchema) }) },
   "monitor.machine": { input: z.object({ machineId: z.string().min(1), force: z.boolean() }), output: snapshotSchema },
   "monitor.alerts": { input: z.null(), output: monitorStatusSchema },
+  "files.home": { input: z.object({ box: z.string().min(1) }), output: z.custom<FilesHome>() },
+  "files.list": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096) }), output: z.custom<FilesList>() },
+  "files.read": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096) }), output: z.custom<FilesRead>() },
+  "files.readRange": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096), start: z.number().int().min(0), length: z.number().int().min(1).max(262144) }), output: z.custom<FilesRange>() },
+  "files.write": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096), content: z.string().max(4_500_000), expectedSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable() }), output: z.custom<FilesWrite>() },
+  "files.create": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096), kind: z.enum(["file", "directory"]) }), output: z.custom<FilesOk>() },
+  "files.rename": { input: z.object({ box: z.string().min(1), from: z.string().min(1).max(4096), to: z.string().min(1).max(4096) }), output: z.custom<FilesOk>() },
+  "files.delete": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096), home: z.string().min(1).max(4096) }), output: z.custom<FilesOk>() },
+  "files.search": {
+    input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096), query: z.string().max(1000), matchCase: z.boolean(), wholeWord: z.boolean(), regex: z.boolean(), hidden: z.boolean() }),
+    output: z.custom<FilesSearch>(),
+  },
+  "files.names": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096) }), output: z.custom<FilesNames>() },
 });
 
 export type Contract = typeof contract;

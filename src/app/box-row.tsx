@@ -11,6 +11,7 @@ import { DESKTOP_PAGE, MACHINES_TAB, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { useOpenTerminal } from "./terminal.tsx";
+import { useOpenFiles } from "./files-open.ts";
 import { BoxGlyph } from "./glyphs.tsx";
 import { openActions, openableNow, type BoxOpens } from "./box-opens.tsx";
 import { useResizeNote } from "./resize.tsx";
@@ -123,8 +124,10 @@ export function BoxRow({
   const navigate = useBbNavigate();
   const openInPanel = useOpenScreen(threadId);
   const terminalInPanel = useOpenTerminal();
+  const filesInPanel = useOpenFiles();
   const openScreen = opens?.screen ?? openInPanel;
   const openTerminal = opens?.terminal ?? terminalInPanel;
+  const openFiles = opens?.files ?? filesInPanel;
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [resizing, setResizing] = useState(false);
   const resizeNote = useResizeNote(box, resizing);
@@ -147,7 +150,7 @@ export function BoxRow({
   const compact = useIsCompactViewport();
   const stops = !held && box.canStopStart && unreachableWhy(box) === null;
   const quickActions = [
-    ...openableNow(openActions(box, { screen: openScreen, terminal: openTerminal })).map((action) => <IconButton key={action.key} label={action.words} icon={action.glyph()} onClick={action.open} />),
+    ...openableNow(openActions(box, { screen: openScreen, terminal: openTerminal, files: openFiles })).map((action) => <IconButton key={action.key} label={action.words} icon={action.glyph()} onClick={action.open} />),
     ...(stops && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
     ...(stops && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
   ];
@@ -250,7 +253,7 @@ export function BoxRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
-        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method, options) => void run(method, options) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
+        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method, options) => void run(method, options) }} opens={{ screen: openScreen, terminal: openTerminal, files: openFiles }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
         {page ? <RowChevron page={page} /> : null}
       </span>
     </div>

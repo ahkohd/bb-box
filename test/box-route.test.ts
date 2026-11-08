@@ -17,6 +17,7 @@ test("each path of 069 section 1 reads as its route and back, innermost origin f
     [`box/${BOX}/desktop`, boxView(BOX, "desktop")],
     [`box/${BOX}/device/from-list`, boxView(BOX, "device", ["from-list"])],
     [`box/${BOX}/terminal/from-box`, boxView(BOX, "terminal", ["from-box"])],
+    [`box/${BOX}/files/from-list`, boxView(BOX, "files", ["from-list"])],
     [`box/${BOX}/desktop/from-box/from-settings`, boxView(BOX, "desktop", ["from-box", "from-settings"])],
     [`box/${BOX}/desktop/from-box/from-list`, boxView(BOX, "desktop", ["from-box", "from-list"])],
   ];
@@ -30,8 +31,9 @@ test("old paths keep working, with and without from-settings", () => {
   assert.deepEqual(routeOf(`thr_1/${BOX}`), { page: "view", boxId: BOX, view: "desktop", origins: [], threadId: "thr_1" });
   assert.deepEqual(routeOf(`thr_1/${BOX}/device`), { page: "view", boxId: BOX, view: "device", origins: [], threadId: "thr_1" });
   assert.deepEqual(routeOf(`operator/${BOX}/terminal/from-settings`), { page: "view", boxId: BOX, view: "terminal", origins: ["from-settings"], threadId: "operator" });
+  assert.deepEqual(routeOf(`thr_1/${BOX}/files`), { page: "view", boxId: BOX, view: "files", origins: [], threadId: "thr_1" });
   assert.deepEqual(routeOf(`operator/${BOX}/from-settings`), { page: "view", boxId: BOX, view: "desktop", origins: ["from-settings"], threadId: "operator" });
-  for (const path of [`thr_1/${BOX}`, `thr_1/${BOX}/device`, `operator/${BOX}/terminal/from-settings`]) assert.equal(subPathOf(routeOf(path)), path);
+  for (const path of [`thr_1/${BOX}`, `thr_1/${BOX}/device`, `operator/${BOX}/terminal/from-settings`, `thr_1/${BOX}/files`]) assert.equal(subPathOf(routeOf(path)), path);
   assert.equal(subPathOf(otherView(routeOf(`thr_1/${BOX}/device`) as never, "desktop")), `box/${BOX}/desktop`, "a switch from an old path names its view, as the old desktop path shows whichever screen was last shown");
   assert.equal(subPathOf(otherView(routeOf(`operator/${BOX}/from-settings`) as never, "terminal")), `box/${BOX}/terminal/from-settings`, "and keeps from-settings");
 });

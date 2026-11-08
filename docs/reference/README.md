@@ -9,3 +9,4 @@ Made from the code, so it says what this version of bb-box does.
 - [Configuration](configuration.md): the configuration document, and each backend's fields.
 - [Kinds and sizes](kinds.md): the kinds, the backends that offer them, and their sizes.
 - [Health checks](checks.md): every check `bb box doctor` can report.
+- [Files](files.md): the panel's calls for a box's own files.
