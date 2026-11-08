@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -116,6 +116,7 @@ test("a guarded write leaves a file that changed, and an overwrite replaces it",
   writeFileSync(path, "one\n");
   const opened = sha("one\n");
   writeFileSync(path, "two\n");
+  chmodSync(path, 0o640);
   const before = statSync(path);
   const run = shRun();
   const conflict = await writeFileAt(linux, path, "three\n", opened, run);
@@ -126,6 +127,7 @@ test("a guarded write leaves a file that changed, and an overwrite replaces it",
   assert.equal(statSync(path).ino, before.ino);
   assert.equal(statSync(path).mode, before.mode);
   assert.equal(readFileSync(`${path}.conflict`, "utf8"), "three\n");
+  assert.equal(statSync(`${path}.conflict`).mode & 0o777, 0o640);
   const replaced = await writeFileAt(linux, path, "three\n", null, run);
   assert.equal(replaced.error, null);
   assert.equal(replaced.outcome, "written");
@@ -162,6 +164,8 @@ test("a Windows write compares the hash and can refuse", () => {
   assert.match(script, /CreateNew/);
   assert.doesNotMatch(script, /\$bbFilesAside/);
   assert.match(script, /Get-FileHash -Algorithm SHA256 -LiteralPath \$bbFilesTmp/);
+  assert.match(script, /\$ErrorActionPreference = 'Stop'/);
+  assert.equal((script.match(/try \{ \[IO\.File\]::Copy\(\$bbFilesTmp, \$bbFilesPath, \$true\) \} catch/g) ?? []).length, 2);
   assert.equal(singleQuoted(script).some((part) => part.includes("`t")), false);
   assert.doesNotMatch(script, /printenv|Get-ChildItem Env:/);
 });
@@ -523,6 +527,83 @@ test("a conflict file that is a link is not followed", async () => {
   assert.equal(readFileSync(`${path}.conflict-2`, "utf8"), "three\n");
 });
 
+function lnThatTakesTheConflictName(dir: string, kind: "dir" | "link"): string {
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(dir, "kind"), kind);
+  writeFileSync(
+    join(bin, "ln"),
+    `#!/bin/sh
+list=\$(mktemp)
+for arg in "\$@"; do printf '%s\\n' "\$arg" >> "\$list"; done
+dest=\$(tail -n 1 "\$list")
+case "\$dest" in
+  *.bbprobe) rm -f "\$list"; exit 1 ;;
+  *.conflict)
+    if [ ! -e "\$dest" ] && [ ! -L "\$dest" ]; then
+      if [ "\$(cat '${dir}/kind')" = link ]; then mkdir "\$dest.dir"; /bin/ln -s "\$dest.dir" "\$dest"; else mkdir "\$dest"; fi
+    fi
+    ;;
+esac
+set --
+while IFS= read -r arg; do
+  [ "\$arg" = -T ] && continue
+  set -- "\$@" "\$arg"
+done < "\$list"
+rm -f "\$list"
+exec /bin/ln "\$@"
+`,
+  );
+  chmodSync(join(bin, "ln"), 0o755);
+  return bin;
+}
+
+test("a conflict name that appears as a directory, or a link to one, is left alone", async () => {
+  for (const kind of ["dir", "link"] as const) {
+    const dir = tempDir(`fs-conflict-${kind}`);
+    const path = join(dir, "note.txt");
+    writeFileSync(path, "two\n");
+    const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun({ PATH: `${lnThatTakesTheConflictName(dir, kind)}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
+    assert.equal(answer.error, null);
+    assert.equal(answer.outcome, "conflict");
+    assert.equal(readFileSync(path, "utf8"), "two\n");
+    if (kind === "dir") {
+      assert.equal(lstatSync(`${path}.conflict`).isDirectory(), true);
+      assert.deepEqual(readdirSync(`${path}.conflict`), []);
+    } else {
+      assert.equal(lstatSync(`${path}.conflict`).isSymbolicLink(), true);
+      assert.deepEqual(readdirSync(`${path}.conflict.dir`), []);
+    }
+    assert.equal(readFileSync(`${path}.conflict-2`, "utf8"), "three\n");
+  }
+  assert.match(writeScript("linux", "/tmp/note.txt", "abc", "guard"), /ln -T /);
+});
+
+test("a conflict file is still written when the box cannot make a hard link", async () => {
+  const dir = tempDir("fs-nolink");
+  const path = join(dir, "note.txt");
+  writeFileSync(path, "two\n");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ln"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "ln"), 0o755);
+  const answer = await writeFileAt(linux, path, "three\n", sha("one\n"), shRun({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }));
+  assert.equal(answer.error, null);
+  assert.equal(answer.outcome, "conflict");
+  assert.equal(readFileSync(path, "utf8"), "two\n");
+  assert.equal(readFileSync(`${path}.conflict`, "utf8"), "three\n");
+  assert.match(writeScript("linux", path, "abc", "guard"), /set -C/);
+});
+
+test("a write that does not finish is a failure", async () => {
+  const crashed: FsRun = async () => ({ exitCode: 1, stdout: `WRITTEN\t${sha("x\n")}\t2\n`, stderr: "", timedOut: false, truncated: false });
+  const bad = await writeFileAt(linux, "/tmp/note.txt", "x\n", null, crashed);
+  assert.match(bad.error ?? "", /could not/);
+  const blank: FsRun = async () => ({ exitCode: 0, stdout: "\n", stderr: "", timedOut: false, truncated: false });
+  const missing = await writeFileAt(linux, "/tmp/note.txt", "x\n", null, blank);
+  assert.match(missing.error ?? "", /could not/);
+});
+
 test("the saved hash is the text that was sent, even when the file changes as it is written", async () => {
   const dir = tempDir("fs-token");
   const path = join(dir, "note.txt");
@@ -611,6 +692,42 @@ test("a search that is cut short keeps the first hits", async () => {
   assert.match(bad.error ?? "", /cannot be read/);
 });
 
+test("a file name with a colon stays intact in a search", async () => {
+  const dir = tempDir("fs-colon");
+  const name = "notes:2026.txt";
+  writeFileSync(join(dir, name), "a\nb\nneedle\n");
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  for (const way of searchWays()) {
+    const found = await searchDirectory(linux, dir, "needle", flags, shRun(way.env), new SearchCorpus(), () => undefined);
+    assert.equal(found.error, null);
+    if (found.error) return;
+    assert.equal(found.engine, way.engine);
+    assert.equal(found.hits[0]?.path, name);
+    assert.equal(found.hits[0]?.line, 3);
+    assert.equal(found.hits[0]?.preview.includes("needle"), true);
+  }
+  const parsed = parseSearch(`ENGINE\tgrep\nnotes:2026.txt${"\0"}3:needle\n`, "linux");
+  assert.equal(parsed.error, null);
+  if (!parsed.error) {
+    assert.equal(parsed.hits[0]?.path, name);
+    assert.equal(parsed.hits[0]?.line, 3);
+  }
+});
+
+test("search finds a file that git would ignore", async () => {
+  const dir = tempDir("fs-ignore");
+  writeFileSync(join(dir, ".gitignore"), "secret.txt\n");
+  writeFileSync(join(dir, "secret.txt"), "needle\n");
+  const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
+  assert.match(searchScript("linux", dir, "needle", flags), /--no-ignore/);
+  for (const way of searchWays()) {
+    const found = await searchDirectory(linux, dir, "needle", flags, shRun(way.env), new SearchCorpus(), () => undefined);
+    assert.equal(found.error, null);
+    if (found.error) return;
+    assert.equal(found.hits.some((hit) => hit.path === "secret.txt"), true);
+  }
+});
+
 test("forty-one matches in one file are marked truncated, and forty are not", async () => {
   const dir = tempDir("fs-per-file");
   const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
@@ -638,14 +755,16 @@ test("a Windows search builds the hidden-file test in the script, and PowerShell
   const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
   const shown = searchScript("windows", "C:\\Users\\box", "the", flags);
   const hidden = searchScript("windows", "C:\\Users\\box", "the", { ...flags, hidden: true });
+  assert.match(shown, /--no-ignore/);
+  assert.match(shown, /--null/);
   assert.doesNotMatch(shown, /flags\.hidden/);
   assert.doesNotMatch(hidden, /flags\.hidden/);
-  assert.match(shown, /\$_\.FullName\.Substring\(\$bbFilesRoot\.Length\) -notmatch/);
+  assert.match(shown, /\('\\' \+ \$_\.FullName\.Substring\(\$bbFilesRoot\.Length\)\) -notmatch '\\\\\\.'/);
   assert.match(hidden, /-and \(\$true\)/);
   const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
   if (pwsh.error || pwsh.status !== 0) return;
   const check = "$script = [Console]::In.ReadToEnd(); $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors); if ($errors -and $errors.Count -gt 0) { $errors | ForEach-Object { $_.ToString() }; exit 1 }";
-  for (const script of [shown, hidden]) {
+  for (const script of [shown, hidden, writeScript("windows", "C:\\Users\\box\\note.txt", "abc", "guard")]) {
     const parsed = spawnSync("pwsh", ["-NoProfile", "-Command", check], { input: script, encoding: "utf8" });
     assert.equal(parsed.status, 0, `${parsed.stdout}\n${parsed.stderr}`);
   }

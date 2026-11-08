@@ -31,7 +31,7 @@ New file and New folder sit with the tree's other icons. They create in the fold
 
 ## Search
 
-Search in files is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit inside the right edge of the field. It uses ripgrep when the box has it, and grep otherwise. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.
+Search in files is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit inside the right edge of the field. It uses ripgrep when the box has it, and grep otherwise. Ripgrep is asked not to skip ignored files, so the two agree. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.
 
 Go to a file by name with Ctrl or Command with P. Find in the open file with Ctrl or Command with F. The find bar sits above the file. Focus the search with Ctrl or Command with Shift and F. Escape closes go to file, then find in the file.
 
@@ -39,6 +39,6 @@ The first search runs in the box. A later search of the same folder can use text
 
 ## What an agent uses
 
-Agents do not use this view. They run commands with the `box_run` tool, or use the terminal. See [agent tools](../reference/tools.md).
+There is no agent tool for a box's files. A call from another plugin is refused. The view opens the same boxes as the terminal. An agent reads or changes a file with the `box_run` tool, or uses the terminal. See [agent tools](../reference/tools.md).
 
 The view runs as the box user, through the same path as the terminal. It can read and change only what that user can. What it reads is not written to a log.

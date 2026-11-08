@@ -235,6 +235,19 @@ export function writeScript(os: GuestOs, path: string, expected: string, mode: W
 
 function posixKeep(): string {
   return (
+    "bb_files_ino() { stat -c '%i' \"$1\" 2>/dev/null || stat -f '%i' \"$1\" 2>/dev/null || echo 0; }\n" +
+    "bb_files_bits() { stat -c '%a' \"$1\" 2>/dev/null || stat -f '%OLp' \"$1\" 2>/dev/null || echo 644; }\n" +
+    "bb_files_link() {\n" +
+    "  bb_files_ok=0\n" +
+    "  if ln -T \"$1\" \"$1.bbprobe\" 2>/dev/null; then\n" +
+    "    rm -f \"$1.bbprobe\"\n" +
+    "    if ln -T \"$1\" \"$2\" 2>/dev/null; then bb_files_ok=1; fi\n" +
+    "  else\n" +
+    "    if ln \"$1\" \"$2\" 2>/dev/null; then bb_files_ok=1; fi\n" +
+    "  fi\n" +
+    "  if [ \"$bb_files_ok\" -eq 1 ]; then return 0; fi\n" +
+    "  return 1\n" +
+    "}\n" +
     "bb_files_keep() {\n" +
     "  bb_files_n=0\n" +
     "  while [ \"$bb_files_n\" -lt 100 ]; do\n" +
@@ -245,7 +258,26 @@ function posixKeep(): string {
     "    if [ -e \"$bb_files_slot\" ] || [ -L \"$bb_files_slot\" ]; then continue; fi\n" +
     "    bb_files_hold=$(mktemp \"$(dirname -- \"$1\")/.bb-files.XXXXXX\") || return 1\n" +
     "    cat < \"$2\" > \"$bb_files_hold\" || { rm -f \"$bb_files_hold\"; return 1; }\n" +
-    "    if ln \"$bb_files_hold\" \"$bb_files_slot\" 2>/dev/null; then rm -f \"$bb_files_hold\"; return 0; fi\n" +
+    "    if [ -f \"$1\" ]; then chmod \"$(bb_files_bits \"$1\")\" \"$bb_files_hold\" 2>/dev/null || true; fi\n" +
+    "    if bb_files_link \"$bb_files_hold\" \"$bb_files_slot\"; then\n" +
+    "      if [ -f \"$bb_files_slot\" ] && [ ! -L \"$bb_files_slot\" ]; then\n" +
+    "        bb_files_a=$(bb_files_ino \"$bb_files_hold\")\n" +
+    "        bb_files_b=$(bb_files_ino \"$bb_files_slot\")\n" +
+    "        if [ \"$bb_files_a\" = \"$bb_files_b\" ] && [ \"$bb_files_a\" != 0 ]; then rm -f \"$bb_files_hold\"; return 0; fi\n" +
+    "      fi\n" +
+    "      bb_files_inner=\"$bb_files_slot/$(basename \"$bb_files_hold\")\"\n" +
+    "      if [ -f \"$bb_files_inner\" ] && [ ! -L \"$bb_files_inner\" ]; then\n" +
+    "        bb_files_a=$(bb_files_ino \"$bb_files_hold\")\n" +
+    "        bb_files_b=$(bb_files_ino \"$bb_files_inner\")\n" +
+    "        if [ \"$bb_files_a\" = \"$bb_files_b\" ] && [ \"$bb_files_a\" != 0 ]; then rm -f \"$bb_files_inner\"; fi\n" +
+    "      fi\n" +
+    "    elif [ ! -e \"$bb_files_slot\" ] && [ ! -L \"$bb_files_slot\" ]; then\n" +
+    "      if (set -C; cat < \"$bb_files_hold\" > \"$bb_files_slot\"); then\n" +
+    "        chmod \"$(bb_files_bits \"$bb_files_hold\")\" \"$bb_files_slot\" 2>/dev/null || true\n" +
+    "        rm -f \"$bb_files_hold\"\n" +
+    "        return 0\n" +
+    "      fi\n" +
+    "    fi\n" +
     "    rm -f \"$bb_files_hold\"\n" +
     "  done\n" +
     "  return 1\n" +
@@ -302,6 +334,7 @@ function posixWrite(path: string, expected: string, mode: WriteMode): string {
 
 function windowsWrite(path: string, expected: string, mode: WriteMode): string {
   return (
+    "$ErrorActionPreference = 'Stop'; " +
     `$bbFilesPath = ${ps(path)}; $bbFilesMode = ${ps(mode)}; $bbFilesExpected = ${ps(expected)}; ` +
     "function BbFilesKeep($bbFilesLive, $bbFilesFrom) { " +
     "$bbFilesSlots = @($bbFilesLive + '.conflict'); " +
@@ -322,14 +355,14 @@ function windowsWrite(path: string, expected: string, mode: WriteMode): string {
     "if ($bbFilesNow -ne $bbFilesExpected) { " +
     "if (-not (BbFilesKeep $bbFilesPath $bbFilesTmp)) { Remove-Item -LiteralPath $bbFilesTmp -Force; \"ERR`tfailed\"; exit 0 }; " +
     "Remove-Item -LiteralPath $bbFilesTmp -Force; \"CONFLICT`t$bbFilesNow\"; exit 0 } }; " +
-    "[IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true) " +
+    "try { [IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true) } catch { Remove-Item -LiteralPath $bbFilesTmp -Force -ErrorAction SilentlyContinue; \"ERR`tfailed\"; exit 0 } " +
     "} elseif ($bbFilesMode -eq 'guard') { " +
     "if (-not (BbFilesKeep $bbFilesPath $bbFilesTmp)) { Remove-Item -LiteralPath $bbFilesTmp -Force; \"ERR`tfailed\"; exit 0 }; " +
     "Remove-Item -LiteralPath $bbFilesTmp -Force; \"CONFLICT`t\"; exit 0 } " +
     "else { " +
     "$bbFilesDir = [IO.Path]::GetDirectoryName($bbFilesPath); " +
     "if ($bbFilesDir) { [void][IO.Directory]::CreateDirectory($bbFilesDir) }; " +
-    "[IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true) }; " +
+    "try { [IO.File]::Copy($bbFilesTmp, $bbFilesPath, $true) } catch { Remove-Item -LiteralPath $bbFilesTmp -Force -ErrorAction SilentlyContinue; \"ERR`tfailed\"; exit 0 } }; " +
     "$bbFilesHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $bbFilesTmp).Hash.ToLower(); " +
     "$bbFilesSize = (Get-Item -LiteralPath $bbFilesTmp).Length; " +
     "Remove-Item -LiteralPath $bbFilesTmp -Force; " +
@@ -423,6 +456,8 @@ function posixSearch(root: string, query: string, flags: SearchFlags): string {
   const smart = flags.matchCase || /[A-Z]/.test(query);
   const rgFlags = [
     "--json",
+    "--null",
+    "--no-ignore",
     "--max-columns",
     "240",
     "--max-filesize",
@@ -459,8 +494,10 @@ function posixSearch(root: string, query: string, flags: SearchFlags): string {
     "  if [ \"$bb_files_status\" -gt 1 ]; then printf 'ERR\\tfailed\\n'; fi\n" +
     "else\n" +
     "  bb_files_bin=\n" +
+    "  bb_files_nul=\n" +
     "  grep --help 2>&1 | grep -q binary-files && bb_files_bin=--binary-files=without-match\n" +
-    `  grep -RInH $bb_files_bin --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor ${hidden} ${grepCase} ${grepFixed} ${grepWord} -m ${SEARCH_PER_FILE + 1} -e ${sh(query)} . > \"$bb_files_tmp\" 2>/dev/null\n` +
+    "  grep --help 2>&1 | grep -q -- '-Z' && bb_files_nul=-Z\n" +
+    `  grep -RInH $bb_files_nul $bb_files_bin --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor ${hidden} ${grepCase} ${grepFixed} ${grepWord} -m ${SEARCH_PER_FILE + 1} -e ${sh(query)} . > \"$bb_files_tmp\" 2>/dev/null\n` +
     "  bb_files_status=$?\n" +
     "  printf 'ENGINE\\tgrep\\n'\n" +
     "  cat \"$bb_files_tmp\"\n" +
@@ -482,7 +519,7 @@ function windowsSearch(root: string, query: string, flags: SearchFlags): string 
   ]
     .filter(Boolean)
     .join(" ");
-  const hiddenTest = flags.hidden ? "$true" : "$_.FullName.Substring($bbFilesRoot.Length) -notmatch '\\\\.'";
+  const hiddenTest = flags.hidden ? "$true" : "('\\' + $_.FullName.Substring($bbFilesRoot.Length)) -notmatch '\\\\\\.'";
   return (
     `$bbFilesRoot = ${ps(root)}; $bbFilesQuery = ${ps(query)}; ` +
     "$bbFilesRegex = " +
@@ -495,7 +532,7 @@ function windowsSearch(root: string, query: string, flags: SearchFlags): string 
     "if (-not (Test-Path -LiteralPath $bbFilesRoot -PathType Container)) { \"ERR`tunreadable\"; exit 0 }; " +
     "Set-Location -LiteralPath $bbFilesRoot; " +
     "if (Get-Command rg -ErrorAction SilentlyContinue) { " +
-    "\"ENGINE`trg\"; & rg --json --max-columns 240 --max-filesize " +
+    "\"ENGINE`trg\"; & rg --json --null --no-ignore --max-columns 240 --max-filesize " +
     String(SEARCH_FILE_BYTES) +
     " -g '!.git/**' -g '!node_modules/**' -g '!vendor/**' " +
     rgExtra +

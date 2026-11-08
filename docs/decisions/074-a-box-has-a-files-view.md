@@ -20,6 +20,6 @@ A box's files are not the thread's workspace. They are the box user's own files,
 ## Consequences
 
 - The panel gains a Files tab beside the thread, a Files button on a box's row and on its page, and a files view on the Boxes page. The tab opens at the box user's home. A path bar goes anywhere that user can read.
-- The calls are the panel's RPC: `files.home`, `files.list`, `files.read`, `files.readRange`, `files.write`, `files.create`, `files.rename`, `files.delete`, `files.search` and `files.names`. Each is one command in the box.
+- The calls are `files.home`, `files.list`, `files.read`, `files.readRange`, `files.write`, `files.create`, `files.rename`, `files.delete`, `files.search` and `files.names`. Each is one command in the box. There is no agent tool for them. A call from another plugin is refused. They open the same boxes as the terminal.
 - The plugin's copyright and permission notice is kept on the [Third-party software](../../THIRD-PARTY.md) page.
 - A file name that contains a newline is not listed. Search skips `.git`, `node_modules` and `vendor`.

@@ -359,14 +359,16 @@ function rgHit(line: string, os: GuestOs): FsHit | null {
 }
 
 function grepHit(line: string, os: GuestOs): FsHit | null {
-  const first = line.indexOf(":");
-  const second = line.indexOf(":", first + 1);
-  if (first < 1 || second < 0) return null;
-  const lineNo = Number(line.slice(first + 1, second));
+  const nul = line.indexOf("\0");
+  const marked = nul >= 0 ? { path: line.slice(0, nul), rest: line.slice(nul + 1) } : null;
+  const first = marked ? marked.rest.indexOf(":") : line.indexOf(":");
+  const second = marked ? first : line.indexOf(":", first + 1);
+  if (marked ? first < 0 : first < 1 || second < 0) return null;
+  const lineNo = Number((marked ? marked.rest : line).slice(marked ? 0 : first + 1, marked ? first : second));
   if (!Number.isInteger(lineNo)) return null;
-  const path = slashes(line.slice(0, first).replace(/^\.\//, ""), os);
-  const preview = line.slice(second + 1).slice(0, 240);
-  return { path, line: lineNo, column: 1, preview };
+  const raw = marked ? marked.path : line.slice(0, first);
+  const preview = (marked ? marked.rest : line).slice((marked ? first : second) + 1).slice(0, 240);
+  return { path: slashes(raw.replace(/^\.\//, ""), os), line: lineNo, column: 1, preview };
 }
 
 export function parseNames(stdout: string, os: GuestOs): FilesNames {
@@ -718,7 +720,10 @@ export async function writeFileAt(box: FsBox, path: string, content: string, exp
   if (mode === "guard" && !HASH.test(expectedSha256 ?? "")) return { error: words("bad-hash") };
   const result = await checked(run, writeScript(box.os, abs, expectedSha256 ?? "", mode), { stdin: Buffer.from(content), timeoutMs: 20_000, maxOutputBytes: SMALL_OUT });
   if (!isResult(result)) return result;
-  return parseWrite(result.stdout);
+  if (result.exitCode !== 0) return { error: failureWords(result) };
+  const parsed = parseWrite(result.stdout);
+  if (parsed.error === null && parsed.outcome !== "written" && parsed.outcome !== "conflict") return { error: words("failed") };
+  return parsed;
 }
 
 export async function createPath(box: FsBox, path: string, kind: "file" | "directory", run: FsRun): Promise<FilesOk> {
