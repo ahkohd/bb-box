@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { CardRoom, GpuResizing, GpuRoom } from "../src/backends/types.ts";
-import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, gpuWaysLine, withGpuPrograms, type GpuFormOffer } from "../src/app/gpu-choice.ts";
+import { GPU_LINE_CLASS, GPU_MENU_LABELS, cardReachLine, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, gpuWaysLine, withGpuPrograms, type GpuFormOffer } from "../src/app/gpu-choice.ts";
 import { boxResizing } from "../src/core/gpu.ts";
 
 const NOW = 1_700_000_000_000;
@@ -121,13 +121,29 @@ test("071 unit 13: the GPU line keeps one height, and each state says what the n
   assert.deepEqual([...gpuMenuParts([offer({ gpuRoom: room([], { wholeOff: true }), gpuParts: ["none", "shared", "whole"] })])], ["none", "shared"]);
 });
 
+test("the Docker reach sentence is kept for a chosen GPU on the one provider it belongs to", () => {
+  const reach = "On docker-1, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
+  const docker = { cardReach: reach };
+  const other = { cardReach: null };
+  assert.equal(cardReachLine(false, [docker]), "");
+  assert.equal(cardReachLine(true, [docker, other]), "");
+  assert.equal(cardReachLine(true, [other]), "");
+  assert.equal(cardReachLine(true, []), "");
+  assert.equal(cardReachLine(true, [docker]), reach);
+  assert.doesNotMatch(cardReachLine(true, [docker]), /bb-box/);
+});
+
 test("071 unit 13: Resize names the way, and a move confirmation names the programs that have the GPU open", () => {
   const proxmox: GpuResizing = { add: "restart", share: "live", move: "restart" };
   assert.match(gpuWaysLine(proxmox, "LXC"), /switch at once/);
   assert.match(gpuWaysLine(proxmox, "LXC"), /Adding, removing or moving a card restarts the box/);
   const docker: GpuResizing = { add: "no", share: "live", move: "no" };
-  assert.match(gpuWaysLine(docker, "Docker"), /cannot be added, removed or moved/);
-  assert.match(gpuWaysLine(docker, "Docker"), /every box with Docker in it can open every card/);
+  assert.match(gpuWaysLine(docker, "Docker", "none"), /cannot be added, removed or moved/);
+  assert.match(gpuWaysLine(docker, "Docker", "shared"), /every box with Docker in it can open every card\. None and Whole card are what BB Box places/);
+  assert.match(gpuWaysLine(docker, "Docker", "whole"), /what BB Box places, not what a box can reach/);
+  assert.doesNotMatch(gpuWaysLine(docker, "Docker", "none"), /every box with Docker in it can open every card/);
+  assert.doesNotMatch(gpuWaysLine(docker, "Docker", "none"), /BB Box places/);
+  assert.doesNotMatch(gpuWaysLine(docker, "Docker"), /every box with Docker in it can open every card/);
   const words = "amber-fox restarts without card 1. Everything running in it stops.";
   assert.equal(withGpuPrograms(words, ": python3 (3310) has the GPU open"), "amber-fox restarts without card 1. Everything running in it stops: python3 (3310) has the GPU open.");
   assert.equal(withGpuPrograms("Everything running in amber-fox stops.", ": python3 (3310) has the GPU open"), "Everything running in amber-fox stops: python3 (3310) has the GPU open.");

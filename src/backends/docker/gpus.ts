@@ -364,8 +364,8 @@ export function oneDeviceForEveryCardOf(info: { readonly gpus: readonly string[]
 }
 
 export function reachWords(host: string, privileged: boolean, oneDeviceForEveryCard: boolean): string | null {
-  if (privileged) return `On ${host}, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.`;
-  if (oneDeviceForEveryCard) return `On ${host}, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what bb-box places, not what a box can reach.`;
+  if (privileged) return `On ${host}, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.`;
+  if (oneDeviceForEveryCard) return `On ${host}, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what BB Box places, not what a box can reach.`;
   return null;
 }
 

@@ -22,7 +22,7 @@ import { withoutRaiseLargest } from "../core/largest-words.ts";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
 import type { GpuPart, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
 import { gpuForSpare, gpuWhenNotAsked } from "../core/gpu.ts";
-import { GPU_LINE_CLASS, GPU_MENU_LABELS, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, type GpuFormOffer } from "./gpu-choice.ts";
+import { GPU_LINE_CLASS, GPU_MENU_LABELS, cardReachLine, gpuFormLine, gpuMenuParts, gpuMenuShows, gpuRowReason, type GpuFormOffer } from "./gpu-choice.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuDesktopSetting, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 export const ROOMS_CHECK_MS = 300;
@@ -447,7 +447,8 @@ export function NewBox({
   // With 1 GPU chosen, why no GPU would take the box (#603); a ready spare holds its GPU already.
   const placing = onOffer ? [onOffer] : shown;
   const gpuFull = gpuChoice && picked.gpu && !placing.some(readyOn) ? gpuFullNote(placing, Date.now()) : null;
-  const cardReach = [...new Set(placing.flatMap((offer) => (offer.cardReach ? [offer.cardReach] : [])))].join(" ");
+  const gpuChosen = cardMenu ? chosenGpu !== "none" : gpuChoice ? picked.gpu : !!kind?.gpu;
+  const cardReach = cardReachLine(gpuChosen, onOffer ? [onOffer] : takers);
 
   useEffect(() => {
     if (open) return;

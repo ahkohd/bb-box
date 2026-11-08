@@ -1335,18 +1335,56 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
 });
 
-test("071 unit 11: the New box form says where every box can open every card, for the provider a box would go to, on a CPU desktop too", async () => {
-  const reach = "On docker-1, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
-  const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };
-  const reaching = [...KINDS.map((kind) => (kind.id === "linux" ? { ...kind, offers: kind.offers.map((offer) => ({ ...offer, cardReach: reach })) } : kind)), { ...cpu, offers: cpu.offers.map((offer) => ({ ...offer, cardReach: reach })) }];
-  const { handlers } = server([], { kinds: reaching });
-  const slot = panel(handlers);
-  await slot.findByText("No boxes yet");
-  fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  await screen.findByRole("radiogroup", { name: "Type" });
+test("071 unit 11: the New box form keeps the Docker reach sentence for a chosen GPU on the chosen provider, or the only one with room", async () => {
+  const reach = "On docker-1, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
+  const card = (host: string): GpuRoom => ({
+    readings: [],
+    fullUntil: null,
+    parts: ["none", "shared", "whole"],
+    host,
+    cards: [{ index: 0, boxes: 0, whole: false, freeMiB: 20_000, totalMiB: 24_000, freeForWhole: true }],
+  });
+  const linuxBase = kindView("linux", "Linux", "A server.", 2, false);
+  const docker = { ...linuxBase.offers[0]!, backend: "docker", name: "Docker on docker-1", type: "docker", label: "Docker", hosts: ["docker-1"], form: "Docker" as const, gpuParts: ["none", "shared", "whole"] as const, gpuRoom: card("docker-1"), cardReach: reach, typicalReadyMs: 400 };
+  const proxmox = { ...linuxBase.offers[0]!, backend: "pve", name: "Proxmox on pve-1", label: "Proxmox", hosts: ["pve-1"], gpuParts: ["none", "shared", "whole"] as const, gpuRoom: card("pve-1"), typicalReadyMs: 2200 };
+  const pickProvider = (title: string) => {
+    const radio = within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").find((option) => option.textContent?.startsWith(title));
+    if (!radio) throw new Error(`No provider ${title}`);
+    fireEvent.click(radio);
+  };
+  const open = async (kinds: KindView[]) => {
+    const slot = panel(server([], { kinds }).handlers);
+    await slot.findByText("No boxes yet");
+    fireEvent.click(slot.getByRole("button", { name: "New box" }));
+    await screen.findByRole("combobox", { name: "GPU" });
+  };
+
+  await open([offered(linuxBase, [docker, proxmox])]);
+  expect(screen.queryByText(reach)).toBeNull();
+  expect(screen.queryByText(/bb-box places/)).toBeNull();
+  await choose("GPU", "Shared");
+  expect(screen.queryByText(reach)).toBeNull();
+  pickProvider("docker-1");
   expect(screen.getByText(reach).tagName).toBe("P");
-  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  await choose("GPU", "None");
+  expect(screen.queryByText(reach)).toBeNull();
+  await choose("GPU", "Whole card");
   expect(screen.getByText(reach).tagName).toBe("P");
+  pickProvider("pve-1");
+  expect(screen.queryByText(reach)).toBeNull();
+  pickProvider("First with room");
+  expect(screen.queryByText(reach)).toBeNull();
+
+  cleanup();
+  const held = panel(server([], { kinds: [offered(linuxBase, [docker, proxmox])], rooms: { pve: "No room for this size" } }).handlers);
+  await held.findByText("No boxes yet");
+  fireEvent.click(held.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "GPU" });
+  await choose("GPU", "Shared");
+  await screen.findByText("No room for this size");
+  expect(screen.getByText(reach).tagName).toBe("P");
+  await choose("GPU", "None");
+  expect(screen.queryByText(reach)).toBeNull();
 });
 
 test("071 unit 13: the GPU line keeps its height on screen", async () => {

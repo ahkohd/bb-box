@@ -436,7 +436,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
                     setRefusal(null);
                   }}
                 />
-                <p className="min-h-[2lh] text-xs leading-snug text-muted-foreground">{box.resizing?.gpu ? gpuWaysLine(box.resizing.gpu, box.form) : "This box's backend does not change its GPU."}</p>
+                <p className="min-h-[2lh] text-xs leading-snug text-muted-foreground">{box.resizing?.gpu ? gpuWaysLine(box.resizing.gpu, box.form, gpu) : "This box's backend does not change its GPU."}</p>
               </section>
             ) : null}
 

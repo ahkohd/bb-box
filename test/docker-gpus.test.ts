@@ -60,7 +60,7 @@ function fact(guest: Guest, label: string): string | undefined {
   return guest.facts?.find((each) => each.label === label)?.value;
 }
 
-const SERVER_REACH = "On fake-docker, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+const SERVER_REACH = "On fake-docker, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
 
 test("071 unit 11: with GPU boxes on, a Docker linux box offers none and shared, and whole only where whole cards are on; a desktop offers shared and whole; with them off, neither offers a GPU", () => {
   const parts = (backend: DockerBackend) => Object.fromEntries(backend.kinds().map((kind) => [kind.id, kind.gpuParts ?? null]));
@@ -125,7 +125,7 @@ test("071 unit 11: on WSL, where the CDI spec has only nvidia.com/gpu=all, every
   assert.deepEqual([first.claim?.card, second.claim?.card], [CARD_A, CARD_B]);
   assert.ok(env(fake, second.ref).includes(`CUDA_VISIBLE_DEVICES=GPU-${CARD_B}`));
   assert.equal(fake.inspect(second.ref).Config.Labels["bbbox.gpu-card"], CARD_B);
-  assert.equal(fact(second, "Cards"), "On fake-docker, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what bb-box places, not what a box can reach.");
+  assert.equal(fact(second, "Cards"), "On fake-docker, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what BB Box places, not what a box can reach.");
   const probe = fake.calls().find((args) => args[0] === "container" && args[1] === "run" && args.at(-1)!.includes("--query-gpu"))!;
   assert.deepEqual(probe.filter((arg, at) => probe[at - 1] === "--device"), ["nvidia.com/gpu=all"]);
   const none = await backend.acquire(identity("linux", "none"), null, hooks(), signal());

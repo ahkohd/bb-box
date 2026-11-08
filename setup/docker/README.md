@@ -290,7 +290,7 @@ every card the box can open, and `nvidia-smi -i "$NVIDIA_VISIBLE_DEVICES"`
 shows its own.
 
 - **With Docker in boxes on**, every box is privileged and can open every
-  card, with a GPU or without. None and Whole card are where bb-box places
+  card, with a GPU or without. None and Whole card are where BB Box places
   boxes, not what a box can reach.
 - **In WSL**, every box with a GPU has every card, as they are one device.
 - A container's devices are fixed when it is made, so a box's GPU cannot be
