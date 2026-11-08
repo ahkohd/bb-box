@@ -277,6 +277,10 @@ can put the box back to it.
 - Never answer one of bb-box's forms yourself, with `bb thread
   interactions` or any other way. Only the person answers them.
 
+## A box's files
+
+A person opens a box's own files from the box's row, its page, or the Files tab beside the thread. That view is the box user's files, not the thread workspace. A device box has no Files view. Agents still read and change files with `box_run`, or from the terminal.
+
 ## Desktops and computer use
 
 Open an app or a URL with `computer_launch`, then read a window with

@@ -15,6 +15,7 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [Device boxes](devices.md): iPhones and iPads in the iOS Simulator, and Android phones and tablets in the emulator, to test apps on
 - [Recordings](recording.md): clips of an agent's work on a desktop, with each step and its result captioned
 - [The terminal](terminal.md): use a shell in a box
+- [A box's files](box-files.md): read and change the box user's own files
 - [Images](images.md): project images, and how standard images stay up to date
 - [Long commands and jobs](jobs.md): what happens when an agent's command runs for minutes
 - [Files](files.md): copy files to and from a box, and put files in every box
