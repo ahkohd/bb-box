@@ -75,6 +75,14 @@ for the window painting, and a flat white editor is not taken for a blank
 window. Only the part of a changed region inside the field is the typed
 text.
 
+Whether a window has painted is judged on the clicked window's own frame
+when the opening covers it, not on the changed region, which also takes in
+a panel's list of windows and so is mostly bare desktop: a small window on a
+dark desktop read as blank, and its zoom was left out. Typing into a field
+just clicked eases in as soon as the camera is back out from a change
+elsewhere, without the 1.5 seconds that other zooms wait, so the line is
+framed as it lands.
+
 A zoom is held for 1.5 seconds after it lands, even when waiting for paint
 made it land after its group's last event. A zoom that would be seen for
 less than 0.6 seconds before something opens elsewhere is left out, so it

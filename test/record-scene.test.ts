@@ -893,6 +893,37 @@ test("a zoom that could land only after its window has closed is left out, and d
   assert.ok(cameraAt(keys, 4).y < button.y, "on the typed line");
 });
 
+test("a window is judged painted by its own frame, so a button in a small window on a dark desktop is zoomed, and the typing after it eases in as the camera comes out (076)", () => {
+  const ready = { x: 524, y: 278, width: 240, height: 130 };
+  const field = { x: 335, y: 216, width: 598, height: 299 };
+  const note = { x: 334, y: 188, width: 600, height: 330 };
+  const desktop = new Array(144).fill(32);
+  const cells = (paint: (column: number, row: number) => number | null) => desktop.map((cell, index) => paint(index % 16, Math.floor(index / 16)) ?? cell);
+  const withReady = cells((column, row) => (column >= 6 && column <= 9 && row >= 3 && row <= 5 ? (row === 5 ? 140 : 230) : null));
+  const withNote = cells((column, row) => (column >= 4 && column <= 11 && row >= 2 && row <= 6 ? 250 : null));
+  const keys = camera({
+    width: 1280,
+    height: 720,
+    length: 8,
+    clicks: [
+      { at: 1.24, x: 644, y: 343, button: "left", count: 1, area: { x: 548, y: 302, width: 192, height: 82 }, role: "push button", window: ready },
+      { at: 2.39, x: 634, y: 366, button: "left", count: 1, area: field, role: "text", window: note },
+    ],
+    typing: [{ at: 3.5, characters: 43, area: field, secret: false, role: "text", window: note, by: "agent", call: 1 }, { at: 3.51, characters: 0, area: null, secret: false, window: note, by: "agent", call: 1 }],
+    changes: [
+      { at: 0.67, x: 120, y: 0, width: 880, height: 413 },
+      { at: 2.13, x: 120, y: 0, width: 880, height: 413 },
+      { at: 2.33, x: 122, y: 0, width: 874, height: 522 },
+      { at: 3.53, x: 146, y: 5, width: 578, height: 229 },
+      { at: 4.67, x: 85, y: 26, width: 1106, height: 693 },
+    ],
+    brightness: [desktop, withReady, withNote, withNote, withNote].map((cells, at) => ({ at, cells })),
+  });
+  assert.ok(cameraAt(keys, 1.3).zoom > 1.5, `the button is zoomed as it is clicked: ${JSON.stringify(keys)}`);
+  assert.ok(cameraAt(keys, 4.2).zoom >= ZOOM_LEAST, "the typed line is zoomed before the dialog opens");
+  assert.ok(cameraAt(keys, 4.2).y < 300, "on the line");
+});
+
 test("a zoom on a window that painted at once lands without waiting for a later reading of the screen (076)", () => {
   const window = { x: 200, y: 120, width: 640, height: 420 };
   const painted = new Array(144).fill(40);

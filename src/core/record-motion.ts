@@ -363,6 +363,7 @@ interface Focus {
   readonly area: InputArea;
   readonly contain: boolean;
   readonly fieldClickAt?: number;
+  readonly window?: InputArea | null;
 }
 
 export const FIELD_TYPING_S = 2;
@@ -488,9 +489,9 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
     return [{ at: drag.from, area: pointArea(start.x, start.y), contain: false }, { at: drag.to, area: pointArea(end.x, end.y), contain: false }];
   });
   const focuses: Focus[] = [
-    ...pointer.rings.map((ring) => {
+    ...pointer.rings.map((ring): Focus => {
       const click = scene.clicks.find((each) => Math.abs(each.at - ring.at) < 0.001);
-      return { at: ring.at, area: small(click?.area ?? null) ? click!.area! : pointArea(ring.x, ring.y), contain: false };
+      return { at: ring.at, area: small(click?.area ?? null) ? click!.area! : pointArea(ring.x, ring.y), contain: false, window: click?.window ?? null };
     }),
     ...scene.scrolls.map((scroll) => ({ at: scroll.at, area: pointArea(scroll.x, scroll.y), contain: false })),
     ...drags,
@@ -499,7 +500,7 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
       const area = typingFocus(scene, typing, pointer);
       if (!area) return [];
       const click = clickInFieldBefore(scene, typing);
-      return [{ at: typing.at, area, contain: areaOf(area) > 0, ...(click ? { fieldClickAt: click.at } : {}) }];
+      return [{ at: typing.at, area, contain: areaOf(area) > 0, window: typing.window ?? null, ...(click ? { fieldClickAt: click.at } : {}) }];
     }),
   ];
   return focuses.sort((a, b) => a.at - b.at);
@@ -566,6 +567,7 @@ interface Group {
   readonly area: InputArea;
   readonly outsideAt: number | null;
   readonly fieldClickAt: number | null;
+  readonly window: InputArea | null;
 }
 
 const BRIGHT_COLUMNS = 16;
@@ -631,10 +633,10 @@ function cellsDiffer(left: readonly number[], right: readonly number[]): boolean
   return moved / count >= PAINT_MOVE_SHARE;
 }
 
-function paintReady(scene: Scene, focus: InputArea, at: number, natural: number): number | null {
+function paintReady(scene: Scene, focus: InputArea, at: number, natural: number, window: InputArea | null): number | null {
   const opened = openingOf(scene, focus, at);
   if (!opened.length) return natural;
-  const region = unionOf(opened);
+  const region = window && areaOf(window) > 0 && opened.some((change) => overlap(change, window) > areaOf(window) / 2) ? window : unionOf(opened);
   const ready = Math.max(natural, Math.max(...opened.map((change) => change.at)) + PAINT_QUIET_S);
   const grids = scene.brightness ?? [];
   if (!grids.length) return ready;
@@ -770,7 +772,7 @@ function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][], actions
       continue;
     }
     const typedAfterClick = members.map((each) => each.fieldClickAt).filter((at): at is number => at !== undefined);
-    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), area: unionOf(members.map((each) => each.area)), outsideAt, fieldClickAt: typedAfterClick.length ? Math.min(...typedAfterClick) : null });
+    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), area: unionOf(members.map((each) => each.area)), outsideAt, fieldClickAt: typedAfterClick.length ? Math.min(...typedAfterClick) : null, window: members.find((each) => each.window)?.window ?? null });
   }
   return planned;
 }
@@ -803,6 +805,7 @@ export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Sp
     keys.push({ at: round3(to), view });
   };
   let outsideShownUntil = -Infinity;
+  let outsideArrivedAt = -Infinity;
   let stayedFor: number | null = null;
   const zoomOutStayed = () => {
     if (stayedFor !== null && stayedFor + MOVE_S <= scene.length && last().view.zoom > 1) keys.push({ at: round3(Math.max(stayedFor, last().at) + MOVE_S), view: full });
@@ -810,10 +813,10 @@ export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Sp
   };
   groups.forEach((group, index) => {
     const nextGroup = groups[index + 1];
-    const natural = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
     const typedField = group.fieldClickAt !== null;
+    const natural = Math.max(group.first - SETTLE_S, (typedField ? outsideArrivedAt : outsideShownUntil) + MOVE_S);
     if (group.view.zoom > 1 && natural > group.last && !typedField) return zoomOutStayed();
-    const ready = group.view.zoom === 1 ? natural : typedField ? settledBefore(scene, group.area, group.fieldClickAt!, natural) : paintReady(scene, group.area, group.first, natural);
+    const ready = group.view.zoom === 1 ? natural : typedField ? settledBefore(scene, group.area, group.fieldClickAt!, natural) : paintReady(scene, group.area, group.first, natural, group.window);
     if (ready === null) return zoomOutStayed();
     const arrive = ready > natural + 0.02 ? ready + MOVE_S : natural;
     const seen = Math.max(group.last, arrive);
@@ -827,7 +830,8 @@ export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Sp
     const zoomsOut = leave + MOVE_S <= scene.length;
     if (group.outsideAt !== null) {
       if (zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
-      outsideShownUntil = leave + MOVE_S + OUTSIDE_SEEN_S;
+      outsideArrivedAt = leave + MOVE_S;
+      outsideShownUntil = outsideArrivedAt + OUTSIDE_SEEN_S;
       return;
     }
     const nextMove = nextGroup ? nextGroup.first - SETTLE_S - MOVE_S : Infinity;
