@@ -144,8 +144,8 @@ function windowGoneAfter(scene: Scene, click: PlacedClick): number | null {
   return Math.min(...gone.map((change) => change.at));
 }
 
-export function clicksBeforeTheirWindowGoes(scene: Scene, keys: readonly { readonly at: number }[] = []): Scene {
-  const actions = [...scene.clicks.map((click) => click.at), ...scene.scrolls.map((scroll) => scroll.at), ...scene.typing.map((typing) => typing.at), ...keys.map((each) => each.at)];
+export function clicksBeforeTheirWindowGoes(scene: Scene, keys: readonly { readonly at: number }[] = [], captions: readonly number[] = []): Scene {
+  const actions = [...scene.clicks.map((click) => click.at), ...scene.scrolls.map((scroll) => scroll.at), ...scene.typing.map((typing) => typing.at), ...keys.map((each) => each.at), ...captions];
   const clicks = scene.clicks.map((click): PlacedClick => {
     const goneAt = windowGoneAfter(scene, click);
     if (goneAt === null) return click;

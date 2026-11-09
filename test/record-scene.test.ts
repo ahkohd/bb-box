@@ -560,6 +560,14 @@ test("a click whose window goes on the click rings on the frames before it goes,
   for (const stage of shown) assert.ok(short.at + stage / 15 < 4.95);
   assert.doesNotMatch(sceneHead(planned(4.6), 1).graph, /between\(t,4\.967/, "the stage after the dialog has gone is never switched on");
   assert.equal(planned(4.9).pointer.rings.length, 0, "with no time before it goes, there is no ring over nothing");
+  const captioned = planScene(
+    facts({ samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }], changes: [{ at: 3.2, ...dialog }, { at: 4.95, x: 590, y: 290, width: 520, height: 420 }], inputs: [cancel] }),
+    SCREEN,
+    1000,
+    10,
+    { zoom: true, frame: true, captions: [4.8] },
+  ).pointer.rings[0]!;
+  assert.ok(captioned.at >= 4.9 - 0.001, `never before the step caption that introduces it: ${captioned.at}`);
   const resized = planned(3, 4.95, 4.7).pointer.rings[0]!;
   assert.ok(Math.abs(resized.at - (4.7 + 1 / 15)) < 0.002, `no earlier than a frame after its window last settled: ${resized.at}`);
   const note = { x: 300, y: 200, width: 600, height: 330 };

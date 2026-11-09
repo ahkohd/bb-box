@@ -231,7 +231,7 @@ function knowsIdle(facts: SceneFacts, options: SceneOptions): boolean {
 export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
   const placed = sceneOf(facts, size, start, length);
   const { keys, keyTyping } = placed;
-  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys);
+  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys, (options.captions ?? []).map((at) => at - facts.lag));
   const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)) : null;
   const idle = moments ? idleStretches(moments, length) : null;
   const pointer = planPointer(scene);

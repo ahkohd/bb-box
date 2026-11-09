@@ -133,8 +133,8 @@ action in a window is in another one, or there is none. A window that
 appears or is uncovered then, and is acted in next, is not going. The click
 is then placed so its ring ends one frame of the capture before that
 change: at most 0.5 seconds earlier, and at least
-0.1 seconds after the action before it and a frame after the window last
-opened or changed size. The pointer's glide, the ring and
+0.1 seconds after the action or caption before it, and a frame after the
+window last opened or changed size. The pointer's glide, the ring and
 the hand move with it. The ring's stages from the change on are not drawn,
 and a ring with none left is not drawn at all.
 
