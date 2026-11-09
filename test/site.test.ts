@@ -221,8 +221,8 @@ test("every page shares the site's card as an absolute image with its size and a
       ["apple-touch-icon", `/${icons.appleTouch.path}`, "192x192"],
     ],
   );
-  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: 64, height: 64 });
-  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: 180, height: 180 });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: icons.png.size, height: icons.png.size });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: icons.appleTouch.size, height: icons.appleTouch.size });
   assert.deepEqual(pngSize(join(repoRoot, "site", "og", "github-social.png")), { width: 1280, height: 640 });
 });
 
