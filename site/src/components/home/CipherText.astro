@@ -1,0 +1,105 @@
+---
+interface Props {
+  text: string;
+  glyphs?: "mono" | "letters";
+  delay?: number;
+  duration?: number;
+  decorative?: boolean;
+  class?: string;
+}
+
+const { text, glyphs = "mono", delay, duration, decorative = false, class: className } = Astro.props;
+const words = text.split(/(\s+)/);
+---
+
+{
+  glyphs === "letters" ? (
+    <span class:list={["cipher", "cipher-letters", className]} data-cipher="letters" data-cipher-delay={delay} data-cipher-duration={duration}>
+      <span class="cipher-spoken">{text}</span>
+      <span class="cipher-chars" aria-hidden="true">
+        {words.map((word) => (/\s/.test(word) ? word : <span class="cipher-word">{[...word].map((glyph) => <span class="cipher-char">{glyph}</span>)}</span>))}
+      </span>
+    </span>
+  ) : (
+    <span class:list={["cipher", className]} data-cipher="mono" data-cipher-delay={delay} data-cipher-duration={duration}>
+      {decorative ? <span class="cipher-real" data-text={text} /> : <span class="cipher-real">{text}</span>}
+      <span class="cipher-layer" aria-hidden="true" />
+    </span>
+  )
+}
+
+<script>
+  import { watchCiphers } from "../../effects/cipher.ts";
+
+  watchCiphers();
+</script>
+
+<style>
+  .cipher {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+  }
+
+  .cipher-letters {
+    display: inline;
+  }
+
+  .cipher-spoken {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .cipher-word {
+    white-space: nowrap;
+  }
+
+  .cipher-char {
+    position: relative;
+  }
+
+  .cipher-char[data-glyph] {
+    color: transparent;
+  }
+
+  .cipher-char[data-glyph]::after {
+    content: attr(data-glyph);
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    color: var(--accent);
+  }
+
+  .cipher-real[data-text]::before {
+    content: attr(data-text) / "";
+  }
+
+  .cipher-layer {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    white-space: pre;
+    font-variant-ligatures: none;
+    pointer-events: none;
+  }
+
+  .cipher[data-running] > .cipher-real {
+    visibility: hidden;
+  }
+
+  .cipher[data-running] > .cipher-layer {
+    visibility: visible;
+  }
+
+  .cipher-layer :global(.cipher-glyph) {
+    color: var(--accent);
+  }
+</style>
