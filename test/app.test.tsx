@@ -3174,7 +3174,7 @@ test("a kind's sizes are checked before Save, and a refusal sits under its size,
   const slot = settings(handlers, "#kind/linux");
   fireEvent.change(await slot.findByRole("textbox", { name: "Small size: cores" }), { target: { value: "two" } });
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
-  expect(await slot.findByText("Small: give the cores as a whole number, at least 1.")).toBeTruthy();
+  expect(await slot.findByText("Small: Give the cores as a whole number, at least 1.")).toBeTruthy();
   expect(slot.getByRole("textbox", { name: "Small size: cores" }).getAttribute("aria-invalid")).toBe("true");
   expect(changes).toHaveLength(0);
   fireEvent.change(slot.getByRole("textbox", { name: "Small size: cores" }), { target: { value: "2" } });
