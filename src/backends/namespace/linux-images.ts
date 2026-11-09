@@ -8,7 +8,6 @@ import type { BackendStorage } from "../types.ts";
 import type { InstanceShape, NamespaceApi } from "./api.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const LINUX_IMAGE_TARGETS = {
   linux: "linux",
   "linux-desktop-cpu": "desktop",

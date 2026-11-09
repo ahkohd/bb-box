@@ -6,7 +6,6 @@
 import type { MachineSize } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface FetchResponse {
   readonly ok: boolean;
   readonly status: number;

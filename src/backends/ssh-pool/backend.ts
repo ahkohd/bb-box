@@ -75,7 +75,6 @@ import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, p
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
 const USER_PREFIX = "bbx-";

@@ -25,7 +25,6 @@ import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
 } as const;

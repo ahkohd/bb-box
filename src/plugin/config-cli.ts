@@ -36,7 +36,6 @@ import {
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const MOST_TRIES = 3;
 const SAVED_WITH_FAILED_CHECK = 2;
 

@@ -5,7 +5,6 @@ import { agentChoices, blockWords, PERSON, type CardBlock, type CardNamer } from
 import { USERSPACE_INSTALL_SECONDS, startFirstWords } from "../../core/gpu-userspace.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const GPU_RESTART_SECONDS = 15;
 
 export function gpuRestartSeconds(installs: string | null): number {

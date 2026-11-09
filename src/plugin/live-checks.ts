@@ -2,7 +2,6 @@ import type { SnapshotBill, Snapshotting } from "../backends/types.ts";
 import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const LIVE_CHECKS_VARIABLE = "BB_BOX_LIVE_CHECKS";
 export const DROPPED_REPLY_MESSAGE = "BB Box saved this and dropped its reply, as a live check asked.";
 

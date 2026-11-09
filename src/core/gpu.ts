@@ -2,7 +2,6 @@ import { currentKindId } from "../backends/kinds.ts";
 import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type CardPlacement, type GpuPart, type GpuRefusal, type GpuResize, type KindCapabilities, type MachineSize, type Resizing } from "../backends/types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type NvidiaUserspace = "none" | "unknown" | `${number}.${string}`;
 
 export type GpuWhenNotAsked = Readonly<Record<string, GpuPart>>;

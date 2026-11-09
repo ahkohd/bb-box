@@ -12,7 +12,6 @@ import { SLOT_KIND, type PoolSlotsConfig, type SshPoolMachine } from "./config.t
 import { SLOTS_HELPER_VERSION, fields, slotsBusy, type MachineStatus, type SlotsSummary } from "./protocol.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const SLOT_MAC_KEY = "slotMac";
 export const NEXT_POOL_SLOT_WORDS = "The next slot is likely free when a box on the pool's Mac is released.";
 const SLOT_READY_MS = 5 * 60_000;

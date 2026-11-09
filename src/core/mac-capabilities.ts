@@ -3,7 +3,6 @@ import type { DoctorCheck } from "../backends/types.ts";
 import type { CheckId } from "./checks.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type Measured<T> = { readonly is: "yes"; readonly what: T } | { readonly is: "no"; readonly why: string } | { readonly is: "unknown"; readonly why: string };
 
 export interface SimulatorOffer {

@@ -124,7 +124,6 @@ import type { QemuConfig } from "./config.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
 const SSH_KEY = "ssh-key";

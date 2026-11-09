@@ -3,7 +3,6 @@ import { cardName, type HelperCard, type HelperHolder } from "./gpu-marking.ts";
 import type { Refusal } from "./gpu-servers.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface BoxMaking {
   readonly name: string;
   readonly threadId: string;

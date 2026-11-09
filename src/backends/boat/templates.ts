@@ -10,7 +10,6 @@ import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const TEMPLATE_ROLE = "template";
 export const TRIAL_ROLE = "template-trial";
 export const TEMPLATE_SIZE: SandboxSize = "default";

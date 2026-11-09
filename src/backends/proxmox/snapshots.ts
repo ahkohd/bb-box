@@ -2,7 +2,6 @@ import type { DoctorCheck } from "../types.ts";
 import type { GuestType, Proxmox } from "./api.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const SNAPSHOT_PRIVILEGES = ["VM.Snapshot", "VM.Snapshot.Rollback"] as const;
 
 export type SnapshotRestore = "any" | "newest-only" | "none" | "unknown";

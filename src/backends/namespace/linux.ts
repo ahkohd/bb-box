@@ -11,7 +11,6 @@ import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, MachineSize, G
 import { LINUX_IMAGE_TARGETS, type LinuxImageKind, type LinuxImages } from "./linux-images.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const LINUX_KINDS = Object.keys(LINUX_IMAGE_TARGETS) as LinuxImageKind[];
 const LINUX_CORES = [1, 2, 4, 8, 10, 12, 16, 32];
 const LINUX_MEMORY_GB = [2, 4, 8, 16, 32, 56];

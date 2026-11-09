@@ -3,7 +3,6 @@ import { copyTags, isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { TAG, installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 type Config = Record<string, unknown>;
 
 export interface GuestOwner {

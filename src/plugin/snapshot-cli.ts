@@ -9,7 +9,6 @@ import { deletedText, forkCheckText, forkedText, keepCheckText, keptText, listTe
 import type { BbBox } from "./setup.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const COMMAND: Caller = { is: "command" };
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
 const threadOption = { thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." } } as const;

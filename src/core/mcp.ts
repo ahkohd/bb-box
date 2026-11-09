@@ -6,7 +6,6 @@
 import type { ByteChannel } from "../transports/types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 /** The longest line bb-box reads: a screenshot is one line of base64. */
 const MAX_LINE_BYTES = 64 * 1024 * 1024;

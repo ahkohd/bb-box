@@ -8,7 +8,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { PRODUCT } from "../brand.ts";
 
-
 export const STOPPED_AT_KEY = "reload/stopped-at";
 export const STARTED_AT_KEY = "reload/started-at";
 

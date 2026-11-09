@@ -27,7 +27,6 @@ import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import type { MacKeys, PersonInput } from "../core/record-input.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** Each person's control, for the plugin's next instance (045). */

@@ -22,7 +22,6 @@ import {
 } from "./device.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export interface DeviceControlParameters {
   readonly action: string;
   readonly turn?: string;

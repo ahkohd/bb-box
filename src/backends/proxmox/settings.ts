@@ -10,7 +10,6 @@ import { normalisePrivateKey } from "../../transports/ssh.ts";
 import type { Footprint } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface ProxmoxConnection {
   readonly apiUrl: string;
   readonly tokenId: string;

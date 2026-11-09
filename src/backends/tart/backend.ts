@@ -225,7 +225,6 @@ import {
 import { identityInstallScript } from "./identity.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
 const VM_STOPPED_POLL_MS = 3_000;

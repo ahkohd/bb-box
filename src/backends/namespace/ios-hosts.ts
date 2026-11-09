@@ -18,7 +18,6 @@ import type { Instance, InstanceStatus } from "./api.ts";
 import type { MacShape } from "./config.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const NAMESPACE_HOST_ROLE = "device-host";
 export const HOST_RECORD_KEY = "ios-host";
 export const ENDING_MS = 60 * 60_000;

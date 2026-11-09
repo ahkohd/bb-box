@@ -8,7 +8,6 @@ import type { GpuMarkGuest, GpuMarking } from "../backends/types.ts";
 import type { BbBox } from "./setup.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const ANSWER_WORDS: Readonly<Record<string, (guest: GpuMarkGuest) => string>> = {
   granted: () => "The GPU helper granted it.",
   refused: (guest) => `The GPU helper refused it, as ${guest.answerWhy}.`,

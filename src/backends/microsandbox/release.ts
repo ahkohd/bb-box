@@ -13,7 +13,6 @@
 import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const MSB_VERSION = "0.7.7";
 
 /** Each platform's release archive, as `uname -s`-`uname -m` names it, and its SHA-256 as the release publishes it. */

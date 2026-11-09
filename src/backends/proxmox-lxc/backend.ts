@@ -223,7 +223,6 @@ import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const WARM = "warm";
 const FILLING = "filling";
 const RETIRED = "retired";

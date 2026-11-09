@@ -18,7 +18,6 @@ import type { HeldIdentity, NotForkSafe } from "../core/identity.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
 const ACTORS = ["person", "agent", "command", "bb-box", "outside", "unknown"] as const;
 const FIRST_OPERATION_KINDS = ["take", "restore", "fork", "delete", "hold-copy", "adopt", "expire"] as const;

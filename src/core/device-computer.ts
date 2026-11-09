@@ -20,7 +20,6 @@ import {
 import { changesShowAtStart } from "./device-settings.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const DEVICE_WINDOW = 1;
 export const DEVICE_SETTLE = { quietMs: 300, mostMs: 2_000, fromNow: true } as const;
 export const SCROLL_STEP_SETTLE = { quietMs: 150, mostMs: 1_000, fromNow: true } as const;

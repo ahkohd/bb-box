@@ -19,7 +19,6 @@ import { IMAGE_VERSION } from "../backends/docker/config.ts";
 import { IMAGE_CONTRACT, recordFromJson } from "../backends/images.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 function imageRefs(images: readonly string[], targets: readonly string[]): string[] {
   return images.filter((image) => {
     const target = BUILT_IMAGES[image] ?? BUILT_IMAGES[image.replace(/:(\d+)-arm64$/, ":$1")];

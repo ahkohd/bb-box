@@ -12,7 +12,6 @@ import type { DoctorCheck } from "../backends/types.ts";
 import { createHash } from "node:crypto";
 import { PRODUCT } from "../brand.ts";
 
-
 export interface BoxFilesDeps {
   readonly boxes: Boxes;
   /** The files whose content is set, as the settings have them now. */

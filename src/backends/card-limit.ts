@@ -1,7 +1,6 @@
 import type { CardHolding, CardInUse, LimitCounts } from "./types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export function cardTitle(index: number | null): string {
   return index === null ? "A card" : `Card ${index}`;
 }

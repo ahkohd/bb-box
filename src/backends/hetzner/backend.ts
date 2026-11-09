@@ -35,7 +35,6 @@ import { HetznerHosts, IMAGE_BUILD_ROLE, serverNamePrefix, serverNamePrefixBefor
 import { euros, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface HetznerConfig {
   readonly token: string;
   readonly location: string;

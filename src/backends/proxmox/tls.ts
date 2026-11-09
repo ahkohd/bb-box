@@ -6,7 +6,6 @@ import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import type { FetchLike } from "./api.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface ProxmoxHttp {
   fetch: FetchLike;
   close(): Promise<void>;

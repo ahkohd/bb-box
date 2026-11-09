@@ -2,7 +2,6 @@ import type { CaptionPosition, RecordingSummary, StepKind } from "./device-recor
 import { DEVICE_MODELS, type AndroidModelName, type AndroidModelNameOfForm, type FoldableModelName, type IosModelName, type ModelName, type TableModel } from "./device-models.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type { AndroidModelName, FoldableModelName, IosModelName, ModelName, TableModel } from "./device-models.ts";
 
 export const DEVICE_PLATFORMS = ["ios", "android"] as const;

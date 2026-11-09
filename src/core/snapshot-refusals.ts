@@ -1,7 +1,6 @@
 import type { GpuPart } from "../backends/types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export function capacityReason(words: string): string {
   const reason = words.replace(/(?:^|\s)(?:Release|Use|Ask|Free|Lower|Raise|Widen|Change)\b[\s\S]*$/, "").trim();
   return reason ? /[.!?]$/.test(reason) ? reason : `${reason}.` : "There is no room now.";

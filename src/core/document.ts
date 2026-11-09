@@ -14,7 +14,6 @@ import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathPro
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const SCHEMA = 1;
 
 /** How a secret shows outside bb-box. In a draft, { set: true } keeps it. */

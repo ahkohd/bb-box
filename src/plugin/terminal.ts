@@ -16,7 +16,6 @@ import type { Terminal, TerminalSize } from "../transports/types.ts";
 import { TERMINAL_ROUTE, terminalPath } from "./contract.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export { TERMINAL_ROUTE };
 const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** A WebSocket close reason holds at most 123 bytes of UTF-8; the server refuses a longer one. */

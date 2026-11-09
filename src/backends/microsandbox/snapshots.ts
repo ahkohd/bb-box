@@ -3,7 +3,6 @@ import { endOfUtcDay } from "../../core/snapshot.ts";
 import { MSB_VERSION } from "./release.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const SNAPSHOTS_CHECKED_WITH = "0.7.7";
 export const MSB_FORK_SAFE_FROM = 7;
 export const DISK_TAKE_ABOUT_MS = 400;

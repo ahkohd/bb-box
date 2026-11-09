@@ -3,7 +3,6 @@ import type { BoxOwner, HeldSnapshot, HeldSnapshotState, Price, SnapshotBill, Sn
 import { isTrial, perWindow, type BoatLimits, type SavedAllowance, type SavedSnapshot, type StartWindow } from "./api.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const SAVED_DAY_DOLLARS = 0.056;
 export const SAVE_RUNNING_ABOUT_MS = 60_000;
 export const SAVE_STOPPED_ABOUT_MS = 10_000;

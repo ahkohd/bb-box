@@ -2,7 +2,6 @@ import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
 import { isInstallDevice, type Tailnet } from "./tailnet.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export async function tailnetDoctor(tailnet: Tailnet, installId: string, signal?: AbortSignal): Promise<DoctorReport> {
   const signedIn = await tailnet.check(signal);
   const checks: DoctorCheck[] = [

@@ -14,7 +14,6 @@ import type { MonitorConfig } from "../core/document.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const MONITOR_OFF_WORDS = "The Monitor is off. Turn it on under Monitor in BB Box's settings.";
 export const SERVER_MACHINE = "server";
 export const BOX_MACHINE_PREFIX = "box:";

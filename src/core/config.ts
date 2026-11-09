@@ -5,7 +5,6 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { PRODUCT } from "../brand.ts";
 
-
 export type { GeneralConfig } from "./document.ts";
 
 export const GENERAL_SETTINGS = {

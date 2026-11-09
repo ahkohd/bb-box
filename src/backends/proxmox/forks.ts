@@ -5,7 +5,6 @@ import { describe, installFromDescription, ownerFromDescription } from "./owner.
 import { cloneWaitMs, storageOfVolume } from "./snapshotting.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export interface ForkWrites {
   config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>>;
   setNetwork(vmid: number, settings: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<void>;

@@ -12,7 +12,6 @@ import { LABEL, type HetznerHosts, type HostRecord, type HostSpec } from "./host
 import { timedSpawn } from "../../transports/spawns.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const HOST_IMAGE_ROLE = "host-image";
 export const BUILD_LABEL = "bbbox-build";
 export const SETUP_LABEL = "bbbox-setup";

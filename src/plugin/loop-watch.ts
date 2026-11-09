@@ -14,7 +14,6 @@ import { PerformanceObserver, constants, performance } from "node:perf_hooks";
 import type { SpawnTotals } from "../transports/spawns.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const TICK_MS = 100;
 /** A gap between ticks this long is a stall: the loop ran nothing else for that long, or ran something that long. */
 const STALL_MS = 250;

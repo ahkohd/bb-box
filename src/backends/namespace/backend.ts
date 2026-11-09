@@ -42,7 +42,6 @@ import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const LABELS = {
   install: "bbbox-install",
   box: "bbbox-box",

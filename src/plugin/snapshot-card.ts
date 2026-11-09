@@ -11,7 +11,6 @@ import { withinWait } from "../core/snapshot-picture.ts";
 import { snapshotGpuWordsFor } from "../core/gpu.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const PERSON: Caller = { is: "person" };
 
 const TAKE_CHECK_KEPT_MS = 30_000;

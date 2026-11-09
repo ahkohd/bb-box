@@ -8,7 +8,6 @@ import { acquireParameters, resizeParameters } from "./tools.ts";
 import { forkParameters } from "./snapshot-tools.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 type Parameters = Record<string, unknown>;
 
 interface Manifest {

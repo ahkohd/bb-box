@@ -49,7 +49,6 @@ import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../cor
 import { JOIN_TRIES, backendVerdict, dueToJoin, failedBeforeTries, gaveUpWords, joinProblem, nextTry, plainJoinFailure, tryWords, waitWords, waitingToJoin } from "../core/join-tries.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 interface TryOutcome {
   resetFound: { readonly machine: string; readonly reset: IdentityReset } | null;
   startOver: boolean;

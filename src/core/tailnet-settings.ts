@@ -1,7 +1,6 @@
 import type { TailnetCredentials } from "./tailnet.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
 
 export const TAILNET_CLIENT_ID = "tailnet:client-id";

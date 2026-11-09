@@ -2,7 +2,6 @@ import type { MessageDispatchHookContext, MessageDispatchHookDecision } from "@g
 import type { BoxRecord } from "../core/boxes.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export interface HeldMachine {
   readonly box: string;
   readonly name: string;

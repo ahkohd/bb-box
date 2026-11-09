@@ -17,7 +17,6 @@ import {
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const BOX_LOG_GAPS_KEY = "box-log/gaps";
 const WHY_BYTES = 256;
 const SHORT_BYTES = 128;

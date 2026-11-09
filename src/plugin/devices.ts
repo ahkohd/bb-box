@@ -12,7 +12,6 @@ import { inSlot, placementOf } from "../core/device-host.ts";
 import { NO_DECISION, type Decision, type EncoderLedgers, type EncoderPlace } from "../core/encoder-ledger.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
 export const ASKED_HOST_WORDS = `The device server for this box has not started. ${PRODUCT} has asked the host to start it again.`;

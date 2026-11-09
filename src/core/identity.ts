@@ -3,7 +3,6 @@ import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const IDENTITY_TOOL = "/usr/local/sbin/bb-box-identity";
 export const DESKTOP_FORK_SAFE_FROM = 9;
 

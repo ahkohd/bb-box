@@ -13,7 +13,6 @@ import type { HostRecord } from "./hosts.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const TAILSCALE_DIRECT_PORT = "41641";
 const SSH_KEY = "ssh-key";
 const FORWARD_UP_WITHIN_MS = 20_000;

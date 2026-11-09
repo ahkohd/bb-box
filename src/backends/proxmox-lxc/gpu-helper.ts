@@ -1,7 +1,6 @@
 import type { DoctorCheck } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const GPU_HELPER_PROTOCOL = 1;
 export const GPU_HELPER_FRESH_MS = 3 * 60_000;
 export const GPU_HELPER_CLOCK_AHEAD_MS = 60_000;

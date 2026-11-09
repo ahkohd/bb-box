@@ -6,7 +6,6 @@ import { PERSON, rowOf, type SnapshotRowView } from "./snapshot-card.ts";
 import { keepCostWords } from "./snapshot-words.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export interface TabBox {
   readonly id: string;
   readonly name: string;

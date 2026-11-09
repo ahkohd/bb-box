@@ -15,7 +15,6 @@ import type { MachineAccess } from "../types.ts";
 import { msbScript, type MsbScript } from "./release.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const MiB = 1024 * 1024;
 
 export interface MsbResult {

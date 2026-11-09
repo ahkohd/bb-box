@@ -12,7 +12,6 @@ import { boxParam, failure, thread } from "./tools.ts";
 import { next } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const INSTRUCTIONS =
   `${PRODUCT} computer use: to use the apps on a desktop box, get a window ID from computer_windows or computer_launch, read the window with computer_observe, ` +
   "then act with computer_act or computer_type, giving an element's reference such as e12. Each action says what changed, so observe again only to see the whole window. " +

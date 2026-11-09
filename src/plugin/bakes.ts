@@ -18,7 +18,6 @@ import { trialCheck } from "../core/refresh.ts";
 import { quote } from "../transports/process.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const DAY_MS = 24 * 60 * 60_000;
 /** Boxes started within these days that make an image baked on a backend (049). */
 const USE_DAYS = 14;

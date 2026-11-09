@@ -13,7 +13,6 @@ import type { BoxLogStore } from "./box-log-store.ts";
 import { MINUTES_KEPT_MS, type BoxHistoryStore } from "./box-history-store.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const ROUTE_OUTPUT_BYTES = 512 * 1024;
 const HOUR_MS = 60 * 60_000;
 const BUSY_LOOK_MS = 70 * 60_000;

@@ -11,7 +11,6 @@ import { boxParam, failure, thread } from "./tools.ts";
 import { next } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 const HINTS: Partial<Record<DeviceErrorCode, string>> = {
   unsupported: "Call box_device with one of the actions it names.",
   "unknown-device": "Pick one of the devices it names, or call box_list.",

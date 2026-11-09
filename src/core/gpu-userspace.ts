@@ -5,7 +5,6 @@ import { judgeCardCheck } from "../backends/card-check.ts";
 import type { NvidiaUserspace } from "./gpu.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type UserspaceVersion = Exclude<NvidiaUserspace, "unknown">;
 
 export interface UserspaceReading {

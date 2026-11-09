@@ -5,7 +5,6 @@ import type { GpuHour, GpuMinute } from "../monitor/history-view.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const MINUTES_KEPT_MS = 24 * 60 * 60_000;
 export const HOURS_KEPT_MS = 7 * 24 * 60 * 60_000;
 export const SHARED_MINUTE_ROWS = 200_000;

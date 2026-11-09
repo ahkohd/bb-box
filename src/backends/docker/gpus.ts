@@ -3,7 +3,6 @@ import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, type CardCheck, type
 import type { CardClaim, CardPlacement, CardRoom, GpuPart, GpuRefusal } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export { DESKTOP_GPU_MIB } from "../card-check.ts";
 export const ALL_CARDS_DEVICE = "nvidia.com/gpu=all";
 export const READING_FRESH_MS = 15_000;

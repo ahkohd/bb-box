@@ -16,7 +16,6 @@ import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, ke
 import { claimScript, ownerText, parseFields, script, type HostState } from "./host.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const HOST_ROLE = "device-host";
 export const HOST_VM_PREFIX = "bb-box-host-";
 export const HOST_STARTING_MS = 55_000;

@@ -4,7 +4,6 @@ import { answerTo, cardName, markerOf, markerTag, parseHelperLines, type ClaimMa
 import type { BoxMaking, CardBlock } from "./gpu-refusals.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const ANSWER_WAIT_MS = 10_000;
 export const ANSWER_POLL_MS = 500;
 export const SETTLE_WAIT_MS = 60_000;

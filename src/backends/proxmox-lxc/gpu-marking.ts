@@ -5,7 +5,6 @@ import type { GpuPart } from "../types.ts";
 import type { GpuHelperVerdict, HelperTooOld } from "./gpu-helper.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const MARKER = new RegExp(`^gpu\\.(?:(none|release)|(shared|whole)\\.(${UUID}))\\.g([1-9][0-9]{0,8})$`);
 const DEVICE_MODE = "0666";

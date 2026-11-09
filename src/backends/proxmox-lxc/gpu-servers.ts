@@ -2,7 +2,6 @@ import { recordInDescription } from "../images.ts";
 import type { GpuPart } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export { CARD_CHECK_COMMAND, CHECK_DONE, DESKTOP_GPU_MIB, SERVER_GPU_MIB, cardFactWords, judgeCardCheck, memoryWords, wrongCardSeen, type CardCheck, type CardReading, type SeenCard } from "../card-check.ts";
 
 export const CARD_CHECK_EVERY_MS = 10 * 60_000;

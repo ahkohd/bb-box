@@ -26,7 +26,6 @@ import {
 } from "./gpu-marking.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 const ANSWER_POLLS = 10;
 const ANSWER_POLL_MS = 1_000;
 const WRITE_TRIES = 2;

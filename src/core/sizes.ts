@@ -10,7 +10,6 @@ import type { AndroidModelName } from "./device-models.ts";
 import { raiseLargestWords, type LargestPart } from "./largest-words.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const PRESETS = ["small", "medium", "large"] as const;
 export type Preset = (typeof PRESETS)[number];
 

@@ -12,7 +12,6 @@ import { PRESETS } from "../core/sizes.ts";
 import { executor } from "./enrol.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const NEW_BOX_PROVIDER_ID = "bb-box-new";
 
 export const newBoxInputs = z.object({

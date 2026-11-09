@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { freshFetch } from "../../core/fresh-fetch.ts";
 import { PRODUCT } from "../../brand.ts";
 
-
 export const BOAT_API = "https://boat.dev/api/v1";
 const REQUEST_TIMEOUT_MS = 60_000;
 const LIST_PAGE = 200;

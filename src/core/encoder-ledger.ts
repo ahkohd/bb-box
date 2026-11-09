@@ -3,7 +3,6 @@ import type { CheckId } from "./checks.ts";
 import { VIDEO_STEPS, VIDEO_STEP_SCALES, largerStep, smallerStep, type VideoEncoding, type VideoSize, type VideoStep, type VideoWant, type WantFor } from "./device.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type { VideoWant, WantFor };
 export type RoomFor = "control" | WantFor;
 

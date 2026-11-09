@@ -19,7 +19,6 @@ import { MAX_WARM, SCHEMA, checkDocument, knownKinds, type BackendConfig, type C
 import { PRESETS, parseSizeChanges, withEarlierSizes } from "./sizes.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const DOCUMENT_KEY = "config/document";
 export const SECRETS_KEY = "config/secrets";
 export const COPY_KEY = "config/migrated-from-bb-settings";

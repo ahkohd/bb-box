@@ -2,7 +2,6 @@ import type { Price, SnapshotBill } from "../backends/types.ts";
 import { heldByProvider, type SnapshotRecord, type Verdict } from "./snapshot.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const DAYS_A_MONTH = 30;
 const DAY_MS = 24 * 60 * 60_000;
 

@@ -2,7 +2,6 @@ import { displayShows, type BoxIdentity, type Guest, type KindCapabilities } fro
 import { deviceModels, listWords, type DeviceOffer, type IosModelName, type IosRuntime } from "./device.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const HOST_KINDS = ["pool-mac", "tart", "namespace"] as const;
 export type HostKind = (typeof HOST_KINDS)[number];
 

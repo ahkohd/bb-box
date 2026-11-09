@@ -17,7 +17,6 @@ import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
   "Nothing was done and the desktop is as they left it. Wait, or ask them in the thread. " +

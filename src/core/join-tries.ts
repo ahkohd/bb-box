@@ -2,7 +2,6 @@ import type { BoxRecord } from "./boxes.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { PRODUCT } from "../brand.ts";
 
-
 export type JoinProblem = "dns-timeout" | "dns" | "refused" | "unroutable" | "timeout" | "reset" | "slow";
 
 export interface JoinTries {
