@@ -1,6 +1,6 @@
 # Recording the demo
 
-The README and the documentation site's landing page open with a demo of about 75 seconds of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form, the desktop and terminal tabs, a box's page or its Snapshots card change.
+The README and the documentation site's landing page open with a demo of about 70 seconds of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form, the desktop and terminal tabs, a box's page or its Snapshots card change.
 
 ## The demo video
 
@@ -63,18 +63,23 @@ This records a rehearsal, then a dark take and a light take, in `~/takes`, with 
 
 A restore can race bb-box's check that a box answers: when the check runs before the restored box has joined BB again, the box's page says it does not answer until the next check, a minute later. Look for 'does not answer' in each take's `page-text.json`, and record that theme again if it is there, giving the theme after the reset command, such as `light`.
 
+About a second after a restore, the box's Activity card can show the old guest's last reading for about half a second, its "Read at" time earlier than the one before it, before the new guest's next reading. A new take shows it too. Read each frame's "Read at" time after the take's `restored` mark, as with `tesseract`, and remove the frames whose time goes back from the `frames` list in a copy of the take's `take.json`, beside a link to its `frames` folder. Encode that copy: the frame before stays on screen until the next fresh one.
+
 ### Encode
 
 ```sh
-python3 scripts/demo/web-demo/encode.py ~/takes/dark --out docs/media --name demo --webp-width 800 --webp-fps 8
+python3 scripts/demo/web-demo/encode.py ~/takes/dark --out docs/media --name demo --width 2560 --no-webp --max-mb 9.5
+python3 scripts/demo/web-demo/encode.py ~/takes/dark --out ~/webp --name demo --webp-width 800 --webp-fps 8 --max-mb 4.9
+cp ~/webp/demo.webp docs/media/
 python3 scripts/demo/web-demo/encode.py ~/takes/light --out docs/media --name demo-light --no-webp
+for video in demo demo-light; do ffmpeg -y -i docs/media/$video.mp4 -frames:v 1 -vf scale=1920:1200:flags=lanczos -q:v 3 docs/media/$video-poster.jpg; done
 ```
 
 This plays the agent's wait three times faster, holds the last frame for 1.5 seconds, and makes:
 
-- `demo.mp4` from the dark take and `demo-light.mp4` from the light one: H.264 at CRF 12, 1920 by 1200, 30 fps, about 4.5 MB each, `-tune animation`, yuv420p, faststart, no sound. The landing page plays one, muted and looping: the one that matches the page's theme.
-- `demo.webp`, from the dark take: animated WebP at 800 by 500 and 8 fps, which keeps it under 5 MB, for the README, as GitHub plays images in a README but not videos. Its quality steps down from 70 until it is under 5 MB, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
-- `demo-poster.jpg` and `demo-light-poster.jpg`: each video's first frame, its poster while it loads, so the page does not jump when the video starts.
+- `demo.mp4` from the dark take: H.264 at CRF 12, 2560 by 1600, 30 fps, about 7 MB, under GitHub's limit of 10 MB for a video in a README. `demo-light.mp4` from the light take: the same at 1920 by 1200, about 4.7 MB. Both are `-tune animation`, yuv420p, faststart, no sound. The landing page plays one, muted and looping: the one that matches the page's theme.
+- `demo.webp`, from the dark take: animated WebP at 800 by 500 and 8 fps, under 4.9 MB, for wherever a video does not play. Its quality steps down from 70 until it fits, as the desktop's video changes in every frame. Lossy WebP can leave ghosts on flat, dark UI, so look at a transition's frames full size, as with `anim_dump` from the `webp` package.
+- `demo-poster.jpg` and `demo-light-poster.jpg`: each video's first frame at 1920 by 1200, its poster while it loads, so the page does not jump when the video starts. The `for` loop makes them, as `encode.py` takes its poster from the Monitor scene.
 
 ### Check every frame
 
