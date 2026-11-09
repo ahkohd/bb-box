@@ -74,7 +74,7 @@ describe("the device server", () => {
     const later = await open("control", { started: 200, instance: "later" });
     assert.equal(later.hello.lease, true);
     for (let tries = 0; !earlierClosed && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.deepEqual(earlierClosed, { superseded: true, words: "superseded: a bb-box instance started later holds this box's device" });
+    assert.deepEqual(earlierClosed, { superseded: true, words: "superseded: a BB Box instance started later holds this box's device" });
     assert.deepEqual(server.leaseHolder, { started: 200, instance: "later" });
     await assert.rejects(open("control", { started: 150, instance: "earlier" }), (error: unknown) => error instanceof DeviceLinkError && /superseded/.test(error.message));
     assert.deepEqual(server.leaseHolder, { started: 200, instance: "later" });

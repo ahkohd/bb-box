@@ -283,7 +283,7 @@ describe("where an Android tree comes from (063, 7.3)", () => {
     const first = await tree.read();
     assert.equal(first.screen.source, "dump");
     assert.deepEqual(ran.at(-1), ["exec-out", "uiautomator", "dump", "/dev/tty"]);
-    assert.ok(logs.some((line) => /tree server failed, so uiautomator dump reads for the next 30 s: bb-box's tree server stopped: it ended with SIGKILL/.test(line)));
+    assert.ok(logs.some((line) => /tree server failed, so uiautomator dump reads for the next 30 s: BB Box's tree server stopped: it ended with SIGKILL/.test(line)));
     assert.equal((await tree.read()).screen.source, "dump", "within the retry window, the dump reads");
     assert.equal(spawned.length, 1);
     advance(TREE_SERVER_RETRY_MS);

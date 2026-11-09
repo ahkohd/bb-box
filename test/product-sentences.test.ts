@@ -10,12 +10,12 @@ import { reasonAfterColon } from "../src/app/settings-drafts.ts";
 import { screenAround } from "../src/app/snapshot-words.ts";
 
 const ROOT = join(import.meta.dirname, "../src");
-const MESSAGE_ROOTS = ["core", "plugin", "backends"];
+const MESSAGE_ROOTS = ["core", "plugin", "backends", "device"];
 const NAME = ["bb", "box"].join("-");
 const PROSE = new RegExp(`${NAME}(?:'s)?(?:(?=\\s+[A-Za-z])|\\s+\\$\\{|[.,;:!?](?=\\s|["'\`]|$))`);
 const CODESIGN_IDENTITY = `${NAME} local code signing`;
 const PLACEHOLDER = "${" + "PRODUCT}";
-const ALLOWED = "logLine, guestScript, commandHelp, recordPrefix, programName, providerResource, guestComment, agentInstruction and profileOwner";
+const ALLOWED = "logLine, guestScript, unitFile, commandHelp, recordPrefix, programName, providerResource, guestComment, agentInstruction and profileOwner";
 
 function filesUnder(dir: string): string[] {
   const found: string[] = [];
@@ -69,8 +69,9 @@ function providerResource(body: string): boolean {
 
 function allowance(body: string, before: string): string | null {
   if (/String\.raw\s*$/.test(before.slice(-40))) return "guestScript";
+  if (body.startsWith("[Unit]")) return "unitFile";
   if (insideUnclosed(before, /\.describe\s*\(/)) return "commandHelp";
-  if (insideUnclosed(before, /(?:^|[^.\w])log\s*\?\.\(|\.log\s*\?\.\(|\.log\s*\(|\.logError\s*\(|console\.(?:log|info|warn|error|debug)\s*\(/)) return "logLine";
+  if (insideUnclosed(before, /(?:^|[^.\w])log\s*\?\.\(|\.log\s*\?\.\(|\.#?log\s*\(|\.logError\s*\(|console\.(?:log|info|warn|error|debug)\s*\(/)) return "logLine";
   if (recordPrefix(body)) return "recordPrefix";
   if (body.startsWith("bb-box: use box_acquire")) return "agentInstruction";
   if (/# (?:Written|Added) by bb-box\b/.test(body)) return "guestComment";

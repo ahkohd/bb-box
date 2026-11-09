@@ -766,7 +766,7 @@ describe("the Android driver", () => {
     emulator.reachable = false;
     await keeper.read(AbortSignal.timeout(5000));
     assert.deepEqual(keeper.settings().network, { known: false, why: "The network is none of BB Box's presets: airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated." });
-    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /bb-box set the network online, and restarted Wi-Fi as the device had no validated network 0\.3 s after the boot, but 0\.3 s later it reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
+    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /BB Box set the network online, and restarted Wi-Fi as the device had no validated network 0\.3 s after the boot, but 0\.3 s later it reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
     emulator.wifiSaved = false;
     await assert.rejects(keeper.setNetwork("online", AbortSignal.timeout(5000)), /The network was set to online, but 0\.3 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network\./);
     await assert.rejects(keeper.waitEmulatorWifiWritten(AbortSignal.timeout(5000)), /had not written AndroidWifi to its Wi-Fi store 0\.3 s later/);

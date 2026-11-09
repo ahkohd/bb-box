@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { open, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -251,7 +252,7 @@ export class AndroidDriver implements DeviceDriver {
     if (running && (running.avd !== target.native || unreachable)) {
       this.#log(
         unreachable
-          ? `device: the emulator for ${running.avd} runs, but bb-box cannot reach it without its gRPC token; stopping it, which saves its snapshot, to start it again`
+          ? `device: the emulator for ${running.avd} runs, but ${PRODUCT} cannot reach it without its gRPC token; stopping it, which saves its snapshot, to start it again`
           : `device: the emulator runs ${running.avd}, not ${target.native}; stopping it, which saves its snapshot`,
       );
       await this.#video.stop();
@@ -380,7 +381,7 @@ export class AndroidDriver implements DeviceDriver {
       const ended = this.#running?.pid;
       this.#running = null;
       if (again) {
-        const said = `The ${target.model} stopped twice within ${DEVICE_EXITS_WINDOW_MS / 60_000} minutes, so bb-box leaves it stopped. Reboot the device, or restart the box, to start it again.`;
+        const said = `The ${target.model} stopped twice within ${DEVICE_EXITS_WINDOW_MS / 60_000} minutes, so ${PRODUCT} leaves it stopped. Reboot the device, or restart the box, to start it again.`;
         this.#log(`device: ${said}`);
         this.#power = { is: "failed", error: { code: "device-exited", words: said }, since: now };
         this.#changed();
@@ -630,7 +631,7 @@ export class AndroidDriver implements DeviceDriver {
   async #heldWayKnown(signal: AbortSignal): Promise<void> {
     if (this.#video.size) return;
     if (!(await this.#newPicture(this.#generation, () => true, FIRST_PICTURE_MS, signal)))
-      throw new DriverError("failed", `The ${this.#target?.model ?? "device"}'s picture has not come ${FIRST_PICTURE_MS / 1000} s after the device server attached, so bb-box cannot tell which way it is held. Try again in a moment.`);
+      throw new DriverError("failed", `The ${this.#target?.model ?? "device"}'s picture has not come ${FIRST_PICTURE_MS / 1000} s after the device server attached, so ${PRODUCT} cannot tell which way it is held. Try again in a moment.`);
   }
 
   async #rotate(to: Orientation, signal: AbortSignal): Promise<void> {

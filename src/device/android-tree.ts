@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import type { DeviceElement, ElementFrame, Orientation, VideoSize } from "../core/device.ts";
 import { DriverError } from "./driver.ts";
 
@@ -93,11 +94,11 @@ export function parseServerTree(line: string): ServerAnswer {
   try {
     raw = JSON.parse(line);
   } catch {
-    throw new DriverError("failed", `bb-box's tree server answered with something that is not JSON: ${line.slice(0, 120)}`);
+    throw new DriverError("failed", `${PRODUCT}'s tree server answered with something that is not JSON: ${line.slice(0, 120)}`);
   }
   const answer = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
-  if (answer.ok !== true) return { ok: false, code: text(answer.code) || "failed", words: text(answer.words) || "bb-box's tree server refused without saying why." };
-  if (!Array.isArray(answer.windows)) throw new DriverError("failed", "bb-box's tree server answered a tree with no windows.");
+  if (answer.ok !== true) return { ok: false, code: text(answer.code) || "failed", words: text(answer.words) || `${PRODUCT}'s tree server refused without saying why.` };
+  if (!Array.isArray(answer.windows)) throw new DriverError("failed", `${PRODUCT}'s tree server answered a tree with no windows.`);
   const windows = answer.windows.map((each): AndroidWindow => {
     const window = (typeof each === "object" && each !== null ? each : {}) as Record<string, unknown>;
     return {
