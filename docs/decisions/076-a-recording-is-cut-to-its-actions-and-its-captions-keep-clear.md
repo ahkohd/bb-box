@@ -48,11 +48,26 @@ neither pumps nor keeps the camera out for the next one. The paint check
 reads the screen from the window's opening, so a window that painted at
 once is zoomed without waiting for a later reading.
 
+### Each step's captions take the clearer side
+
+The captions of a step, from its step caption to the next one, go where
+they cover less of what changes during it, as the camera shows it: the
+changed regions larger than 0.3% and at most half of the screen, the
+elements clicked, and the typed text. The side the agent asked for at the
+start is kept unless it covers something and covers more than 1.25 times
+what the other side would. Key pills, warnings and the skip marks move with
+the captions. The overlap is measured against a guess of the caption's
+width, 0.55 of the font size a character, as the box measures the text only
+when it draws the pills.
+
 ## Consequences
 
 The Linux showcase's typing, Ctrl+A and Ctrl+S steps are readable at 1280
 pixels wide; before, a late zoom on a closed window kept the camera out
 until 4 seconds after the typing.
+
+A dialog whose name field is at the top has its step at the bottom, and a
+change that fills more than half the screen counts for neither side.
 
 An agent does not pause between steps for the viewer, and a clip of a
 focused editor is as tight as one of a still screen. A pointer moving over

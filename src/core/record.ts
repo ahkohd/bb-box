@@ -425,6 +425,47 @@ function pillClearOf(top: number, height: number, tall: number, gap: number, min
   return Math.round(Number.isFinite(edge) ? edge : fallback);
 }
 
+export interface CaptionSide {
+  readonly from: number;
+  readonly to: number;
+  readonly side: CaptionPosition;
+}
+
+export const OTHER_SIDE_CLEARER = 1.25;
+
+function pillWidthGuess(text: string, fontSize: number): number {
+  return fontSize * (2.6 + 0.55 * text.length);
+}
+
+export function captionSides(scene: ScenePlan, captions: readonly Caption[], preferred: CaptionPosition, lag: number, recorded: number, band: (side: CaptionPosition) => { readonly top: number; readonly bottom: number }, fontSize: number): CaptionSide[] {
+  const steps = captions.filter((caption) => caption.kind === "step");
+  const starts = [...new Set([0, ...steps.map((step) => step.from)])].sort((a, b) => a - b);
+  return starts.map((from, index): CaptionSide => {
+    const to = starts[index + 1] ?? Infinity;
+    const inSpan = captions.filter((caption) => caption.from >= from - 0.0005 && caption.from < to - 0.0005);
+    if (!inSpan.length) return { from, to, side: preferred };
+    const realFrom = Math.min(...inSpan.map((caption) => caption.real)) - lag;
+    const later = captions.find((caption) => caption.kind === "step" && caption.from >= to - 0.0005);
+    const realTo = (later ? later.real : recorded) - lag;
+    const width = Math.max(...inSpan.map((caption) => pillWidthGuess(caption.text, fontSize)));
+    const left = (scene.content.width - width) / 2;
+    const covered = (side: CaptionPosition) => {
+      const { top, bottom } = band(side);
+      return scene.notable
+        .filter((region) => region.at >= realFrom - 0.25 && region.at <= realTo)
+        .reduce((sum, region) => {
+          const shown = areaOnClip(scene, region, region.at);
+          const across = Math.min(left + width, shown.x + shown.width) - Math.max(left, shown.x);
+          const down = Math.min(bottom, shown.y + shown.height) - Math.max(top, shown.y);
+          return sum + (across > 0 && down > 0 ? across * down : 0);
+        }, 0);
+    };
+    const other: CaptionPosition = preferred === "top" ? "bottom" : "top";
+    const stay = covered(preferred);
+    return { from, to, side: stay > 0 && stay > covered(other) * OTHER_SIDE_CLEARER ? other : preferred };
+  });
+}
+
 export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneOptions = DEFAULT_SCENE_OPTIONS): ClipPlan {
   const layout = prepared.layout;
   const size = { width: prepared.width, height: prepared.height };
@@ -485,22 +526,30 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const edge = layout ? Math.round((layout.band.height - 2 * pill(fontSize) - gap) / 2) : Math.round(inner * 0.035);
   const dock = layout ? edge : Math.round(inner * 0.11);
   const position = prepared.position ?? "top";
-  const captionY = (row: 0 | 1) =>
-    layout ? layout.band.y + edge + row * (pill(fontSize) + gap) : position === "top" ? inset + edge + row * (pill(fontSize) + gap) : inset + inner - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
+  const captionAt = (side: CaptionPosition, row: 0 | 1) =>
+    layout ? layout.band.y + edge + row * (pill(fontSize) + gap) : side === "top" ? inset + edge + row * (pill(fontSize) + gap) : inset + inner - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
+  const sides = layout || !planned ? [] : captionSides(planned, captions, position, prepared.scene?.lag ?? 0, prepared.recorded, (side) => ({ top: captionAt(side, 0) - inset, bottom: captionAt(side, 1) + pill(fontSize) - inset }), fontSize);
+  const sideAt = (t: number): CaptionPosition => sides.find((span) => t >= span.from - 0.0005 && t < span.to - 0.0005)?.side ?? position;
+  const captionY = (row: 0 | 1, t: number) => captionAt(sideAt(t), row);
   const markSize = Math.max(11, Math.round(fontSize * 0.7));
   const markHeight = pill(markSize);
-  const cornerY = position === "top" ? inset + inner - dock - markHeight : layout ? edge : inset + Math.round(inner * 0.05);
-  const skipY = speed > 1 ? (position === "top" ? cornerY - markHeight - gap : cornerY + markHeight + gap) : cornerY;
-  const noteY = layout ? (position === "top" ? layout.band.y + layout.band.height + gap : layout.band.y - gap - pill(fontSize)) : captionY(1);
+  const cornerOf = (side: CaptionPosition) => (side === "top" ? inset + inner - dock - markHeight : layout ? edge : inset + Math.round(inner * 0.05));
+  const cornerY = cornerOf(position);
+  const skipAt = (t: number) => {
+    const side = sideAt(t);
+    const corner = cornerOf(side);
+    return speed > 1 ? (side === "top" ? corner - markHeight - gap : corner + markHeight + gap) : corner;
+  };
+  const noteAt = (t: number) => (layout ? (position === "top" ? layout.band.y + layout.band.height + gap : layout.band.y - gap - pill(fontSize)) : captionY(1, t));
   const finalAt = (at: number) => at + holds.filter((hold) => hold.at < at - 0.0005).reduce((sum, hold) => sum + hold.seconds, 0);
   const skips = cuts
     .filter(([from, to]) => to - from >= SKIP_MARK_S)
     .map(([from, to]): Overlay => {
       const shown = round3(finalAt(onClip(from)));
-      return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipY, from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
+      return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipAt(shown), from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
     });
   const notes = shownChanges.flatMap((change, index): Overlay[] =>
-    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteY, from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))) }] : [],
+    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(shownAt[index]!), from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))) }] : [],
   );
   const keyPills = (planned?.pills ?? []).flatMap((each): Overlay[] => {
     const from = round3(finalAt(onClip(each.from)));
@@ -508,22 +557,23 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     if (to - from < 0.2) return [];
     const at = pointerOnClip(planned!, each.from);
     const tall = pill(fontSize);
+    const side = sideAt(from);
     const clear =
-      position === "top"
+      side === "top"
         ? at && at.y > inner * 0.8
-          ? captionY(1) + tall + gap
+          ? captionY(1, from) + tall + gap
           : inset + inner - dock - tall
         : at && at.y < inner * 0.2
-          ? captionY(0) - tall - gap
+          ? captionY(0, from) - tall - gap
           : inset + edge;
-    const bandTop = position === "top" ? captionY(1) + pill(fontSize) + gap : inset + edge;
-    const bandBottom = position === "top" ? inset + inner - dock - tall : captionY(0) - gap - tall;
+    const bandTop = side === "top" ? captionY(1, from) + pill(fontSize) + gap : inset + edge;
+    const bandBottom = side === "top" ? inset + inner - dock - tall : captionY(0, from) - gap - tall;
     const region = each.avoid && each.avoid.width > 0 && each.avoid.height > 0 ? areaOnClip(planned!, each.avoid, each.from) : null;
     const y = region ? pillClearOf(region.y + inset, region.height, tall, gap, Math.min(bandTop, bandBottom), Math.max(bandTop, bandBottom), clear) : clear;
     return [{ look: "key", text: each.text, size: fontSize, x: "centre", y, from, to }];
   });
   const overlays: Overlay[] = [
-    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row), from: caption.from, to: caption.to })),
+    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row, caption.from), from: caption.from, to: caption.to })),
     ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length }] : []),
     ...skips,
     ...notes,

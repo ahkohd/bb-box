@@ -176,7 +176,7 @@ Record a desktop box's screen, to show your work in the thread as a short video 
 | `action` | `start`, `step`, `result`, `stop` | yes | start begins recording; step captions the next check; result gives its outcome; stop ends it and makes the clip. |
 | `text` | string | no | With step: what you check next. With result: what you saw. One short line each. |
 | `passed` | boolean | no | With result: whether the check passed. |
-| `position` | `top`, `bottom` | no | With start: where step captions go. Defaults to "top"; "bottom" when what you check is near the top of the screen. |
+| `position` | `top`, `bottom` | no | With start: where step captions usually go. Defaults to "top"; "bottom" when what you check is near the top of the screen. A step moves its captions to the other side when theirs would cover more of what it changes. |
 | `speed` | number or number or number | no | With stop: the clip plays this many times faster. Defaults to 1. |
 | `stills` | `cut`, `keep` | no | With stop: cut each idle stretch to half a second (the default), or keep it. |
 | `zoom` | boolean | no | With stop: zoom in gently where you click, drag and type, and out between (the default), or false for the whole screen throughout. |

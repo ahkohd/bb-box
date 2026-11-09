@@ -465,6 +465,45 @@ test("a framed clip insets the screen on a background that matches its brightnes
   assert.equal(planClip({ ...prepared, scene: { ...prepared.scene!, luma: 30 } }, 1).scene!.frame!.background, "161618");
 });
 
+test("each step's captions go to the top or the bottom, whichever covers less of what changes during it, and the key pills keep clear of them (076)", () => {
+  const name = { x: 700, y: 40, width: 500, height: 36 };
+  const button = { x: 860, y: 980, width: 80, height: 40 };
+  const prepared: Prepared = {
+    ended: "stopped",
+    recorded: 12,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    position: "top",
+    cuts: [],
+    events: [
+      { at: 1002, kind: "step", text: "Name the file" },
+      { at: 1004, kind: "pass", text: "The name is in the field" },
+      { at: 1006, kind: "step", text: "Press the button" },
+      { at: 1008, kind: "pass", text: "The button was pressed" },
+    ],
+    scene: facts({
+      samples: [{ at: 1000, x: 900, y: 600, buttons: 0 }],
+      changes: [{ at: 3.4, ...name }, { at: 7.2, ...button }],
+      inputs: [
+        { at: 1003, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 900, y: 58, area: name, role: "text" },
+        { at: 1003.3, by: "agent", type: "typing", characters: 12, space: "screen", area: name, secret: false, role: "text" },
+        { at: 1003.5, by: "agent", type: "keys", chord: normalChord("Tab", []) },
+        { at: 1007, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 900, y: 1000, area: button, role: "push button" },
+      ],
+    }),
+  };
+  const plan = planClip(prepared, 1, { zoom: false, frame: true });
+  const caption = (text: string) => plan.overlays.find((overlay) => overlay.text === text)!;
+  assert.ok(caption("Name the file").y > plan.height / 2, "the name field is at the top, so its step goes to the bottom");
+  assert.ok(caption("The name is in the field").y > caption("Name the file").y, "its result stays under it");
+  assert.ok(caption("Press the button").y < plan.height / 2, "the button is at the bottom, so the next step is at the top again");
+  const tab = plan.overlays.find((overlay) => overlay.look === "key" && overlay.text === "Tab")!;
+  assert.ok(tab.y + plan.fontSize * 2.1 <= caption("Name the file").y, "a key pill in that step sits clear of the captions at the bottom");
+  const kept = planClip({ ...prepared, scene: facts({ samples: [{ at: 1000, x: 900, y: 600, buttons: 0 }] }) }, 1, { zoom: false, frame: true });
+  assert.ok(kept.overlays.filter((overlay) => overlay.look === "step").every((overlay) => overlay.y < kept.height / 2), "with nothing to avoid, the captions stay where the agent put them");
+});
+
 test("a key pill sits below the region it would cover, or above it when below does not fit (073)", () => {
   const line = { at: 3.2, x: 180, y: 16, width: 520, height: 28 };
   const typing: InputEvent = { at: 1003, by: "agent", type: "typing", characters: 40, space: "screen", area: { x: 160, y: 8, width: 600, height: 48 }, secret: false };

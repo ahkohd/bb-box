@@ -54,6 +54,8 @@ The step caption changes when the next step starts. A result fades after about 2
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 
+Each step's captions also move to the other side by themselves when they would cover more of what changes during that step, such as a dialog's name field at the top, than the other side would. Key pills and marks move with them.
+
 The page under the clip lists the steps, each with its result and its real time in the recording. Select a step to play the clip from there.
 
 ## Recording a device

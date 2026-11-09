@@ -1,5 +1,5 @@
 import { cornerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
-import { activityMoments, idleStretches } from "./record-edit.ts";
+import { activityMoments, idleStretches, notableRegions } from "./record-edit.ts";
 import { CURSOR_BODY, CURSOR_VIEW, cursorArt, cursorCanvas, ringInk, type PointerShape } from "./record-cursors.ts";
 import type { InputArea, InputEvent } from "./record-input.ts";
 import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
@@ -97,6 +97,7 @@ export interface ScenePlan {
   readonly inks: readonly InkSpan[];
   readonly ringStyles: readonly RingStyle[];
   readonly idle: readonly Span[] | null;
+  readonly notable: readonly ChangedRegion[];
 }
 
 export interface RingStyle {
@@ -239,7 +240,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
     ...cursors,
     ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
   ];
-  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle };
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle, notable: notableRegions(scene, pointer) };
 }
 
 function inkSpans(shapes: readonly ShapeSpan[], variants: readonly VariantSpan[], frames: number): InkSpan[] {

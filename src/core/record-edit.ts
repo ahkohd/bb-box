@@ -1,10 +1,12 @@
 import type { PlacedKeys } from "./record-keys.ts";
-import type { Scene, Span } from "./record-motion.ts";
+import { typingFocus, type ChangedRegion, type PointerPlan, type Scene, type Span } from "./record-motion.ts";
 
 export const IDLE_LEAST_S = 1;
 export const IDLE_KEPT_S = 0.5;
 export const IDLE_LEAD_S = 0.25;
 export const QUIET_CHANGE_SHARE = 0.003;
+export const NOTABLE_MOST_SHARE = 0.5;
+export const CLICK_MARK_PX = 48;
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
@@ -40,4 +42,16 @@ export function idleStretches(moments: readonly number[], length: number): Span[
     if (to > from) idle.push({ from: round3(from), to: round3(to) });
   }
   return idle;
+}
+
+export function notableRegions(scene: Scene, pointer: PointerPlan): ChangedRegion[] {
+  const screen = scene.width * scene.height;
+  const notable = (area: { readonly width: number; readonly height: number }) => changedArea(area) > 0 && changedArea(area) <= screen * NOTABLE_MOST_SHARE;
+  const changed = scene.changes.filter((change) => changedArea(change) > screen * QUIET_CHANGE_SHARE && notable(change));
+  const clicked = scene.clicks.map((click): ChangedRegion => (click.area && notable(click.area) ? { at: click.at, ...click.area } : { at: click.at, x: click.x - CLICK_MARK_PX / 2, y: click.y - CLICK_MARK_PX / 2, width: CLICK_MARK_PX, height: CLICK_MARK_PX }));
+  const typed = scene.typing.flatMap((typing): ChangedRegion[] => {
+    const focus = typing.secret || !typing.characters ? null : typingFocus(scene, typing, pointer);
+    return focus && notable(focus) ? [{ at: typing.at, ...focus }] : [];
+  });
+  return [...changed, ...clicked, ...typed].sort((a, b) => a.at - b.at);
 }
