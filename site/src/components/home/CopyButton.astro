@@ -1,0 +1,91 @@
+---
+interface Props {
+  source: string;
+  class?: string;
+  label?: string;
+}
+
+const { source, class: className, label = "Copy" } = Astro.props;
+---
+
+<button type="button" class:list={["copy-button", className]} data-copy={source} hidden>
+  <span class="copy-label">{label}</span>
+  <span class="copy-label copy-done" aria-hidden="true">Copied</span>
+</button>
+<span class="sr-only copy-status" role="status"></span>
+
+<script>
+  const copiedForMs = 1500;
+
+  function copyBySelection(text: string): boolean {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  }
+
+  async function copyText(text: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return copyBySelection(text);
+    }
+  }
+
+  const timers = new Map<HTMLButtonElement, number>();
+
+  function showCopied(button: HTMLButtonElement): void {
+    const status = button.nextElementSibling;
+    button.dataset.copied = "";
+    if (status) status.textContent = "Copied";
+    clearTimeout(timers.get(button));
+    timers.set(
+      button,
+      window.setTimeout(() => {
+        delete button.dataset.copied;
+        if (status) status.textContent = "";
+      }, copiedForMs),
+    );
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("button.copy-button[data-copy]")) {
+    const source = document.getElementById(button.dataset.copy!);
+    if (!source) continue;
+    button.hidden = false;
+    button.addEventListener("click", async () => {
+      if (await copyText(source.textContent ?? "")) showCopied(button);
+    });
+  }
+</script>
+
+<style>
+  .copy-button {
+    display: inline-grid;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .copy-button[hidden] {
+    display: none;
+  }
+
+  .copy-label {
+    grid-area: 1 / 1;
+  }
+
+  .copy-done,
+  [data-copied] .copy-label:not(.copy-done) {
+    visibility: hidden;
+  }
+
+  [data-copied] .copy-done {
+    visibility: visible;
+  }
+</style>

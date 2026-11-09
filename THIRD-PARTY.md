@@ -40,6 +40,7 @@ The site in `site/` is built from these packages. Its pages carry their code, st
 | Software | Licence | Notes |
 | --- | --- | --- |
 | [Inter](https://github.com/rsms/inter), from npm (`@fontsource-variable/inter`) 5.3.0 | SIL Open Font License 1.1 | The site's typeface, served from the site itself as WOFF2 files, unchanged. Copyright 2016 The Inter Project Authors. The licence text is in [`site/public/licenses/inter-OFL.txt`](site/public/licenses/inter-OFL.txt), which the built site serves at `licenses/inter-OFL.txt` with the fonts. |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), from npm (`@fontsource-variable/jetbrains-mono`) 5.3.0 | SIL Open Font License 1.1 | The site's monospaced typeface, for code, commands and its character drawings, served from the site itself as WOFF2 files, unchanged. Copyright 2020 The JetBrains Mono Project Authors. The licence text is in [`site/public/licenses/jetbrains-mono-OFL.txt`](site/public/licenses/jetbrains-mono-OFL.txt), which the built site serves at `licenses/jetbrains-mono-OFL.txt` with the fonts. |
 | [Astro](https://github.com/withastro/astro) and [Starlight](https://github.com/withastro/starlight) (`astro`, `@astrojs/starlight`) | MIT | The site's framework and its documentation theme. |
 | [Pagefind](https://github.com/CloudCannon/pagefind) (`pagefind`, `@pagefind/default-ui`) | MIT | The site's search. |
 | [Expressive Code](https://github.com/expressive-code/expressive-code) (`astro-expressive-code`) | MIT | The site's code blocks. |

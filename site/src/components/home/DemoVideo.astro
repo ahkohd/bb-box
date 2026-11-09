@@ -1,0 +1,45 @@
+---
+import darkPoster from "../../../../docs/media/demo-poster.jpg";
+import darkVideo from "../../../../docs/media/demo.mp4?url";
+import lightPoster from "../../../../docs/media/demo-light-poster.jpg";
+import lightVideo from "../../../../docs/media/demo-light.mp4?url";
+import { demoDescription } from "../../home.ts";
+
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`;
+---
+
+<video class={className} style={reservedShape} autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label={demoDescription}></video>
+<script is:inline>
+  (() => {
+    const video = document.currentScript.previousElementSibling;
+    const stillPlease = matchMedia("(prefers-reduced-motion: reduce)");
+    const waitForPlay = () => {
+      video.removeAttribute("autoplay");
+      video.autoplay = false;
+      video.controls = true;
+      video.pause();
+    };
+    if (stillPlease.matches) waitForPlay();
+    stillPlease.addEventListener("change", () => (stillPlease.matches ? waitForPlay() : video.play().catch(() => {})));
+    const show = () => {
+      const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+      if (video.dataset.shown === theme) return;
+      const playedTo = video.currentTime;
+      video.dataset.shown = theme;
+      video.poster = video.dataset[`${theme}Poster`];
+      const wasPlaying = !video.paused;
+      video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
+      if (!stillPlease.matches || wasPlaying) video.play().catch(() => {});
+    };
+    show();
+    new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  })();
+</script>
+<noscript>
+  <video class={className} style={reservedShape} autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label={demoDescription}></video>
+</noscript>

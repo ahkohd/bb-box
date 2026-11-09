@@ -1,215 +1,645 @@
 ---
-import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
-import { getEntry } from "astro:content";
-import darkPoster from "../../../docs/media/demo-poster.jpg";
-import darkVideo from "../../../docs/media/demo.mp4?url";
-import lightPoster from "../../../docs/media/demo-light-poster.jpg";
-import lightVideo from "../../../docs/media/demo-light.mp4?url";
-import InstallBlock from "../components/InstallBlock.astro";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
+import BoxFrame from "../components/home/BoxFrame.astro";
+import CopyButton from "../components/home/CopyButton.astro";
+import DemoVideo from "../components/home/DemoVideo.astro";
+import DitherField from "../components/home/DitherField.astro";
+import HomeHead from "../components/home/HomeHead.astro";
+import ThemedShot from "../components/home/ThemedShot.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import { homePageHead } from "../head.ts";
-import { absoluteAddress, markdownPath } from "../llms.ts";
-import { listUnder } from "../rendered.ts";
-import { pageUrl, readPages } from "../repo.ts";
-import { installCommand, quickStartOnGitHub, setupPrompt } from "../setup-prompt.ts";
-import { startingPoints, trustNote } from "../starting-points.ts";
+import { headline, homeData, platformLines, platformNames, subline, tagline } from "../home.ts";
+import { pageUrl } from "../repo.ts";
 
 const base = import.meta.env.BASE_URL;
-const introduction = await getEntry("docs", "start");
-const reasons = listUnder(introduction?.rendered?.html ?? "", "why-bb-box");
-const mark = `<svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>`;
-const command = installCommand(readPages());
-const quickStart = Astro.site ? absoluteAddress(markdownPath(base, "start/quick-start"), { base, site: Astro.site.href }) : quickStartOnGitHub(command);
+const data = await homeData(base, Astro.site);
+const shown = data.features.filter((feature) => feature.shot);
+const listed = data.features.filter((feature) => !feature.shot);
+const page = {
+  title: "BB Box",
+  description: tagline,
+  head: homePageHead,
+};
+const docs = pageUrl(base, "start");
+const acquire = "bb box acquire linux-desktop-cpu";
 ---
 
-<StarlightPage
-  frontmatter={{
-    title: "BB Box",
-    description: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
-    template: "splash",
-    head: homePageHead,
-    hero: {
-      title: `${mark}BB Box`,
-      tagline: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
-    },
-  }}
->
-  <InstallBlock prompt={setupPrompt(readPages(), quickStart)} guide={pageUrl(base, "start/quick-start")} />
+<html lang="en" dir="ltr">
+  <head>
+    <HomeHead {...page} />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="bar">
+      <a class="brand" href={base}>
+        <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"></path><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"></path></svg>
+        BB Box
+      </a>
+      <nav aria-label="Site">
+        <a href={docs}>Docs</a>
+        <a href={pageUrl(base, "reference")}>Reference</a>
+        <a href={data.repository}>GitHub</a>
+        <ThemeToggle />
+      </nav>
+    </header>
 
-  <figure class="demo not-content">
-    <video autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo."></video>
-    <script is:inline>
-      (() => {
-        const video = document.currentScript.previousElementSibling;
-        const show = () => {
-          const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-          if (video.dataset.shown === theme) return;
-          const playedTo = video.currentTime;
-          video.dataset.shown = theme;
-          video.poster = video.dataset[`${theme}Poster`];
-          video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
-          video.play().catch(() => {});
-        };
-        show();
-        new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-      })();
-    </script>
-    <noscript>
-      <video autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo."></video>
-    </noscript>
-  </figure>
+    <main id="main">
+      <section class="hero" aria-labelledby="headline">
+        <div class="dither"><DitherField /></div>
+        <div class="hero-copy">
+          <p class="session">
+            <span class="line"><span class="prompt-sign" aria-hidden="true">$</span> <span class="typed" style={`--chars: ${acquire.length}`}>{acquire}</span></span>
+            <span class="line reply"><span class="ready" aria-hidden="true">●</span> Ready in seconds, and a warm box at once.</span>
+          </p>
+          <h1 id="headline">{headline}</h1>
+          <p class="lead">{subline}</p>
+          <div class="actions">
+            <CopyButton source="setup-prompt" class="button primary" label="Copy setup prompt" />
+            <a class="button secondary" href={data.quickStart}>Quick start</a>
+          </div>
+        </div>
+      </section>
 
-  <section class="column not-content" aria-labelledby="why-bb-box">
-    <h2 id="why-bb-box">Why BB Box</h2>
-    <ul class="list">
-      {reasons.map((reason) => (
-        <li>
-          <span class="dash" aria-hidden="true">-</span>
-          <span>
-            <span class="lead">{reason.title}.</span>{" "}
-            <span class="words" set:html={reason.html} />
-          </span>
-        </li>
-      ))}
-    </ul>
-    <p class="trust">{trustNote}</p>
-  </section>
+      <section class="demo" aria-label="The demo">
+        <BoxFrame title="demo.mp4  68 s">
+          <div class="video-well"><DemoVideo /></div>
+        </BoxFrame>
+        <p class="caption">A thread's agent gets a Linux desktop, then a server box, a snapshot and an undo.</p>
+      </section>
 
-  <section class="column not-content" aria-labelledby="find-your-way">
-    <h2 id="find-your-way">Find your way</h2>
-    <ul class="list">
-      {startingPoints.map((way) => (
-        <li>
-          <span class="dash" aria-hidden="true">-</span>
-          <span>
-            <a class="lead link" href={pageUrl(base, way.id)}>{way.title}</a>{". "}
-            <span class="words">{way.words}</span>
-          </span>
-        </li>
-      ))}
-    </ul>
-  </section>
-</StarlightPage>
+      <section class="section" aria-labelledby="platforms">
+        <p class="heading-mark" aria-hidden="true">## what it is</p>
+        <h2 id="platforms">A computer of its own for every thread</h2>
+        <p class="section-lead">Boxes have the thread's Git access, its variables and BB itself. You and the agent share them: the agent works in the box, and you can open its desktop or terminal at any time.</p>
+        <ul class="tree">
+          <li class="tree-root">boxes/</li>
+          {platformNames.map((name, index) => (
+            <li>
+              <span class:list={["branch", { last: index === platformNames.length - 1 }]}></span>
+              <span class="tree-name">{name}</span>
+              <span class="tree-words">{platformLines[name]}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section class="section" aria-labelledby="features">
+        <p class="heading-mark" aria-hidden="true">## why bb box</p>
+        <h2 id="features">Made for the way agents work</h2>
+        <ul class="shots">
+          {shown.map((feature, index) => (
+            <li class:list={{ wide: index === 0 }}>
+              <BoxFrame title={feature.title}>
+                <ThemedShot shot={feature.shot!} class="feature-shot" sizes={index === 0 ? "(min-width: 1100px) 1100px, 100vw" : "(min-width: 1100px) 540px, 100vw"} />
+              </BoxFrame>
+              <p class="shot-words" set:html={feature.html} />
+            </li>
+          ))}
+        </ul>
+        <ul class="more-features">
+          {listed.map((feature) => (
+            <li>
+              <span class="branch"></span>
+              <span>
+                <span class="feature-title">{feature.title}.</span>{" "}
+                <span class="feature-words" set:html={feature.html} />
+              </span>
+            </li>
+          ))}
+          <li class="trust">
+            <span class="branch last"></span>
+            <span>{data.trustNote}</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="section" aria-labelledby="backends">
+        <p class="heading-mark" aria-hidden="true">## backends</p>
+        <h2 id="backends">Any provider, one interface</h2>
+        <p class="section-lead">Docker on the machine that runs BB to start with. Add Proxmox, microsandbox, Macs with Tart, machines over SSH, or rent from Hetzner Cloud, Namespace and boat.dev.</p>
+        <div class="table-scroll" role="region" aria-labelledby="backends" tabindex="0">
+          <table class="listing">
+            <thead>
+              <tr>
+                <th scope="col">backend</th>
+                {platformNames.map((name) => <th scope="col" class="mark-col">{name.toLowerCase()}</th>)}
+                <th scope="col" class="mark-col">snapshots</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.backends.map((backend) => (
+                <tr>
+                  <th scope="row">
+                    <a href={backend.href}>{backend.name}</a>
+                    <span class="where">{backend.where}</span>
+                    <span class="runs-on">{platformNames.filter((name) => backend.runs[name]).join(" · ")}{backend.takesSnapshots ? " · snapshots" : ""}</span>
+                  </th>
+                  {platformNames.map((name) => (
+                    <td class="mark-col">{backend.runs[name] ? <span class="yes"><span aria-hidden="true">[x]</span><span class="sr-only">Yes</span></span> : <span class="no"><span aria-hidden="true">[ ]</span><span class="sr-only">No</span></span>}</td>
+                  ))}
+                  <td class="mark-col">{backend.takesSnapshots ? <span class="yes"><span aria-hidden="true">[x]</span><span class="sr-only">Yes</span></span> : <span class="no"><span aria-hidden="true">[ ]</span><span class="sr-only">No</span></span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="install">
+        <p class="heading-mark" aria-hidden="true">## install</p>
+        <h2 id="install">Set it up with an agent</h2>
+        <p class="section-lead">Paste this into a BB thread. Its agent installs BB Box, sets up a backend and proves it with a box.</p>
+        <div class="install">
+          <BoxFrame title="setup prompt" class="prompt-frame">
+            <CopyButton slot="action" source="setup-prompt" class="frame-button" label="Copy" />
+            <pre id="setup-prompt" class="prompt">{data.prompt}</pre>
+          </BoxFrame>
+          <div class="by-hand">
+            <h3>Or by hand</h3>
+            <div class="command">
+              <span class="prompt-sign" aria-hidden="true">$</span>
+              <code id="install-command">{data.command}</code>
+              <CopyButton source="install-command" class="frame-button" label="Copy" />
+            </div>
+            <h3>What each platform needs</h3>
+            <ul class="needs">
+              {data.requirements.map((need) => (
+                <li>
+                  <span class="need-title">{need.title}</span>
+                  <span set:html={need.html} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="dither-strip" aria-hidden="true"></div>
+      <div class="foot-inner">
+        <ul class="ways">
+          {data.links.map((link) => (
+            <li>
+              <a href={link.href}><span class="arrow" aria-hidden="true">→</span>{link.title}</a>
+              <span>{link.words}</span>
+            </li>
+          ))}
+        </ul>
+        <p class="fine">
+          <a href={data.repository}>GitHub</a>
+          <a href={`${base.replace(/\/?$/, "/")}llms.txt`}>llms.txt</a>
+          <a href={data.licence}>MIT licence</a>
+          <a href={data.thirdParty}>Third-party software</a>
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --background: #0a0a0a;
+    --foreground: #fafafa;
+    --muted-foreground: #a1a1a1;
+    --muted: #151515;
+    --muted-strong: #262626;
+    --border: rgb(255 255 255 / 0.1);
+    --accent: #ffb224;
+    --accent-fill: #ffb224;
+    --accent-ink: #0a0a0a;
+    --frame-ink: #4d4d4d;
+    --dither-ink: #ffb224;
+    --dither-paper: #0a0a0a;
+    --dither-strength: 0.38;
+    --dither-floor: 0.3;
+    --mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    --background: #ffffff;
+    --foreground: #0a0a0a;
+    --muted-foreground: #6b6b6b;
+    --muted: #f4f3f0;
+    --muted-strong: #ebe8e2;
+    --border: #e8e6e1;
+    --accent: #a85000;
+    --accent-fill: #f5a524;
+    --accent-ink: #0a0a0a;
+    --frame-ink: #c9c5bd;
+    --dither-ink: #f5a524;
+    --dither-paper: #ffffff;
+    --dither-strength: 0.5;
+    --dither-floor: 0.46;
+    color-scheme: light;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    font-weight: 400 !important;
+  }
+
+  html {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: "Inter Variable", system-ui, sans-serif;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none !important;
+    }
+  }
+</style>
 
 <style>
-  :global([data-has-hero] .site-title) {
-    visibility: hidden;
-  }
-
-  :global([data-has-hero] button[data-open-modal]) {
-    display: none;
-  }
-
-  :global([data-has-hero] header.header) {
+  .skip {
     position: absolute;
-    border-bottom-color: transparent;
-    background-color: transparent;
+    left: 1rem;
+    top: -3rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--foreground);
+    color: var(--background);
+    z-index: 10;
   }
 
-  :global([data-has-hero] .main-frame) {
-    padding-top: 0;
+  .skip:focus {
+    top: 0.75rem;
   }
 
-  :global([data-has-hero] header .right-group) {
-    display: flex;
-  }
-
-  :global([data-has-hero] .hero) {
-    display: block;
-    max-width: 42rem;
-    margin-inline: auto;
-    padding: 4rem 0 0;
-  }
-
-  :global([data-has-hero] .hero .stack),
-  :global([data-has-hero] .hero .copy) {
-    align-items: flex-start;
-    text-align: start;
-    gap: 0;
-  }
-
-  :global([data-has-hero] .hero h1) {
+  .bar {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 5;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    max-width: 72rem;
+    height: 4rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
     gap: 0.5rem;
-    margin-bottom: 1rem;
-    font-size: 1.25rem;
-    line-height: 1.75rem;
+    color: var(--foreground);
+    text-decoration: none;
+    font-size: 0.9375rem;
+  }
+
+  .mark {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  nav a {
+    padding: 0.5rem 0.625rem;
+    color: var(--muted-foreground);
+    text-decoration: none;
+    font-size: 0.875rem;
+  }
+
+  nav a:hover {
     color: var(--foreground);
   }
 
-  :global([data-has-hero] .hero h1 .mark) {
-    width: 1.5rem;
-    height: 1.5rem;
-    flex-shrink: 0;
+  .hero {
+    position: relative;
+    padding: 10rem 1.5rem 5rem;
   }
 
-  :global([data-has-hero] .hero .tagline) {
-    max-width: none;
-    font-size: 1rem;
+  .dither {
+    position: absolute;
+    inset: 0;
+    mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+  }
+
+  .hero-copy {
+    position: relative;
+    max-width: 69rem;
+    margin: 0 auto;
+  }
+
+  .session {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0 0 2.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    background: var(--background);
+    box-shadow: inset 0 0 0 1px var(--border);
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--foreground);
+  }
+
+  .prompt-sign {
+    color: var(--accent);
+  }
+
+  .typed {
+    display: inline-block;
+    max-width: calc(var(--chars) * 1ch);
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: bottom;
+    animation: type-in 1.4s steps(var(--chars)) 0.4s both;
+  }
+
+  .reply {
+    color: var(--muted-foreground);
+    animation: appear 0s linear 2s both;
+  }
+
+  .ready {
+    color: var(--accent);
+  }
+
+  @keyframes type-in {
+    from {
+      max-width: 0;
+    }
+  }
+
+  @keyframes appear {
+    from {
+      visibility: hidden;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .typed,
+    .reply {
+      animation: none;
+    }
+  }
+
+  h1 {
+    max-width: 52rem;
+    margin: 0;
+    font-size: clamp(2.5rem, 6vw + 0.5rem, 5rem);
+    line-height: 1;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+
+  .lead {
+    max-width: 36rem;
+    margin: 1.5rem 0 0;
+    font-size: 1.1875rem;
     line-height: 1.5;
     color: var(--muted-foreground);
     text-wrap: pretty;
   }
 
-  .demo {
-    max-width: 67.5rem;
-    margin: 3rem auto 0;
-    padding: 6px;
-    border-radius: 14px;
-    background-color: var(--muted);
-  }
-
-  .demo video {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-  }
-
-  .column {
-    max-width: 42rem;
-    margin: 3rem auto 0;
-  }
-
-  .column h2 {
-    margin: 0 0 0.75rem;
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 500 !important;
-    color: var(--muted-foreground);
-  }
-
-  .list {
+  .actions {
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 2.25rem;
+  }
+
+  :global(.button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 2.75rem;
+    padding: 0 1.25rem;
+    border: 0;
+    border-radius: 6px;
     font-size: 0.9375rem;
-    line-height: 1.275;
+    text-decoration: none;
+    cursor: pointer;
   }
 
-  .list li {
-    display: flex;
-    gap: 0.75rem;
-    margin: 0;
+  :global(.button.primary) {
+    background: var(--accent-fill);
+    color: var(--accent-ink);
   }
 
-  .dash {
-    flex-shrink: 0;
-    color: var(--muted-foreground);
-  }
-
-  .lead {
+  .button.secondary {
+    background: var(--muted-strong);
     color: var(--foreground);
   }
 
-  .words {
+  :global(.frame-button) {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  :global(.frame-button:hover) {
+    color: var(--foreground);
+  }
+
+  :global(.frame-button .copy-label)::before {
+    content: "[ " / "";
+  }
+
+  :global(.frame-button .copy-label)::after {
+    content: " ]" / "";
+  }
+
+  .demo,
+  .section {
+    max-width: 72rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .video-well {
+    padding: 0.5rem 0 0.75rem;
+  }
+
+  .video-well :global(video) {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+
+  .caption {
+    margin: 0.75rem 0 0 1.2em;
+    font-family: var(--mono);
+    font-size: 0.75rem;
     color: var(--muted-foreground);
   }
 
-  .list :global(a) {
+  .section {
+    padding-top: 7rem;
+  }
+
+  .heading-mark {
+    margin: 0 0 0.75rem;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--accent);
+  }
+
+  h2 {
+    max-width: 44rem;
+    margin: 0;
+    font-size: clamp(1.75rem, 3vw + 0.75rem, 2.75rem);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+
+  .section-lead {
+    max-width: 40rem;
+    margin: 1rem 0 0;
+    font-size: 1.0625rem;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    text-wrap: pretty;
+  }
+
+  .tree {
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.9375rem;
+  }
+
+  .tree li {
+    display: grid;
+    grid-template-columns: 3.25em 7rem minmax(0, 1fr);
+    align-items: baseline;
+    padding: 0.375rem 0;
+  }
+
+  .tree-root {
+    display: block !important;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--muted-foreground);
+  }
+
+  .branch::before {
+    content: "├──" / "";
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--frame-ink);
+  }
+
+  .branch.last::before {
+    content: "└──" / "";
+  }
+
+  .tree-words {
+    color: var(--muted-foreground);
+    line-height: 1.5;
+  }
+
+  .shots {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3rem 2rem;
+    margin: 3rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .shots .wide {
+    grid-column: 1 / -1;
+  }
+
+  .shots :global(.feature-shot) {
+    aspect-ratio: 16 / 10;
+    margin: 0.5rem 0 0.75rem;
+    border-radius: 4px;
+    background: var(--muted);
+  }
+
+  .shots .wide :global(.feature-shot) {
+    aspect-ratio: 16 / 7.5;
+  }
+
+  .shot-words {
+    max-width: 34rem;
+    margin: 0.75rem 0 0 1.2em;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+  }
+
+  .more-features {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    margin: 3.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+  }
+
+  .more-features li {
+    display: grid;
+    grid-template-columns: 3.25em minmax(0, 1fr);
+    max-width: 48rem;
+  }
+
+  .feature-words {
+    color: var(--muted-foreground);
+  }
+
+  .trust {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+
+  main :global(a:not(.button)) {
     color: inherit;
     text-decoration-line: underline;
     text-decoration-color: var(--muted-foreground);
@@ -217,18 +647,283 @@ const quickStart = Astro.site ? absoluteAddress(markdownPath(base, "start/quick-
     text-underline-offset: 2px;
   }
 
-  .list :global(a:hover) {
-    text-decoration-color: var(--foreground);
+  main :global(a:not(.button):hover) {
+    text-decoration-color: var(--accent);
   }
 
-  .list a.link {
+  main :global(code) {
+    font-family: var(--mono);
+    font-size: 0.875em;
+  }
+
+  .table-scroll {
+    margin-top: 2.5rem;
+    overflow-x: auto;
+  }
+
+  .listing {
+    width: 100%;
+    min-width: 48rem;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .listing th,
+  .listing td {
+    padding: 0.75rem 0.75rem 0.75rem 0;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .listing thead th {
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+
+  .listing tbody tr + tr > * {
+    border-top: 1px solid var(--border);
+  }
+
+  .listing tbody th {
+    width: 42%;
+  }
+
+  .listing tbody th a {
+    font-size: 0.9375rem;
+  }
+
+  .where {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--muted-foreground);
+  }
+
+  .runs-on {
+    display: none;
+  }
+
+  .mark-col {
+    text-align: center !important;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    white-space: nowrap;
+  }
+
+  .yes {
+    color: var(--accent);
+  }
+
+  .no {
+    color: var(--muted-foreground);
+  }
+
+  .install {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 2.5rem;
+    margin-top: 2.5rem;
+  }
+
+  .prompt {
+    margin: 0.5rem 0 0.75rem;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .by-hand h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+  }
+
+  .command {
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+    margin-bottom: 2rem;
+    padding: 0.75rem 1rem;
+    background: var(--muted);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+  }
+
+  .command code {
+    flex: 1;
+    min-width: 0;
+    font-size: 1em;
+    overflow-wrap: anywhere;
+  }
+
+  .needs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+  }
+
+  .need-title {
+    display: block;
     color: var(--foreground);
   }
 
-  .trust {
-    margin: 1.25rem 0 0;
-    font-size: 0.75rem;
-    line-height: 1rem;
+  .foot {
+    margin-top: 8rem;
+  }
+
+  .dither-strip {
+    height: 3rem;
+    background-image: radial-gradient(var(--dither-ink) 0.75px, transparent 1px);
+    background-size: 6px 6px;
+    opacity: 0.35;
+    mask-image: linear-gradient(to top, #000, transparent);
+  }
+
+  .foot-inner {
+    max-width: 72rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 3rem;
+  }
+
+  .ways {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ways a {
+    display: inline-flex;
+    gap: 0.5rem;
+    color: var(--foreground);
+    text-decoration: none;
+    font-size: 0.9375rem;
+  }
+
+  .ways a:hover {
+    color: var(--accent);
+  }
+
+  .arrow {
+    font-family: var(--mono);
+    color: var(--accent);
+  }
+
+  .ways span:not(.arrow) {
+    display: block;
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
     color: var(--muted-foreground);
+  }
+
+  .fine {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    margin: 3rem 0 0;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  .fine a {
+    color: var(--muted-foreground);
+    text-decoration: none;
+  }
+
+  .fine a:hover {
+    color: var(--foreground);
+  }
+
+  @media (max-width: 64rem) {
+    .install {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ways {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .bar {
+      padding: 0 0.75rem 0 1rem;
+    }
+
+    nav a:nth-child(2) {
+      display: none;
+    }
+
+    .hero {
+      padding: 7rem 1rem 3rem;
+    }
+
+    .session {
+      font-size: 0.75rem;
+    }
+
+    .demo,
+    .section {
+      padding-inline: 1rem;
+    }
+
+    .section {
+      padding-top: 5rem;
+    }
+
+    .tree li {
+      grid-template-columns: 3.25em minmax(0, 1fr);
+    }
+
+    .tree-words {
+      grid-column: 2;
+      font-size: 0.875rem;
+    }
+
+    .shots {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .shots .wide :global(.feature-shot) {
+      aspect-ratio: 16 / 10;
+    }
+
+    .listing {
+      min-width: 0;
+    }
+
+    .listing .mark-col {
+      display: none;
+    }
+
+    .listing tbody th {
+      width: auto;
+    }
+
+    .runs-on {
+      display: block;
+      margin-top: 0.375rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+    }
+
+    .ways {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

@@ -1,0 +1,156 @@
+---
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+---
+
+<canvas class:list={["dither-field", className]} aria-hidden="true"></canvas>
+
+<script>
+  import { animateWhileSeen, cssColour } from "../../motion.ts";
+
+  const pixelSize = 4;
+
+  const vertexSource = `
+    attribute vec2 corner;
+    void main() {
+      gl_Position = vec4(corner, 0.0, 1.0);
+    }
+  `;
+
+  const fragmentSource = `
+    precision mediump float;
+    uniform vec2 size;
+    uniform float seconds;
+    uniform vec3 ink;
+    uniform vec3 paper;
+    uniform float strength;
+    uniform float lowest;
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+    }
+
+    float layered(vec2 p) {
+      float total = 0.0;
+      float amount = 0.5;
+      for (int octave = 0; octave < 4; octave++) {
+        total += amount * noise(p);
+        p = p * 2.03 + vec2(1.7, 9.2);
+        amount *= 0.5;
+      }
+      return total;
+    }
+
+    float bayer2(vec2 a) {
+      a = floor(a);
+      return fract(dot(a, vec2(0.5, a.y * 0.75)));
+    }
+
+    float bayer4(vec2 a) {
+      return bayer2(0.5 * a) * 0.25 + bayer2(a);
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / size.y;
+      float t = seconds * 0.04;
+      vec2 warp = vec2(layered(uv * 1.5 + t), layered(uv * 1.5 + vec2(5.2, 1.3) - t));
+      float value = layered(uv * 1.3 + warp * 1.7 + vec2(t * 0.5, 0.0));
+      value = smoothstep(lowest, 0.8, value);
+      float fade = smoothstep(0.0, 0.85, gl_FragCoord.y / size.y);
+      value *= fade;
+      float levels = 3.0;
+      float stepped = floor(value * levels + bayer4(gl_FragCoord.xy)) / levels;
+      gl_FragColor = vec4(mix(paper, ink, clamp(stepped, 0.0, 1.0) * strength), 1.0);
+    }
+  `;
+
+  function compile(gl: WebGLRenderingContext, type: number, source: string): WebGLShader | undefined {
+    const shader = gl.createShader(type);
+    if (!shader) return undefined;
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    return gl.getShaderParameter(shader, gl.COMPILE_STATUS) ? shader : undefined;
+  }
+
+  function rgbOf(colour: string): [number, number, number] {
+    const probe = document.createElement("canvas").getContext("2d");
+    if (!probe) return [0, 0, 0];
+    probe.fillStyle = colour;
+    const hex = probe.fillStyle.replace("#", "");
+    return [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255) as [number, number, number];
+  }
+
+  function startField(canvas: HTMLCanvasElement): void {
+    const gl = canvas.getContext("webgl", { antialias: false, alpha: false, preserveDrawingBuffer: false });
+    if (!gl) {
+      canvas.hidden = true;
+      return;
+    }
+    const vertex = compile(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragment = compile(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    const program = gl.createProgram();
+    if (!vertex || !fragment || !program) {
+      canvas.hidden = true;
+      return;
+    }
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.useProgram(program);
+    const corners = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const corner = gl.getAttribLocation(program, "corner");
+    gl.enableVertexAttribArray(corner);
+    gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
+    const where = (name: string) => gl.getUniformLocation(program, name);
+    const size = where("size");
+    const seconds = where("seconds");
+    const ink = where("ink");
+    const paper = where("paper");
+    const strength = where("strength");
+    const lowest = where("lowest");
+
+    const resize = () => {
+      const { width, height } = canvas.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.round(width / pixelSize));
+      canvas.height = Math.max(1, Math.round(height / pixelSize));
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    };
+
+    const draw = (time: number) => {
+      if (canvas.width <= 1) resize();
+      gl.uniform2f(size, canvas.width, canvas.height);
+      gl.uniform1f(seconds, time + 40);
+      gl.uniform3fv(ink, rgbOf(cssColour(canvas, "--dither-ink")));
+      gl.uniform3fv(paper, rgbOf(cssColour(canvas, "--dither-paper")));
+      gl.uniform1f(strength, parseFloat(cssColour(canvas, "--dither-strength")) || 0.4);
+      gl.uniform1f(lowest, parseFloat(cssColour(canvas, "--dither-floor")) || 0.3);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    };
+
+    animateWhileSeen(canvas, { draw, resize }, 15);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas.dither-field")) startField(canvas);
+</script>
+
+<style>
+  .dither-field {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+</style>
