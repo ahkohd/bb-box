@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site/src/head.ts";
 import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
+import { sampleBoxName } from "../site/src/effects/sample-names.ts";
 import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
 import { glyphRule } from "../site/src/effects/glyph-rule.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
@@ -74,6 +75,16 @@ test("a section rule is a line of the ramp's characters, the same for a seed eve
   assert.notEqual(glyphRule(3.9, 220), rule);
   assert.match(rule, /[ .·:]{6}/, "a quiet stretch");
   assert.match(rule, /[+*=]{4}/, "a dense stretch");
+});
+
+test("a sample box name is an adjective and a noun that no other sample box has", () => {
+  const taken = new Set(["proud-crane", "clear-comet"]);
+  const name = sampleBoxName(taken);
+  assert.match(name, /^[a-z]+-[a-z]+$/);
+  assert.ok(!taken.has(name));
+  let calls = 0;
+  const alwaysFirst = () => (calls++ < 2 ? 0 : 0.99);
+  assert.equal(sampleBoxName(new Set(["quiet-crane"]), alwaysFirst), "deep-stone");
 });
 
 test("every page of the site is in its sidebar once a section lists it", () => {

@@ -31,6 +31,17 @@
   --frame-ink: #4d4d4d;
   --dither-ink: #ffb224;
   --field-hot: #ffd98a;
+  --ready: #4ade80;
+  --sample-desktop: #16202e;
+  --sample-taskbar: #0e151f;
+  --sample-taskbar-ink: #c8d0dc;
+  --sample-taskbar-mark: #5b8bd8;
+  --sample-window: #ffffff;
+  --sample-window-ink: #1d1d1f;
+  --sample-window-bar: #ececec;
+  --sample-window-muted: #555555;
+  --sample-line: #dcdcdc;
+  --sample-control: #c4c4c4;
   --box-ink: rgb(255 255 255 / 0.45);
   --dither-paper: var(--background);
   --dither-strength: 0.55;
@@ -83,6 +94,7 @@
   --frame-ink: #c9c5bd;
   --dither-ink: #f5a524;
   --field-hot: #d97706;
+  --ready: #16a34a;
   --box-ink: rgb(0 0 0 / 0.42);
   --dither-strength: 0.74;
   --dither-floor: 0.24;

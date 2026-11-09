@@ -2,6 +2,7 @@
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "../styles/theme.css";
+import "../styles/pieces.css";
 import BoxFrame from "../components/home/BoxFrame.astro";
 import CopyButton from "../components/home/CopyButton.astro";
 import DemoVideo from "../components/home/DemoVideo.astro";
@@ -14,7 +15,11 @@ import PointerBox from "../components/home/PointerBox.astro";
 import HomeHead from "../components/home/HomeHead.astro";
 import AimReticle from "../components/home/AimReticle.astro";
 import MotionToggle from "../components/home/MotionToggle.astro";
-import ThemedShot from "../components/home/ThemedShot.astro";
+import BoxPanelPiece from "../components/home/BoxPanelPiece.astro";
+import DesktopPiece from "../components/home/DesktopPiece.astro";
+import MonitorPiece from "../components/home/MonitorPiece.astro";
+import NewBoxPiece from "../components/home/NewBoxPiece.astro";
+import RecordingPiece from "../components/home/RecordingPiece.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import { demoSeconds } from "../demo.ts";
 import { homePageHead } from "../head.ts";
@@ -23,8 +28,8 @@ import { pageUrl } from "../repo.ts";
 
 const base = import.meta.env.BASE_URL;
 const data = await homeData(base, Astro.site);
-const shown = data.features.filter((feature) => feature.shot);
-const listed = data.features.filter((feature) => !feature.shot);
+const shown = data.features.filter((feature) => feature.piece);
+const listed = data.features.filter((feature) => !feature.piece);
 const page = {
   title: "BB Box",
   description: tagline,
@@ -118,7 +123,12 @@ import appIcon from "../assets/app-icon.png";
           {shown.map((feature, index) => (
             <li class:list={{ wide: index === 0 }}>
               <BoxFrame title={feature.title}>
-                <ThemedShot shot={feature.shot!} class="feature-shot" sizes={index === 0 ? "(min-width: 1100px) 1100px, 100vw" : "(min-width: 1100px) 540px, 100vw"} />
+                {feature.piece !== "recording" && <span slot="action" class="piece-tag">try it</span>}
+                {feature.piece === "boxPanel" && <BoxPanelPiece />}
+                {feature.piece === "newBox" && <NewBoxPiece backends={data.backends} />}
+                {feature.piece === "desktop" && <DesktopPiece />}
+                {feature.piece === "recording" && <RecordingPiece />}
+                {feature.piece === "monitor" && <MonitorPiece />}
               </BoxFrame>
               <p class="shot-words" set:html={feature.html} />
             </li>
@@ -747,6 +757,7 @@ import appIcon from "../assets/app-icon.png";
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 3rem 2rem;
+    align-items: start;
     margin: 3rem 0 0;
     padding: 0;
     list-style: none;
@@ -754,17 +765,6 @@ import appIcon from "../assets/app-icon.png";
 
   .shots .wide {
     grid-column: 1 / -1;
-  }
-
-  .shots :global(.feature-shot) {
-    aspect-ratio: 16 / 10;
-    margin: 0.5rem 0 0.75rem;
-    border-radius: 0;
-    background: var(--muted);
-  }
-
-  .shots .wide :global(.feature-shot) {
-    aspect-ratio: 16 / 7.5;
   }
 
   .shot-words {
@@ -1103,10 +1103,6 @@ import appIcon from "../assets/app-icon.png";
 
     .shots {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .shots .wide :global(.feature-shot) {
-      aspect-ratio: 16 / 10;
     }
 
     .listing {

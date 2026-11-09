@@ -1,15 +1,4 @@
 import { getEntry } from "astro:content";
-import boxPanel from "../../docs/media/box-panel.png";
-import boxPanelLight from "../../docs/media/box-panel-light.png";
-import desktopBox from "../../docs/media/desktop-box.png";
-import desktopBoxLight from "../../docs/media/desktop-box-light.png";
-import monitor from "../../docs/media/monitor.png";
-import monitorLight from "../../docs/media/monitor-light.png";
-import newBoxForm from "../../docs/media/new-box-form.png";
-import newBoxFormLight from "../../docs/media/new-box-form-light.png";
-import recordingStep from "../../docs/media/recording-step.png";
-import terminalBox from "../../docs/media/terminal-box.png";
-import terminalBoxLight from "../../docs/media/terminal-box-light.png";
 import { absoluteAddress, markdownPath } from "./llms.ts";
 import { firstListIn, listUnder, plainText, tableUnder, type ListItem } from "./rendered.ts";
 import { pageUrl, readPages, repository, repositoryRef } from "./repo.ts";
@@ -22,34 +11,18 @@ export const subline = "Linux, Windows, macOS, iOS and Android, virtual or real:
 export const demoDescription =
   "A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo.";
 
-export type ImageSource = typeof boxPanel;
+export type FeaturePiece = "boxPanel" | "newBox" | "desktop" | "recording" | "monitor";
 
-export interface Shot {
-  dark: ImageSource;
-  light: ImageSource;
-  alt: string;
-  focus: { x: number; y: number; zoom: number };
-}
-
-export const shots = {
-  boxPanel: { dark: boxPanel, light: boxPanelLight, alt: "A thread's Box panel with two Linux boxes, each ready in under 2 seconds.", focus: { x: 100, y: 8, zoom: 1.3 } },
-  desktop: { dark: desktopBox, light: desktopBoxLight, alt: "A Linux desktop box open in a thread's Desktop tab while the agent has control.", focus: { x: 70, y: 40, zoom: 1.15 } },
-  newBox: { dark: newBoxForm, light: newBoxFormLight, alt: "The new box form: system, architecture, type, size and the provider the box goes to.", focus: { x: 92, y: 60, zoom: 1.5 } },
-  monitor: { dark: monitor, light: monitorLight, alt: "The Monitor in BB's sidebar, with a box's CPU at 100 percent and its memory at 52 percent.", focus: { x: 0, y: 100, zoom: 2 } },
-  terminal: { dark: terminalBox, light: terminalBoxLight, alt: "A box's terminal in a thread, after uname and nproc.", focus: { x: 40, y: 0, zoom: 1.6 } },
-  recording: { dark: recordingStep, light: recordingStep, alt: "A step of an agent's recording, captioned with what it did and what happened.", focus: { x: 50, y: 50, zoom: 1 } },
-} satisfies Record<string, Shot>;
-
-const shotForReason: Record<string, Shot> = {
-  "Each thread gets its own computers": shots.boxPanel,
-  "Shared desktops": shots.desktop,
-  "Any provider": shots.newBox,
-  "Every machine at a glance": shots.monitor,
-  "Recordings that show the work": shots.recording,
+const pieceForReason: Record<string, FeaturePiece> = {
+  "Each thread gets its own computers": "boxPanel",
+  "Shared desktops": "desktop",
+  "Any provider": "newBox",
+  "Every machine at a glance": "monitor",
+  "Recordings that show the work": "recording",
 };
 
 export interface Feature extends ListItem {
-  shot?: Shot;
+  piece?: FeaturePiece;
 }
 
 export const platformNames = ["Linux", "Windows", "macOS", "iOS", "Android"] as const;
@@ -116,7 +89,7 @@ export async function homeData(base: string, site: URL | undefined): Promise<Hom
   const quickStartMarkdown = site ? absoluteAddress(markdownPath(base, "start/quick-start"), { base, site: site.href }) : quickStartOnGitHub(command);
   const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
   return {
-    features: listUnder(html, "why-bb-box").map((reason) => ({ ...reason, shot: shotForReason[reason.title] })),
+    features: listUnder(html, "why-bb-box").map((reason) => ({ ...reason, piece: pieceForReason[reason.title] })),
     backends: tableUnder(html, "backends-and-boxes").map(backendOf),
     requirements: firstListIn(quickStartEntry?.rendered?.html ?? ""),
     prompt: setupPrompt(pages, quickStartMarkdown),
