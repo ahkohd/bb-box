@@ -24,10 +24,10 @@ The cloud backends join their machines to your tailnet when BB is on one: see [j
 
 ## Install the plugin
 
-In BB, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, enter `git:https://github.com/moonstead/bb-box.git@stable`, and select **Install plugin**. Or, with BB's command line:
+In BB, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, enter `git:https://github.com/ahkohd/bb-box.git@stable`, and select **Install plugin**. Or, with BB's command line:
 
 ```sh
-bb plugin install git:https://github.com/moonstead/bb-box.git@stable
+bb plugin install git:https://github.com/ahkohd/bb-box.git@stable
 ```
 
 It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds it, so you need no clone. To change bb-box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.

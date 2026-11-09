@@ -29,13 +29,13 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 1. In BB, open Settings, then Installed plugins, then the arrow beside **New plugin**, then **Install from source**, and enter:
 
    ```text
-   git:https://github.com/moonstead/bb-box.git@stable
+   git:https://github.com/ahkohd/bb-box.git@stable
    ```
 
    Or with BB's command line, `bb`, or `npx --package bb-app bb` where `bb` is not installed:
 
    ```sh
-   bb plugin install git:https://github.com/moonstead/bb-box.git@stable
+   bb plugin install git:https://github.com/ahkohd/bb-box.git@stable
    ```
 
    It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.

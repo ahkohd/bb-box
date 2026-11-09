@@ -1,5 +1,5 @@
 /** Where the setup guides and scripts are read, as pages. */
-export const REPOSITORY_URL = "https://github.com/moonstead/bb-box/blob/main";
+export const REPOSITORY_URL = "https://github.com/ahkohd/bb-box/blob/main";
 
 /**
  * The name in a backend's ID, as a second backend of a type has ("microsandbox:mac-mini"), for a chip beside its label;

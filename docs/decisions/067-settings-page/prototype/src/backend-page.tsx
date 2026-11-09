@@ -14,7 +14,7 @@ import { isSecretEdit, newKey, useDraft, useInstant, useWrite, type Draft } from
 import { isSecretState, type Path } from "./paths";
 import { Badge, Card, Checkbox, ConflictNote, FieldInput, Icon, PageHeader, ProviderGlyph, RestoredNote, Rows, SaveBar, SaveRule, SavedTick, Section, SettingRow, Confirm, FOCUS_RING } from "./ui";
 
-export const REPOSITORY = "https://github.com/moonstead/bb-box/blob/main";
+export const REPOSITORY = "https://github.com/ahkohd/bb-box/blob/main";
 
 export const GROUPS: readonly { readonly id: string; readonly title: string; readonly description?: string; readonly folded?: boolean }[] = [
   { id: "connection", title: "Connection" },

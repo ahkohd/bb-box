@@ -13,7 +13,7 @@ The first panel worked but read like a settings form: a native select
 a line of description, and "This thread has no boxes. Make one here, or ask
 the agent to use box_acquire." The operator asked for a panel that feels
 part of BB (1 October 2026), and for people and agents to choose a box's
-size ([#58](https://github.com/moonstead/bb-box/issues/58), decision 028).
+size ([#58](https://github.com/ahkohd/bb-box/issues/58), decision 028).
 
 ## Rules
 
@@ -189,7 +189,7 @@ A two-column grid in `text-xs`, labels muted:
 
 Quick actions are BB's ghost icon buttons with tooltips: "Open desktop"
 (desktop boxes, when ready), "Open terminal" (once
-[#51](https://github.com/moonstead/bb-box/issues/51) exists, for boxes that
+[#51](https://github.com/ahkohd/bb-box/issues/51) exists, for boxes that
 are BB machines), "Start" on a stopped box, "Stop" on a running one that can
 stop. The menu (BB's overflow menu, three dots) repeats them and adds the
 rest:
@@ -608,7 +608,7 @@ that request's round trip (#353).
 
 A thread panel tab per box (`layout: "flush"`), "Terminal: <box>", opened
 from a row's "Open terminal" (a quick action and a menu item) while the
-box runs. Issue [#51](https://github.com/moonstead/bb-box/issues/51).
+box runs. Issue [#51](https://github.com/ahkohd/bb-box/issues/51).
 
 ```
 +------------------------------------------------------------------+
