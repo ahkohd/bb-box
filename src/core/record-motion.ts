@@ -522,6 +522,7 @@ interface Group {
 const BRIGHT_COLUMNS = 16;
 const BRIGHT_ROWS = 9;
 const PAINT_QUIET_S = 0.4;
+export const OPENING_RESIZE_S = 1;
 const PAINT_WITH_ACTION_S = 0.15;
 const WINDOW_MIN_W = 120;
 const WINDOW_MIN_H = 80;
@@ -534,8 +535,19 @@ function coversFocus(change: InputArea, focus: InputArea): boolean {
   return overlap(change, focus) > 0;
 }
 
+function windowSized(change: InputArea): boolean {
+  return change.width >= WINDOW_MIN_W && change.height >= WINDOW_MIN_H;
+}
+
 function openingOf(scene: Scene, focus: InputArea, at: number): ChangedRegion[] {
-  return scene.changes.filter((change) => change.width >= WINDOW_MIN_W && change.height >= WINDOW_MIN_H && change.at >= at - 1.2 && change.at <= at + PAINT_WITH_ACTION_S && coversFocus(change, focus));
+  const opened = scene.changes.filter((change) => windowSized(change) && change.at >= at - 1.2 && change.at <= at + PAINT_WITH_ACTION_S && coversFocus(change, focus));
+  if (!opened.length) return opened;
+  const first = Math.min(...opened.map((change) => change.at));
+  const resized = scene.changes
+    .filter((change) => windowSized(change) && change.at > first && change.at <= first + OPENING_RESIZE_S && !opened.includes(change))
+    .sort((a, b) => a.at - b.at)
+    .reduce((all: ChangedRegion[], change) => (overlap(change, unionOf([...opened, ...all])) > 0 ? [...all, change] : all), []);
+  return [...opened, ...resized];
 }
 
 function cellsUnder(scene: Scene, area: InputArea, at: number): number[] | null {

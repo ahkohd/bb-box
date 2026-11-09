@@ -48,6 +48,14 @@ neither pumps nor keeps the camera out for the next one. The paint check
 reads the screen from the window's opening, so a window that painted at
 once is zoomed without waiting for a later reading.
 
+### A window resized as it opens is still opening
+
+A window-sized change that overlaps a window's opening and comes within
+1 second of it is part of that opening, as when an app restores its size or
+an agent resizes the window it launched. The previous framing holds until
+the last such change has been quiet for 0.4 seconds, as 075 holds it for
+paint.
+
 ### The camera pans rather than pumps
 
 After a zoomed group, the camera stays in and pans to the next group when

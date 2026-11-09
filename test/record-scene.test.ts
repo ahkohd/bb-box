@@ -807,6 +807,30 @@ test("a zoom on a window that painted at once lands without waiting for a later 
   assert.equal(cameraAt(keys, 2.4).zoom, top, `in by 2.4 s: ${JSON.stringify(keys)}`);
 });
 
+test("a window resized within a second of appearing is still opening: the previous framing holds until it settles (076)", () => {
+  const window = { x: 300, y: 200, width: 700, height: 450 };
+  const keys = camera({
+    clicks: [{ at: 1.3, x: 500, y: 400, button: "left", count: 1, area: { x: 460, y: 380, width: 80, height: 40 }, role: "push button", window }],
+    changes: [
+      { at: 1, x: 300, y: 200, width: 900, height: 600 },
+      { at: 1.8, ...window },
+    ],
+    length: 10,
+  });
+  assert.equal(cameraAt(keys, 1.9).zoom, 1, `the camera does not move while the window snaps to its size: ${JSON.stringify(keys)}`);
+  assert.equal(cameraAt(keys, 2.15).zoom, 1, "nor until it has been quiet a moment");
+  assert.ok(cameraAt(keys, 3.2).zoom > 1, "then it eases in");
+  const later = camera({
+    clicks: [{ at: 1.3, x: 500, y: 400, button: "left", count: 1, area: { x: 460, y: 380, width: 80, height: 40 }, role: "push button", window }],
+    changes: [
+      { at: 1, x: 300, y: 200, width: 900, height: 600 },
+      { at: 2.3, ...window },
+    ],
+    length: 10,
+  });
+  assert.ok(cameraAt(later, 2.2).zoom > 1, "a change more than a second after it appeared is not part of its opening");
+});
+
 test("a typing zoom keeps the whole changed region inside the frame, and zooms less instead of cropping it (073)", () => {
   const line = { at: 3.4, x: 40, y: 360, width: 1500, height: 28 };
   const field = { x: 30, y: 280, width: 1700, height: 520 };
