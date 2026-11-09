@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Icon } from "@/components/ui/icon";
@@ -19,6 +19,9 @@ import { SearchResults } from "./SearchResults.tsx";
 
 export interface ExplorerProps {
   entries: readonly FlatEntry[];
+  onLoadFolder?: (path: string) => void;
+  loadingFolders?: ReadonlySet<string>;
+  folderErrors?: ReadonlyMap<string, string>;
   activePath: string | null;
   isLoading: boolean;
   error: string | null;
@@ -48,6 +51,9 @@ const ROW_LIMIT = 600;
 
 export function Explorer({
   entries,
+  onLoadFolder,
+  loadingFolders,
+  folderErrors,
   activePath,
   isLoading,
   error,
@@ -68,12 +74,22 @@ export function Explorer({
 }: ExplorerProps) {
 
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const [matchCase, setMatchCase] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [regex, setRegex] = useState(false);
   const [submitNonce, setSubmitNonce] = useState(0);
+  const createMenu = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !createMenu.current?.contains(event.target)) createMenu.current?.removeAttribute("open"); };
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") createMenu.current?.removeAttribute("open"); };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, []);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  useLayoutEffect(() => { setExpanded(new Set()); }, [scope?.root, scope?.box]);
   const [menu, setMenu] = useState<{ path: string; kind: EntryKind; x: number; y: number } | null>(null);
   const [draft, setDraft] = useState<{ mode: "create"; parent: string; kind: EntryKind } | { mode: "rename"; path: string } | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -81,6 +97,9 @@ export function Explorer({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const committing = useRef(false);
+  const prefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPrefetch = () => { if (prefetchTimer.current !== null) clearTimeout(prefetchTimer.current); };
+  useEffect(() => cancelPrefetch, []);
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
 
   const isSearching = query !== "" && scope !== null;
@@ -95,6 +114,7 @@ export function Explorer({
 
   useEffect(() => {
     if (activePath === null) return;
+    for (const ancestor of ancestorsOf(activePath)) onLoadFolder?.(ancestor);
     setExpanded((current) => {
       const ancestors = ancestorsOf(activePath);
       if (ancestors.every((ancestor) => current.has(ancestor))) return current;
@@ -102,7 +122,7 @@ export function Explorer({
       for (const ancestor of ancestors) next.add(ancestor);
       return next;
     });
-  }, [activePath]);
+  }, [activePath, onLoadFolder]);
 
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: "nearest" });
@@ -120,6 +140,7 @@ export function Explorer({
   }, [activePath, allRows]);
 
   const toggle = (path: string) => {
+    onLoadFolder?.(path);
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path);
@@ -131,6 +152,7 @@ export function Explorer({
   const beginCreate = (parent: string, kind: EntryKind) => {
     setQuery("");
     if (parent !== "") {
+      onLoadFolder?.(parent);
       setExpanded((current) => {
         const next = new Set(current);
         next.add(parent);
@@ -181,9 +203,19 @@ export function Explorer({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-recessed">
-      {header}
+      <div className="flex min-w-0 items-center gap-0.5 px-2 py-2">
+        {header}
+        <ExplorerAction icon="RotateCcw" label="Refresh files" onClick={onRefresh} />
+        <details ref={createMenu} className="relative shrink-0">
+          <summary aria-label="Create" className="flex size-6 cursor-pointer list-none items-center justify-center text-muted-foreground"><span aria-hidden>+</span></summary>
+          <div className="absolute right-0 z-20 w-32 border border-border bg-popover p-1">
+            <button className="block w-full px-2 py-1 text-left text-xs" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); beginCreate('', 'file'); }}><FilePlusGlyph />New file</button>
+            <button className="block w-full px-2 py-1 text-left text-xs" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); beginCreate('', 'directory'); }}><Icon name="FolderPlus" />New folder</button>
+          </div>
+        </details>
+      </div>
 
-      <div className="flex shrink-0 items-center gap-1.5 px-2 pb-2">
+      <div className="flex shrink-0 items-center gap-0.5 px-2 pb-2">
         <div className="relative min-w-0 flex-1">
           <Icon
             name="Search"
@@ -194,6 +226,8 @@ export function Explorer({
             ref={inputRef}
             type="search"
             value={query}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape" && query !== "") {
@@ -216,40 +250,19 @@ export function Explorer({
                 event.preventDefault();
               }
             }}
-            placeholder="Search in files"
+            placeholder="Search"
             aria-label="Search in files"
             title="Search in files"
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
             className={cn(
-              "h-7 w-full min-w-0 rounded-md border border-border bg-background pr-[4.5rem] pl-7 text-sm",
+              "h-7 w-full min-w-[9rem] rounded-md border border-border bg-background pr-2 pl-7 text-sm",
               "text-foreground placeholder:text-muted-foreground",
               "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
               "[&::-webkit-search-cancel-button]:hidden",
             )}
           />
-          <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px">
-            <SearchToggle
-              label="Match case. Off, a capital letter makes the search case-sensitive"
-              glyph="Aa"
-              isOn={matchCase}
-              onToggle={() => setMatchCase((value) => !value)}
-            />
-            <SearchToggle
-              label="Match whole word (Alt W)"
-              glyph="ab"
-              underline
-              isOn={wholeWord}
-              onToggle={() => setWholeWord((value) => !value)}
-            />
-            <SearchToggle
-              label="Use regular expression (Alt R)"
-              glyph=".*"
-              isOn={regex}
-              onToggle={() => setRegex((value) => !value)}
-            />
-          </div>
         </div>
         <ExplorerAction
           icon="Search"
@@ -264,15 +277,31 @@ export function Explorer({
             onClick={() => onToggleHidden(!includeHidden)}
           />
         ) : null}
-        <ExplorerAction
-          icon="RotateCcw"
-          label="Refresh files"
-          isSpinning={isLoading}
-          onClick={onRefresh}
-        />
-        <ExplorerAction icon="FilePlus" label="New file" onClick={() => beginCreate("", "file")} />
-        <ExplorerAction icon="FolderPlus" label="New folder" onClick={() => beginCreate("", "directory")} />
       </div>
+
+      {searchFocused || query !== "" ? (
+        <div className="flex shrink-0 items-center gap-px px-2 pb-2" onMouseDown={(event) => event.preventDefault()}>
+          <SearchToggle
+            label="Match case. Off, a capital letter makes the search case-sensitive"
+            glyph="Aa"
+            isOn={matchCase}
+            onToggle={() => setMatchCase((value) => !value)}
+          />
+          <SearchToggle
+            label="Match whole word (Alt W)"
+            glyph="ab"
+            underline
+            isOn={wholeWord}
+            onToggle={() => setWholeWord((value) => !value)}
+          />
+          <SearchToggle
+            label="Use regular expression (Alt R)"
+            glyph=".*"
+            isOn={regex}
+            onToggle={() => setRegex((value) => !value)}
+          />
+        </div>
+      ) : null}
 
       {isSearching && scope !== null ? (
         <SearchResults
@@ -290,7 +319,7 @@ export function Explorer({
         <div className="min-h-0 flex-1 overflow-auto pb-2">
           {error !== null || actionError !== null ? (
             <p className="px-3 py-2 text-xs text-destructive-text">{error ?? actionError}</p>
-          ) : isLoading && entries.length === 0 ? null : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
+          ) : isLoading && entries.length === 0 ? <FolderSkeleton /> : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
               This folder has no files yet.
             </p>
@@ -304,6 +333,9 @@ export function Explorer({
               {rows.map((row) => (
                 <Fragment key={row.node.path}>
                   <ExplorerRow
+                    onPrefetch={() => { if (row.node.kind === "directory") onLoadFolder?.(row.node.path); }}
+                    onDwell={() => { cancelPrefetch(); prefetchTimer.current = setTimeout(() => { if (row.node.kind === "directory") onLoadFolder?.(row.node.path); }, 120); }}
+                    onLeave={cancelPrefetch}
                     row={row}
                     query=""
                     isActive={row.node.path === activePath}
@@ -316,6 +348,8 @@ export function Explorer({
                     onCommitRename={(name) => void commitDraft(name)}
                     onCancelRename={() => { setDraft(null); setDraftError(null); }}
                   />
+                  {row.isExpanded && folderErrors?.has(row.node.path) ? <li role="none" className="px-3 text-xs text-destructive-text">{folderErrors.get(row.node.path)}</li> : null}
+                  {row.isExpanded && loadingFolders?.has(row.node.path) ? <li role="none"><FolderSkeleton /></li> : null}
                   {draft?.mode === "create" && draft.parent === row.node.path ? (
                     <li role="none">
                       <NameField depth={row.depth + 1} kind={draft.kind} label={draft.kind === "directory" ? "New folder name" : "New file name"} initial="" error={draftError} onCommit={(name) => void commitDraft(name)} onCancel={() => { setDraft(null); setDraftError(null); }} />
@@ -329,7 +363,7 @@ export function Explorer({
       )}
 
       <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-        {isLoading && entries.length === 0 ? "\u00a0" : `${fileCount.toLocaleString()} files`}
+        {isLoading && entries.length === 0 ? "\u00a0" : `${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"}`}
         {!isSearching && allRows.length > rows.length
           ? ` - showing first ${ROW_LIMIT.toLocaleString()}`
           : ""}
@@ -375,6 +409,9 @@ function dirnameOf(path: string): string {
 }
 
 function ExplorerRow({
+  onPrefetch,
+  onDwell,
+  onLeave,
   row,
   query,
   isActive,
@@ -387,6 +424,9 @@ function ExplorerRow({
   onCommitRename,
   onCancelRename,
 }: {
+  onPrefetch: () => void;
+  onDwell: () => void;
+  onLeave: () => void;
   row: TreeRow;
   query: string;
   isActive: boolean;
@@ -408,6 +448,9 @@ function ExplorerRow({
         <NameField depth={depth} kind={node.kind} label="New name" initial={node.name} error={renameError} onCommit={onCommitRename} onCancel={onCancelRename} />
       ) : (
         <button
+          onFocus={onPrefetch}
+          onPointerEnter={onDwell}
+          onPointerLeave={onLeave}
           ref={activeRef}
           type="button"
           role="treeitem"
@@ -644,7 +687,7 @@ function ExplorerAction({
       title={label}
       aria-label={label}
       className={cn(
-        "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md",
+        "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md",
         "text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground",
         "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
         isActive === true && "text-foreground",
@@ -726,4 +769,8 @@ export function highlightChunks(
     else chunks.push({ text: character, isMatch });
   }
   return chunks;
+}
+
+function FolderSkeleton() {
+  return <div role="status" aria-label="Loading folder" className="px-3 motion-safe:animate-pulse">{[1, 2, 3, 4].map((row) => <div key={row} className="flex h-6 items-center"><div className="h-2 w-2/3 rounded bg-muted" /></div>)}</div>;
 }

@@ -1,6 +1,6 @@
 # 075: The files view is the editor plugin's own UI
 
-Status: accepted, 8 November 2026. Supersedes the view-construction sentence of [074](074-a-box-has-a-files-view.md).
+Status: accepted, 8 November 2026. The recursive initial tree and left-hand placement are superseded by [077](077-files-draw-one-level-before-walking-names.md). Supersedes the view-construction sentence of [074](074-a-box-has-a-files-view.md).
 
 ## Context
 

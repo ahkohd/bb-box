@@ -44,3 +44,74 @@ test("the files RPC opens any box that is not a spare, and refuses a plugin or a
   assert.equal(spare.error, "That box is gone.");
   assert.equal(calls, 2);
 });
+
+test("cached tree reopens without a shell call before explicit refresh", async () => {
+  let calls = 0;
+  const boxes = {
+    async find() { return record('bx_tree', OPERATOR); },
+    async runOwn() {
+      calls++;
+      return { exitCode: 0, stdout: `ROOT\0/home/box\0d\0folder-${calls}\0DONE\0`, stderr: '', timedOut: false, truncated: false };
+    },
+  } as unknown as Boxes;
+  const handlers = filesHandlers(boxes);
+  const context = { experimental_caller: { kind: 'client' } };
+  const first = await handlers['files.tree']({ box: 'bx_tree' }, context);
+  assert.equal(calls, 1);
+  const cached = await handlers['files.tree']({ box: 'bx_tree' }, context);
+  assert.equal(calls, 1);
+  assert.equal(cached.error, null);
+  if (cached.error === null && first.error === null) assert.deepEqual(cached.directories, first.directories);
+  const fresh = await handlers['files.tree']({ box: 'bx_tree', refresh: true }, context);
+  assert.equal(calls, 2);
+  assert.notDeepEqual(fresh, cached);
+});
+
+test('tree cache separates boxes and paths and evicts least recently used bytes', async () => {
+  let calls = 0;
+  const filename = 'x'.repeat(1024);
+  const listing = Array.from({ length: 1900 }, (_, index) => `f\0${index}-${filename}\0`).join('');
+  const boxes = {
+    async find(id: string) { return record(id, OPERATOR); },
+    async runOwn() {
+      calls++;
+      return { exitCode: 0, stdout: `ROOT\0/tmp\0${listing}DONE\0`, stderr: '', timedOut: false, truncated: false };
+    },
+  } as unknown as Boxes;
+  const handlers = filesHandlers(boxes);
+  const context = { experimental_caller: { kind: 'client' } };
+  const tree = (box: string, path: string) => handlers['files.tree']({ box, path }, context);
+  await tree('bx_one', '/a');
+  await tree('bx_two', '/a');
+  await tree('bx_one', '/b');
+  await tree('bx_one', '/c');
+  assert.equal(calls, 4);
+  await tree('bx_one', '/a');
+  assert.equal(calls, 4);
+  await tree('bx_one', '/d');
+  assert.equal(calls, 5);
+  await tree('bx_one', '/a');
+  assert.equal(calls, 5);
+  await tree('bx_two', '/a');
+  assert.equal(calls, 6);
+});
+
+test('recursive results preserve shallow cache entries and stay fresh', async () => {
+  let calls = 0;
+  const listing = Array.from({ length: 1900 }, (_, index) => `f\0${index}-${'x'.repeat(1024)}\0`).join('');
+  const boxes = {
+    async find(id: string) { return record(id, OPERATOR); },
+    async runOwn() {
+      calls++;
+      return { exitCode: 0, stdout: `ROOT\0/tmp\0${listing}DONE\0`, stderr: '', timedOut: false, truncated: false };
+    },
+  } as unknown as Boxes;
+  const handlers = filesHandlers(boxes);
+  const context = { experimental_caller: { kind: 'client' } };
+  await handlers['files.tree']({ box: 'bx_one', path: '/shallow' }, context);
+  for (let index = 0; index < 6; index++) await handlers['files.tree']({ box: 'bx_one', path: `/index-${index}`, recursive: true }, context);
+  await handlers['files.tree']({ box: 'bx_one', path: '/shallow' }, context);
+  assert.equal(calls, 7);
+  await handlers['files.tree']({ box: 'bx_one', path: '/index-5', recursive: true }, context);
+  assert.equal(calls, 8);
+});

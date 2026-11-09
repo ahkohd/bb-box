@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
 import { Explorer } from "../src/app/files-ui/Explorer.tsx";
@@ -70,6 +70,7 @@ test("new file and new folder use the file-plus and folder-plus icons, not the b
       header={null}
     />,
   );
+  fireEvent.click(screen.getByLabelText("Create"));
   const file = screen.getByRole("button", { name: "New file" });
   const folder = screen.getByRole("button", { name: "New folder" });
   expect(file.querySelector("[data-icon]")?.getAttribute("data-icon")).toBe("FilePlus");
@@ -109,20 +110,43 @@ function explorerWhile(isLoading: boolean) {
   );
 }
 
-test("refresh uses the rotate icon and spins while a folder is read, with no reading line and no file count", () => {
+test("refresh stays still while row-height skeletons show folder loading", () => {
   const { container } = explorerWhile(true);
   const refresh = screen.getByRole("button", { name: "Refresh files" });
   const icon = refresh.querySelector("[data-icon]");
   expect(icon?.getAttribute("data-icon")).toBe("RotateCcw");
-  expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
+  expect(icon?.getAttribute("class") ?? "").not.toContain("animate-spin");
+  expect(screen.getByRole("status", { name: "Loading folder" }).className).toContain("motion-safe:animate-pulse");
+  expect(screen.getByRole("status", { name: "Loading folder" }).querySelectorAll(".h-6").length).toBe(4);
   expect(container.textContent ?? "").not.toMatch(/Reading/);
   expect(container.textContent ?? "").not.toMatch(/0 files/);
 });
 
 test("the search row never wraps, so New folder stays beside the other actions", () => {
   explorerWhile(false);
-  const row = screen.getByRole("button", { name: "New folder" }).parentElement;
+  fireEvent.click(screen.getByLabelText("Create"));
+  const row = screen.getByRole("button", { name: "New folder" }).closest("details")?.parentElement;
   expect(row?.className ?? "").not.toContain("flex-wrap");
   expect(screen.getByRole("button", { name: "Refresh files" }).parentElement).toBe(row);
   expect(screen.getByText("This folder has no files yet.")).toBeTruthy();
+});
+
+test('path and search actions stay on separate rows and create uses one dismissible menu', () => {
+  explorerWhile(false);
+  const create = screen.getByLabelText('Create');
+  const pathRow = create.closest('details')?.parentElement;
+  const search = screen.getByRole('searchbox', { name: 'Search in files' });
+  const searchRow = search.parentElement?.parentElement;
+  expect(screen.getByRole('button', { name: 'Refresh files' }).parentElement).toBe(pathRow);
+  expect(screen.getByRole('button', { name: 'Go to file by name' }).parentElement).toBe(searchRow);
+  expect(screen.getByRole('button', { name: 'Show dotfiles' }).parentElement).toBe(searchRow);
+  expect(pathRow).not.toBe(searchRow);
+  fireEvent.click(create);
+  expect(screen.getByRole('button', { name: 'New file' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'New folder' })).toBeTruthy();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(create.closest('details')?.hasAttribute('open')).toBe(false);
+  fireEvent.click(create);
+  fireEvent.pointerDown(document.body);
+  expect(create.closest('details')?.hasAttribute('open')).toBe(false);
 });
