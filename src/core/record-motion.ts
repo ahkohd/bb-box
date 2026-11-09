@@ -878,6 +878,7 @@ function activeBetween(idle: readonly Span[], from: number, to: number): number 
 
 export const MOVE_LEAST_S = 0.3;
 export const ZOOM_OUT_LEAST_S = 0.4;
+export const OUTSIDE_LEAD_S = 0.25;
 
 function settledByHolds(keys: readonly CameraKey[], held: readonly number[]): CameraKey[] {
   return keys.map((key, index) => {
@@ -919,7 +920,7 @@ export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Sp
     if (ready === null) return zoomOutStayed();
     const arrive = ready > natural + 0.02 ? ready + MOVE_S : natural;
     const seen = Math.max(group.last, arrive);
-    const hold = Math.min(scene.length, seen + LINGER_S, group.outsideAt ?? Infinity);
+    const hold = Math.min(scene.length, seen + LINGER_S, group.outsideAt === null ? Infinity : group.outsideAt - OUTSIDE_LEAD_S);
     if (group.view.zoom > 1 && hold - arrive < ZOOM_SEEN_LEAST_S) return zoomOutStayed();
     stayedFor = null;
     moveTo(arrive, group.view);

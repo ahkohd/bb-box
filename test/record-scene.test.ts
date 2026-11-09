@@ -467,11 +467,14 @@ function idleRecording(parts: Partial<SceneFacts> = {}, events: Prepared["events
   };
 }
 
-test("a zoom out a result's hold would cut short still takes 0.4 s (081)", () => {
+test("a zoom out a result's hold would cut short still takes 0.4 s, and one a change elsewhere calls for starts a quarter second before it, so a result given just after is held on a settled view (081)", () => {
   const planned = scene({ clicks: [{ at: 2, x: 600, y: 400, button: "left", count: 1, area: { x: 560, y: 380, width: 80, height: 40 } }], changes: [{ at: 3, x: 0, y: 0, width: 1900, height: 1000 }], length: 10 });
-  const keys = planCamera(planned, planPointer(planned), [], [3.3]);
-  assert.ok(cameraAt(keys, 3.35).zoom > 1, `still easing out: ${JSON.stringify(keys)}`);
-  assert.equal(cameraAt(keys, 3.45).zoom, 1);
+  const floored = planCamera(planned, planPointer(planned), [], [3.07]);
+  assert.ok(cameraAt(floored, 3.1).zoom > 1, `still easing out: ${JSON.stringify(floored)}`);
+  assert.equal(cameraAt(floored, 3.2).zoom, 1);
+  const led = planCamera(planned, planPointer(planned), [], [3.33]);
+  assert.ok(cameraAt(led, 2.9).zoom < cameraAt(led, 2.7).zoom, `out before the dialog opens: ${JSON.stringify(led)}`);
+  assert.equal(cameraAt(led, 3.33).zoom, 1, "and out by the result a third of a second after it");
 });
 
 test("a dressed recording cuts its idle stretches by default, though a caret blinks, keeps a moving pointer, and keeps them all with stills keep (081)", () => {
@@ -1284,7 +1287,7 @@ test("an outside change ends a zoom as it happens, with clicks still to come, an
   const keys = camera({ clicks, changes });
   const zoomed = cameraAt(keys, 2.5).zoom;
   assert.ok(zoomed > 1, "in on the first click");
-  assert.equal(cameraAt(keys, 3).zoom, zoomed, "until the dialog opens");
+  assert.equal(cameraAt(keys, 2.75).zoom, zoomed, "until a quarter second before the dialog opens (081)");
   assert.ok(cameraAt(keys, 3.4).zoom < zoomed, "out as it opens");
   assert.equal(cameraAt(keys, 3.9).zoom, 1);
   assert.equal(cameraAt(keys, 5).zoom, 1, "out while the dialog is seen");
