@@ -45,7 +45,7 @@ Set up BB Box for me: the BB plugin that gives threads computers of their own, c
 </details>
 
 <details>
-<summary><strong>By hand</strong></summary>
+<summary><strong>Manually</strong></summary>
 
 1. Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, and search for **BB Box**. Or open the plugin store and install **BB Box**.
 
