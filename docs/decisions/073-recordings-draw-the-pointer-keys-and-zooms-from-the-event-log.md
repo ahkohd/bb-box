@@ -13,6 +13,10 @@ rule that a typing zoom uses the whole field when that field would
 not zoom. [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)
 supersedes zooming in on a window before it has painted, a result
 caption that stays until the next step, and two captions for one moment.
+[076](076-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
+supersedes cutting only still stretches where bb-box draws the pointer,
+captions that keep their places, and the 1.5 seconds out before typing into
+a field just clicked.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context

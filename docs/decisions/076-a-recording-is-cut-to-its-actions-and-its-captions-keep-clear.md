@@ -1,8 +1,10 @@
 # 076: A recording is cut to its actions, and its captions keep clear
 
 Status: accepted, 9 November 2026.
-Extends [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md).
-Supersedes parts of [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md):
+Extends [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md), and supersedes its
+cutting only still stretches where bb-box draws the pointer, captions that
+keep their places, and the 1.5 seconds out before typing into a field just
+clicked. Supersedes parts of [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md):
 a result that fades after 2.5 seconds, and a zoom left out when its window
 is one flat tone after a click in its field.
 
